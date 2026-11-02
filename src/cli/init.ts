@@ -5,7 +5,7 @@ import { findPrompts } from "../core/prompt.ts";
 import { promptPathProblem } from "../core/safety.ts";
 import { askJson, type Model } from "../model/client.ts";
 
-export const ACTION = "synthelabs/synthe@v0";
+export const ACTION = "synthelabs/synthe@v1";
 export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 export const WORKFLOW_FILE = ".github/workflows/synthe.yml";
 

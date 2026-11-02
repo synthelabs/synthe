@@ -28654,7 +28654,7 @@ async function measureNoise(goal, prompt, scenarios, model) {
 // src/cli/init.ts
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
-var ACTION = "synthelabs/synthe@v0";
+var ACTION = "synthelabs/synthe@v1";
 var SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 var WORKFLOW_FILE = ".github/workflows/synthe.yml";
 var SCENARIO_SCHEMA = {

@@ -5,7 +5,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-ACTION=$(sed -n 's/^export const ACTION = "\(.*\)@v0";$/\1/p' src/cli/init.ts)
+ACTION=$(sed -n 's/^export const ACTION = "\(.*\)@v1";$/\1/p' src/cli/init.ts)
 [ -n "$ACTION" ] || { echo "Could not read ACTION from src/cli/init.ts."; exit 1; }
 ORG=${ACTION%%/*}
 
@@ -21,13 +21,13 @@ git add .gitignore README.md action.yml package.json package-lock.json tsconfig.
 git commit -m "First version of Synthe" || true
 git remote add origin "https://github.com/$ACTION.git" 2>/dev/null || true
 git push -u origin main
-git tag -f v0
-git push -f origin v0
+git tag -f v1
+git push -f origin v1
 
 DEMO=$(mktemp -d)
 cp -R examples/support-bot/. "$DEMO"
 mkdir -p "$DEMO/.github/workflows"
-sed "s#__ACTION__#$ACTION@v0#g" templates/synthe.yml > "$DEMO/.github/workflows/synthe.yml"
+sed "s#__ACTION__#$ACTION@v1#g" templates/synthe.yml > "$DEMO/.github/workflows/synthe.yml"
 (
   cd "$DEMO"
   git init -q -b main
