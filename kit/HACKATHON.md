@@ -2,7 +2,7 @@
 
 Friday, November 6. Nothing here has been used or sent yet.
 
-## Slide for Andrew
+## Intro slide
 
 **Synthe: your agent gets better while you sleep.**
 
@@ -38,7 +38,7 @@ Needs GitHub CLI, signed in. Stop any time: `npx synthe stop`
 
 ## Before merging overnight
 
-Tell every team: automatic merges land on your default branch. If the repo deploys from it, each merge deploys. A team that doesn't want that shouldn't install it on that repo.
+Tell every team: automatic merges land on your default branch. If the repo deploys from it, each merge deploys. A team that doesn't want that can set `"merge_rule": { "mode": "propose" }` in `synthe.json`, and Synthe leaves each winning pull request for them to merge in the morning. Repos that require reviews get this automatically.
 
 ## Capped keys, Thursday November 5
 

@@ -12,10 +12,10 @@ Answer one question, paste your key, and go to sleep. In the morning, open the *
 
 Every hour, up to 12 times, Synthe:
 
-1. Writes 3 new versions of your system prompt.
-2. Tests them against simulated scenarios, including 10 the writer never sees.
-3. Merges the winner only if it wins scenario by scenario, gains on the 10 unseen scenarios and breaks no guardrail.
-4. Reverts a merged prompt if it later scores clearly below the prompt it replaced.
+1. Proposes 2 new versions of your system prompt, each one or two exact edits aimed at the replies that lost last round.
+2. Puts each one head to head with your current prompt on simulated scenarios, including 10 the writer never sees.
+3. Merges the winner only if it wins scenario by scenario, gains on the 10 unseen scenarios and never breaks a guardrail your current prompt keeps.
+4. Reverts a merged prompt if the prompt it replaced later beats it clearly, head to head.
 
 It only ever changes the system prompt. It never touches your other code, your CI or your secrets, and it never runs your agent's code.
 
@@ -39,12 +39,12 @@ It also stops by itself when the budget ($3 by default) runs out, after 3 rounds
 | `npx synthe status` | Show progress |
 | `npx synthe stop` | Stop all runs |
 | `npx synthe try` | Run one round locally, changing nothing |
-| `npx synthe try --noise` | Score your prompt twice to see how noisy scores are |
+| `npx synthe try --noise` | Judge your prompt against itself to see how noisy judging is |
 
 ## Requirements
 
-A GitHub repo you admin and the [GitHub CLI](https://cli.github.com), signed in. If your default branch requires reviews, exempt Actions in your branch rules or Synthe will stop and tell you.
+A GitHub repo you admin and the [GitHub CLI](https://cli.github.com), signed in. If your default branch requires reviews, Synthe leaves each winning pull request open for you to merge instead.
 
 ## Change the goal
 
-Edit `synthe.json` for the objective, guardrails and budget, and `.synthe/scenarios.jsonl` for the test cases. Scenario rows marked `holdout` stay hidden from the writer.
+Edit `synthe.json` for the objective, guardrails and budget (set `"merge_rule": { "mode": "propose" }` to review every change before it merges), and `.synthe/scenarios.jsonl` for the test cases. Scenario rows marked `holdout` stay hidden from the writer.

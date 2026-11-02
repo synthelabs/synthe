@@ -64,8 +64,15 @@ const anthropic = createServer((req, res) => {
     const schema = JSON.stringify(b.output_config?.format?.schema ?? "");
     const user = b.messages[0].content;
     let text: string;
-    if (schema.includes("guardrail_ok")) text = JSON.stringify({ score: user.includes("policy-aware") ? 92 : 40, guardrail_ok: true });
-    else if (schema.includes("prompt")) text = JSON.stringify({ prompt: "You are careful and use the store policy." });
+    if (schema.includes("guardrail_ok")) {
+      const good = (tag: string) => new RegExp(`<${tag}>\\n[^<]*policy-aware`).test(user);
+      const a = good("reply_a"), b = good("reply_b");
+      text = JSON.stringify({ better: a === b ? "tie" : a ? "A" : "B", a_guardrail_ok: true, b_guardrail_ok: true });
+    }
+    else if (schema.includes("edits")) {
+      const current = /<prompt>\n([\s\S]*?)\n<\/prompt>/.exec(user)![1];
+      text = JSON.stringify({ edits: [{ find: current, replace: "You are careful and use the store policy." }], summary: "Uses the store policy." });
+    }
     else text = b.system?.includes("careful") ? "A policy-aware answer." : "A vague answer.";
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify({ id: "m", type: "message", role: "assistant", model: b.model, stop_reason: "end_turn", stop_sequence: null, content: [{ type: "text", text }], usage: { input_tokens: 1000, output_tokens: 200 } }));
@@ -119,8 +126,8 @@ test("one full round merges the winner using the real bundle", async () => {
   const state = JSON.parse(files.get("synthe/state:state.json")!);
   assert.equal(state.rounds[0].outcome, "merged");
   assert.ok(state.spendUsd > 0);
-  assert.match(issues.at(-1) ?? "", /40\.0 to 92\.0/);
-  assert.equal(models["claude-sonnet-5-5"], 3);
+  assert.match(issues.at(-1) ?? "", /\| merged \| 100\.0 \|/);
+  assert.equal(models["claude-sonnet-5-5"], 2);
 });
 
 test("requests carry valid model settings", () => {
@@ -138,6 +145,41 @@ test("a stopped run says so and doesn't call the model", async () => {
   assert.equal(r.code, 0);
   assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=false/);
   assert.equal(bodies.length, before);
+});
+
+test("a stopped run with a crashed decide still lets decide clean up and report", async () => {
+  reset();
+  files.set("synthe/state:state.json", JSON.stringify({ round: 3, stalls: 3, spendUsd: 0.2, stopped: null, pending: { round: 3, at: "t", costUsd: 0.07 }, rounds: [] }));
+  writeFileSync(join(dir, "out.txt"), "");
+  const before = bodies.length;
+  assert.equal((await step("write")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=recover/);
+  assert.equal(bodies.length, before); // nothing scored, nothing spent
+  const d = await step("decide");
+  assert.equal(d.code, 0, d.log);
+  const state = JSON.parse(files.get("synthe/state:state.json")!);
+  assert.equal(state.pending, null);
+  assert.equal(state.rounds[0].outcome, "failed");
+  assert.match(state.stopped, /no winner/);
+  assert.match(issues.at(-1) ?? "", /finished|stopped/);
+});
+
+test("while a proposal waits for review, the write step makes no model calls and decide only checks the pull request", async () => {
+  reset();
+  files.set("synthe/state:state.json", JSON.stringify({ round: 1, stalls: 0, spendUsd: 0.1, stopped: null, pending: null, rounds: [{ round: 1, at: "t", outcome: "proposed", pr: 1, reasons: [], costUsd: 0.1 }], proposal: { pr: 1, round: 1, branch: "synthe/round-1", kind: "merge", text: "New", priorPrompt: "Old", propose: true } }));
+  writeFileSync(join(dir, "out.txt"), "");
+  const before = bodies.length;
+  assert.equal((await step("write")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=check/);
+  assert.equal(bodies.length, before);
+});
+
+test("a proposal opened in a run's last round is still checked after the run stops", async () => {
+  reset();
+  files.set("synthe/state:state.json", JSON.stringify({ round: 12, stalls: 0, spendUsd: 0.1, stopped: "reached 12 rounds", pending: null, rounds: [], proposal: { pr: 1, round: 12, branch: "synthe/round-12", kind: "merge", text: "New", priorPrompt: "Old", propose: true } }));
+  writeFileSync(join(dir, "out.txt"), "");
+  assert.equal((await step("write")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=check/);
 });
 
 test("a revoked key fails the job, and decide records the failed round", async () => {

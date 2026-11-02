@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { GOAL_FILE, STATE_BRANCH, parseGoal, parseScenarios } from "../core/goal.ts";
 import { judgeRound } from "../core/merge-rule.ts";
 import { readPrompt } from "../core/prompt.ts";
-import { newState, type State } from "../core/state.ts";
+import { isFinished, newState, type State } from "../core/state.ts";
 import { anthropicModel } from "../model/client.ts";
 import { measureNoise, runScore } from "../loop/score.ts";
 import { runWrite } from "../loop/write.ts";
@@ -45,7 +45,7 @@ async function status() {
   const raw = await run("gh", ["api", `repos/${slug}/contents/state.json?ref=${encodeURIComponent(STATE_BRANCH)}`, "-H", "Accept: application/vnd.github.raw+json"]);
   const s: State = JSON.parse(raw);
   const merged = s.rounds.filter((r) => r.outcome === "merged").length;
-  console.log(`Round ${s.round}, ${merged} merged, $${s.spendUsd.toFixed(2)} spent. ${s.stopped ? `Stopped: ${s.stopped}.` : "Running."}`);
+  console.log(`Round ${s.round}, ${merged} merged, $${s.spendUsd.toFixed(2)} spent. ${s.stopped ? `${isFinished(s.stopped) ? "Finished" : "Stopped"}: ${s.stopped}.` : "Running."}`);
   if (s.issue) console.log(`Report: https://github.com/${slug}/issues/${s.issue}`);
 }
 
@@ -59,8 +59,10 @@ async function tryRound() {
   const scenarios = parseScenarios(readFileSync(goal.scenarios, "utf8"));
   const model = anthropicModel(key);
   if (process.argv.includes("--noise")) {
-    const { points, costUsd } = await measureNoise(goal, prompt, scenarios, model);
-    console.log(`Noise: ${points === null ? "unknown" : `${points.toFixed(1)} points`}. Cost: ${costUsd === null ? "unknown" : `${costUsd.toFixed(4)}`}`);
+    const n = await measureNoise(goal, prompt, scenarios, model);
+    const split = n.wins === null ? "unknown (some replies or judgments failed)" : `won ${n.wins}, lost ${n.losses}, tied ${n.ties}`;
+    console.log(`Your prompt against itself: ${split}. Any lean here is noise; a real win has to beat it clearly.`);
+    console.log(`Cost: ${n.costUsd === null ? "unknown" : `$${n.costUsd.toFixed(4)}`}`);
     return;
   }
   const written = await runWrite(goal, newState(), prompt, scenarios, model);
@@ -73,7 +75,7 @@ const HELP = `synthe init    set up this repo and start improving
 synthe status  show progress
 synthe stop    stop all runs
 synthe try     run one round locally, changing nothing
-               add --noise to score your prompt twice and see how noisy scores are`;
+               add --noise to judge your prompt against itself and see how noisy judging is`;
 
 async function main() {
   const command = process.argv[2];

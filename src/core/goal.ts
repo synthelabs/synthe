@@ -13,8 +13,9 @@ export interface Goal {
   objective: string;
   guardrails: string[];
   scenarios: string;
-  models: { writer: string; runner: string; judge: string };
+  models: { writer: string; runner: string; judge: string; checker: string };
   merge_rule: {
+    mode: "auto" | "propose"; // propose: open the winning pull request and leave the merge to a person
     min_improvement: number; // points out of 100, on both training and held-back scenarios
     max_p: number; // how likely a win may be by chance, from scenario wins and losses
     noise_margin: number; // points below the replaced prompt before a merge is reverted
@@ -25,8 +26,8 @@ export interface Goal {
 }
 
 export const DEFAULTS = {
-  models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5" },
-  merge_rule: { min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3 },
+  models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5", checker: "claude-sonnet-5-5" },
+  merge_rule: { mode: "auto" as "auto" | "propose", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3 },
   budget: { max_usd: 3 },
 };
 
@@ -40,6 +41,7 @@ export function parseGoal(text: string): Goal {
   if (!g.objective || typeof g.objective !== "string") bad("objective is required");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
+  if (g.merge_rule?.mode !== undefined && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
   return {
     ...g,
     guardrails: g.guardrails ?? [],

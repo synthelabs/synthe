@@ -1,7 +1,13 @@
 import { STATE_BRANCH } from "../core/goal.ts";
 import { newState, type State } from "../core/state.ts";
 
-export type MergeResult = { merged: true } | { merged: false; why: string; blocked: boolean };
+// Why a merge didn't happen. blocked, permission and token need a person; the rest are worth another round.
+export type MergeProblem = "blocked" | "permission" | "token" | "rate_limited" | "moved" | "other";
+export type MergeResult = { merged: true } | { merged: false; why: string; problem: MergeProblem };
+export interface PrInfo { number: number; open: boolean; merged: boolean }
+
+const isRateLimited = (status: number, headers: Headers, text: string) =>
+  status === 429 || (status === 403 && (headers.get("x-ratelimit-remaining") === "0" || /rate limit/i.test(text)));
 
 export interface Repo {
   defaultBranch(): Promise<string>;
@@ -12,6 +18,7 @@ export interface Repo {
   mergePr(number: number, sha: string): Promise<MergeResult>;
   deleteBranch(branch: string): Promise<void>;
   closePr(number: number): Promise<void>;
+  findPr(branch: string): Promise<PrInfo | null>;
   upsertIssue(number: number | null, title: string, body: string): Promise<number>;
   readState(): Promise<State>;
   writeState(state: State): Promise<void>;
@@ -19,13 +26,34 @@ export interface Repo {
 
 const STATE_PATH = "state.json";
 
-export function githubRepo(slug: string, token: string, api = "https://api.github.com"): Repo {
-  const call = async (method: string, path: string, body?: unknown, accept = "application/vnd.github+json") => {
-    return fetch(`${api}/repos/${slug}${path}`, {
-      method,
-      headers: { Authorization: `Bearer ${token}`, Accept: accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "synthe" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+const RETRIES = 2;
+const sleepFor = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export function githubRepo(slug: string, token: string, api = "https://api.github.com", sleep = sleepFor): Repo {
+  // GitHub's rate limits answer 429, or 403 with a rate-limit sign: wait as asked (at most a minute) and try again.
+  // Server errors are retried after a short pause.
+  const call = async (method: string, path: string, body?: unknown, accept = "application/vnd.github+json"): Promise<Response> => {
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(`${api}/repos/${slug}${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, Accept: accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "synthe" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      if (attempt >= RETRIES) return res;
+      // GitHub's own hiccups (500, 502, 503, 504) usually pass in seconds. Only requests that are safe to repeat are
+      // retried: a POST or PUT may have taken effect before the error, so repeating it could open a second pull
+      // request or issue, or misread a merge that already happened.
+      if (res.status >= 500) {
+        if (method === "POST" || method === "PUT") return res;
+        await sleep(5_000);
+        continue;
+      }
+      if (res.status !== 429 && res.status !== 403) return res;
+      const text = await res.clone().text();
+      if (!isRateLimited(res.status, res.headers, text)) return res;
+      const wait = Number(res.headers.get("retry-after"));
+      await sleep(Math.min(Number.isFinite(wait) && wait > 0 ? wait * 1000 : 20_000, 60_000));
+    }
   };
   const json = async (method: string, path: string, body?: unknown) => {
     const res = await call(method, path, body);
@@ -43,7 +71,13 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
     });
     return out.commit.sha;
   };
-  const createBranch = (branch: string, sha: string) => json("POST", "/git/refs", { ref: `refs/heads/${branch}`, sha });
+  // Safe to repeat: a branch left behind by a crashed round is moved to the new commit instead of failing.
+  const createBranch = async (branch: string, sha: string) => {
+    const res = await call("POST", "/git/refs", { ref: `refs/heads/${branch}`, sha });
+    if (res.ok) return;
+    if (res.status === 422) return void await json("PATCH", `/git/refs/heads/${encodeURIComponent(branch)}`, { sha, force: true });
+    throw new Error(`GitHub POST /git/refs: ${res.status} ${(await res.text()).slice(0, 300)}`);
+  };
 
   const repo: Repo = {
     async defaultBranch() { return (await json("GET", "")).default_branch; },
@@ -64,12 +98,24 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
     async mergePr(number, sha) {
       const res = await call("PUT", `/pulls/${number}/merge`, { sha, merge_method: "squash" });
       if (res.ok) return { merged: true };
-      const why = `${res.status} ${(await res.text()).slice(0, 200)}`;
-      // 405 is a repo rule or review requirement; other failures are usually a moved branch.
-      return { merged: false, why, blocked: res.status === 405 || res.status === 403 };
+      const text = await res.text();
+      const why = `${res.status} ${text.slice(0, 200)}`;
+      const problem: MergeProblem = isRateLimited(res.status, res.headers, text) ? "rate_limited"
+        : res.status === 405 ? "blocked" // a branch rule or required review
+        : res.status === 401 ? "token"
+        : res.status === 403 ? "permission"
+        : res.status === 409 ? "moved"
+        : "other";
+      return { merged: false, why, problem };
     },
     async deleteBranch(branch) { await call("DELETE", `/git/refs/heads/${encodeURIComponent(branch)}`); },
     async closePr(number) { await call("PATCH", `/pulls/${number}`, { state: "closed" }); },
+    async findPr(branch) {
+      const owner = slug.split("/")[0];
+      const list = await json("GET", `/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`);
+      const pr = Array.isArray(list) ? list[0] : undefined;
+      return pr ? { number: pr.number, open: pr.state === "open", merged: Boolean(pr.merged_at) } : null;
+    },
     async upsertIssue(number, title, body) {
       if (number !== null) { await json("PATCH", `/issues/${number}`, { title, body }); return number; }
       return (await json("POST", "/issues", { title, body })).number;
