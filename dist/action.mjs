@@ -28423,10 +28423,10 @@ function trainingProblem(c, baselineTrain, goal) {
   if (before === null) return "baseline score unknown";
   const after = mean(c.train);
   if (after === null) return `${c.id}: training score unknown`;
-  if (after < before + min_improvement) return `${c.id}: head-to-head ${after.toFixed(1)}, needs ${(before + min_improvement).toFixed(1)} (${before.toFixed(0)} is even)`;
+  if (after < before + min_improvement) return `${c.id}: judge score ${after.toFixed(1)}, needs ${(before + min_improvement).toFixed(1)} (${before.toFixed(0)} is even)`;
   const split = paired(c.train, baselineTrain);
-  if (split === null) return `${c.id}: scenarios could not be compared`;
-  if (split.p > max_p) return `${c.id}: won ${split.wins} and lost ${split.losses} scenarios, which could be noise`;
+  if (split === null) return `${c.id}: test cases could not be compared`;
+  if (split.p > max_p) return `${c.id}: better in ${split.wins} and worse in ${split.losses} test cases, which could be luck`;
   return null;
 }
 function judgeRound(scores, goal, replaced) {
@@ -28443,7 +28443,7 @@ function judgeRound(scores, goal, replaced) {
       return {
         action: "revert",
         notes: {},
-        reasons: [`the prompt it replaced now wins head to head, ${was.toFixed(1)} to ${is.toFixed(1)}: better on ${worse.wins} scenarios, worse on ${worse.losses}`],
+        reasons: [`the prompt it replaced now wins, judge score ${was.toFixed(1)} to ${is.toFixed(1)}: better in ${worse.wins} test cases, worse in ${worse.losses}`],
         plain: `The prompt from before the last change now does better (better in ${cases(worse.wins)}, worse in ${worse.losses}), so Synthe put it back.`
       };
     }
@@ -28461,25 +28461,25 @@ function judgeRound(scores, goal, replaced) {
     const after = mean(c.train);
     const split = paired(c.train, scores.baselineTrain);
     if (!c.holdout) {
-      reasons.push(`${c.id}: not held-back tested`);
+      reasons.push(`${c.id}: not tried on the hidden test cases`);
       notes[c.id] = "Also looked better, but another change did better still.";
       continue;
     }
     const held = mean(c.holdout);
     const heldSplit = tally(c.holdout, scores.baselineHoldout);
     if (held === null || !heldSplit) {
-      reasons.push(`${c.id}: held-back score unknown`);
+      reasons.push(`${c.id}: hidden test cases couldn't be judged`);
       notes[c.id] = "Couldn't be checked on the hidden test cases, so it wasn't used.";
       continue;
     }
     if (held < beforeHoldout + min_improvement) {
-      reasons.push(`${c.id}: did not gain ${min_improvement} on held-back scenarios, ${held.toFixed(1)} vs ${beforeHoldout.toFixed(1)}`);
+      reasons.push(`${c.id}: judge score ${held.toFixed(1)} on the hidden test cases, needs ${(beforeHoldout + min_improvement).toFixed(1)}`);
       notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
       continue;
     }
     const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
     if (added > 0) {
-      reasons.push(`${c.id}: breaks a guardrail where the current prompt keeps it, or couldn't be checked`);
+      reasons.push(`${c.id}: breaks a rule where the current prompt follows it, or couldn't be checked`);
       notes[c.id] = `Broke one of your rules in ${cases(added)} where your current prompt follows it, so it wasn't used.`;
       continue;
     }
@@ -28501,7 +28501,7 @@ function judgeRound(scores, goal, replaced) {
         heldLosses: heldSplit.l,
         notes,
         plain: `Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}`,
-        reasons: [`head-to-head ${held.toFixed(1)} held back and ${after.toFixed(1)} on training, where ${before.toFixed(0)} is even; won ${split.wins} and lost ${split.losses} training scenarios${stillBroken > 0 ? `; still breaks a guardrail on ${stillBroken} scenario${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
+        reasons: [`judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
       };
     }
   }
@@ -28561,7 +28561,7 @@ function nextSteps(goal, state) {
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");
   }
-  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe, you can delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml` from your repo.");
+  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete the `SYNTHE_ANTHROPIC_KEY` secret in your repo's settings.");
   return steps;
 }
 var OUTCOME = { merged: "Merged", reverted: "Undone", proposed: "Waiting for review", declined: "Declined by you", skipped: "No change", failed: "Didn't finish" };
@@ -28574,13 +28574,16 @@ function roundRow(r) {
 function renderReport(goal, state) {
   const { title, summary } = headline(goal, state);
   const changes = state.rounds.filter((r) => ["merged", "reverted", "proposed"].includes(r.outcome) && r.pr);
-  const lines = [`## ${title}`, "", summary, ""];
+  const mode = goal.merge_rule.mode === "propose" ? "**Mode:** review. Each change waits in a pull request until you merge or close it." : "**Mode:** automatic. Changes are merged into your main branch as soon as they win.";
+  const lines = [`## ${title}`, "", summary, "", mode, ""];
   if (changes.length) {
     lines.push("### What changed", "");
     for (const r of changes) {
       const undo = r.outcome === "merged" ? ` To undo it, click **Revert** on #${r.pr}.` : "";
       const note = r.outcome === "proposed" ? " (waiting for your review)" : r.outcome === "reverted" ? " (an undo)" : "";
-      lines.push(`- **#${r.pr}${note}:** ${r.changed ?? "A change to the prompt"}. ${r.plain ?? ""}${undo}`);
+      const label = r.title ? `**#${r.pr}${note}: ${r.title[0].toUpperCase()}${r.title.slice(1)}.**` : `**#${r.pr}${note}:**`;
+      const check = r.unverified?.length ? ` **Check these are real:** ${r.unverified.map((d) => `\`${d}\``).join(", ")} ${r.unverified.length === 1 ? "isn't" : "aren't"} in your old prompt or policy.` : "";
+      lines.push(`- ${label} ${r.changed ?? "A change to the prompt"}. ${r.plain ?? ""}${check}${undo}`);
       if (r.example) lines.push("", exampleText(r.example).split("\n").map((l) => `  ${l}`).join("\n"), "");
     }
     lines.push("");
@@ -28603,7 +28606,7 @@ function renderReport(goal, state) {
     "",
     `- Goal: ${goal.objective}`,
     `- Rounds: ${state.round} of up to ${goal.merge_rule.max_rounds}. Spent ${money(state)} of $${goal.budget.max_usd}.`,
-    `- Models: writer ${goal.models.writer}, runner ${goal.models.runner}, judge ${goal.models.judge}, checker ${goal.models.checker}.`,
+    `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
     ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}. ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),
     "",
@@ -28637,9 +28640,10 @@ var SCHEMA = {
         additionalProperties: false
       }
     },
-    summary: { type: "string" }
+    summary: { type: "string" },
+    title: { type: "string" }
   },
-  required: ["edits", "summary"],
+  required: ["edits", "summary", "title"],
   additionalProperties: false
 };
 function applyEdits(prompt, edits) {
@@ -28713,7 +28717,7 @@ ${train.slice(0, MAX_EXAMPLES).map((s) => `- ${s.input} => ${s.expected}`).join(
 Earlier rounds:
 ${history}
 ${notAgain}${lessons}
-Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why.`
+Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why. In "title", name the fix in a few lowercase words a customer-support team would use, starting with a verb, such as "stop approving every refund" (under 50 characters).`
   }));
   const candidates = [];
   const rejected = [];
@@ -28722,7 +28726,13 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
     const applied = applyEdits(prompt, r.value.edits);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
-    candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : void 0, edits: r.value.edits });
+    candidates.push({
+      id,
+      text: applied.text,
+      summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : void 0,
+      title: typeof r.value.title === "string" && r.value.title.trim() ? r.value.title.trim().replace(/\.$/, "").slice(0, 60) : void 0,
+      edits: r.value.edits
+    });
   });
   return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
 }
@@ -28947,6 +28957,13 @@ function pickExample(scores, candidateId, scenarioText) {
   const scenario = won && rows.find((r) => r.id === won.id && r.split === "train");
   return won && before && scenario ? { input: clipText(scenario.input, 200), before: clipText(before), after: clipText(won.reply) } : void 0;
 }
+var DETAIL = /\$\s?\d[\d,]*(?:\.\d+)?|\b\d+(?:\.\d+)?\s?%|\b\d+[- ]?(?:days?|hours?|weeks?|months?|years?)\b|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\b(?:https?:\/\/)?[\w-]+(?:\.[\w-]+)*\.(?:com|org|net|io|co|ai|app|shop|store)(?:\/[\w\-/]*)?/gi;
+function newDetails(edits, known) {
+  const norm = (t) => t.toLowerCase().replace(/\s+/g, "").replace(/^https?:\/\//, "");
+  const have = norm(known);
+  const added = (edits ?? []).flatMap((e) => e.replace.match(DETAIL) ?? []);
+  return [...new Set(added.map((d) => d.trim()))].filter((d) => !have.includes(norm(d))).slice(0, 8);
+}
 function diffLines(edits) {
   return (edits ?? []).flatMap((e) => [
     ...e.find ? e.find.split("\n").map((l) => `- ${l}`) : [],
@@ -29075,6 +29092,7 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
       proposed ? blocked ? `**Waiting for your review.** Synthe found a better prompt, but this repo's rules require a review before merging into \`${base}\`. Merge this pull request to keep the change, or close it to decline. Synthe pauses until you decide.` : `**Waiting for your review.** Synthe found a better prompt. Merge this pull request to keep the change, or close it to decline. Synthe pauses until you decide.` : `**Already merged into \`${base}\`** at ${when}, because automatic merging was chosen at setup. If \`${base}\` deploys your app, this change is live.`,
       `**What changed in \`${path4}\`:** ${why.changed}`,
       ...why.diff?.length ? ["```diff\n" + why.diff.join("\n") + "\n```"] : [],
+      ...why.unverified?.length ? [`**Check these are real:** this change adds ${why.unverified.map((d) => `\`${d}\``).join(", ")}, which ${why.unverified.length === 1 ? "isn't" : "aren't"} in your old prompt or your policy. Make sure your business really offers ${why.unverified.length === 1 ? "it" : "them"}${proposed ? " before merging" : ", or revert this change"}.`] : [],
       `**Why:** ${why.plain}`,
       ...why.example ? [exampleText(why.example)] : [],
       proposed ? "After merging, pull before you edit the prompt yourself." : "**Before you edit the prompt yourself, pull the latest changes,** so this change isn't overwritten. To undo it, click **Revert** on this pull request.",
@@ -29155,13 +29173,20 @@ ${notTested(goal).slice(1).join("\n")}
       } else {
         const changed = chosen?.summary ?? "A change to the prompt";
         const example = pickExample(scores, verdict.candidateId, scenarioText);
+        const unverified = newDetails(chosen?.edits, `${current}
+${goal.policy ?? ""}`);
+        const name = chosen?.title ?? (changed.length > 60 ? `${changed.slice(0, 57)}...` : changed);
         const landed = await land(
           text,
           "merge",
-          `Synthe: ${changed.length > 70 ? `${changed.slice(0, 67)}...` : changed}`,
-          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example }
+          `Synthe: ${name}`,
+          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified }
         );
-        if (landed && example) record.example = example;
+        if (landed) {
+          if (example) record.example = example;
+          if (chosen?.title) record.title = chosen.title;
+          if (unverified.length) record.unverified = unverified;
+        }
         if (landed) {
           Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses });
           record.changed = chosen?.summary ?? "A change to the prompt";

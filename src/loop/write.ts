@@ -4,7 +4,7 @@ import { sumCosts } from "../core/cost.ts";
 import { sha256 } from "../core/safety.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
 
-export interface Candidate { id: string; text: string; summary?: string; edits?: Edit[] }
+export interface Candidate { id: string; text: string; summary?: string; title?: string; edits?: Edit[] }
 export interface Written { candidates: Candidate[]; costUsd: number | null; rejected?: string[] }
 
 // Each candidate is one or two exact edits to the current prompt, GEPA-style, not a rewrite: everything else stays
@@ -36,8 +36,9 @@ const SCHEMA = {
       },
     },
     summary: { type: "string" },
+    title: { type: "string" },
   },
-  required: ["edits", "summary"],
+  required: ["edits", "summary", "title"],
   additionalProperties: false,
 };
 
@@ -91,7 +92,7 @@ export async function runWrite(goal: Goal, state: State, prompt: string, scenari
   const history = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}. ${r.reasons.join(" ")}`).join("\n") || "None yet.";
   const quoteRule = goal.prompt.kind === "inline"
     ? `\nThe prompt lives inside a source-code string, so never use backslashes, ${goal.prompt.delimiter} or \${ in it.` : "";
-  const results = await pool(ANGLES, ANGLES.length, async (angle) => askJson<{ edits: Edit[]; summary: string }>(model, {
+  const results = await pool(ANGLES, ANGLES.length, async (angle) => askJson<{ edits: Edit[]; summary: string; title?: string }>(model, {
     model: goal.models.writer, maxTokens: 3000, schema: SCHEMA,
     user: `You improve the system prompt of an AI agent by making small, exact edits.
 
@@ -110,7 +111,7 @@ ${train.slice(0, MAX_EXAMPLES).map((s) => `- ${s.input} => ${s.expected}`).join(
 Earlier rounds:
 ${history}
 ${notAgain}${lessons}
-Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why.`,
+Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why. In "title", name the fix in a few lowercase words a customer-support team would use, starting with a verb, such as "stop approving every refund" (under 50 characters).`,
   }));
   const candidates: Candidate[] = [];
   const rejected: string[] = [];
@@ -119,7 +120,8 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
     const applied = applyEdits(prompt, r.value.edits);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
-    candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : undefined, edits: r.value.edits });
+    candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : undefined,
+      title: typeof r.value.title === "string" && r.value.title.trim() ? r.value.title.trim().replace(/\.$/, "").slice(0, 60) : undefined, edits: r.value.edits });
   });
   return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
 }

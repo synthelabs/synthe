@@ -13,7 +13,7 @@ const mutations = [
   ["no scenario wins needed", RULE, "if (split.p > max_p) return", "if (false) return"],
   ["no held-back gain needed", RULE, "held < beforeHoldout + min_improvement", "held < beforeHoldout"],
   ["no training gain needed", RULE, "after < before + min_improvement", "after < before"],
-  ["unpaired scenarios allowed", RULE, 'if (split === null) return `${c.id}: scenarios could not be compared`;', ""],
+  ["unpaired scenarios allowed", RULE, 'if (split === null) return `${c.id}: test cases could not be compared`;', ""],
   ["unknown scores pair as wins", RULE, 'if (typeof other !== "number" || !Number.isFinite(other) || typeof r.score !== "number" || !Number.isFinite(r.score)) return null;', ""],
   ["different scenario counts allowed", RULE, " || after.length !== before.length", ""],
   ["duplicate candidate rows allowed", RULE, " || new Set(after.map((r) => r.id)).size !== after.length", ""],
@@ -56,6 +56,7 @@ const mutations = [
   ["scoring pays when there's nothing to compare", SCORE, "  if (safe.length === 0 && !hasPrior) {", "  if (false) {"],
   ["an edit may add talk of judging or scores", WRITE, "if (mentions(e.replace) > mentions(e.find)) return", "if (false) return"],
   ["the judge never sees the business policy", SCORE, "const policyText = (goal: Goal) => (goal.policy?.trim() ?", "const policyText = (goal: Goal) => (false ?"],
+  ["setup defaults an unclear merge answer to automatic", "src/cli/init.ts", "if (auto === null) { auto = false;", "if (auto === null) { auto = true;"],
   ["unknown cost merges", DECIDE, "input.costUsd === null", "false"],
   ["identical candidate scored", SCORE, " && c.text.trim() !== baseline.trim()", ""],
   ["candidates trained on held-back scenarios", SCORE, "const duels = await challenge(c.id, c.text, train, trainReplies);", "const duels = await challenge(c.id, c.text, scenarios, new Map([...trainReplies, ...(await holdReplies())]));"],
@@ -70,7 +71,7 @@ for (const [name, file, from, to] of mutations) {
   process.once("SIGINT", restore);
   try {
     writeFileSync(file, original.replace(from, to));
-    const { status } = spawnSync("node", ["--test", "test/core.test.ts", "test/loop.test.ts", "test/github.test.ts"], { stdio: "ignore", timeout: 60000 });
+    const { status } = spawnSync("node", ["--test", "test/core.test.ts", "test/loop.test.ts", "test/github.test.ts", "test/init.test.ts"], { stdio: "ignore", timeout: 60000 });
     if (status === 0) survived++;
     console.log(`${status === 0 ? "SURVIVED " : "killed   "} ${name}`);
   } finally {

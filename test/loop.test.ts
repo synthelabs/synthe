@@ -390,7 +390,7 @@ const decideBold = async (m: Model) => {
 test("a new guardrail break confirmed on re-check, with a real quote, blocks the merge", async () => {
   const r = await decideBold(flagsC(() => ({ breaks: true, guardrail: "no lies", quote: "Bold answers q-c" })));
   assert.notEqual(r?.outcome, "merged");
-  assert.match(r!.reasons.join(), /guardrail/);
+  assert.match(r!.reasons.join(), /breaks a rule/);
 });
 
 test("a guardrail flag the re-check dismisses doesn't block a clear winner", async () => {
@@ -419,7 +419,7 @@ test("(old) a candidate the judge catches breaking a guardrail never merges, how
   const repo = new MemoryRepo("Base");
   const r = await runDecide(goal(), repo, { candidates: [{ id: "bold", text: "Bold" }], scores, costUsd: 0.1 });
   assert.notEqual(r?.outcome, "merged");
-  assert.match(r!.reasons.join(), /guardrail/);
+  assert.match(r!.reasons.join(), /breaks a rule/);
 });
 
 const win = () => round(scored("Old prompt.", 50, 50, 60, 55));
@@ -777,4 +777,24 @@ test("a merge blocked by review rewrites the pull request to say it is waiting, 
   await runDecide(goal(), repo, win());
   assert.match(repo.prs[0].body, /^\*\*Waiting for your review\.\*\* .*this repo's rules require a review/);
   assert.doesNotMatch(repo.prs[0].body, /Already merged/);
+});
+
+test("new business details a change adds are flagged for the team to check, known ones aren't", async () => {
+  const { newDetails } = await import("../src/loop/decide.ts");
+  const known = "Returns: 30 days from delivery. Start at loomandlark.com/returns.";
+  const found = newDetails([{ find: "x", replace: "Offer 10% bonus credit, a $7.95 fee, 30 days to return, 45-day exchanges, see loomandlark.com/returns or help@loomandlark.com." }], known);
+  assert.deepEqual(found.sort(), ["$7.95", "10%", "45-day", "help@loomandlark.com"].sort());
+  assert.deepEqual(newDetails([{ find: "x", replace: "Be kind." }], known), []);
+});
+
+test("the pull request is titled with the fix, flags new details, and the report states the mode", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  await runDecide(goal(), repo, { ...win(), candidates: [{ id: "c1", text: "Better prompt.", title: "stop approving every refund", summary: "Replaces the refund rule", edits: [{ find: "Old prompt.", replace: "Refunds cost a $7.95 fee." }] }] });
+  assert.equal(repo.prs[0].title, "Synthe: stop approving every refund");
+  assert.match(repo.prs[0].body, /\*\*Check these are real:\*\* this change adds `\$7\.95`, which isn't in your old prompt or your policy\. Make sure your business really offers it, or revert this change\./);
+  assert.match(repo.issue, /\*\*#1: Stop approving every refund\.\*\* Replaces the refund rule\..*\*\*Check these are real:\*\* `\$7\.95` isn't in your old prompt or policy\./);
+  assert.match(repo.issue, /\*\*Mode:\*\* automatic\. Changes are merged into your main branch as soon as they win\./);
+  const review = new MemoryRepo("Old prompt.");
+  await runDecide(goal({ merge_rule: { ...goal().merge_rule, mode: "propose" } }), review, win());
+  assert.match(review.issue, /\*\*Mode:\*\* review\./);
 });

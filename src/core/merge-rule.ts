@@ -90,10 +90,10 @@ export function trainingProblem(c: CandidateScore, baselineTrain: ScoreRow[], go
   if (before === null) return "baseline score unknown";
   const after = mean(c.train);
   if (after === null) return `${c.id}: training score unknown`;
-  if (after < before + min_improvement) return `${c.id}: head-to-head ${after.toFixed(1)}, needs ${(before + min_improvement).toFixed(1)} (${before.toFixed(0)} is even)`;
+  if (after < before + min_improvement) return `${c.id}: judge score ${after.toFixed(1)}, needs ${(before + min_improvement).toFixed(1)} (${before.toFixed(0)} is even)`;
   const split = paired(c.train, baselineTrain);
-  if (split === null) return `${c.id}: scenarios could not be compared`;
-  if (split.p > max_p) return `${c.id}: won ${split.wins} and lost ${split.losses} scenarios, which could be noise`;
+  if (split === null) return `${c.id}: test cases could not be compared`;
+  if (split.p > max_p) return `${c.id}: better in ${split.wins} and worse in ${split.losses} test cases, which could be luck`;
   return null;
 }
 
@@ -113,7 +113,7 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
     if (was !== null && is !== null && worse !== null && is < was - noise_margin && worse.p <= max_p) {
       return {
         action: "revert", notes: {},
-        reasons: [`the prompt it replaced now wins head to head, ${was.toFixed(1)} to ${is.toFixed(1)}: better on ${worse.wins} scenarios, worse on ${worse.losses}`],
+        reasons: [`the prompt it replaced now wins, judge score ${was.toFixed(1)} to ${is.toFixed(1)}: better in ${worse.wins} test cases, worse in ${worse.losses}`],
         plain: `The prompt from before the last change now does better (better in ${cases(worse.wins)}, worse in ${worse.losses}), so Synthe put it back.`,
       };
     }
@@ -127,18 +127,18 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
     if (problem) { reasons.push(problem); notes[c.id] = trainingNote(c, scores.baselineTrain, goal); continue; }
     const after = mean(c.train)!;
     const split = paired(c.train, scores.baselineTrain)!;
-    if (!c.holdout) { reasons.push(`${c.id}: not held-back tested`); notes[c.id] = "Also looked better, but another change did better still."; continue; }
+    if (!c.holdout) { reasons.push(`${c.id}: not tried on the hidden test cases`); notes[c.id] = "Also looked better, but another change did better still."; continue; }
     const held = mean(c.holdout);
     const heldSplit = tally(c.holdout, scores.baselineHoldout);
-    if (held === null || !heldSplit) { reasons.push(`${c.id}: held-back score unknown`); notes[c.id] = "Couldn't be checked on the hidden test cases, so it wasn't used."; continue; }
+    if (held === null || !heldSplit) { reasons.push(`${c.id}: hidden test cases couldn't be judged`); notes[c.id] = "Couldn't be checked on the hidden test cases, so it wasn't used."; continue; }
     if (held < beforeHoldout + min_improvement) {
-      reasons.push(`${c.id}: did not gain ${min_improvement} on held-back scenarios, ${held.toFixed(1)} vs ${beforeHoldout.toFixed(1)}`);
+      reasons.push(`${c.id}: judge score ${held.toFixed(1)} on the hidden test cases, needs ${(beforeHoldout + min_improvement).toFixed(1)}`);
       notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
       continue;
     }
     const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
     if (added > 0) {
-      reasons.push(`${c.id}: breaks a guardrail where the current prompt keeps it, or couldn't be checked`);
+      reasons.push(`${c.id}: breaks a rule where the current prompt follows it, or couldn't be checked`);
       notes[c.id] = `Broke one of your rules in ${cases(added)} where your current prompt follows it, so it wasn't used.`;
       continue;
     }
@@ -153,7 +153,7 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
         action: "merge", candidateId: c.id, before, after, heldBefore: beforeHoldout, heldAfter: held, wins: split.wins, losses: split.losses,
         heldWins: heldSplit.w, heldLosses: heldSplit.l, notes,
         plain: `Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}`,
-        reasons: [`head-to-head ${held.toFixed(1)} held back and ${after.toFixed(1)} on training, where ${before.toFixed(0)} is even; won ${split.wins} and lost ${split.losses} training scenarios${stillBroken > 0 ? `; still breaks a guardrail on ${stillBroken} scenario${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`],
+        reasons: [`judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`],
       };
     }
   }

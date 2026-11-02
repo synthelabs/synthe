@@ -28148,10 +28148,10 @@ function trainingProblem(c, baselineTrain, goal) {
   if (before === null) return "baseline score unknown";
   const after = mean(c.train);
   if (after === null) return `${c.id}: training score unknown`;
-  if (after < before + min_improvement) return `${c.id}: head-to-head ${after.toFixed(1)}, needs ${(before + min_improvement).toFixed(1)} (${before.toFixed(0)} is even)`;
+  if (after < before + min_improvement) return `${c.id}: judge score ${after.toFixed(1)}, needs ${(before + min_improvement).toFixed(1)} (${before.toFixed(0)} is even)`;
   const split = paired(c.train, baselineTrain);
-  if (split === null) return `${c.id}: scenarios could not be compared`;
-  if (split.p > max_p) return `${c.id}: won ${split.wins} and lost ${split.losses} scenarios, which could be noise`;
+  if (split === null) return `${c.id}: test cases could not be compared`;
+  if (split.p > max_p) return `${c.id}: better in ${split.wins} and worse in ${split.losses} test cases, which could be luck`;
   return null;
 }
 function judgeRound(scores, goal, replaced) {
@@ -28168,7 +28168,7 @@ function judgeRound(scores, goal, replaced) {
       return {
         action: "revert",
         notes: {},
-        reasons: [`the prompt it replaced now wins head to head, ${was.toFixed(1)} to ${is.toFixed(1)}: better on ${worse.wins} scenarios, worse on ${worse.losses}`],
+        reasons: [`the prompt it replaced now wins, judge score ${was.toFixed(1)} to ${is.toFixed(1)}: better in ${worse.wins} test cases, worse in ${worse.losses}`],
         plain: `The prompt from before the last change now does better (better in ${cases(worse.wins)}, worse in ${worse.losses}), so Synthe put it back.`
       };
     }
@@ -28186,25 +28186,25 @@ function judgeRound(scores, goal, replaced) {
     const after = mean(c.train);
     const split = paired(c.train, scores.baselineTrain);
     if (!c.holdout) {
-      reasons.push(`${c.id}: not held-back tested`);
+      reasons.push(`${c.id}: not tried on the hidden test cases`);
       notes[c.id] = "Also looked better, but another change did better still.";
       continue;
     }
     const held = mean(c.holdout);
     const heldSplit = tally(c.holdout, scores.baselineHoldout);
     if (held === null || !heldSplit) {
-      reasons.push(`${c.id}: held-back score unknown`);
+      reasons.push(`${c.id}: hidden test cases couldn't be judged`);
       notes[c.id] = "Couldn't be checked on the hidden test cases, so it wasn't used.";
       continue;
     }
     if (held < beforeHoldout + min_improvement) {
-      reasons.push(`${c.id}: did not gain ${min_improvement} on held-back scenarios, ${held.toFixed(1)} vs ${beforeHoldout.toFixed(1)}`);
+      reasons.push(`${c.id}: judge score ${held.toFixed(1)} on the hidden test cases, needs ${(beforeHoldout + min_improvement).toFixed(1)}`);
       notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
       continue;
     }
     const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
     if (added > 0) {
-      reasons.push(`${c.id}: breaks a guardrail where the current prompt keeps it, or couldn't be checked`);
+      reasons.push(`${c.id}: breaks a rule where the current prompt follows it, or couldn't be checked`);
       notes[c.id] = `Broke one of your rules in ${cases(added)} where your current prompt follows it, so it wasn't used.`;
       continue;
     }
@@ -28226,7 +28226,7 @@ function judgeRound(scores, goal, replaced) {
         heldLosses: heldSplit.l,
         notes,
         plain: `Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}`,
-        reasons: [`head-to-head ${held.toFixed(1)} held back and ${after.toFixed(1)} on training, where ${before.toFixed(0)} is even; won ${split.wins} and lost ${split.losses} training scenarios${stillBroken > 0 ? `; still breaks a guardrail on ${stillBroken} scenario${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
+        reasons: [`judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
       };
     }
   }
@@ -28441,9 +28441,10 @@ var SCHEMA = {
         additionalProperties: false
       }
     },
-    summary: { type: "string" }
+    summary: { type: "string" },
+    title: { type: "string" }
   },
-  required: ["edits", "summary"],
+  required: ["edits", "summary", "title"],
   additionalProperties: false
 };
 function applyEdits(prompt, edits) {
@@ -28517,7 +28518,7 @@ ${train.slice(0, MAX_EXAMPLES).map((s) => `- ${s.input} => ${s.expected}`).join(
 Earlier rounds:
 ${history}
 ${notAgain}${lessons}
-Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why.`
+Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why. In "title", name the fix in a few lowercase words a customer-support team would use, starting with a verb, such as "stop approving every refund" (under 50 characters).`
   }));
   const candidates = [];
   const rejected = [];
@@ -28526,7 +28527,13 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
     const applied = applyEdits(prompt, r.value.edits);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
-    candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : void 0, edits: r.value.edits });
+    candidates.push({
+      id,
+      text: applied.text,
+      summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : void 0,
+      title: typeof r.value.title === "string" && r.value.title.trim() ? r.value.title.trim().replace(/\.$/, "").slice(0, 60) : void 0,
+      edits: r.value.edits
+    });
   });
   return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
 }
@@ -28781,6 +28788,15 @@ function repoTextFiles(listing, root) {
     }
   });
 }
+async function yesNo(io2, question) {
+  for (let i = 0; i < 3; i++) {
+    const a = (await io2.ask(question)).trim();
+    if (/^y/i.test(a)) return true;
+    if (/^n/i.test(a)) return false;
+    io2.say("Please type y or n.");
+  }
+  return null;
+}
 async function whyGitHubFails(io2) {
   try {
     await io2.run("gh", ["--version"]);
@@ -28842,15 +28858,12 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date()) {
   }
   io2.say(`
 When Synthe finds a clearly better prompt, it can merge it into ${branch} by itself, overnight. If ${branch} deploys your app, each change goes live. Or it can open a pull request each time for you to review.`);
-  let auto = null;
-  for (let i = 0; i < 3 && auto === null; i++) {
-    const a = (await io2.ask(`Merge improvements into ${branch} automatically? Type y for automatic, or n to review each one: `)).trim();
-    auto = /^y/i.test(a) ? true : /^n/i.test(a) ? false : null;
-  }
+  let auto = await yesNo(io2, `Merge improvements into ${branch} automatically? Type y for automatic, or n to review each one: `);
   if (auto === null) {
     auto = false;
-    io2.say("No answer, so Synthe will open pull requests for you to review.");
+    io2.say("No clear answer, so Synthe will open pull requests for you to review.");
   }
+  io2.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
   const key = process.env.ANTHROPIC_API_KEY || (await io2.askSecret("Paste your Synthe key (from the Synthe table; it has $3 of credit, paid by Synthe): ")).trim();
   io2.say(`
 Reading your prompt and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
@@ -28903,7 +28916,9 @@ Added to ${branch} (committed and pushed): ${GOAL_FILE}, ${SCENARIOS_FILE} and $
       await new Promise((r) => setTimeout(r, 3e3));
     }
   }
-  const share = !/^n/i.test((await io2.ask("\nShare this run's progress with the Synthe team, to help us improve Synthe? We'd see rounds, merges, spend and why runs stop, never your prompt, scenarios or code (Y/n): ")).trim());
+  io2.say("\nOne last question. Sharing helps us improve Synthe: we'd see your repo name, rounds, merges, spend and why runs stop, never your prompt, test cases or code.");
+  const share = await yesNo(io2, "Share this run's progress with the Synthe team? Type y or n: ") === true;
+  io2.say(share ? "Sharing progress with Synthe: on." : "Sharing progress with Synthe: off.");
   if (share) {
     const entry = { repo: slug, startedAt, finishedAt: now().toISOString(), mode: goal.merge_rule.mode, version: ACTION };
     try {
@@ -28912,7 +28927,7 @@ Added to ${branch} (committed and pushed): ${GOAL_FILE}, ${SCENARIOS_FILE} and $
     } catch {
     }
   }
-  const last = new Date(now().getTime() + goal.merge_rule.max_rounds * 36e5).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const last = new Date(now().getTime() + goal.merge_rule.max_rounds * 36e5).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
   io2.say(started ? `
 Synthe is running. The first round takes a few minutes, then it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.` : `
 Set up. The first round starts within the hour, then it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.`);

@@ -27,6 +27,16 @@ function pickExample(scores: RoundScores, candidateId: string, scenarioText: str
 }
 
 
+// Details a change adds that a business would have to really offer: amounts, percentages, time limits, web
+// addresses and emails that are nowhere in the old prompt or the policy. A reviewer should check they're real.
+const DETAIL = /\$\s?\d[\d,]*(?:\.\d+)?|\b\d+(?:\.\d+)?\s?%|\b\d+[- ]?(?:days?|hours?|weeks?|months?|years?)\b|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\b(?:https?:\/\/)?[\w-]+(?:\.[\w-]+)*\.(?:com|org|net|io|co|ai|app|shop|store)(?:\/[\w\-/]*)?/gi;
+export function newDetails(edits: { find: string; replace: string }[] | undefined, known: string): string[] {
+  const norm = (t: string) => t.toLowerCase().replace(/\s+/g, "").replace(/^https?:\/\//, "");
+  const have = norm(known);
+  const added = (edits ?? []).flatMap((e) => e.replace.match(DETAIL) ?? []);
+  return [...new Set(added.map((d) => d.trim()))].filter((d) => !have.includes(norm(d))).slice(0, 8);
+}
+
 // The edits as a diff a reviewer can read at a glance.
 function diffLines(edits: { find: string; replace: string }[] | undefined): string[] {
   return (edits ?? []).flatMap((e) => [
@@ -155,7 +165,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
 
   // Opens the pull request, then merges it (auto mode) or leaves it for a person (propose mode, or a repo whose
   // branch rules require a review). Returns the pull request and whether it was only proposed, or null.
-  type Why = { changed: string; plain: string; technical: string; diff?: string[]; example?: Example };
+  type Why = { changed: string; plain: string; technical: string; diff?: string[]; example?: Example; unverified?: string[] };
   const land = async (text: string, kind: "merge" | "revert", title: string, why: Why): Promise<{ pr: number; proposed: boolean } | null> => {
     const branch = `synthe/round-${round}`;
     const landing: Landing = { branch, kind, text, priorPrompt: current!, propose: merge_rule.mode === "propose" };
@@ -183,6 +193,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
         : `**Already merged into \`${base}\`** at ${when}, because automatic merging was chosen at setup. If \`${base}\` deploys your app, this change is live.`,
       `**What changed in \`${path}\`:** ${why.changed}`,
       ...(why.diff?.length ? ["```diff\n" + why.diff.join("\n") + "\n```"] : []),
+      ...(why.unverified?.length ? [`**Check these are real:** this change adds ${why.unverified.map((d) => `\`${d}\``).join(", ")}, which ${why.unverified.length === 1 ? "isn't" : "aren't"} in your old prompt or your policy. Make sure your business really offers ${why.unverified.length === 1 ? "it" : "them"}${proposed ? " before merging" : ", or revert this change"}.`] : []),
       `**Why:** ${why.plain}`,
       ...(why.example ? [exampleText(why.example)] : []),
       proposed
@@ -258,9 +269,15 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       } else {
         const changed = chosen?.summary ?? "A change to the prompt";
         const example = pickExample(scores, verdict.candidateId, scenarioText);
-        const landed = await land(text!, "merge", `Synthe: ${changed.length > 70 ? `${changed.slice(0, 67)}...` : changed}`,
-          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example });
-        if (landed && example) record.example = example;
+        const unverified = newDetails(chosen?.edits, `${current}\n${goal.policy ?? ""}`);
+        const name = chosen?.title ?? (changed.length > 60 ? `${changed.slice(0, 57)}...` : changed);
+        const landed = await land(text!, "merge", `Synthe: ${name}`,
+          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified });
+        if (landed) {
+          if (example) record.example = example;
+          if (chosen?.title) record.title = chosen.title;
+          if (unverified.length) record.unverified = unverified;
+        }
         if (landed) {
           Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses });
           record.changed = chosen?.summary ?? "A change to the prompt";

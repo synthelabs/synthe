@@ -26,7 +26,7 @@ const fakeIo = (dir: string, failing: string[] = [], answers: Record<string, str
   const said: string[] = [];
   const io: Io = {
     say: (t) => said.push(t),
-    ask: async (q) => Object.entries({ "automatically?": "y", ...answers }).find(([k]) => q.includes(k))?.[1] ?? "Answer returns correctly",
+    ask: async (q) => Object.entries({ "automatically?": "y", "Share this run": "y", ...answers }).find(([k]) => q.includes(k))?.[1] ?? "Answer returns correctly",
     askSecret: async () => "sk-test-team-key",
     template: () => readFileSync("templates/synthe.yml", "utf8"),
     model: () => ({ ask: async () => ({ text: scenarioReply, costUsd: 0.01 }) }),
@@ -95,7 +95,9 @@ test("init shows what it inferred and what happens next, in plain words", async 
   assert.match(text, /Your business policy, copied from your prompt \(1 line\), starting: "Returns within 30 days of delivery\."/);
   assert.match(text, /Added to o\/r \(committed and pushed\): synthe\.json, \.synthe\/scenarios\.jsonl and \.github\/workflows\/synthe\.yml\. Saved your key as the repo secret SYNTHE_ANTHROPIC_KEY\./);
   assert.match(text, /at most 12 rounds, using at most \$3 of your key's credit/);
-  assert.match(text, /The last possible change is around 11:00 AM\. .*run: npx synthe stop/);
+  assert.match(text, /The last possible change is around 11:00 AM [A-Z]{2,5}[+\-\d:]*\. .*run: npx synthe stop/);
+  assert.match(text, /Automatic merging: on\. Changes go into o\/r as soon as they win\./);
+  assert.match(text, /Sharing progress with Synthe: on\./);
   assert.match(text, /You can keep editing your prompt: Synthe always starts from the latest version on o\/r/);
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).merge_rule.mode, "auto");
 });
@@ -110,7 +112,7 @@ test("the merge question comes before the key, and no clear answer means review 
   await init(io, dir);
   assert.deepEqual(order.filter((x, i) => order.indexOf(x) === i), ["goal", "merge", "key"]);
   assert.equal(order.filter((x) => x === "merge").length, 3);
-  assert.match(said.join("\n"), /No answer, so Synthe will open pull requests for you to review/);
+  assert.match(said.join("\n"), /Please type y or n\.[\s\S]*No clear answer, so Synthe will open pull requests for you to review[\s\S]*Review mode: on\./);
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).merge_rule.mode, "propose");
 });
 
@@ -150,6 +152,14 @@ test("sharing progress is asked, and on yes sends only the repo name, setup time
   assert.deepEqual(Object.keys(entry).sort(), ["finishedAt", "mode", "repo", "startedAt", "version"]);
   assert.equal(entry.startedAt, "2026-11-06T23:00:00.000Z");
   assert.ok(!sent.stdin!.includes(PROMPT) && !sent.stdin!.includes("sk-test"));
+});
+
+test("sharing needs a clear yes: no answer means off", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, ran, said } = fakeIo(dir, [], { "Share this run": "" });
+  await init(io, dir);
+  assert.ok(!ran.some((r) => r.args.includes("issue")));
+  assert.match(said.join("\n"), /Sharing progress with Synthe: off\./);
 });
 
 test("saying no to sharing sends nothing, and a failed share never blocks setup", async () => {

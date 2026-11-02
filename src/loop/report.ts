@@ -60,7 +60,7 @@ function nextSteps(goal: Goal, state: State): string[] {
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");
   }
-  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe, you can delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml` from your repo.");
+  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete the `SYNTHE_ANTHROPIC_KEY` secret in your repo's settings.");
   return steps;
 }
 
@@ -78,13 +78,18 @@ function roundRow(r: RoundRecord): string {
 export function renderReport(goal: Goal, state: State): string {
   const { title, summary } = headline(goal, state);
   const changes = state.rounds.filter((r) => ["merged", "reverted", "proposed"].includes(r.outcome) && r.pr);
-  const lines = [`## ${title}`, "", summary, ""];
+  const mode = goal.merge_rule.mode === "propose"
+    ? "**Mode:** review. Each change waits in a pull request until you merge or close it."
+    : "**Mode:** automatic. Changes are merged into your main branch as soon as they win.";
+  const lines = [`## ${title}`, "", summary, "", mode, ""];
   if (changes.length) {
     lines.push("### What changed", "");
     for (const r of changes) {
       const undo = r.outcome === "merged" ? ` To undo it, click **Revert** on #${r.pr}.` : "";
       const note = r.outcome === "proposed" ? " (waiting for your review)" : r.outcome === "reverted" ? " (an undo)" : "";
-      lines.push(`- **#${r.pr}${note}:** ${r.changed ?? "A change to the prompt"}. ${r.plain ?? ""}${undo}`);
+      const label = r.title ? `**#${r.pr}${note}: ${r.title[0].toUpperCase()}${r.title.slice(1)}.**` : `**#${r.pr}${note}:**`;
+      const check = r.unverified?.length ? ` **Check these are real:** ${r.unverified.map((d) => `\`${d}\``).join(", ")} ${r.unverified.length === 1 ? "isn't" : "aren't"} in your old prompt or policy.` : "";
+      lines.push(`- ${label} ${r.changed ?? "A change to the prompt"}. ${r.plain ?? ""}${check}${undo}`);
       if (r.example) lines.push("", exampleText(r.example).split("\n").map((l) => `  ${l}`).join("\n"), "");
     }
     lines.push("");
@@ -102,7 +107,7 @@ export function renderReport(goal: Goal, state: State): string {
     "<details><summary>Details for reviewers</summary>", "",
     `- Goal: ${goal.objective}`,
     `- Rounds: ${state.round} of up to ${goal.merge_rule.max_rounds}. Spent ${money(state)} of $${goal.budget.max_usd}.`,
-    `- Models: writer ${goal.models.writer}, runner ${goal.models.runner}, judge ${goal.models.judge}, checker ${goal.models.checker}.`,
+    `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
     ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}. ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),
     "", "</details>", "",

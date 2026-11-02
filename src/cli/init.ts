@@ -77,6 +77,17 @@ function repoTextFiles(listing: string, root: string) {
   });
 }
 
+// Asks until it gets a y or an n, three times at most. Null means no clear answer, and the caller picks the safe side.
+async function yesNo(io: Io, question: string): Promise<boolean | null> {
+  for (let i = 0; i < 3; i++) {
+    const a = (await io.ask(question)).trim();
+    if (/^y/i.test(a)) return true;
+    if (/^n/i.test(a)) return false;
+    io.say("Please type y or n.");
+  }
+  return null;
+}
+
 // Says exactly what's missing, so a team can fix it in one step.
 async function whyGitHubFails(io: Io): Promise<string> {
   try { await io.run("gh", ["--version"]); } catch {
@@ -121,12 +132,9 @@ export async function init(io: Io, root: string, now = () => new Date()) {
   const objective = (await io.ask("\nWhat should your agent get better at? One sentence, for example \"answer returns questions correctly and offer an exchange first\":\n> ")).trim();
   if (!objective) { io.say("Synthe needs a goal to work toward. Run `npx synthe init` again and describe one."); return false; }
   io.say(`\nWhen Synthe finds a clearly better prompt, it can merge it into ${branch} by itself, overnight. If ${branch} deploys your app, each change goes live. Or it can open a pull request each time for you to review.`);
-  let auto: boolean | null = null;
-  for (let i = 0; i < 3 && auto === null; i++) {
-    const a = (await io.ask(`Merge improvements into ${branch} automatically? Type y for automatic, or n to review each one: `)).trim();
-    auto = /^y/i.test(a) ? true : /^n/i.test(a) ? false : null;
-  }
-  if (auto === null) { auto = false; io.say("No answer, so Synthe will open pull requests for you to review."); }
+  let auto = await yesNo(io, `Merge improvements into ${branch} automatically? Type y for automatic, or n to review each one: `);
+  if (auto === null) { auto = false; io.say("No clear answer, so Synthe will open pull requests for you to review."); }
+  io.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
   const key = process.env.ANTHROPIC_API_KEY || (await io.askSecret("Paste your Synthe key (from the Synthe table; it has $3 of credit, paid by Synthe): ")).trim();
 
   io.say(`\nReading your prompt and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
@@ -174,7 +182,9 @@ export async function init(io: Io, root: string, now = () => new Date()) {
     }
   }
   // Opt-in, and only numbers about the run: never the prompt, the scenarios or any code.
-  const share = !/^n/i.test((await io.ask("\nShare this run's progress with the Synthe team, to help us improve Synthe? We'd see rounds, merges, spend and why runs stop, never your prompt, scenarios or code (Y/n): ")).trim());
+  io.say("\nOne last question. Sharing helps us improve Synthe: we'd see your repo name, rounds, merges, spend and why runs stop, never your prompt, test cases or code.");
+  const share = (await yesNo(io, "Share this run's progress with the Synthe team? Type y or n: ")) === true;
+  io.say(share ? "Sharing progress with Synthe: on." : "Sharing progress with Synthe: off.");
   if (share) {
     const entry = { repo: slug, startedAt, finishedAt: now().toISOString(), mode: goal.merge_rule.mode, version: ACTION };
     try {
@@ -182,7 +192,7 @@ export async function init(io: Io, root: string, now = () => new Date()) {
     } catch { /* sharing is a favour to us; never let it block a team's setup */ }
   }
 
-  const last = new Date(now().getTime() + goal.merge_rule.max_rounds * 3_600_000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  const last = new Date(now().getTime() + goal.merge_rule.max_rounds * 3_600_000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
   io.say(started
     ? `\nSynthe is running. The first round takes a few minutes, then it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.`
     : `\nSet up. The first round starts within the hour, then it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.`);

@@ -32,7 +32,7 @@ test("a higher average from a few scenarios isn't enough", () => {
   s.candidates[0].train = rows([...Array(5).fill(100), ...Array(5).fill(60), ...Array(10).fill(45)]);
   const v = judgeRound(s, goal(), null);
   assert.equal(v.action, "skip");
-  assert.match(v.reasons.join(), /could be noise/);
+  assert.match(v.reasons.join(), /which could be luck/);
 });
 
 test("the sign test is exact and ignores ties", () => {
@@ -244,11 +244,11 @@ test("never add a guardrail break: fewer breaks than the current prompt can merg
   s.candidates[0].holdout = s.candidates[0].holdout!.map((r, i) => ({ ...r, violation: i < 1 }));
   const v = judgeRound(s, goal(), null);
   assert.equal(v.action, "merge");
-  assert.match(v.reasons.join(), /still breaks a guardrail on 4 scenarios, down from 15/);
+  assert.match(v.reasons.join(), /still breaks a rule in 4 test cases, down from 15/);
 
   const added = structuredClone(s);
   added.candidates[0].train[15].violation = true; // s15 was safe before
-  assert.match(judgeRound(added, goal(), null).reasons.join(), /breaks a guardrail where the current prompt keeps it/);
+  assert.match(judgeRound(added, goal(), null).reasons.join(), /breaks a rule where the current prompt follows it/);
 
   const addedHeld = structuredClone(s);
   addedHeld.candidates[0].holdout![8].violation = true; // h8 was safe before
