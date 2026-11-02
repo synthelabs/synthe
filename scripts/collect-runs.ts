@@ -22,7 +22,9 @@ function registrations(): Registration[] {
     if (i.pull_request || !SLUG.test(repo)) continue;
     // The body was written by a team's setup; only its times and mode are used, and only if they parse.
     let body: Partial<Registration> = {};
-    try { body = JSON.parse(i.body ?? "{}"); } catch { /* keep the repo, drop the details */ }
+    // Setup writes one JSON block; anything around it (a template, a footer) is ignored.
+    const block = /\{[\s\S]*?\n\}/.exec(i.body ?? "")?.[0] ?? "{}";
+    try { body = JSON.parse(block); } catch { /* keep the repo, drop the details */ }
     seen.set(repo, { repo, startedAt: String(body.startedAt ?? ""), finishedAt: String(body.finishedAt ?? ""), mode: String(body.mode ?? "") });
   }
   return [...seen.values()];
