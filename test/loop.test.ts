@@ -523,3 +523,11 @@ test("the Actions log explains each candidate: its edits, its record, new guardr
   assert.ok(lines.some((l) => /s1 guardrail unknown/.test(l)));
   assert.ok(lines.some((l) => /current: +Sure, approved!/.test(l)) && lines.some((l) => /candidate: Let me check\./.test(l)));
 });
+
+test("the guardrail re-check runs on the checker model and sees what a good response does", async () => {
+  const m = flagsC(() => ({ breaks: false, guardrail: "", quote: "" }));
+  await decideBold(m);
+  const checks = (m as any).seen?.filter?.((a: Ask) => JSON.stringify(a.schema ?? "").includes("quote")) ?? [];
+  assert.ok(checks.length > 0);
+  assert.ok(checks.every((a: Ask) => a.model === "claude-sonnet-5-5" && a.user.includes("A good response: good")));
+});

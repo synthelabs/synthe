@@ -13,7 +13,7 @@ export interface Goal {
   objective: string;
   guardrails: string[];
   scenarios: string;
-  models: { writer: string; runner: string; judge: string };
+  models: { writer: string; runner: string; judge: string; checker: string };
   merge_rule: {
     min_improvement: number; // points out of 100, on both training and held-back scenarios
     max_p: number; // how likely a win may be by chance, from scenario wins and losses
@@ -25,7 +25,7 @@ export interface Goal {
 }
 
 export const DEFAULTS = {
-  models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5" },
+  models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5", checker: "claude-sonnet-5-5" },
   merge_rule: { min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3 },
   budget: { max_usd: 3 },
 };
