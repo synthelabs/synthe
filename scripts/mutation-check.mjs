@@ -54,7 +54,7 @@ const mutations = [
   ["a review-blocked proposal isn't saved before a crash", DECIDE, "      landing.propose = true;\n      await repo.writeState(state);\n", ""],
   ["settling trusts the proposed text over what merged", DECIDE, "const live = source === null ? null : readPrompt(source, goal, p.text);", "const live = p.text;"],
   ["scoring pays when there's nothing to compare", SCORE, "  if (safe.length === 0 && !hasPrior) {", "  if (false) {"],
-  ["an edit may add talk of judging or scores", WRITE, "if (mentions(e.replace) > mentions(e.find)) return", "if (false) return"],
+  ["an edit may add talk of judging or scores", WRITE, "if (mentions(e.replace, own) > mentions(e.find, own)) return", "if (false) return"],
   ["the judge never sees the business policy", SCORE, "const policyText = (goal: Goal) => (goal.policy?.trim() ?", "const policyText = (goal: Goal) => (false ?"],
   ["setup defaults an unclear merge answer to automatic", "src/cli/init.ts", "if (auto === null) { auto = false;", "if (auto === null) { auto = true;"],
   ["unknown cost merges", DECIDE, "input.costUsd === null", "false"],

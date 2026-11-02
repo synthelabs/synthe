@@ -9998,7 +9998,7 @@ function platformSupported() {
   return O_NOFOLLOW !== 0;
 }
 async function makeDirAndAncestors(dir) {
-  const missing = [];
+  const missing2 = [];
   let current = dir;
   for (; ; ) {
     try {
@@ -10009,13 +10009,13 @@ async function makeDirAndAncestors(dir) {
       if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "ELOOP")
         throw e;
     }
-    missing.push(current);
+    missing2.push(current);
     const parent = path.dirname(current);
     if (parent === current)
       break;
     current = parent;
   }
-  for (const directory of missing.reverse()) {
+  for (const directory of missing2.reverse()) {
     try {
       await fsp.mkdir(directory, { mode: OWNER_ONLY_DIR_MODE });
     } catch (e) {
@@ -14458,8 +14458,8 @@ var init_errors2 = __esm({
 });
 
 // node_modules/@anthropic-ai/sdk/lib/internal/toolsets/run.mjs
-function notExecutedText(family) {
-  return Object.prototype.hasOwnProperty.call(NOT_EXECUTED_BY_FAMILY, family) ? NOT_EXECUTED_BY_FAMILY[family] : NOT_EXECUTED;
+function notExecutedText(family2) {
+  return Object.prototype.hasOwnProperty.call(NOT_EXECUTED_BY_FAMILY, family2) ? NOT_EXECUTED_BY_FAMILY[family2] : NOT_EXECUTED;
 }
 function toolsetResultBlock(toolUse, content, isError = false) {
   if (isError && (content === "" || Array.isArray(content) && content.length === 0)) {
@@ -14483,9 +14483,9 @@ function throwIfAborted(signal) {
     throw new APIUserAbortError();
 }
 async function runToolsetMember(toolset, toolUse, options = {}) {
-  const family = toolsetFamily(toolset);
-  if (toolUse.toolset_name !== family) {
-    throw new ToolsetContractError(`tool_use ${JSON.stringify(toolUse.id)} (toolset_name=${JSON.stringify(toolUse.toolset_name ?? null)}, name=${JSON.stringify(toolUse.name)}) is not a member call of the ${JSON.stringify(family)} toolset`);
+  const family2 = toolsetFamily(toolset);
+  if (toolUse.toolset_name !== family2) {
+    throw new ToolsetContractError(`tool_use ${JSON.stringify(toolUse.id)} (toolset_name=${JSON.stringify(toolUse.toolset_name ?? null)}, name=${JSON.stringify(toolUse.name)}) is not a member call of the ${JSON.stringify(family2)} toolset`);
   }
   const ctx = { ...options, toolUse, toolUseBlock: toolUse };
   try {
@@ -23240,11 +23240,11 @@ async function generateToolResponse(params, runnable, available, lastMessage, re
     const call = calls?.get(toolUse.id);
     const started = call?.status === "started" ? call.result : void 0;
     if (toolUse.toolset_name) {
-      const family = toolUse.toolset_name;
-      const sequence = sequences.get(family) ?? { tail: Promise.resolve(), failed: false };
-      sequences.set(family, sequence);
-      const registered = params.tools.some((t) => isRunnableToolset(t) && toolsetFamily(t) === family);
-      const run = started ?? sequence.tail.then(() => sequence.failed ? toolsetResultBlock(toolUse, notExecutedText(family), true) : runToolsetCall(params, family, toolUse, requestOptions, client, toolOtelContext));
+      const family2 = toolUse.toolset_name;
+      const sequence = sequences.get(family2) ?? { tail: Promise.resolve(), failed: false };
+      sequences.set(family2, sequence);
+      const registered = params.tools.some((t) => isRunnableToolset(t) && toolsetFamily(t) === family2);
+      const run = started ?? sequence.tail.then(() => sequence.failed ? toolsetResultBlock(toolUse, notExecutedText(family2), true) : runToolsetCall(params, family2, toolUse, requestOptions, client, toolOtelContext));
       sequence.tail = run.then(({ is_error }) => {
         if (is_error && registered)
           sequence.failed = true;
@@ -23275,10 +23275,10 @@ async function generateToolResponse(params, runnable, available, lastMessage, re
     content: toolResults
   };
 }
-async function runToolsetCall(params, family, toolUse, requestOptions, client, toolOtelContext) {
-  const toolset = params.tools.find((t) => isRunnableToolset(t) && toolsetFamily(t) === family);
+async function runToolsetCall(params, family2, toolUse, requestOptions, client, toolOtelContext) {
+  const toolset = params.tools.find((t) => isRunnableToolset(t) && toolsetFamily(t) === family2);
   if (!toolset) {
-    return toolsetResultBlock(toolUse, `Error: Toolset '${quotedName(family)}' member '${quotedName(toolUse.name)}' not found`, true);
+    return toolsetResultBlock(toolUse, `Error: Toolset '${quotedName(family2)}' member '${quotedName(toolUse.name)}' not found`, true);
   }
   const spanOptions = {
     signal: requestOptions?.signal,
@@ -23811,9 +23811,9 @@ var init_BetaToolRunner = __esm({
             if (isRunnableToolset(tool)) {
               throw new ToolsetContractError(`addTools() can't add the '${quotedName(toolsetFamily(tool))}' toolset: ${USE_A_NEW_RUNNER}`);
             }
-            const family = definitionFamily(tool);
-            if (families.has(family)) {
-              throw new ToolsetContractError(`addTools() can't replace the '${quotedName(family)}' toolset: ${USE_A_NEW_RUNNER}`);
+            const family2 = definitionFamily(tool);
+            if (families.has(family2)) {
+              throw new ToolsetContractError(`addTools() can't replace the '${quotedName(family2)}' toolset: ${USE_A_NEW_RUNNER}`);
             }
           }
           for (const tool of tools) {
@@ -23901,21 +23901,21 @@ var init_BetaToolRunner = __esm({
         const onToolCall = (toolUse) => {
           const known = calls.has(toolUse.id);
           const malformed = !toolUse.toolset_name && __classPrivateFieldGet(this, _BetaToolRunner_instances, "m", _BetaToolRunner_toolsetFamilies).call(this).has(toolUse.name);
-          const family = malformed ? toolUse.name : toolUse.toolset_name;
-          if (family) {
-            if (known || malformed || toolsets.has(family)) {
-              toolsets.set(family, "waiting");
+          const family2 = malformed ? toolUse.name : toolUse.toolset_name;
+          if (family2) {
+            if (known || malformed || toolsets.has(family2)) {
+              toolsets.set(family2, "waiting");
               return;
             }
-            toolsets.set(family, "running");
-            const result2 = runToolsetCall(__classPrivateFieldGet(this, _BetaToolRunner_instances, "m", _BetaToolRunner_toolsetParams).call(this), family, toolUse, __classPrivateFieldGet(this, _BetaToolRunner_options, "f"), __classPrivateFieldGet(this, _BetaToolRunner_thread, "f")._client, __classPrivateFieldGet(this, _BetaToolRunner_toolRunnerOtelContext, "f"));
+            toolsets.set(family2, "running");
+            const result2 = runToolsetCall(__classPrivateFieldGet(this, _BetaToolRunner_instances, "m", _BetaToolRunner_toolsetParams).call(this), family2, toolUse, __classPrivateFieldGet(this, _BetaToolRunner_options, "f"), __classPrivateFieldGet(this, _BetaToolRunner_thread, "f")._client, __classPrivateFieldGet(this, _BetaToolRunner_toolRunnerOtelContext, "f"));
             calls.set(toolUse.id, { status: "started", result: result2 });
             result2.then(({ is_error }) => {
-              if (is_error || toolsets.get(family) === "waiting")
-                toolsets.set(family, "waiting");
+              if (is_error || toolsets.get(family2) === "waiting")
+                toolsets.set(family2, "waiting");
               else
-                toolsets.delete(family);
-            }, () => toolsets.set(family, "waiting"));
+                toolsets.delete(family2);
+            }, () => toolsets.set(family2, "waiting"));
             return;
           }
           if (known) {
@@ -28096,12 +28096,35 @@ function parseScenarios(text) {
 function readPrompt(source, goal, tracked) {
   if (goal.prompt.kind === "file") return source;
   const text = tracked ?? goal.prompt.initial;
-  return source.split(text).length === 2 ? text : null;
+  if (source.split(text).length === 2) return text;
+  const { path: path4, delimiter: delimiter2 } = goal.prompt;
+  const left2 = findPrompts([{ path: path4, text: source }]).flatMap((f) => f.location.kind === "inline" && f.location.delimiter === delimiter2 ? [f.location.initial] : []);
+  return left2.length === 1 && source.split(left2[0]).length === 2 ? left2[0] : null;
 }
 function writePrompt(source, location, current, next) {
   if (location.kind === "file") return next;
   const [before, after] = source.split(current);
   return `${before}${next}${after}`;
+}
+var PROMPT_FILE = /(^|\/)[^/]*(prompt|system|instructions)[^/]*\.(md|txt)$/i;
+var SKIP_PATH = /(^|\/)(node_modules|dist|build|\.next|\.git|venv|\.venv|__pycache__)\//;
+var CODE_FILE = /\.(ts|tsx|js|jsx|mjs|py)$/;
+var INLINE = /(system|prompt|instructions)\w*["']?\s*[:=]\s*(?:\w+\s*\(\s*)?(`{1}|"""|"|')([\s\S]*?)\2/gi;
+function findPrompts(files) {
+  const found = [];
+  for (const f of files) {
+    if (SKIP_PATH.test(f.path)) continue;
+    if (PROMPT_FILE.test(f.path) && f.text.trim()) {
+      found.push({ location: { kind: "file", path: f.path }, preview: f.text.slice(0, 80) });
+    } else if (CODE_FILE.test(f.path)) {
+      for (const m of f.text.matchAll(INLINE)) {
+        const text = m[3];
+        if (text.length < 40 || text.includes("\\") || text.includes("${")) continue;
+        found.push({ location: { kind: "inline", path: f.path, delimiter: m[2], initial: text }, preview: text.slice(0, 80) });
+      }
+    }
+  }
+  return found;
 }
 
 // src/core/cost.ts
@@ -28528,18 +28551,22 @@ var exampleText = (e) => `**For example,** a customer wrote: "${e.input}"
 var money = (state) => state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}` : `$${state.spendUsd.toFixed(2)}`;
 var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")}, one an hour`;
+var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
 function headline(goal, state) {
   const merged = state.rounds.filter((r) => r.outcome === "merged").length;
   const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;
   if (state.proposal) {
     return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
   }
+  if (!state.stopped && missing(state.rounds.at(-1))) {
+    return { title: "Synthe needs you to fix something", summary: `${state.rounds.at(-1).plain} ${spent}` };
+  }
   if (!state.stopped) {
     return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `Synthe is still running: ${left(goal, state)}. This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}. This page updates after each round. ${spent}` };
   }
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
-    return { title: "Stopped: the last rounds didn't finish", summary: "Check that your Synthe key still has credit, and look at the latest run in the Actions tab for the error." };
+    return { title: "Stopped: the last rounds didn't finish", summary: missing(recent.at(-1)) ? recent.at(-1).plain : "Check that your Synthe key still has credit, and look at the latest run in the Actions tab for the error." };
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
@@ -28555,7 +28582,9 @@ function nextSteps(goal, state) {
   \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`
   \`expected\` describes a good answer in a sentence. \`split\` is \`train\` (Synthe learns from it) or \`holdout\` (kept hidden to check its changes).`);
   }
-  if (!state.stopped && !state.proposal) {
+  if (!state.stopped && !state.proposal && missing(state.rounds.at(-1))) {
+    steps.push(`${state.rounds.at(-1).plain} Synthe tries again every hour, without spending anything until it finds the prompt.`);
+  } else if (!state.stopped && !state.proposal) {
     steps.push("Nothing to do. Synthe runs every hour and stops by itself.");
     steps.push("To keep your agent unchanged, for example before a demo, run `npx synthe stop`.");
   } else if (state.proposal) {
@@ -28627,7 +28656,10 @@ var ANGLES = [
 var MAX_EDITS = 2;
 var MAX_EDIT_CHARS = 1500;
 var JUDGING = /\b(judg(e|es|ed|ing)|grad(er|ers|ing)|evaluat(or|ors|ion|ing)|rubric|scor(e|es|ed|ing)|test cases?|held[- ]back|benchmark)\b/gi;
-var mentions = (t) => (t.match(JUDGING) ?? []).length;
+var FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark)\w*/gi;
+var family = (w) => w.toLowerCase().slice(0, 4);
+var ownFamilies = (known) => new Set((known.match(FAMILY) ?? []).map(family));
+var mentions = (t, own) => (t.match(JUDGING) ?? []).filter((w) => !own.has(family(w))).length;
 var SCHEMA = {
   type: "object",
   properties: {
@@ -28646,14 +28678,16 @@ var SCHEMA = {
   required: ["edits", "summary", "title"],
   additionalProperties: false
 };
-function applyEdits(prompt, edits) {
+function applyEdits(prompt, edits, known = "") {
   if (!Array.isArray(edits) || edits.length === 0) return { problem: "no edits" };
+  const own = ownFamilies(`${prompt}
+${known}`);
   if (edits.length > MAX_EDITS) return { problem: `more than ${MAX_EDITS} edits` };
   let text = prompt;
   for (const e of edits) {
     if (typeof e?.find !== "string" || typeof e?.replace !== "string") return { problem: "malformed edit" };
     if (e.replace.length > MAX_EDIT_CHARS || e.find.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
-    if (mentions(e.replace) > mentions(e.find)) return { problem: "an edit talks about judging or scores" };
+    if (mentions(e.replace, own) > mentions(e.find, own)) return { problem: "an edit talks about judging or scores" };
     if (e.find === "") {
       text = `${text.trimEnd()}
 
@@ -28724,7 +28758,8 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
   results.forEach((r, i) => {
     const id = `candidate-${i + 1}`;
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
-    const applied = applyEdits(prompt, r.value.edits);
+    const applied = applyEdits(prompt, r.value.edits, `${goal.objective}
+${goal.policy ?? ""}`);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
     candidates.push({
       id,
@@ -29136,7 +29171,12 @@ ${notTested(goal).slice(1).join("\n")}
     if (stop) state.stopped = stop;
     return null;
   };
-  if (!scores || !input2.candidates) {
+  if ((!scores || !input2.candidates) && current === null) {
+    record.outcome = "failed";
+    record.reasons.push(`couldn't find the prompt in ${path4}`);
+    record.plain = source === null ? `This round didn't run because ${path4} is missing. If you moved your prompt, change prompt.path in synthe.json to its new place.` : goal.prompt.kind === "inline" ? `This round didn't run because Synthe can't tell which string in ${path4} is your prompt. Set prompt.initial in synthe.json to your prompt's text as it is now.` : `This round didn't run because Synthe couldn't read your prompt in ${path4}.`;
+    stall = false;
+  } else if (!scores || !input2.candidates) {
     record.outcome = "failed";
     record.reasons.push("the round did not finish; check the Actions log and the API key");
     record.plain = "This round didn't finish. If it keeps happening, check the Actions log and that your key still has credit.";

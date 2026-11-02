@@ -21,7 +21,12 @@ export interface Edit { find: string; replace: string }
 // Words a prompt only needs if it is trying to influence how its replies are judged. An edit may not add them:
 // the agent is being tested, and a prompt that addresses the test instead of the customer is gaming it.
 const JUDGING = /\b(judg(e|es|ed|ing)|grad(er|ers|ing)|evaluat(or|ors|ion|ing)|rubric|scor(e|es|ed|ing)|test cases?|held[- ]back|benchmark)\b/gi;
-const mentions = (t: string) => (t.match(JUDGING) ?? []).length;
+// A tutor's prompt talks about grading and a sports bot's about scores: a word family the prompt, goal or policy
+// already uses is the agent's own subject, so only judging words from other families count.
+const FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark)\w*/gi;
+const family = (w: string) => w.toLowerCase().slice(0, 4);
+const ownFamilies = (known: string) => new Set((known.match(FAMILY) ?? []).map(family));
+const mentions = (t: string, own: Set<string>) => (t.match(JUDGING) ?? []).filter((w) => !own.has(family(w))).length;
 
 const SCHEMA = {
   type: "object",
@@ -44,14 +49,15 @@ const SCHEMA = {
 
 // Applies edits in order. Each find must appear exactly once in the text as it stands, so an edit can only change
 // the place it names; an empty find appends a new paragraph at the end. Any bad edit rejects the whole candidate.
-export function applyEdits(prompt: string, edits: unknown): { text: string } | { problem: string } {
+export function applyEdits(prompt: string, edits: unknown, known = ""): { text: string } | { problem: string } {
   if (!Array.isArray(edits) || edits.length === 0) return { problem: "no edits" };
+  const own = ownFamilies(`${prompt}\n${known}`);
   if (edits.length > MAX_EDITS) return { problem: `more than ${MAX_EDITS} edits` };
   let text = prompt;
   for (const e of edits as Edit[]) {
     if (typeof e?.find !== "string" || typeof e?.replace !== "string") return { problem: "malformed edit" };
     if (e.replace.length > MAX_EDIT_CHARS || e.find.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
-    if (mentions(e.replace) > mentions(e.find)) return { problem: "an edit talks about judging or scores" };
+    if (mentions(e.replace, own) > mentions(e.find, own)) return { problem: "an edit talks about judging or scores" };
     if (e.find === "") { text = `${text.trimEnd()}\n\n${e.replace.trim()}\n`; continue; }
     const at = text.indexOf(e.find);
     if (at === -1) return { problem: "an edit's text isn't in the prompt" };
@@ -118,7 +124,7 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
   results.forEach((r, i) => {
     const id = `candidate-${i + 1}`;
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
-    const applied = applyEdits(prompt, r.value.edits);
+    const applied = applyEdits(prompt, r.value.edits, `${goal.objective}\n${goal.policy ?? ""}`);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
     candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : undefined,
       title: typeof r.value.title === "string" && r.value.title.trim() ? r.value.title.trim().replace(/\.$/, "").slice(0, 60) : undefined, edits: r.value.edits });

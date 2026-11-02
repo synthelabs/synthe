@@ -22,12 +22,18 @@ const money = (state: State) => (state.spendUnknown ? `over $${state.spendUsd.to
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const left = (goal: Goal, state: State) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")}, one an hour`;
 
+// A prompt Synthe can't find needs a person, and the report says so instead of blaming the key.
+const missing = (r: RoundRecord | undefined) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
+
 // The first thing a team reads in the morning: the outcome in one line, then what it means.
 export function headline(goal: Goal, state: State): { title: string; summary: string } {
   const merged = state.rounds.filter((r) => r.outcome === "merged").length;
   const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;
   if (state.proposal) {
     return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
+  }
+  if (!state.stopped && missing(state.rounds.at(-1))) {
+    return { title: "Synthe needs you to fix something", summary: `${state.rounds.at(-1)!.plain} ${spent}` };
   }
   if (!state.stopped) {
     return merged > 0
@@ -36,7 +42,7 @@ export function headline(goal: Goal, state: State): { title: string; summary: st
   }
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
-    return { title: "Stopped: the last rounds didn't finish", summary: "Check that your Synthe key still has credit, and look at the latest run in the Actions tab for the error." };
+    return { title: "Stopped: the last rounds didn't finish", summary: missing(recent.at(-1)) ? recent.at(-1)!.plain! : "Check that your Synthe key still has credit, and look at the latest run in the Actions tab for the error." };
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better`
@@ -54,7 +60,9 @@ function nextSteps(goal: Goal, state: State): string[] {
   if (state.stopped && /no winner$/.test(state.stopped)) {
     steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push. It starts again at the next hourly check${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. One line per case, for example:\n  \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`\n  \`expected\` describes a good answer in a sentence. \`split\` is \`train\` (Synthe learns from it) or \`holdout\` (kept hidden to check its changes).`);
   }
-  if (!state.stopped && !state.proposal) {
+  if (!state.stopped && !state.proposal && missing(state.rounds.at(-1))) {
+    steps.push(`${state.rounds.at(-1)!.plain} Synthe tries again every hour, without spending anything until it finds the prompt.`);
+  } else if (!state.stopped && !state.proposal) {
     steps.push("Nothing to do. Synthe runs every hour and stops by itself.");
     steps.push("To keep your agent unchanged, for example before a demo, run `npx synthe stop`.");
   } else if (state.proposal) {

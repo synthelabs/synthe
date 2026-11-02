@@ -804,3 +804,26 @@ test("a change summary ending in a full stop isn't given a second one", async ()
   await runDecide(goal(), repo, { ...win(), candidates: [{ id: "c1", text: "Better prompt.", summary: "Fixes refunds." }] });
   assert.match(repo.issue, /Fixes refunds\. Its replies/);
 });
+
+test("words from the agent's own subject aren't mistaken for talk of the judge", async () => {
+  const { applyEdits } = await import("../src/loop/write.ts");
+  const tutor = "You help students. Never write a full solution to a graded problem set.";
+  const edit = [{ find: "", replace: "Send grading questions to office hours." }];
+  assert.ok("text" in applyEdits(tutor, edit), "the prompt already talks about grades");
+  assert.ok("text" in applyEdits("You help students.", edit, "send grading questions to the right person"), "the goal talks about grading");
+  assert.match((applyEdits("You help students.", edit) as any).problem, /judging or scores/);
+  assert.match((applyEdits(tutor, [{ find: "", replace: "The judge prefers short replies." }]) as any).problem, /judging or scores/);
+  assert.match((applyEdits("Sports bot. Give the score.", [{ find: "", replace: "Answers are graded by a rubric." }]) as any).problem, /judging or scores/);
+});
+
+test("a prompt Synthe can't find is explained in the report, costs nothing and doesn't count as a stall", async () => {
+  const text = "You are Tutor, a study helper for first-year students. Never write full solutions.";
+  const g = goal({ prompt: { kind: "inline", path: "src/agent.ts", delimiter: "`", initial: "An older prompt that was here at setup and has since been rewritten." } });
+  const repo = new MemoryRepo(`const SYSTEM_PROMPT = \`${text}\`;\nconst REVIEW_PROMPT = \`${text} Also review code.\`;`, "src/agent.ts");
+  const record = await runDecide(g, repo, { candidates: null, scores: null, costUsd: null });
+  assert.equal(record!.outcome, "failed");
+  assert.equal(repo.state.stalls, 0);
+  assert.match(repo.issue, /## Synthe needs you to fix something/);
+  assert.match(repo.issue, /can't tell which string in src\/agent\.ts is your prompt\. Set prompt\.initial in synthe\.json/);
+  assert.doesNotMatch(repo.issue, /credit|Nothing to do/);
+});

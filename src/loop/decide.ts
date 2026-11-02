@@ -231,7 +231,17 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     return null;
   };
 
-  if (!scores || !input.candidates) {
+  if ((!scores || !input.candidates) && current === null) {
+    // The write step stops before any model call when it can't find the prompt, so this costs nothing and needs a person.
+    record.outcome = "failed";
+    record.reasons.push(`couldn't find the prompt in ${path}`);
+    record.plain = source === null
+      ? `This round didn't run because ${path} is missing. If you moved your prompt, change prompt.path in synthe.json to its new place.`
+      : goal.prompt.kind === "inline"
+        ? `This round didn't run because Synthe can't tell which string in ${path} is your prompt. Set prompt.initial in synthe.json to your prompt's text as it is now.`
+        : `This round didn't run because Synthe couldn't read your prompt in ${path}.`;
+    stall = false;
+  } else if (!scores || !input.candidates) {
     record.outcome = "failed";
     record.reasons.push("the round did not finish; check the Actions log and the API key");
     record.plain = "This round didn't finish. If it keeps happening, check the Actions log and that your key still has credit.";

@@ -224,6 +224,17 @@ test("writes inline prompts in place and refuses a missing or repeated one", () 
   assert.equal(readPrompt("`old text` `old text`", g, null), null);
 });
 
+test("an inline prompt the team edited after setup is followed, unless the file has two", () => {
+  const before = "You are Tutor, a study helper for first-year students. Never write full solutions.";
+  const after = "You are Tutor, a friendly study helper. Be as helpful as possible with problem sets.";
+  const g = goal({ prompt: { kind: "inline", path: "src/agent.ts", delimiter: "`", initial: before } });
+  const src = `const SYSTEM_PROMPT = \`${after}\`;\nconst x = 1;`;
+  assert.equal(readPrompt(src, g, null), after);
+  assert.equal(writePrompt(src, g.prompt, after, "next"), "const SYSTEM_PROMPT = `next`;\nconst x = 1;");
+  assert.equal(readPrompt(`${src}\nconst REVIEW_PROMPT = \`${after} Also review code carefully.\`;`, g, null), null);
+  assert.equal(readPrompt(`const SYSTEM_PROMPT = "${after}";`, g, null), null, "a different kind of string isn't the same prompt");
+});
+
 test("goal and scenario parsing reject bad input", () => {
   assert.throws(() => parseGoal('{"version":2}'));
   assert.throws(() => parseScenarios('{"id":"a","input":"i","expected":"e","split":"train"}'));
@@ -278,4 +289,16 @@ test("a run summary keeps only numbers, never prompt or reply text", async () =>
   assert.deepEqual([none.readable, none.status], [false, "not started"]);
   const card = scorecard([s, none]);
   assert.deepEqual([card.teamsRegistered, card.teamsStarted, card.teamsWithAMerge, card.medianSetupSeconds, card.thumbsUp], [2, 1, 1, 270, 2]);
+});
+
+test("a failed model call is explained in words a team can act on", async () => {
+  const { modelProblem } = await import("../src/model/client.ts");
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  assert.match(modelProblem({ status: 401, message: '401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}' })!, /key was rejected/);
+  assert.match(modelProblem({ status: 400, message: "400 Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits." })!, /no credit left/);
+  assert.match(modelProblem({ status: 400, message: "400 You have reached your specified workspace API usage limits. You will regain access on 2026-12-01 at 00:00 UTC." })!, /spending limit/);
+  assert.match(modelProblem({ status: 529, message: "529 Overloaded" })!, /busy/);
+  assert.match(modelProblem(new Anthropic.APIConnectionError({ message: "fetch failed" }))!, /internet/);
+  assert.equal(modelProblem(new Error("could not find the prompt")), null);
+  assert.equal(modelProblem({ status: 400, message: "400 max_tokens too large" }), null);
 });
