@@ -194,3 +194,51 @@ test("a refused or empty reply yields unknown and blocks the merge", async () =>
   assert.equal(repo.commits.length, 0);
   assert.deepEqual(rows([null], null)[0].score, scores.baselineTrain[0].score);
 });
+
+const stall = (r: ReturnType<typeof scored>) => ({ candidates, scores: r, costUsd: 0.1 });
+
+test("a run that stops finding winners reads as finished and says how to continue", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55)));
+  for (let i = 0; i < 3; i++) await runDecide(goal(), repo, stall(scored("Better prompt.", 60, 55, 60, 55)));
+  assert.match(repo.state.stopped!, /no winner/);
+  assert.match(repo.issue, /\*\*Status:\*\* finished\. Merged 1 improvement\. Held-back score went from 50\.0 to 55\.0\./);
+  assert.match(repo.issue, /add harder scenarios to `s\.jsonl`/);
+});
+
+test("failed rounds read as stopped, not finished", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  for (let i = 0; i < 3; i++) await runDecide(goal(), repo, { candidates: null, scores: null, costUsd: null });
+  assert.match(repo.issue, /\*\*Status:\*\* stopped: the last 3 rounds failed/);
+  assert.doesNotMatch(repo.issue, /finished/);
+});
+
+test("a blocked repo reads as stopped", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  repo.mergeResult = { merged: false, why: "405", blocked: true };
+  await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55)));
+  assert.match(repo.issue, /\*\*Status:\*\* stopped: this repo blocks/);
+});
+
+test("a stalled run resumes when the scenarios change, and only then", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  repo.files.set("s.jsonl", "easy");
+  for (let i = 0; i < 3; i++) await runDecide(goal(), repo, stall(scored("Old prompt.", 60, 55, 60, 55)));
+  assert.match(repo.state.stopped!, /no winner/);
+  assert.equal(await runDecide(goal(), repo, stall(scored("Old prompt.", 60, 55, 60, 55))), null);
+  repo.files.set("s.jsonl", "harder");
+  const r = await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55)));
+  assert.equal(r?.outcome, "merged");
+  assert.equal(repo.state.stopped, null);
+  assert.equal(repo.state.stalls, 0);
+});
+
+test("a run stopped for another reason doesn't resume on new scenarios", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  repo.files.set("s.jsonl", "easy");
+  repo.mergeResult = { merged: false, why: "405", blocked: true };
+  await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55)));
+  repo.mergeResult = { merged: true };
+  repo.files.set("s.jsonl", "harder");
+  assert.equal(await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55))), null);
+});

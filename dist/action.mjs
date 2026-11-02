@@ -110,59 +110,59 @@ var init_error = __esm({
       return AnthropicError2;
     })();
     APIError = class _APIError extends AnthropicError {
-      constructor(status, error, message, headers, type) {
-        super(`${_APIError.makeMessage(status, error, message)}`);
-        this.status = status;
+      constructor(status2, error, message, headers, type) {
+        super(`${_APIError.makeMessage(status2, error, message)}`);
+        this.status = status2;
         this.headers = headers;
         this.requestID = headers?.get("request-id");
         this.workspaceID = headers?.get("anthropic-workspace-id");
         this.error = error;
         this.type = type ?? null;
       }
-      static makeMessage(status, error, message) {
+      static makeMessage(status2, error, message) {
         const msg = error?.message ? typeof error.message === "string" ? error.message : JSON.stringify(error.message) : error ? JSON.stringify(error) : message;
-        if (status && msg) {
-          return `${status} ${msg}`;
+        if (status2 && msg) {
+          return `${status2} ${msg}`;
         }
-        if (status) {
-          return `${status} status code (no body)`;
+        if (status2) {
+          return `${status2} status code (no body)`;
         }
         if (msg) {
           return msg;
         }
         return "(no status code or body)";
       }
-      static generate(status, errorResponse, message, headers) {
-        if (!status || !headers) {
+      static generate(status2, errorResponse, message, headers) {
+        if (!status2 || !headers) {
           return new APIConnectionError({ message, cause: castToError(errorResponse) });
         }
         const error = errorResponse;
         const type = error?.["error"]?.["type"];
-        if (status === 400) {
-          return new BadRequestError(status, error, message, headers, type);
+        if (status2 === 400) {
+          return new BadRequestError(status2, error, message, headers, type);
         }
-        if (status === 401) {
-          return new AuthenticationError(status, error, message, headers, type);
+        if (status2 === 401) {
+          return new AuthenticationError(status2, error, message, headers, type);
         }
-        if (status === 403) {
-          return new PermissionDeniedError(status, error, message, headers, type);
+        if (status2 === 403) {
+          return new PermissionDeniedError(status2, error, message, headers, type);
         }
-        if (status === 404) {
-          return new NotFoundError(status, error, message, headers, type);
+        if (status2 === 404) {
+          return new NotFoundError(status2, error, message, headers, type);
         }
-        if (status === 409) {
-          return new ConflictError(status, error, message, headers, type);
+        if (status2 === 409) {
+          return new ConflictError(status2, error, message, headers, type);
         }
-        if (status === 422) {
-          return new UnprocessableEntityError(status, error, message, headers, type);
+        if (status2 === 422) {
+          return new UnprocessableEntityError(status2, error, message, headers, type);
         }
-        if (status === 429) {
-          return new RateLimitError(status, error, message, headers, type);
+        if (status2 === 429) {
+          return new RateLimitError(status2, error, message, headers, type);
         }
-        if (status >= 500) {
-          return new InternalServerError(status, error, message, headers, type);
+        if (status2 >= 500) {
+          return new InternalServerError(status2, error, message, headers, type);
         }
-        return new _APIError(status, error, message, headers, type);
+        return new _APIError(status2, error, message, headers, type);
       }
     };
     APIUserAbortError = class extends APIError {
@@ -2399,9 +2399,9 @@ function endApiCallSpanWhenStreamEnds(span, stream2, props) {
   });
 }
 function setResponseStatusCode(span, result) {
-  const status = result.response?.status ?? (result.status === "error" && result.error instanceof APIError ? result.error.status : void 0);
-  if (status !== void 0) {
-    span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, status);
+  const status2 = result.response?.status ?? (result.status === "error" && result.error instanceof APIError ? result.error.status : void 0);
+  if (status2 !== void 0) {
+    span.setAttribute(ATTR_HTTP_RESPONSE_STATUS_CODE, status2);
   }
 }
 function setErrorStatus(span, error, type) {
@@ -27523,8 +27523,8 @@ var init_client = __esm({
         getUserAgent() {
           return `Anthropic/JS ${VERSION}`;
         }
-        makeStatusError(status, error, message, headers) {
-          return APIError.generate(status, error, message, headers);
+        makeStatusError(status2, error, message, headers) {
+          return APIError.generate(status2, error, message, headers);
         }
         buildURL(path4, query, defaultBaseURL) {
           const baseURL = !__classPrivateFieldGet(this, _BaseAnthropic_instances, "m", _BaseAnthropic_baseURLOverridden).call(this) && defaultBaseURL || this.baseURL;
@@ -28133,6 +28133,7 @@ var newState = () => ({
   spendUnknown: false,
   stopped: null,
   issue: null,
+  scenariosHash: null,
   rounds: []
 });
 function stopReason(s, maxRounds, stallRounds, maxUsd) {
@@ -28141,6 +28142,66 @@ function stopReason(s, maxRounds, stallRounds, maxUsd) {
   if (s.spendUsd >= maxUsd) return `budget of $${maxUsd} is used`;
   if (s.round >= maxRounds) return `reached ${maxRounds} rounds`;
   if (s.stalls >= stallRounds) return `${stallRounds} rounds in a row found no winner`;
+  return null;
+}
+function isFinished(reason) {
+  return /^(budget of .* is used|reached \d+ rounds|\d+ rounds in a row found no winner)$/.test(reason);
+}
+function resumeIfScenariosChanged(s, scenariosHash) {
+  if (!s.stopped || !/rounds in a row found no winner$/.test(s.stopped) || s.scenariosHash === null || s.scenariosHash === scenariosHash) return false;
+  s.stopped = null;
+  s.stalls = 0;
+  return true;
+}
+
+// src/core/safety.ts
+import { createHash } from "node:crypto";
+var sha256 = (text) => createHash("sha256").update(text).digest("hex");
+var MAX_PROMPT_CHARS = 2e4;
+var SENSITIVE_PATHS = [
+  /^\.github\//,
+  /^\.gitlab-ci\.yml$/,
+  /^\.circleci\//,
+  /^Jenkinsfile$/,
+  /\.pem$/,
+  /\.key$/,
+  /(^|\/)id_rsa/,
+  /(^|\/)id_ed25519/,
+  /(^|\/)\.env(\.|$)/,
+  /(^|\/)Dockerfile/,
+  /(^|\/)package(-lock)?\.json$/,
+  /(^|\/)pnpm-lock\.yaml$/,
+  /(^|\/)yarn\.lock$/,
+  /(^|\/)(poetry|uv|Cargo)\.lock$/,
+  /(^|\/)go\.sum$/,
+  /(^|\/)setup\.py$/,
+  /(^|\/)pyproject\.toml$/,
+  /(^|\/)Makefile$/,
+  /^scripts\/.*\.sh$/,
+  /^bin\//,
+  /(^|\/)CODEOWNERS$/,
+  /(^|\/)\.gitattributes$/
+];
+var SECRET_SHAPES = [/sk-ant-[\w-]{8,}/, /sk-[A-Za-z0-9]{20,}/, /gh[pousr]_[A-Za-z0-9]{20,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN [A-Z ]*PRIVATE KEY/];
+function promptPathProblem(path4) {
+  if (path4.startsWith("/") || path4.split("/").includes("..")) return "prompt path must stay inside the repo";
+  return SENSITIVE_PATHS.some((p) => p.test(path4)) ? `refusing sensitive path ${path4}` : null;
+}
+function candidateProblem(text, location) {
+  if (typeof text !== "string" || !text.trim()) return "candidate is empty";
+  if (text.length > MAX_PROMPT_CHARS) return "candidate is too long";
+  if (SECRET_SHAPES.some((s) => s.test(text))) return "candidate looks like it contains a secret";
+  if (location.kind === "inline") {
+    const problem = literalProblem(text, location.delimiter);
+    if (problem) return problem;
+  }
+  return null;
+}
+function literalProblem(text, delimiter2) {
+  if (text.includes("\\")) return "candidate contains a backslash";
+  if (text.includes(delimiter2)) return "candidate would end the source string";
+  if (delimiter2 === "`" && text.includes("${")) return "candidate would run code in a template string";
+  if ((delimiter2 === '"' || delimiter2 === "'") && /[\r\n]/.test(text)) return "candidate is multi-line in a one-line string";
   return null;
 }
 
@@ -28374,66 +28435,40 @@ function judgeRound(scores, goal, replaced) {
   return best ?? { action: "skip", reasons: reasons.length ? reasons : ["no candidates"] };
 }
 
-// src/core/safety.ts
-import { createHash } from "node:crypto";
-var sha256 = (text) => createHash("sha256").update(text).digest("hex");
-var MAX_PROMPT_CHARS = 2e4;
-var SENSITIVE_PATHS = [
-  /^\.github\//,
-  /^\.gitlab-ci\.yml$/,
-  /^\.circleci\//,
-  /^Jenkinsfile$/,
-  /\.pem$/,
-  /\.key$/,
-  /(^|\/)id_rsa/,
-  /(^|\/)id_ed25519/,
-  /(^|\/)\.env(\.|$)/,
-  /(^|\/)Dockerfile/,
-  /(^|\/)package(-lock)?\.json$/,
-  /(^|\/)pnpm-lock\.yaml$/,
-  /(^|\/)yarn\.lock$/,
-  /(^|\/)(poetry|uv|Cargo)\.lock$/,
-  /(^|\/)go\.sum$/,
-  /(^|\/)setup\.py$/,
-  /(^|\/)pyproject\.toml$/,
-  /(^|\/)Makefile$/,
-  /^scripts\/.*\.sh$/,
-  /^bin\//,
-  /(^|\/)CODEOWNERS$/,
-  /(^|\/)\.gitattributes$/
-];
-var SECRET_SHAPES = [/sk-ant-[\w-]{8,}/, /sk-[A-Za-z0-9]{20,}/, /gh[pousr]_[A-Za-z0-9]{20,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN [A-Z ]*PRIVATE KEY/];
-function promptPathProblem(path4) {
-  if (path4.startsWith("/") || path4.split("/").includes("..")) return "prompt path must stay inside the repo";
-  return SENSITIVE_PATHS.some((p) => p.test(path4)) ? `refusing sensitive path ${path4}` : null;
-}
-function candidateProblem(text, location) {
-  if (typeof text !== "string" || !text.trim()) return "candidate is empty";
-  if (text.length > MAX_PROMPT_CHARS) return "candidate is too long";
-  if (SECRET_SHAPES.some((s) => s.test(text))) return "candidate looks like it contains a secret";
-  if (location.kind === "inline") {
-    const problem = literalProblem(text, location.delimiter);
-    if (problem) return problem;
-  }
-  return null;
-}
-function literalProblem(text, delimiter2) {
-  if (text.includes("\\")) return "candidate contains a backslash";
-  if (text.includes(delimiter2)) return "candidate would end the source string";
-  if (delimiter2 === "`" && text.includes("${")) return "candidate would run code in a template string";
-  if ((delimiter2 === '"' || delimiter2 === "'") && /[\r\n]/.test(text)) return "candidate is multi-line in a one-line string";
-  return null;
-}
-
 // src/loop/report.ts
 var ISSUE_TITLE = "Synthe: overnight prompt report";
+function status(goal, state) {
+  if (!state.stopped) return ["**Status:** running"];
+  const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
+  if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
+    return [`**Status:** stopped: the last ${recent.length} rounds failed. Check the Actions log and the API key.`];
+  }
+  if (!isFinished(state.stopped)) return [`**Status:** stopped: ${state.stopped}.`];
+  const merged = state.rounds.filter((r) => r.outcome === "merged");
+  const reverted = state.rounds.some((r) => r.outcome === "reverted");
+  const first = merged[0];
+  const last = merged.at(-1);
+  const gain = first && last && !reverted && first.heldBefore !== void 0 && last.heldAfter !== void 0 ? ` Held-back score went from ${first.heldBefore.toFixed(1)} to ${last.heldAfter.toFixed(1)}.` : "";
+  const result = merged.length === 0 ? "No rewrite beat your prompt, so it stays as it was." : `Merged ${merged.length} improvement${merged.length === 1 ? "" : "s"}.${gain}`;
+  const lines = [`**Status:** finished. ${result}`, ""];
+  if (/no winner$/.test(state.stopped)) {
+    lines.push(
+      `In the last ${goal.merge_rule.stall_rounds} rounds no rewrite beat the current prompt by ${goal.merge_rule.min_improvement} points, so it is close to the best these scenarios can measure.`,
+      state.round < goal.merge_rule.max_rounds ? `**To keep improving,** add harder scenarios to \`${goal.scenarios}\`, especially cases your agent still gets wrong. The next scheduled run picks them up and continues.` : `**To keep improving,** add harder scenarios to \`${goal.scenarios}\`, especially cases your agent still gets wrong, and raise \`merge_rule.max_rounds\` in \`synthe.json\`.`
+    );
+  } else {
+    lines.push(/^budget/.test(state.stopped) ? `It used its $${goal.budget.max_usd} budget.` : `It ran all ${goal.merge_rule.max_rounds} rounds.`);
+  }
+  return lines;
+}
 function renderReport(goal, state) {
   const money = state.spendUnknown ? `over $${state.spendUsd.toFixed(2)} (some costs unknown)` : `$${state.spendUsd.toFixed(2)}`;
   const merged = state.rounds.filter((r) => r.outcome === "merged");
   const lines = [
     `**Goal:** ${goal.objective}`,
     "",
-    state.stopped ? `**Status:** stopped: ${state.stopped}` : "**Status:** running",
+    ...status(goal, state),
+    "",
     `**Rounds:** ${state.round} of up to ${goal.merge_rule.max_rounds}. **Merged:** ${merged.length}. **Spent:** ${money} of $${goal.budget.max_usd}.`,
     "",
     "| Round | Result | Held-back score | Scenarios won / lost | PR | Why |",
@@ -28452,9 +28487,12 @@ function renderReport(goal, state) {
 async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
   const state = await repo.readState();
   const { merge_rule, budget } = goal;
-  if (stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd)) return null;
   const base = await repo.defaultBranch();
   const head = await repo.headSha(base);
+  const scenarioText = await repo.readFile(goal.scenarios, head);
+  const scenariosHash = scenarioText === null ? null : sha256(scenarioText);
+  if (scenariosHash !== null) resumeIfScenariosChanged(state, scenariosHash);
+  if (stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd)) return null;
   const path4 = goal.prompt.path;
   const source = await repo.readFile(path4, head);
   const current = source === null ? null : readPrompt(source, goal, state.prompt);
@@ -28527,6 +28565,7 @@ Chosen by Synthe from simulated scenarios. Only \`${path4}\` changed.` });
     }
   }
   state.round = round;
+  state.scenariosHash = scenariosHash;
   state.spendUsd += input2.costUsd ?? 0;
   state.rounds.push(record);
   state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
@@ -28667,6 +28706,7 @@ async function main() {
   }
   const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
   const state = await repo.readState();
+  if (existsSync(goal.scenarios)) resumeIfScenariosChanged(state, sha256(readFileSync(goal.scenarios, "utf8")));
   const stop = stopReason(state, goal.merge_rule.max_rounds, goal.merge_rule.stall_rounds, goal.budget.max_usd);
   if (stop) {
     console.log(`Stopped: ${stop}`);

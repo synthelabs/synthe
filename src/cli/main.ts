@@ -4,7 +4,7 @@ import { createInterface } from "node:readline/promises";
 import { GOAL_FILE, STATE_BRANCH, parseGoal, parseScenarios } from "../core/goal.ts";
 import { judgeRound } from "../core/merge-rule.ts";
 import { readPrompt } from "../core/prompt.ts";
-import { newState, type State } from "../core/state.ts";
+import { isFinished, newState, type State } from "../core/state.ts";
 import { anthropicModel } from "../model/client.ts";
 import { measureNoise, runScore } from "../loop/score.ts";
 import { runWrite } from "../loop/write.ts";
@@ -45,7 +45,7 @@ async function status() {
   const raw = await run("gh", ["api", `repos/${slug}/contents/state.json?ref=${encodeURIComponent(STATE_BRANCH)}`, "-H", "Accept: application/vnd.github.raw+json"]);
   const s: State = JSON.parse(raw);
   const merged = s.rounds.filter((r) => r.outcome === "merged").length;
-  console.log(`Round ${s.round}, ${merged} merged, $${s.spendUsd.toFixed(2)} spent. ${s.stopped ? `Stopped: ${s.stopped}.` : "Running."}`);
+  console.log(`Round ${s.round}, ${merged} merged, $${s.spendUsd.toFixed(2)} spent. ${s.stopped ? `${isFinished(s.stopped) ? "Finished" : "Stopped"}: ${s.stopped}.` : "Running."}`);
   if (s.issue) console.log(`Report: https://github.com/${slug}/issues/${s.issue}`);
 }
 

@@ -6,6 +6,7 @@ const RULE = "src/core/merge-rule.ts";
 const DECIDE = "src/loop/decide.ts";
 const SCORE = "src/loop/score.ts";
 const WRITE = "src/loop/write.ts";
+const STATE = "src/core/state.ts";
 
 const mutations = [
   ["no scenario wins needed", RULE, "if (split.p > max_p)", "if (false)"],
@@ -27,6 +28,8 @@ const mutations = [
   ["identical candidate merges", DECIDE, ' ?? (text.trim() === current.trim() ? "candidate is the current prompt" : null)', ""],
   ["revert baseline left out", DECIDE, "priorScores: [...scores.baselineTrain, ...scores.baselineHoldout]", "priorScores: [...scores.baselineTrain]"],
   ["prompt change ignored", DECIDE, "sha256(current) !== scores.baselineHash", "false"],
+  ["any stop resumes on new scenarios", STATE, "!/rounds in a row found no winner$/.test(s.stopped) || ", ""],
+  ["resumes without a scenario change", STATE, " || s.scenariosHash === scenariosHash", ""],
   ["unknown cost merges", DECIDE, "input.costUsd === null", "false"],
   ["identical candidate scored", SCORE, " && c.text.trim() !== baseline.trim()", ""],
   ["every candidate tested held back", SCORE, "for (const c of safe) scores.candidates.push({ id: c.id, train: await scoreSet(c.text, train) });", "for (const c of safe) scores.candidates.push({ id: c.id, train: await scoreSet(c.text, scenarios) });"],

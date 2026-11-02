@@ -2,7 +2,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { GOAL_FILE, parseGoal, parseScenarios } from "./core/goal.ts";
 import { readPrompt } from "./core/prompt.ts";
 import { sumCosts } from "./core/cost.ts";
-import { stopReason } from "./core/state.ts";
+import { resumeIfScenariosChanged, stopReason } from "./core/state.ts";
+import { sha256 } from "./core/safety.ts";
 import { githubRepo } from "./github/repo.ts";
 import { anthropicModel } from "./model/client.ts";
 import { runDecide } from "./loop/decide.ts";
@@ -32,6 +33,8 @@ async function main() {
 
   const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
   const state = await repo.readState();
+  // Decide makes the same check on the same commit and saves it; this job only needs to know whether to run.
+  if (existsSync(goal.scenarios)) resumeIfScenariosChanged(state, sha256(readFileSync(goal.scenarios, "utf8")));
   const stop = stopReason(state, goal.merge_rule.max_rounds, goal.merge_rule.stall_rounds, goal.budget.max_usd);
   if (stop) {
     console.log(`Stopped: ${stop}`);

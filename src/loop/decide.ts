@@ -2,7 +2,7 @@ import type { Goal } from "../core/goal.ts";
 import { judgeRound, type RoundScores } from "../core/merge-rule.ts";
 import { readPrompt, writePrompt } from "../core/prompt.ts";
 import { candidateProblem, promptPathProblem, sha256 } from "../core/safety.ts";
-import { stopReason, type RoundRecord } from "../core/state.ts";
+import { resumeIfScenariosChanged, stopReason, type RoundRecord } from "../core/state.ts";
 import type { Repo } from "../github/repo.ts";
 import { ISSUE_TITLE, renderReport } from "./report.ts";
 import type { Candidate } from "./write.ts";
@@ -12,10 +12,13 @@ export interface RoundInput { candidates: Candidate[] | null; scores: RoundScore
 export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now = new Date()): Promise<RoundRecord | null> {
   const state = await repo.readState();
   const { merge_rule, budget } = goal;
-  if (stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd)) return null;
-
   const base = await repo.defaultBranch();
   const head = await repo.headSha(base);
+  const scenarioText = await repo.readFile(goal.scenarios, head);
+  const scenariosHash = scenarioText === null ? null : sha256(scenarioText);
+  if (scenariosHash !== null) resumeIfScenariosChanged(state, scenariosHash);
+  if (stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd)) return null;
+
   const path = goal.prompt.path;
   const source = await repo.readFile(path, head);
   const current = source === null ? null : readPrompt(source, goal, state.prompt);
@@ -90,6 +93,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   }
 
   state.round = round;
+  state.scenariosHash = scenariosHash;
   state.spendUsd += input.costUsd ?? 0;
   state.rounds.push(record);
   state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);

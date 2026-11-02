@@ -28239,8 +28239,12 @@ var newState = () => ({
   spendUnknown: false,
   stopped: null,
   issue: null,
+  scenariosHash: null,
   rounds: []
 });
+function isFinished(reason) {
+  return /^(budget of .* is used|reached \d+ rounds|\d+ rounds in a row found no winner)$/.test(reason);
+}
 
 // src/model/client.ts
 init_sdk();
@@ -28647,7 +28651,7 @@ async function status() {
   const raw = await run("gh", ["api", `repos/${slug}/contents/state.json?ref=${encodeURIComponent(STATE_BRANCH)}`, "-H", "Accept: application/vnd.github.raw+json"]);
   const s = JSON.parse(raw);
   const merged = s.rounds.filter((r) => r.outcome === "merged").length;
-  console.log(`Round ${s.round}, ${merged} merged, $${s.spendUsd.toFixed(2)} spent. ${s.stopped ? `Stopped: ${s.stopped}.` : "Running."}`);
+  console.log(`Round ${s.round}, ${merged} merged, $${s.spendUsd.toFixed(2)} spent. ${s.stopped ? `${isFinished(s.stopped) ? "Finished" : "Stopped"}: ${s.stopped}.` : "Running."}`);
   if (s.issue) console.log(`Report: https://github.com/${slug}/issues/${s.issue}`);
 }
 async function tryRound() {
