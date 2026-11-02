@@ -125,13 +125,15 @@ test("merge then slump reverts to the prior prompt when it wins head to head", a
   assert.equal(repo.state.lastMerge?.reverted, true);
 });
 
-test("blocked merges close the PR and explain the fix", async () => {
+test("a repo that requires review gets the winning pull request left open as a proposal, not a stopped run", async () => {
   const repo = new MemoryRepo("Old prompt.");
   repo.mergeResult = { merged: false, why: "405", problem: "blocked" };
   const r = await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55)));
-  assert.equal(r?.outcome, "skipped");
-  assert.equal(repo.prs[0].closed, true);
-  assert.match(repo.state.stopped!, /blocks automatic merges/);
+  assert.equal(r?.outcome, "proposed");
+  assert.equal(repo.prs[0].closed, false);
+  assert.equal(repo.state.stopped, null);
+  assert.equal(repo.state.proposal?.pr, 1);
+  assert.match(r!.reasons.join(), /requires a review to merge, so Synthe left #1 open/);
 });
 
 test("inline prompts track their text across rounds", async () => {
@@ -225,11 +227,11 @@ test("failed rounds read as stopped, not finished", async () => {
   assert.doesNotMatch(repo.issue, /finished/);
 });
 
-test("a blocked repo reads as stopped", async () => {
+test("a repo where Actions may not merge reads as stopped, with the setting to change", async () => {
   const repo = new MemoryRepo("Old prompt.");
-  repo.mergeResult = { merged: false, why: "405", problem: "blocked" };
+  repo.mergeResult = { merged: false, why: "403", problem: "permission" };
   await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55)));
-  assert.match(repo.issue, /\*\*Status:\*\* stopped: this repo blocks/);
+  assert.match(repo.issue, /\*\*Status:\*\* stopped: GitHub Actions isn't allowed to merge/);
 });
 
 test("a stalled run resumes when the scenarios change, and only then", async () => {
@@ -248,7 +250,7 @@ test("a stalled run resumes when the scenarios change, and only then", async () 
 test("a run stopped for another reason doesn't resume on new scenarios", async () => {
   const repo = new MemoryRepo("Old prompt.");
   repo.files.set("s.jsonl", "easy");
-  repo.mergeResult = { merged: false, why: "405", problem: "blocked" };
+  repo.mergeResult = { merged: false, why: "403", problem: "permission" };
   await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55)));
   repo.mergeResult = { merged: true };
   repo.files.set("s.jsonl", "harder");
@@ -530,4 +532,72 @@ test("the guardrail re-check runs on the checker model and sees what a good resp
   const checks = (m as any).seen?.filter?.((a: Ask) => JSON.stringify(a.schema ?? "").includes("quote")) ?? [];
   assert.ok(checks.length > 0);
   assert.ok(checks.every((a: Ask) => a.model === "claude-sonnet-5-5" && a.user.includes("A good response: good")));
+});
+
+
+const propose = () => goal({ merge_rule: { ...goal().merge_rule, mode: "propose" } });
+
+test("propose mode opens the winning pull request with its evidence and leaves the merge to a person", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  const r = await runDecide(propose(), repo, win());
+  assert.equal(r?.outcome, "proposed");
+  assert.equal(repo.merges.length, 0);
+  assert.equal(repo.files.get("prompt.md"), "Old prompt.");
+  assert.equal(repo.state.lastMerge, null);
+  assert.match(repo.prs[0].body, /Merge it to keep the change, or close it to decline/);
+  assert.match(repo.issue, /waiting for review\. Synthe proposed #1/);
+});
+
+test("while a proposal waits, nothing is scored, spent or proposed again", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  await runDecide(propose(), repo, win());
+  const spent = repo.state.spendUsd;
+  assert.equal(await runDecide(propose(), repo, { candidates: null, scores: null, costUsd: null }), null);
+  assert.equal(await runDecide(propose(), repo, win()), null);
+  assert.equal(repo.prs.length, 1);
+  assert.equal(repo.state.spendUsd, spent);
+  assert.equal(repo.state.rounds.length, 1);
+});
+
+test("a proposal merged by a person is tracked like a merge, so the revert check protects it", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  await runDecide(propose(), repo, win());
+  repo.prs[0].merged = true;
+  repo.files.set("prompt.md", "Better prompt.");
+  assert.equal(await runDecide(propose(), repo, { candidates: null, scores: null, costUsd: null }), null);
+  assert.equal(repo.state.proposal, null);
+  assert.equal(repo.state.rounds[0].outcome, "merged");
+  assert.equal((repo.state.lastMerge as any)?.mergedHash, sha256("Better prompt."));
+  assert.equal(repo.state.rounds.length, 1); // settling isn't a round
+  const next = scored("Better prompt.", 50, 50, 50, 50);
+  next.prior = [...trainRows(90), ...heldRows(90)];
+  assert.equal((await runDecide(propose(), repo, round(next)))?.outcome, "proposed"); // a revert is proposed too
+});
+
+test("a proposal closed without merging is recorded as declined, and rounds go on", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  await runDecide(propose(), repo, win());
+  repo.prs[0].closed = true;
+  await runDecide(propose(), repo, { candidates: null, scores: null, costUsd: null });
+  assert.equal(repo.state.rounds[0].outcome, "declined");
+  assert.equal(repo.state.proposal, null);
+  assert.equal((await runDecide(propose(), repo, win()))?.outcome, "proposed");
+});
+
+test("a proposal opened just before a crash is kept open for review, not closed", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  repo.crashOn = "upsertIssue";
+  await assert.rejects(runDecide(propose(), repo, win()));
+  await runDecide(propose(), repo, { candidates: null, scores: null, costUsd: null });
+  assert.equal(repo.prs[0].closed, false);
+  assert.equal(repo.state.proposal?.pr, 1);
+  assert.equal(repo.state.rounds[0].outcome, "proposed");
+});
+
+test("the goal file rejects an unknown merge mode", async () => {
+  const { parseGoal } = await import("../src/core/goal.ts");
+  const base = { version: 1, prompt: { kind: "file", path: "p.md" }, objective: "x", scenarios: "s", budget: { max_usd: 1 } };
+  assert.equal(parseGoal(JSON.stringify(base)).merge_rule.mode, "auto");
+  assert.equal(parseGoal(JSON.stringify({ ...base, merge_rule: { mode: "propose" } })).merge_rule.mode, "propose");
+  assert.throws(() => parseGoal(JSON.stringify({ ...base, merge_rule: { mode: "yolo" } })), /auto or propose/);
 });

@@ -43,6 +43,13 @@ async function main() {
     setOutput("go", state.pending ? "recover" : "false");
     return;
   }
+  if (state.proposal) {
+    // Waiting for a person to merge or close a proposal: no model calls. "check" skips scoring but lets decide
+    // look at the pull request.
+    console.log(`Waiting for review of #${state.proposal.pr}`);
+    setOutput("go", "check");
+    return;
+  }
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, state.prompt);
   if (prompt === null) throw new Error(`could not find the prompt in ${goal.prompt.path}`);
   const scenarios = parseScenarios(readFileSync(goal.scenarios, "utf8"));

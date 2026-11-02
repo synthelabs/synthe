@@ -28057,7 +28057,7 @@ var STATE_BRANCH = "synthe/state";
 var GOAL_FILE = "synthe.json";
 var DEFAULTS = {
   models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5", checker: "claude-sonnet-5-5" },
-  merge_rule: { min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3 },
+  merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3 },
   budget: { max_usd: 3 }
 };
 function parseGoal(text) {
@@ -28072,6 +28072,7 @@ function parseGoal(text) {
   if (!g.objective || typeof g.objective !== "string") bad("objective is required");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
+  if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
   return {
     ...g,
     guardrails: g.guardrails ?? [],
@@ -28242,6 +28243,7 @@ var newState = () => ({
   scenariosHash: null,
   lessons: null,
   pending: null,
+  proposal: null,
   rounds: []
 });
 function isFinished(reason) {

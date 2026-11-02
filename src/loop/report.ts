@@ -5,6 +5,9 @@ export const ISSUE_TITLE = "Synthe: overnight prompt report";
 
 // What the run did, said as an outcome: a run that ran out of ideas is done, not broken.
 function status(goal: Goal, state: State): string[] {
+  if (state.proposal) {
+    return [`**Status:** waiting for review. Synthe proposed #${state.proposal.pr}: merge it to keep the change, or close it to decline. Rounds continue after that, with no spending while it waits.`];
+  }
   if (!state.stopped) return ["**Status:** running"];
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
@@ -35,12 +38,13 @@ function status(goal: Goal, state: State): string[] {
 export function renderReport(goal: Goal, state: State): string {
   const money = state.spendUnknown ? `over $${state.spendUsd.toFixed(2)} (some costs unknown)` : `$${state.spendUsd.toFixed(2)}`;
   const merged = state.rounds.filter((r) => r.outcome === "merged");
+  const proposed = state.rounds.filter((r) => r.outcome === "proposed" || r.outcome === "declined").length;
   const lines = [
     `**Goal:** ${goal.objective}`,
     "",
     ...status(goal, state),
     "",
-    `**Rounds:** ${state.round} of up to ${goal.merge_rule.max_rounds}. **Merged:** ${merged.length}. **Spent:** ${money} of $${goal.budget.max_usd}.`,
+    `**Rounds:** ${state.round} of up to ${goal.merge_rule.max_rounds}. **Merged:** ${merged.length}.${proposed ? ` **Proposed:** ${proposed}.` : ""} **Spent:** ${money} of $${goal.budget.max_usd}.`,
     "",
     "| Round | Result | Held-back head-to-head (50 = even) | Scenarios won / lost | PR | Cost | Why |",
     "| --- | --- | --- | --- | --- | --- | --- |",

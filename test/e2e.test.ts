@@ -164,6 +164,16 @@ test("a stopped run with a crashed decide still lets decide clean up and report"
   assert.match(issues.at(-1) ?? "", /finished|stopped/);
 });
 
+test("while a proposal waits for review, the write step makes no model calls and decide only checks the pull request", async () => {
+  reset();
+  files.set("synthe/state:state.json", JSON.stringify({ round: 1, stalls: 0, spendUsd: 0.1, stopped: null, pending: null, rounds: [{ round: 1, at: "t", outcome: "proposed", pr: 1, reasons: [], costUsd: 0.1 }], proposal: { pr: 1, round: 1, branch: "synthe/round-1", kind: "merge", text: "New", priorPrompt: "Old", propose: true } }));
+  writeFileSync(join(dir, "out.txt"), "");
+  const before = bodies.length;
+  assert.equal((await step("write")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=check/);
+  assert.equal(bodies.length, before);
+});
+
 test("a revoked key fails the job, and decide records the failed round", async () => {
   reset();
   denyKey = true;

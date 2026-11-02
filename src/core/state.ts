@@ -1,9 +1,11 @@
 import type { ScoreRow } from "./merge-rule.ts";
 
 export interface RoundRecord {
-  round: number; at: string; outcome: "merged" | "reverted" | "skipped" | "failed";
+  round: number; at: string; outcome: "merged" | "reverted" | "proposed" | "declined" | "skipped" | "failed";
   heldBefore?: number; heldAfter?: number; wins?: number; losses?: number; pr?: number; reasons: string[]; costUsd: number | null; writeUsd?: number | null;
 }
+
+export interface Landing { branch: string; kind: "merge" | "revert"; text: string; priorPrompt: string; propose?: boolean }
 
 export interface State {
   round: number;
@@ -18,12 +20,15 @@ export interface State {
   // Training cases from the last round where the current prompt lost or broke a guardrail, for the next writer.
   lessons: { promptHash: string; rows: { id: string; reply: string; better?: string; violation: boolean }[] } | null;
   // Set while a decide step is acting, so the next one can tell it died partway and clean up after it.
-  pending: { round: number; at: string; costUsd: number | null; land?: { branch: string; kind: "merge" | "revert"; text: string; priorPrompt: string } } | null;
+  pending: { round: number; at: string; costUsd: number | null; land?: Landing } | null;
+  // A pull request Synthe opened and left for a person to merge (propose mode, or a repo that requires review).
+  // Rounds wait, without model calls, until it is merged or closed.
+  proposal: (Landing & { pr: number; round: number }) | null;
   rounds: RoundRecord[];
 }
 
 export const newState = (): State => ({
-  round: 0, prompt: null, lastMerge: null, stalls: 0, spendUsd: 0, spendUnknown: false, stopped: null, issue: null, scenariosHash: null, lessons: null, pending: null, rounds: [],
+  round: 0, prompt: null, lastMerge: null, stalls: 0, spendUsd: 0, spendUnknown: false, stopped: null, issue: null, scenariosHash: null, lessons: null, pending: null, proposal: null, rounds: [],
 });
 
 export function stopReason(s: State, maxRounds: number, stallRounds: number, maxUsd: number): string | null {

@@ -28054,7 +28054,7 @@ var STATE_BRANCH = "synthe/state";
 var GOAL_FILE = "synthe.json";
 var DEFAULTS = {
   models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5", checker: "claude-sonnet-5-5" },
-  merge_rule: { min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3 },
+  merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3 },
   budget: { max_usd: 3 }
 };
 function parseGoal(text) {
@@ -28069,6 +28069,7 @@ function parseGoal(text) {
   if (!g.objective || typeof g.objective !== "string") bad("objective is required");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
+  if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
   return {
     ...g,
     guardrails: g.guardrails ?? [],
@@ -28136,6 +28137,7 @@ var newState = () => ({
   scenariosHash: null,
   lessons: null,
   pending: null,
+  proposal: null,
   rounds: []
 });
 function stopReason(s, maxRounds, stallRounds, maxUsd) {
@@ -28475,6 +28477,9 @@ function judgeRound(scores, goal, replaced) {
 // src/loop/report.ts
 var ISSUE_TITLE = "Synthe: overnight prompt report";
 function status(goal, state) {
+  if (state.proposal) {
+    return [`**Status:** waiting for review. Synthe proposed #${state.proposal.pr}: merge it to keep the change, or close it to decline. Rounds continue after that, with no spending while it waits.`];
+  }
   if (!state.stopped) return ["**Status:** running"];
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
@@ -28499,12 +28504,13 @@ function status(goal, state) {
 function renderReport(goal, state) {
   const money = state.spendUnknown ? `over $${state.spendUsd.toFixed(2)} (some costs unknown)` : `$${state.spendUsd.toFixed(2)}`;
   const merged = state.rounds.filter((r) => r.outcome === "merged");
+  const proposed = state.rounds.filter((r) => r.outcome === "proposed" || r.outcome === "declined").length;
   const lines = [
     `**Goal:** ${goal.objective}`,
     "",
     ...status(goal, state),
     "",
-    `**Rounds:** ${state.round} of up to ${goal.merge_rule.max_rounds}. **Merged:** ${merged.length}. **Spent:** ${money} of $${goal.budget.max_usd}.`,
+    `**Rounds:** ${state.round} of up to ${goal.merge_rule.max_rounds}. **Merged:** ${merged.length}.${proposed ? ` **Proposed:** ${proposed}.` : ""} **Spent:** ${money} of $${goal.budget.max_usd}.`,
     "",
     "| Round | Result | Held-back head-to-head (50 = even) | Scenarios won / lost | PR | Cost | Why |",
     "| --- | --- | --- | --- | --- | --- | --- |"
@@ -28699,10 +28705,26 @@ function explainScores(scores, scenarios, samples = 3) {
 // src/loop/decide.ts
 var LESSONS = 6;
 var NEEDS_A_PERSON = {
-  blocked: "this repo blocks automatic merges; exempt Synthe's token in the branch rules",
   permission: "GitHub Actions isn't allowed to merge here; turn on 'Allow GitHub Actions to create and approve pull requests' in the repo's Actions settings",
   token: "GitHub refused the workflow's token"
 };
+function settle(goal, state, merged) {
+  const p = state.proposal;
+  const record = state.rounds.find((r) => r.pr === p.pr && r.outcome === "proposed");
+  if (merged && p.kind === "merge") {
+    state.lastMerge = { pr: p.pr, priorPrompt: p.priorPrompt, mergedHash: sha256(p.text), reverted: false };
+    state.prompt = goal.prompt.kind === "inline" ? p.text : null;
+    state.stalls = 0;
+  } else if (merged && state.lastMerge) {
+    state.lastMerge.reverted = true;
+    state.prompt = goal.prompt.kind === "inline" ? p.text : null;
+  }
+  if (record) {
+    record.outcome = merged ? p.kind === "merge" ? "merged" : "reverted" : "declined";
+    record.reasons.push(merged ? `merged by a person after review` : `closed without merging`);
+  }
+  state.proposal = null;
+}
 async function recover(goal, repo, state) {
   const p = state.pending;
   if (!p) return false;
@@ -28719,10 +28741,14 @@ async function recover(goal, repo, state) {
         state.lastMerge.reverted = true;
       }
       state.prompt = goal.prompt.kind === "inline" ? p.land.text : null;
+    } else if (pr?.open && p.land.propose) {
+      Object.assign(record, { outcome: "proposed", pr: pr.number });
+      record.reasons = ["proposed for review; the decide step stopped just after opening it"];
+      state.proposal = { ...p.land, pr: pr.number, round: p.round };
     } else if (pr?.open) {
       await repo.closePr(pr.number);
     }
-    await repo.deleteBranch(p.land.branch);
+    if (!state.proposal || state.proposal.branch !== p.land.branch) await repo.deleteBranch(p.land.branch);
   }
   state.rounds.push(record);
   state.pending = null;
@@ -28732,6 +28758,21 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
   const state = await repo.readState();
   const { merge_rule, budget } = goal;
   const recovered = await recover(goal, repo, state);
+  if (state.proposal) {
+    const pr = await repo.findPr(state.proposal.branch);
+    if (pr?.open) {
+      state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+      await repo.writeState(state);
+      return null;
+    }
+    settle(goal, state, Boolean(pr?.merged));
+    if (!input2.scores) {
+      state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
+      state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+      await repo.writeState(state);
+      return null;
+    }
+  }
   const base = await repo.defaultBranch();
   const head = await repo.headSha(base);
   const scenarioText = await repo.readFile(goal.scenarios, head);
@@ -28760,17 +28801,27 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
   let stall = true;
   const land = async (text, kind, title, why) => {
     const branch = `synthe/round-${round}`;
-    state.pending = { ...state.pending, land: { branch, kind, text, priorPrompt: current } };
+    const landing = { branch, kind, text, priorPrompt: current, propose: merge_rule.mode === "propose" };
+    state.pending = { ...state.pending, land: landing };
     await repo.writeState(state);
     const content = writePrompt(source, goal.prompt, current, text);
     const sha = await repo.commitFile({ branch, baseSha: head, path: path4, content, message: title });
     const pr = await repo.openPr({ branch, base, title, body: `${why}
 
-Chosen by Synthe from simulated scenarios. Only \`${path4}\` changed.` });
+Chosen by Synthe from simulated scenarios. Only \`${path4}\` changed.${landing.propose ? " Merge it to keep the change, or close it to decline." : ""}` });
+    if (landing.propose) {
+      state.proposal = { ...landing, pr, round };
+      return { pr, proposed: true };
+    }
     const merged = await repo.mergePr(pr, sha);
     if (merged.merged) {
       await repo.deleteBranch(branch);
-      return pr;
+      return { pr, proposed: false };
+    }
+    if (merged.problem === "blocked") {
+      record.reasons.push(`this repo requires a review to merge, so Synthe left #${pr} open for you`);
+      state.proposal = { ...landing, propose: true, pr, round };
+      return { pr, proposed: true };
     }
     await repo.closePr(pr);
     await repo.deleteBranch(branch);
@@ -28806,21 +28857,25 @@ Chosen by Synthe from simulated scenarios. Only \`${path4}\` changed.` });
         record.reasons.push(problem);
       } else {
         const why = [chosen?.summary ? `What changed: ${chosen.summary}` : "", verdict.reasons.join(" ")].filter(Boolean).join("\n\n");
-        const pr = await land(text, "merge", `Synthe: improve prompt (round ${round})`, why);
-        if (pr !== null) {
-          Object.assign(record, { outcome: "merged", pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses });
-          state.lastMerge = { pr, priorPrompt: current, mergedHash: sha256(text), reverted: false };
-          state.prompt = goal.prompt.kind === "inline" ? text : null;
+        const landed = await land(text, "merge", `Synthe: improve prompt (round ${round})`, why);
+        if (landed) {
+          Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses });
+          if (!landed.proposed) {
+            state.lastMerge = { pr: landed.pr, priorPrompt: current, mergedHash: sha256(text), reverted: false };
+            state.prompt = goal.prompt.kind === "inline" ? text : null;
+          }
           stall = false;
         }
       }
     } else if (verdict.action === "revert") {
       const prior = state.lastMerge.priorPrompt;
-      const pr = await land(prior, "revert", `Synthe: revert round ${round - 1}'s prompt`, verdict.reasons.join(" "));
-      if (pr !== null) {
-        Object.assign(record, { outcome: "reverted", pr });
-        state.lastMerge.reverted = true;
-        state.prompt = goal.prompt.kind === "inline" ? prior : null;
+      const landed = await land(prior, "revert", `Synthe: revert round ${round - 1}'s prompt`, verdict.reasons.join(" "));
+      if (landed) {
+        Object.assign(record, { outcome: landed.proposed ? "proposed" : "reverted", pr: landed.pr });
+        if (!landed.proposed) {
+          state.lastMerge.reverted = true;
+          state.prompt = goal.prompt.kind === "inline" ? prior : null;
+        }
       }
     }
   }
@@ -28987,6 +29042,11 @@ async function main() {
   if (stop) {
     console.log(`Stopped: ${stop}`);
     setOutput("go", state.pending ? "recover" : "false");
+    return;
+  }
+  if (state.proposal) {
+    console.log(`Waiting for review of #${state.proposal.pr}`);
+    setOutput("go", "check");
     return;
   }
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, state.prompt);

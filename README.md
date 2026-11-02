@@ -43,8 +43,8 @@ It also stops by itself when the budget ($3 by default) runs out, after 3 rounds
 
 ## Requirements
 
-A GitHub repo you admin and the [GitHub CLI](https://cli.github.com), signed in. If your default branch requires reviews, exempt Actions in your branch rules or Synthe will stop and tell you.
+A GitHub repo you admin and the [GitHub CLI](https://cli.github.com), signed in. If your default branch requires reviews, Synthe leaves each winning pull request open for you to merge instead.
 
 ## Change the goal
 
-Edit `synthe.json` for the objective, guardrails and budget, and `.synthe/scenarios.jsonl` for the test cases. Scenario rows marked `holdout` stay hidden from the writer.
+Edit `synthe.json` for the objective, guardrails and budget (set `"merge_rule": { "mode": "propose" }` to review every change before it merges), and `.synthe/scenarios.jsonl` for the test cases. Scenario rows marked `holdout` stay hidden from the writer.

@@ -2,7 +2,7 @@ import type { Goal } from "../core/goal.ts";
 import { judgeRound, type RoundScores } from "../core/merge-rule.ts";
 import { readPrompt, writePrompt } from "../core/prompt.ts";
 import { candidateProblem, promptPathProblem, sha256 } from "../core/safety.ts";
-import { resumeIfScenariosChanged, stopReason, type RoundRecord, type State } from "../core/state.ts";
+import { resumeIfScenariosChanged, stopReason, type Landing, type RoundRecord, type State } from "../core/state.ts";
 import type { MergeProblem, Repo } from "../github/repo.ts";
 import { ISSUE_TITLE, renderReport } from "./report.ts";
 import type { Candidate } from "./write.ts";
@@ -13,11 +13,31 @@ export interface RoundInput { candidates: Candidate[] | null; scores: RoundScore
 const LESSONS = 6;
 
 // Merge problems a person has to fix; the run stops and the report says how.
+// (A merge blocked by branch rules isn't here: its pull request is left open as a proposal instead.)
 const NEEDS_A_PERSON: Partial<Record<MergeProblem, string>> = {
-  blocked: "this repo blocks automatic merges; exempt Synthe's token in the branch rules",
   permission: "GitHub Actions isn't allowed to merge here; turn on 'Allow GitHub Actions to create and approve pull requests' in the repo's Actions settings",
   token: "GitHub refused the workflow's token",
 };
+
+// A proposal was merged or closed by a person: keep a merge on record (so the revert check protects it) or note
+// that it was declined, and let rounds continue.
+function settle(goal: Goal, state: State, merged: boolean) {
+  const p = state.proposal!;
+  const record = state.rounds.find((r) => r.pr === p.pr && r.outcome === "proposed");
+  if (merged && p.kind === "merge") {
+    state.lastMerge = { pr: p.pr, priorPrompt: p.priorPrompt, mergedHash: sha256(p.text), reverted: false };
+    state.prompt = goal.prompt.kind === "inline" ? p.text : null;
+    state.stalls = 0;
+  } else if (merged && state.lastMerge) {
+    state.lastMerge.reverted = true;
+    state.prompt = goal.prompt.kind === "inline" ? p.text : null;
+  }
+  if (record) {
+    record.outcome = merged ? (p.kind === "merge" ? "merged" : "reverted") : "declined";
+    record.reasons.push(merged ? `merged by a person after review` : `closed without merging`);
+  }
+  state.proposal = null;
+}
 
 // A decide step that died partway leaves state.pending behind. Find out on GitHub what it got done, keep a merge
 // that went through (so the revert check still protects it), and clean up a branch or pull request it left.
@@ -37,10 +57,15 @@ async function recover(goal: Goal, repo: Repo, state: State): Promise<boolean> {
         state.lastMerge.reverted = true;
       }
       state.prompt = goal.prompt.kind === "inline" ? p.land.text : null;
+    } else if (pr?.open && p.land.propose) {
+      // A proposal that was opened just before the crash: leave it for review, as intended.
+      Object.assign(record, { outcome: "proposed", pr: pr.number });
+      record.reasons = ["proposed for review; the decide step stopped just after opening it"];
+      state.proposal = { ...p.land, pr: pr.number, round: p.round };
     } else if (pr?.open) {
       await repo.closePr(pr.number);
     }
-    await repo.deleteBranch(p.land.branch);
+    if (!state.proposal || state.proposal.branch !== p.land.branch) await repo.deleteBranch(p.land.branch);
   }
   state.rounds.push(record);
   state.pending = null;
@@ -51,6 +76,22 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   const state = await repo.readState();
   const { merge_rule, budget } = goal;
   const recovered = await recover(goal, repo, state);
+  // While a proposal waits for review, nothing else happens: no candidates, no spend, no round.
+  if (state.proposal) {
+    const pr = await repo.findPr(state.proposal.branch);
+    if (pr?.open) {
+      state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+      await repo.writeState(state);
+      return null;
+    }
+    settle(goal, state, Boolean(pr?.merged));
+    if (!input.scores) {
+      state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
+      state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+      await repo.writeState(state);
+      return null;
+    }
+  }
   const base = await repo.defaultBranch();
   const head = await repo.headSha(base);
   const scenarioText = await repo.readFile(goal.scenarios, head);
@@ -82,17 +123,29 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   await repo.writeState(state);
   let stall = true;
 
-  const land = async (text: string, kind: "merge" | "revert", title: string, why: string): Promise<number | null> => {
+  // Opens the pull request, then merges it (auto mode) or leaves it for a person (propose mode, or a repo whose
+  // branch rules require a review). Returns the pull request and whether it was only proposed, or null.
+  const land = async (text: string, kind: "merge" | "revert", title: string, why: string): Promise<{ pr: number; proposed: boolean } | null> => {
     const branch = `synthe/round-${round}`;
-    state.pending = { ...state.pending!, land: { branch, kind, text, priorPrompt: current! } };
+    const landing: Landing = { branch, kind, text, priorPrompt: current!, propose: merge_rule.mode === "propose" };
+    state.pending = { ...state.pending!, land: landing };
     await repo.writeState(state);
     const content = writePrompt(source!, goal.prompt, current!, text);
     const sha = await repo.commitFile({ branch, baseSha: head, path, content, message: title });
-    const pr = await repo.openPr({ branch, base, title, body: `${why}\n\nChosen by Synthe from simulated scenarios. Only \`${path}\` changed.` });
+    const pr = await repo.openPr({ branch, base, title, body: `${why}\n\nChosen by Synthe from simulated scenarios. Only \`${path}\` changed.${landing.propose ? " Merge it to keep the change, or close it to decline." : ""}` });
+    if (landing.propose) {
+      state.proposal = { ...landing, pr, round };
+      return { pr, proposed: true };
+    }
     const merged = await repo.mergePr(pr, sha);
     if (merged.merged) {
       await repo.deleteBranch(branch);
-      return pr;
+      return { pr, proposed: false };
+    }
+    if (merged.problem === "blocked") {
+      record.reasons.push(`this repo requires a review to merge, so Synthe left #${pr} open for you`);
+      state.proposal = { ...landing, propose: true, pr, round };
+      return { pr, proposed: true };
     }
     await repo.closePr(pr);
     await repo.deleteBranch(branch);
@@ -130,21 +183,25 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
         record.reasons.push(problem);
       } else {
         const why = [chosen?.summary ? `What changed: ${chosen.summary}` : "", verdict.reasons.join(" ")].filter(Boolean).join("\n\n");
-        const pr = await land(text!, "merge", `Synthe: improve prompt (round ${round})`, why);
-        if (pr !== null) {
-          Object.assign(record, { outcome: "merged", pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses });
-          state.lastMerge = { pr, priorPrompt: current, mergedHash: sha256(text!), reverted: false };
-          state.prompt = goal.prompt.kind === "inline" ? text! : null;
+        const landed = await land(text!, "merge", `Synthe: improve prompt (round ${round})`, why);
+        if (landed) {
+          Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses });
+          if (!landed.proposed) {
+            state.lastMerge = { pr: landed.pr, priorPrompt: current, mergedHash: sha256(text!), reverted: false };
+            state.prompt = goal.prompt.kind === "inline" ? text! : null;
+          }
           stall = false;
         }
       }
     } else if (verdict.action === "revert") {
       const prior = state.lastMerge!.priorPrompt;
-      const pr = await land(prior, "revert", `Synthe: revert round ${round - 1}'s prompt`, verdict.reasons.join(" "));
-      if (pr !== null) {
-        Object.assign(record, { outcome: "reverted", pr });
-        state.lastMerge!.reverted = true;
-        state.prompt = goal.prompt.kind === "inline" ? prior : null;
+      const landed = await land(prior, "revert", `Synthe: revert round ${round - 1}'s prompt`, verdict.reasons.join(" "));
+      if (landed) {
+        Object.assign(record, { outcome: landed.proposed ? "proposed" : "reverted", pr: landed.pr });
+        if (!landed.proposed) {
+          state.lastMerge!.reverted = true;
+          state.prompt = goal.prompt.kind === "inline" ? prior : null;
+        }
       }
     }
   }
