@@ -22,6 +22,7 @@ const SCENARIO_SCHEMA = {
   type: "object",
   properties: {
     guardrails: { type: "array", items: { type: "string" } },
+    policy: { type: "string" },
     scenarios: {
       type: "array",
       items: {
@@ -31,14 +32,14 @@ const SCENARIO_SCHEMA = {
       },
     },
   },
-  required: ["guardrails", "scenarios"], additionalProperties: false,
+  required: ["guardrails", "policy", "scenarios"], additionalProperties: false,
 };
 
 const TRAIN = 20;
 const HOLDOUT = 10;
 
 export async function generateScenarios(model: Model, objective: string, promptText: string) {
-  const { value } = await askJson<{ guardrails: string[]; scenarios: { input: string; expected: string }[] }>(model, {
+  const { value } = await askJson<{ guardrails: string[]; policy: string; scenarios: { input: string; expected: string }[] }>(model, {
     model: DEFAULTS.models.writer, maxTokens: 16000, schema: SCENARIO_SCHEMA,
     user: `An AI agent has this system prompt:
 <prompt>
@@ -47,17 +48,17 @@ ${promptText.slice(0, 8000)}
 
 Its team wants it to get better at: ${objective}
 
-Write ${TRAIN + HOLDOUT} varied, realistic user messages for testing it, each with a one-sentence description of what a good response does. Include hard and edge cases. Also list 2 guardrails: things it must never do.`,
+Write ${TRAIN + HOLDOUT} varied, realistic user messages for testing it, each with a one-sentence description of what a good response does. Include hard and edge cases. Also list 2 guardrails: things it must never do. In "policy", copy the business rules the prompt states (what the agent may and may not offer, limits, fees, deadlines), word for word where possible, without inventing any; leave it empty if the prompt states none.`,
   });
   if (!value || value.scenarios.length < TRAIN + HOLDOUT) throw new Error("could not generate scenarios; run init again");
   const rows: Scenario[] = value.scenarios.slice(0, TRAIN + HOLDOUT).map((s, i) => ({
     id: `s${i + 1}`, ...s, split: i < TRAIN ? "train" : "holdout",
   }));
-  return { guardrails: value.guardrails.slice(0, 5), rows };
+  return { guardrails: value.guardrails.slice(0, 5), policy: typeof value.policy === "string" ? value.policy.trim().slice(0, 4000) : "", rows };
 }
 
-export function buildGoal(prompt: PromptLocation, objective: string, guardrails: string[]): Goal {
-  return { version: 1, prompt, objective, guardrails, scenarios: SCENARIOS_FILE, ...DEFAULTS };
+export function buildGoal(prompt: PromptLocation, objective: string, guardrails: string[], policy = ""): Goal {
+  return { version: 1, prompt, objective, ...(policy ? { policy } : {}), guardrails, scenarios: SCENARIOS_FILE, ...DEFAULTS };
 }
 
 export function renderWorkflow(template: string): string {
@@ -104,8 +105,8 @@ export async function init(io: Io, root: string) {
   const key = process.env.ANTHROPIC_API_KEY || (await io.askSecret("Paste your Synthe key: ")).trim();
 
   io.say("Writing test scenarios...");
-  const { guardrails, rows } = await generateScenarios(io.model(key), objective, promptText);
-  const goal = buildGoal(location, objective, guardrails);
+  const { guardrails, policy, rows } = await generateScenarios(io.model(key), objective, promptText);
+  const goal = buildGoal(location, objective, guardrails, policy);
 
   mkdirSync(join(root, ".synthe"), { recursive: true });
   mkdirSync(join(root, ".github/workflows"), { recursive: true });

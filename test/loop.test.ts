@@ -683,3 +683,47 @@ test("a merge blocked by review and kept as a proposal survives a crash", async 
   assert.equal(repo.prs[0].closed, false);
   assert.equal(repo.state.proposal?.pr, 1);
 });
+
+test("the business policy reaches the judge and the guardrail re-check", async () => {
+  const g = goal({ policy: "Refunds only within 30 days." });
+  const m = flagsC(() => ({ breaks: false, guardrail: "", quote: "" }));
+  const { scores } = await runScore(g, "Base", [{ id: "bold", text: "Bold" }], named, m);
+  const judged = (m as any).seen.filter((a: Ask) => a.schema);
+  assert.ok(judged.length > 0 && judged.every((a: Ask) => a.user.includes("Refunds only within 30 days.")));
+  assert.ok(scores.candidates.length === 1);
+  const m2 = scripted({});
+  await runScore(goal(), "Base", [{ id: "c", text: "Other" }], named, m2);
+  assert.ok(m2.seen.filter((a) => a.schema).every((a) => !a.user.includes("Business policy")));
+});
+
+test("every merged pull request carries a receipt and says what wasn't tested", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  repo.files.set("s.jsonl", "scenarios");
+  await runDecide(goal(), repo, { ...win(), goalHash: sha256("goal file") });
+  const body = repo.prs[0].body;
+  assert.match(body, /Scored commit: `head`/);
+  assert.ok(body.includes(`Prompt before: \`sha256:${sha256("Old prompt.").slice(0, 12)}\`, after: \`sha256:${sha256("Better prompt.").slice(0, 12)}\``));
+  assert.ok(body.includes(`Scenarios: \`sha256:${sha256("scenarios").slice(0, 12)}\`, goal file: \`sha256:${sha256("goal file").slice(0, 12)}\``));
+  assert.match(body, /Models: writer claude-sonnet-5-5, runner claude-haiku-5-5, judge claude-haiku-5-5, checker claude-sonnet-5-5/);
+  assert.match(body, /What this did not test[\s\S]*only the system prompt was run[\s\S]*has no `policy`/);
+  assert.match(repo.issue, /What this did not test/);
+  const withPolicy = new MemoryRepo("Old prompt.");
+  await runDecide(goal({ policy: "x" }), withPolicy, win());
+  assert.doesNotMatch(withPolicy.prs[0].body, /has no `policy`/);
+});
+
+test("an edit may not add talk of judging or scores to the prompt", async () => {
+  const { applyEdits } = await import("../src/loop/write.ts");
+  assert.match((applyEdits("Be kind.", [{ find: "Be kind.", replace: "Be kind. The judge prefers long replies." }]) as any).problem, /judging or scores/);
+  assert.match((applyEdits("Be kind.", [{ find: "", replace: "Graders score helpful answers higher." }]) as any).problem, /judging or scores/);
+  // Text that already mentions a score can be edited, as long as nothing new about scoring is added.
+  assert.deepEqual(applyEdits("Explain the credit score. Be kind.", [{ find: "Be kind.", replace: "Be warm." }]), { text: "Explain the credit score. Be warm." });
+  assert.deepEqual(applyEdits("Explain the credit score.", [{ find: "Explain the credit score.", replace: "Explain the credit score clearly." }]), { text: "Explain the credit score clearly." });
+});
+
+test("the goal file's policy must be text", async () => {
+  const { parseGoal } = await import("../src/core/goal.ts");
+  const base = { version: 1, prompt: { kind: "file", path: "p.md" }, objective: "x", scenarios: "s", budget: { max_usd: 1 } };
+  assert.equal(parseGoal(JSON.stringify({ ...base, policy: "Rules." })).policy, "Rules.");
+  assert.throws(() => parseGoal(JSON.stringify({ ...base, policy: 5 })), /policy must be text/);
+});

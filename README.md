@@ -47,4 +47,4 @@ A GitHub repo you admin and the [GitHub CLI](https://cli.github.com), signed in.
 
 ## Change the goal
 
-Edit `synthe.json` for the objective, guardrails and budget (set `"merge_rule": { "mode": "propose" }` to review every change before it merges), and `.synthe/scenarios.jsonl` for the test cases. Scenario rows marked `holdout` stay hidden from the writer.
+Edit `synthe.json` for the objective, guardrails, budget and `policy` (the business rules the judge checks replies against; `init` copies them from your prompt) (set `"merge_rule": { "mode": "propose" }` to review every change before it merges), and `.synthe/scenarios.jsonl` for the test cases. Scenario rows marked `holdout` stay hidden from the writer.

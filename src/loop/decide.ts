@@ -4,11 +4,11 @@ import { readPrompt, writePrompt } from "../core/prompt.ts";
 import { candidateProblem, promptPathProblem, sha256 } from "../core/safety.ts";
 import { resumeIfScenariosChanged, stopReason, type Landing, type RoundRecord, type State } from "../core/state.ts";
 import type { MergeProblem, Repo } from "../github/repo.ts";
-import { ISSUE_TITLE, renderReport } from "./report.ts";
+import { ISSUE_TITLE, notTested, renderReport } from "./report.ts";
 import type { Candidate } from "./write.ts";
 import { WIN } from "./score.ts";
 
-export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[] }
+export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string }
 
 const LESSONS = 6;
 
@@ -139,7 +139,18 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     await repo.writeState(state);
     const content = writePrompt(source!, goal.prompt, current!, text);
     const sha = await repo.commitFile({ branch, baseSha: head, path, content, message: title });
-    const pr = await repo.openPr({ branch, base, title, body: `${why}\n\nChosen by Synthe from simulated scenarios. Only \`${path}\` changed.${landing.propose ? " Merge it to keep the change, or close it to decline." : ""}` });
+    const short = (h: string | null | undefined) => (h ? `\`sha256:${h.slice(0, 12)}\`` : "unknown");
+    const { writer, runner, judge, checker } = goal.models;
+    const receipt = [
+      "**Receipt** (what exactly was scored, to check or reproduce this decision)",
+      `- Scored commit: \`${head.slice(0, 12)}\``,
+      `- Prompt before: ${short(sha256(current!))}, after: ${short(sha256(text))}`,
+      `- Scenarios: ${short(scenariosHash)}, goal file: ${short(input.goalHash)}`,
+      `- Models: writer ${writer}, runner ${runner}, judge ${judge}, checker ${checker}`,
+    ].join("\n");
+    const body = [why, receipt, notTested(goal).join("\n"),
+      `Chosen by Synthe from simulated scenarios. Only \`${path}\` changed.${landing.propose ? " Merge it to keep the change, or close it to decline." : ""}`].join("\n\n");
+    const pr = await repo.openPr({ branch, base, title, body });
     if (landing.propose) {
       state.proposal = { ...landing, pr, round };
       return { pr, proposed: true };

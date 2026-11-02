@@ -18,6 +18,11 @@ const MAX_EDIT_CHARS = 1500;
 
 export interface Edit { find: string; replace: string }
 
+// Words a prompt only needs if it is trying to influence how its replies are judged. An edit may not add them:
+// the agent is being tested, and a prompt that addresses the test instead of the customer is gaming it.
+const JUDGING = /\b(judg(e|es|ed|ing)|grad(er|ers|ing)|evaluat(or|ors|ion|ing)|rubric|scor(e|es|ed|ing)|test cases?|held[- ]back|benchmark)\b/gi;
+const mentions = (t: string) => (t.match(JUDGING) ?? []).length;
+
 const SCHEMA = {
   type: "object",
   properties: {
@@ -45,6 +50,7 @@ export function applyEdits(prompt: string, edits: unknown): { text: string } | {
   for (const e of edits as Edit[]) {
     if (typeof e?.find !== "string" || typeof e?.replace !== "string") return { problem: "malformed edit" };
     if (e.replace.length > MAX_EDIT_CHARS || e.find.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
+    if (mentions(e.replace) > mentions(e.find)) return { problem: "an edit talks about judging or scores" };
     if (e.find === "") { text = `${text.trimEnd()}\n\n${e.replace.trim()}\n`; continue; }
     const at = text.indexOf(e.find);
     if (at === -1) return { problem: "an edit's text isn't in the prompt" };

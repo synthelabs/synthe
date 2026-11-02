@@ -17,6 +17,7 @@ const repoDir = (prompt: string) => {
 
 const scenarioReply = JSON.stringify({
   guardrails: ["Never lie"],
+  policy: "Returns within 30 days of delivery.",
   scenarios: Array.from({ length: 30 }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })),
 });
 
@@ -81,4 +82,14 @@ test("a blocked Actions setting gives the settings link and still finishes", asy
   const { io, said } = fakeIo(dir, ["actions/permissions"]);
   assert.equal(await init(io, dir), true);
   assert.match(said.join(), /settings\/actions/);
+});
+
+test("init copies the prompt's business rules into the goal file as its policy", async () => {
+  const { generateScenarios, buildGoal } = await import("../src/cli/init.ts");
+  const model = { async ask() { return { text: scenarioReply, costUsd: 0.01 }; } };
+  const { policy, guardrails } = await generateScenarios(model, "Answer returns correctly", "You handle returns.");
+  assert.equal(policy, "Returns within 30 days of delivery.");
+  const g = buildGoal({ kind: "file", path: "p.md" }, "x", guardrails, policy);
+  assert.equal(g.policy, "Returns within 30 days of delivery.");
+  assert.equal("policy" in buildGoal({ kind: "file", path: "p.md" }, "x", guardrails, ""), false);
 });

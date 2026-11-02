@@ -3,6 +3,18 @@ import { isFinished, type State } from "../core/state.ts";
 
 export const ISSUE_TITLE = "Synthe: overnight prompt report";
 
+// What a round can't tell you, said every time, so an offline win is never mistaken for proof of business results.
+export function notTested(goal: Goal): string[] {
+  return [
+    "**What this did not test**",
+    "- Tools or actions your agent takes: only the system prompt was run, with no tools.",
+    "- Conversations: each scenario is a single message, not a back-and-forth.",
+    "- Real customers: scenarios are simulated, and generated ones aren't reviewed by a person.",
+    "- People's judgment: replies were compared by an AI judge.",
+    ...(goal.policy?.trim() ? [] : ["- Your business policy: synthe.json has no `policy`, so the judge only saw each scenario's good-response line."]),
+  ];
+}
+
 // What the run did, said as an outcome: a run that ran out of ideas is done, not broken.
 function status(goal: Goal, state: State): string[] {
   if (state.proposal) {
@@ -56,6 +68,6 @@ export function renderReport(goal: Goal, state: State): string {
       : `$${r.costUsd.toFixed(2)}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}`;
     lines.push(`| ${r.round} | ${r.outcome} | ${score} | ${split} | ${r.pr ? `#${r.pr}` : ""} | ${cost} | ${r.reasons.join("; ").replaceAll("|", "/").slice(0, 200)} |`);
   }
-  lines.push("", "Scores come from simulated scenarios, not live traffic, and generated scenarios aren't reviewed by a person. Only the prompt can change. Stop any time with `npx synthe stop`.");
+  lines.push("", ...notTested(goal), "", "Only the prompt can change. Stop any time with `npx synthe stop`.");
   return lines.join("\n");
 }
