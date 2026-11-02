@@ -28122,7 +28122,11 @@ function paired(after, before) {
   }
   return { wins, losses, p: signP(wins, losses) };
 }
-var violated = (rows) => rows.some((r) => r.violation !== false);
+var addedBreaks = (rows, current) => {
+  const before = new Map(current.map((r) => [r.id, r.violation]));
+  return rows.filter((r) => r.violation === null || r.violation === true && before.get(r.id) !== true).length;
+};
+var breaks = (rows) => rows.filter((r) => r.violation === true).length;
 function trainingProblem(c, baselineTrain, goal) {
   const { min_improvement, max_p } = goal.merge_rule;
   const before = mean(baselineTrain);
@@ -28175,10 +28179,12 @@ function judgeRound(scores, goal, replaced) {
       reasons.push(`${c.id}: did not gain ${min_improvement} on held-back scenarios, ${held.toFixed(1)} vs ${beforeHoldout.toFixed(1)}`);
       continue;
     }
-    if (violated(c.train) || violated(c.holdout)) {
-      reasons.push(`${c.id}: guardrail failed or unknown`);
+    if (addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout) > 0) {
+      reasons.push(`${c.id}: breaks a guardrail where the current prompt keeps it, or couldn't be checked`);
       continue;
     }
+    const stillBroken = breaks(c.train) + breaks(c.holdout);
+    const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id)));
     if (best === null || after > best.after) {
       best = {
         action: "merge",
@@ -28189,7 +28195,7 @@ function judgeRound(scores, goal, replaced) {
         heldAfter: held,
         wins: split.wins,
         losses: split.losses,
-        reasons: [`head-to-head ${held.toFixed(1)} held back and ${after.toFixed(1)} on training, where ${before.toFixed(0)} is even; won ${split.wins} and lost ${split.losses} training scenarios`]
+        reasons: [`head-to-head ${held.toFixed(1)} held back and ${after.toFixed(1)} on training, where ${before.toFixed(0)} is even; won ${split.wins} and lost ${split.losses} training scenarios${stillBroken > 0 ? `; still breaks a guardrail on ${stillBroken} scenario${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
       };
     }
   }

@@ -54,7 +54,14 @@ export function paired(after: ScoreRow[], before: ScoreRow[]) {
   return { wins, losses, p: signP(wins, losses) };
 }
 
-const violated = (rows: ScoreRow[]) => rows.some((r) => r.violation !== false);
+// Never add a guardrail break: a candidate may still break a guardrail only on a scenario where the current prompt
+// already breaks it, so a merge is never less safe than what it replaces, and a prompt that already breaks
+// guardrails can be fixed a step at a time. Unknown counts as broken on the candidate's side.
+const addedBreaks = (rows: ScoreRow[], current: ScoreRow[]) => {
+  const before = new Map(current.map((r) => [r.id, r.violation]));
+  return rows.filter((r) => r.violation === null || (r.violation === true && before.get(r.id) !== true)).length;
+};
+const breaks = (rows: ScoreRow[]) => rows.filter((r) => r.violation === true).length;
 
 // Why a candidate fails on the training scenarios, or null if it passes. Scoring uses this to pick which
 // candidate earns the held-back test, and judgeRound uses it again, so the two can never disagree.
@@ -103,11 +110,16 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
     const held = mean(c.holdout);
     if (held === null) { reasons.push(`${c.id}: held-back score unknown`); continue; }
     if (held < beforeHoldout + min_improvement) { reasons.push(`${c.id}: did not gain ${min_improvement} on held-back scenarios, ${held.toFixed(1)} vs ${beforeHoldout.toFixed(1)}`); continue; }
-    if (violated(c.train) || violated(c.holdout)) { reasons.push(`${c.id}: guardrail failed or unknown`); continue; }
+    if (addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout) > 0) {
+      reasons.push(`${c.id}: breaks a guardrail where the current prompt keeps it, or couldn't be checked`);
+      continue;
+    }
+    const stillBroken = breaks(c.train) + breaks(c.holdout);
+    const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout!.some((h) => h.id === r.id)));
     if (best === null || after > best.after) {
       best = {
         action: "merge", candidateId: c.id, before, after, heldBefore: beforeHoldout, heldAfter: held, wins: split.wins, losses: split.losses,
-        reasons: [`head-to-head ${held.toFixed(1)} held back and ${after.toFixed(1)} on training, where ${before.toFixed(0)} is even; won ${split.wins} and lost ${split.losses} training scenarios`],
+        reasons: [`head-to-head ${held.toFixed(1)} held back and ${after.toFixed(1)} on training, where ${before.toFixed(0)} is even; won ${split.wins} and lost ${split.losses} training scenarios${stillBroken > 0 ? `; still breaks a guardrail on ${stillBroken} scenario${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`],
       };
     }
   }

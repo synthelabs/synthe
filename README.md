@@ -14,7 +14,7 @@ Every hour, up to 12 times, Synthe:
 
 1. Proposes 2 new versions of your system prompt, each one or two exact edits aimed at the replies that lost last round.
 2. Puts each one head to head with your current prompt on simulated scenarios, including 10 the writer never sees.
-3. Merges the winner only if it wins scenario by scenario, gains on the 10 unseen scenarios and breaks no guardrail.
+3. Merges the winner only if it wins scenario by scenario, gains on the 10 unseen scenarios and never breaks a guardrail your current prompt keeps.
 4. Reverts a merged prompt if the prompt it replaced later beats it clearly, head to head.
 
 It only ever changes the system prompt. It never touches your other code, your CI or your secrets, and it never runs your agent's code.

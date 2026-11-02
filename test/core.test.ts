@@ -233,3 +233,28 @@ test("goal and scenario parsing reject bad input", () => {
   const g = parseGoal('{"version":1,"prompt":{"kind":"file","path":"p.md"},"objective":"o","scenarios":"s","budget":{"max_usd":3}}');
   assert.equal(g.models.judge, "claude-haiku-5-5");
 });
+
+test("never add a guardrail break: fewer breaks than the current prompt can merge, a new one can't", () => {
+  const s = scored("p", 50, 50, 70, 60);
+  // The current prompt breaks a guardrail on s0-s9 and h0-h4.
+  s.baselineTrain = s.baselineTrain.map((r, i) => ({ ...r, violation: i < 10 }));
+  s.baselineHoldout = s.baselineHoldout.map((r, i) => ({ ...r, violation: i < 5 }));
+  // The candidate still breaks on s0-s2 and h0, all places the current prompt already does.
+  s.candidates[0].train = s.candidates[0].train.map((r, i) => ({ ...r, violation: i < 3 }));
+  s.candidates[0].holdout = s.candidates[0].holdout!.map((r, i) => ({ ...r, violation: i < 1 }));
+  const v = judgeRound(s, goal(), null);
+  assert.equal(v.action, "merge");
+  assert.match(v.reasons.join(), /still breaks a guardrail on 4 scenarios, down from 15/);
+
+  const added = structuredClone(s);
+  added.candidates[0].train[15].violation = true; // s15 was safe before
+  assert.match(judgeRound(added, goal(), null).reasons.join(), /breaks a guardrail where the current prompt keeps it/);
+
+  const addedHeld = structuredClone(s);
+  addedHeld.candidates[0].holdout![8].violation = true; // h8 was safe before
+  assert.equal(judgeRound(addedHeld, goal(), null).action, "skip");
+
+  const unknown = structuredClone(s);
+  unknown.candidates[0].train[0].violation = null; // unknown is never allowed, even where the current prompt breaks
+  assert.equal(judgeRound(unknown, goal(), null).action, "skip");
+});
