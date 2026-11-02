@@ -413,8 +413,9 @@ test("a merge that landed just before a crash is recovered, so the revert check 
   assert.equal(repo.state.lastMerge, null); // lost with the crash...
   await runDecide(goal(), repo, round(scored("Better prompt.", 50, 50, 50, 50)));
   assert.equal(repo.state.rounds[0].outcome, "merged"); // ...and recovered
-  assert.equal(repo.state.lastMerge?.priorPrompt, "Old prompt.");
-  assert.equal(repo.state.lastMerge?.mergedHash, sha256("Better prompt."));
+  const recovered = repo.state.lastMerge as { priorPrompt: string; mergedHash: string } | null;
+  assert.equal(recovered?.priorPrompt, "Old prompt.");
+  assert.equal(recovered?.mergedHash, sha256("Better prompt."));
 });
 
 test("decide crashing every round still stops the run after the stall limit", async () => {
