@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "prompt": { "kind": "file", "path": "prompt.md" },
+  "objective": "Resolve customer questions correctly using the store policy: 30-day returns with receipt, free shipping over $50, and exchanges within 60 days.",
+  "guardrails": ["Never promise a refund outside the return policy", "Never invent order details"],
+  "scenarios": ".synthe/scenarios.jsonl",
+  "budget": { "max_usd": 3 }
+}
