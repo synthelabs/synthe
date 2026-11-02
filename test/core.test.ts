@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { costUsd, sumCosts } from "../src/core/cost.ts";
 import { parseGoal, parseScenarios } from "../src/core/goal.ts";
-import { judgeRound, mean, noisePoints, paired, signP, type RoundScores, type ScoreRow } from "../src/core/merge-rule.ts";
+import { judgeRound, mean, paired, signP, type RoundScores, type ScoreRow } from "../src/core/merge-rule.ts";
 import { findPrompts, readPrompt, writePrompt } from "../src/core/prompt.ts";
 import { candidateProblem, promptPathProblem } from "../src/core/safety.ts";
 import { newState, stopReason } from "../src/core/state.ts";
@@ -60,12 +60,6 @@ test("scenarios that can't be paired are unknown", () => {
   const s = scored("p", 50, 50, 70, 60);
   s.candidates[0].train = rows(Array(20).fill(70), false, "other");
   assert.equal(judgeRound(s, goal(), null).action, "skip");
-});
-
-test("noise comes from the same prompt scored twice", () => {
-  assert.equal(noisePoints(rows([50, 60]), rows([50, 60])), 0);
-  assert.ok(Math.abs(noisePoints(rows([52, 48]), rows([48, 52]))! - 4 / Math.SQRT2) < 1e-9);
-  assert.equal(noisePoints(rows([50, null]), rows([50, 60])), null);
 });
 
 test("an unknown score is never zero", () => {

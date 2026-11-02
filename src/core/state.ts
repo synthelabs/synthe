@@ -8,15 +8,15 @@ export interface RoundRecord {
 export interface State {
   round: number;
   prompt: string | null; // tracked inline prompt text
-  lastMerge: { pr: number; priorPrompt: string; priorScores: ScoreRow[]; mergedHash: string; reverted: boolean } | null;
+  lastMerge: { pr: number; priorPrompt: string; mergedHash: string; reverted: boolean } | null;
   stalls: number;
   spendUsd: number;
   spendUnknown: boolean;
   stopped: string | null;
   issue: number | null;
   scenariosHash: string | null; // scenarios the last round was scored on
-  // The current prompt's worst training cases from the last round, for the next writer to study.
-  lessons: { promptHash: string; rows: { id: string; score: number; reply: string }[] } | null;
+  // Training cases from the last round where the current prompt lost or broke a guardrail, for the next writer.
+  lessons: { promptHash: string; rows: { id: string; reply: string; better?: string; violation: boolean }[] } | null;
   rounds: RoundRecord[];
 }
 

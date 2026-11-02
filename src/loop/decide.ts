@@ -6,6 +6,7 @@ import { resumeIfScenariosChanged, stopReason, type RoundRecord } from "../core/
 import type { Repo } from "../github/repo.ts";
 import { ISSUE_TITLE, renderReport } from "./report.ts";
 import type { Candidate } from "./write.ts";
+import { WIN } from "./score.ts";
 
 export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null }
 
@@ -60,7 +61,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   } else {
     // A teammate's later edit is a different prompt, so its score says nothing about Synthe's merge.
     const last = state.lastMerge;
-    const replaced = last && !last.reverted && last.mergedHash === scores.baselineHash ? last.priorScores : null;
+    const replaced = last && !last.reverted && last.mergedHash === scores.baselineHash && scores.prior ? scores.prior : null;
     const verdict = judgeRound(scores, goal, replaced);
     record.reasons.push(...verdict.reasons);
     if (verdict.action === "merge") {
@@ -73,7 +74,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
         const pr = await land(text!, `Synthe: improve prompt (round ${round})`, verdict.reasons.join(" "));
         if (pr !== null) {
           Object.assign(record, { outcome: "merged", pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses });
-          state.lastMerge = { pr, priorPrompt: current, priorScores: [...scores.baselineTrain, ...scores.baselineHoldout], mergedHash: sha256(text!), reverted: false };
+          state.lastMerge = { pr, priorPrompt: current, mergedHash: sha256(text!), reverted: false };
           state.prompt = goal.prompt.kind === "inline" ? text! : null;
           state.stalls = 0;
         } else {
@@ -96,12 +97,15 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
 
   if (scores) {
     // Training rows only: held-back scenarios are never in scores.baselineTrain, so the writer can't learn them.
-    const worst = scores.baselineTrain
-      .filter((r): r is typeof r & { score: number; reply: string } => typeof r.score === "number" && r.score < 100 && typeof r.reply === "string")
-      .sort((a, b) => a.score - b.score)
-      .slice(0, LESSONS)
-      .map(({ id, score, reply }) => ({ id, score, reply }));
-    state.lessons = { promptHash: scores.baselineHash, rows: worst };
+    // A lesson is a scenario where the current prompt broke a guardrail or a rewrite beat it, with both replies.
+    const lessons = scores.baselineTrain.flatMap((r) => {
+      if (typeof r.reply !== "string") return [];
+      const winner = scores.candidates.map((c) => c.train.find((x) => x.id === r.id)).find((x) => x?.score === WIN && typeof x.reply === "string");
+      if (!winner && r.violation !== true) return [];
+      return [{ id: r.id, reply: r.reply, better: winner?.reply, violation: r.violation === true }];
+    });
+    lessons.sort((a, b) => Number(b.violation) - Number(a.violation));
+    state.lessons = { promptHash: scores.baselineHash, rows: lessons.slice(0, LESSONS) };
   }
   state.round = round;
   state.scenariosHash = scenariosHash;

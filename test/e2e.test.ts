@@ -64,7 +64,11 @@ const anthropic = createServer((req, res) => {
     const schema = JSON.stringify(b.output_config?.format?.schema ?? "");
     const user = b.messages[0].content;
     let text: string;
-    if (schema.includes("guardrail_ok")) text = JSON.stringify({ score: user.includes("policy-aware") ? 92 : 40, guardrail_ok: true });
+    if (schema.includes("guardrail_ok")) {
+      const good = (tag: string) => new RegExp(`<${tag}>\\n[^<]*policy-aware`).test(user);
+      const a = good("reply_a"), b = good("reply_b");
+      text = JSON.stringify({ better: a === b ? "tie" : a ? "A" : "B", a_guardrail_ok: true, b_guardrail_ok: true });
+    }
     else if (schema.includes("prompt")) text = JSON.stringify({ prompt: "You are careful and use the store policy." });
     else text = b.system?.includes("careful") ? "A policy-aware answer." : "A vague answer.";
     res.setHeader("content-type", "application/json");
@@ -119,8 +123,8 @@ test("one full round merges the winner using the real bundle", async () => {
   const state = JSON.parse(files.get("synthe/state:state.json")!);
   assert.equal(state.rounds[0].outcome, "merged");
   assert.ok(state.spendUsd > 0);
-  assert.match(issues.at(-1) ?? "", /40\.0 to 92\.0/);
-  assert.equal(models["claude-sonnet-5-5"], 3);
+  assert.match(issues.at(-1) ?? "", /\| merged \| 100\.0 \|/);
+  assert.equal(models["claude-sonnet-5-5"], 2);
 });
 
 test("requests carry valid model settings", () => {

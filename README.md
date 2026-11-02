@@ -12,10 +12,10 @@ Answer one question, paste your key, and go to sleep. In the morning, open the *
 
 Every hour, up to 12 times, Synthe:
 
-1. Writes 3 new versions of your system prompt, studying the replies it got most wrong last round.
-2. Tests them against simulated scenarios, including 10 the writer never sees.
+1. Writes 2 new versions of your system prompt, studying the replies that lost last round.
+2. Puts each one head to head with your current prompt on simulated scenarios, including 10 the writer never sees.
 3. Merges the winner only if it wins scenario by scenario, gains on the 10 unseen scenarios and breaks no guardrail.
-4. Reverts a merged prompt if it later scores clearly below the prompt it replaced.
+4. Reverts a merged prompt if the prompt it replaced later beats it clearly, head to head.
 
 It only ever changes the system prompt. It never touches your other code, your CI or your secrets, and it never runs your agent's code.
 
@@ -39,7 +39,7 @@ It also stops by itself when the budget ($3 by default) runs out, after 3 rounds
 | `npx synthe status` | Show progress |
 | `npx synthe stop` | Stop all runs |
 | `npx synthe try` | Run one round locally, changing nothing |
-| `npx synthe try --noise` | Score your prompt twice to see how noisy scores are |
+| `npx synthe try --noise` | Judge your prompt against itself to see how noisy judging is |
 
 ## Requirements
 

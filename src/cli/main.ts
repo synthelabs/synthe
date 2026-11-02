@@ -59,8 +59,10 @@ async function tryRound() {
   const scenarios = parseScenarios(readFileSync(goal.scenarios, "utf8"));
   const model = anthropicModel(key);
   if (process.argv.includes("--noise")) {
-    const { points, costUsd } = await measureNoise(goal, prompt, scenarios, model);
-    console.log(`Noise: ${points === null ? "unknown" : `${points.toFixed(1)} points`}. Cost: ${costUsd === null ? "unknown" : `${costUsd.toFixed(4)}`}`);
+    const n = await measureNoise(goal, prompt, scenarios, model);
+    const split = n.wins === null ? "unknown (some replies or judgments failed)" : `won ${n.wins}, lost ${n.losses}, tied ${n.ties}`;
+    console.log(`Your prompt against itself: ${split}. Any lean here is noise; a real win has to beat it clearly.`);
+    console.log(`Cost: ${n.costUsd === null ? "unknown" : `$${n.costUsd.toFixed(4)}`}`);
     return;
   }
   const written = await runWrite(goal, newState(), prompt, scenarios, model);
@@ -73,7 +75,7 @@ const HELP = `synthe init    set up this repo and start improving
 synthe status  show progress
 synthe stop    stop all runs
 synthe try     run one round locally, changing nothing
-               add --noise to score your prompt twice and see how noisy scores are`;
+               add --noise to judge your prompt against itself and see how noisy judging is`;
 
 async function main() {
   const command = process.argv[2];

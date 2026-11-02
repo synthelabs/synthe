@@ -54,7 +54,9 @@ async function main() {
   } else if (step === "score") {
     const written = load<any>("candidates.json");
     if (!written) throw new Error("candidates are missing");
-    const scored = await runScore(goal, prompt, written.candidates, scenarios, model);
+    const last = state.lastMerge;
+    const prior = last && !last.reverted && last.mergedHash === sha256(prompt) ? last.priorPrompt : null;
+    const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior);
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
     save("scores.json", scored);
   } else {

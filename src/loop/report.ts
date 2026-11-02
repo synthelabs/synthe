@@ -12,11 +12,9 @@ function status(goal: Goal, state: State): string[] {
   }
   if (!isFinished(state.stopped)) return [`**Status:** stopped: ${state.stopped}.`];
   const merged = state.rounds.filter((r) => r.outcome === "merged");
-  const reverted = state.rounds.some((r) => r.outcome === "reverted");
-  const first = merged[0];
-  const last = merged.at(-1);
-  const gain = first && last && !reverted && first.heldBefore !== undefined && last.heldAfter !== undefined
-    ? ` Held-back score went from ${first.heldBefore.toFixed(1)} to ${last.heldAfter.toFixed(1)}.` : "";
+  const reverted = state.rounds.filter((r) => r.outcome === "reverted").length;
+  const gain = merged.length > 0
+    ? ` Each beat the prompt before it head to head, on training and held-back scenarios.${reverted ? ` ${reverted} later turned out worse and ${reverted === 1 ? "was" : "were"} reverted.` : ""}` : "";
   const result = merged.length === 0
     ? "No rewrite won clearly enough to merge, so your prompt stays as it was."
     : `Merged ${merged.length} improvement${merged.length === 1 ? "" : "s"}.${gain}`;
@@ -44,11 +42,11 @@ export function renderReport(goal: Goal, state: State): string {
     "",
     `**Rounds:** ${state.round} of up to ${goal.merge_rule.max_rounds}. **Merged:** ${merged.length}. **Spent:** ${money} of $${goal.budget.max_usd}.`,
     "",
-    "| Round | Result | Held-back score | Scenarios won / lost | PR | Cost | Why |",
+    "| Round | Result | Held-back head-to-head (50 = even) | Scenarios won / lost | PR | Cost | Why |",
     "| --- | --- | --- | --- | --- | --- | --- |",
   ];
   for (const r of [...state.rounds].reverse()) {
-    const score = r.heldAfter !== undefined ? `${r.heldBefore?.toFixed(1)} to ${r.heldAfter.toFixed(1)}` : "";
+    const score = r.heldAfter !== undefined ? r.heldAfter.toFixed(1) : "";
     const split = r.wins !== undefined ? `${r.wins} / ${r.losses}` : "";
     const cost = r.costUsd === null ? "unknown"
       : `$${r.costUsd.toFixed(2)}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}`;

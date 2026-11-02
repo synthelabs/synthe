@@ -11,6 +11,8 @@ export interface RoundScores {
   baselineTrain: ScoreRow[];
   baselineHoldout: ScoreRow[];
   candidates: CandidateScore[];
+  // The prompt the last merge replaced, challenging the current one head to head, when that merge is still live.
+  prior?: ScoreRow[];
 }
 
 export type Verdict =
@@ -52,15 +54,6 @@ export function paired(after: ScoreRow[], before: ScoreRow[]) {
   return { wins, losses, p: signP(wins, losses) };
 }
 
-// Points of noise in one score, from the same prompt scored twice.
-export function noisePoints(first: ScoreRow[], second: ScoreRow[]): number | null {
-  if (paired(first, second) === null) return null;
-  const other = new Map(second.map((r) => [r.id, r.score as number]));
-  const gaps = first.map((r) => (r.score as number) - other.get(r.id)!);
-  const average = gaps.reduce((a, b) => a + b, 0) / gaps.length;
-  return Math.sqrt(gaps.reduce((sum, g) => sum + (g - average) ** 2, 0) / gaps.length / 2);
-}
-
 const violated = (rows: ScoreRow[]) => rows.some((r) => r.violation !== false);
 
 // Why a candidate fails on the training scenarios, or null if it passes. Scoring uses this to pick which
@@ -71,21 +64,21 @@ export function trainingProblem(c: CandidateScore, baselineTrain: ScoreRow[], go
   if (before === null) return "baseline score unknown";
   const after = mean(c.train);
   if (after === null) return `${c.id}: training score unknown`;
-  if (after < before + min_improvement) return `${c.id}: ${after.toFixed(1)} did not beat ${before.toFixed(1)} by ${min_improvement}`;
+  if (after < before + min_improvement) return `${c.id}: head-to-head ${after.toFixed(1)}, needs ${(before + min_improvement).toFixed(1)} (${before.toFixed(0)} is even)`;
   const split = paired(c.train, baselineTrain);
   if (split === null) return `${c.id}: scenarios could not be compared`;
   if (split.p > max_p) return `${c.id}: won ${split.wins} and lost ${split.losses} scenarios, which could be noise`;
   return null;
 }
 
-// replaced holds the scores of the prompt the last merge replaced, or null when there is nothing to check.
+// replaced holds the head-to-head rows of the prompt the last merge replaced against the current prompt, or null
+// when there is nothing to check. It reverts only when that older prompt now wins clearly.
 export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[] | null): Verdict {
   const { min_improvement, noise_margin, max_p } = goal.merge_rule;
   const before = mean(scores.baselineTrain);
   const beforeHoldout = mean(scores.baselineHoldout);
   if (before === null || beforeHoldout === null) return { action: "skip", reasons: ["baseline score unknown"] };
 
-  // The best of three candidates reads high, so a revert compares against what the merge replaced, not its own score.
   if (replaced !== null) {
     const now = [...scores.baselineTrain, ...scores.baselineHoldout];
     const was = mean(replaced);
@@ -94,7 +87,7 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
     if (was !== null && is !== null && worse !== null && is < was - noise_margin && worse.p <= max_p) {
       return {
         action: "revert",
-        reasons: [`now ${is.toFixed(1)}, below the ${was.toFixed(1)} of the prompt it replaced; worse on ${worse.wins} scenarios, better on ${worse.losses}`],
+        reasons: [`the prompt it replaced now wins head to head, ${was.toFixed(1)} to ${is.toFixed(1)}: better on ${worse.wins} scenarios, worse on ${worse.losses}`],
       };
     }
   }
@@ -114,7 +107,7 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
     if (best === null || after > best.after) {
       best = {
         action: "merge", candidateId: c.id, before, after, heldBefore: beforeHoldout, heldAfter: held, wins: split.wins, losses: split.losses,
-        reasons: [`${beforeHoldout.toFixed(1)} to ${held.toFixed(1)} held back, ${before.toFixed(1)} to ${after.toFixed(1)} on training; won ${split.wins} and lost ${split.losses} training scenarios`],
+        reasons: [`head-to-head ${held.toFixed(1)} held back and ${after.toFixed(1)} on training, where ${before.toFixed(0)} is even; won ${split.wins} and lost ${split.losses} training scenarios`],
       };
     }
   }
