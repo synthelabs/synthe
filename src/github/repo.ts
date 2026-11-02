@@ -30,7 +30,8 @@ const RETRIES = 2;
 const sleepFor = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function githubRepo(slug: string, token: string, api = "https://api.github.com", sleep = sleepFor): Repo {
-  // GitHub's rate limits answer 429, or 403 with a rate-limit sign. Wait as asked (at most a minute) and try again.
+  // GitHub's rate limits answer 429, or 403 with a rate-limit sign: wait as asked (at most a minute) and try again.
+  // Server errors are retried after a short pause.
   const call = async (method: string, path: string, body?: unknown, accept = "application/vnd.github+json"): Promise<Response> => {
     for (let attempt = 0; ; attempt++) {
       const res = await fetch(`${api}/repos/${slug}${path}`, {
@@ -38,7 +39,10 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
         headers: { Authorization: `Bearer ${token}`, Accept: accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "synthe" },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
-      if (attempt >= RETRIES || (res.status !== 429 && res.status !== 403)) return res;
+      if (attempt >= RETRIES) return res;
+      // GitHub's own hiccups (500, 502, 503, 504) usually pass in seconds.
+      if (res.status >= 500) { await sleep(5_000); continue; }
+      if (res.status !== 429 && res.status !== 403) return res;
       const text = await res.clone().text();
       if (!isRateLimited(res.status, res.headers, text)) return res;
       const wait = Number(res.headers.get("retry-after"));

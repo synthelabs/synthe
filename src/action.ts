@@ -38,7 +38,9 @@ async function main() {
   const stop = stopReason(state, goal.merge_rule.max_rounds, goal.merge_rule.stall_rounds, goal.budget.max_usd);
   if (stop) {
     console.log(`Stopped: ${stop}`);
-    setOutput("go", "false");
+    // A decide step that died partway still needs its own cleanup and a final report, even when the run is over.
+    // "recover" skips scoring (it only runs on "true") but lets decide run.
+    setOutput("go", state.pending ? "recover" : "false");
     return;
   }
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, state.prompt);

@@ -100,6 +100,13 @@ test("a rate limit is waited out and retried before giving up", async () => {
   assert.deepEqual(waits, [2000]);
 });
 
+test("a GitHub server error is retried after a short pause", async () => {
+  waits.length = 0;
+  mergeQueue = [{ status: 502, body: "bad gateway", headers: {} }];
+  assert.deepEqual(await repo.mergePr(7, "s"), { merged: true });
+  assert.deepEqual(waits, [5000]);
+});
+
 test("a branch left behind by a crashed round is moved, not a failure", async () => {
   files.set("synthe/round-9:.keep", "");
   const sha = await repo.commitFile({ branch: "synthe/round-9", baseSha: "headsha", path: "prompt.md", content: "Again", message: "m" });

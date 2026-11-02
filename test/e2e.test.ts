@@ -147,6 +147,23 @@ test("a stopped run says so and doesn't call the model", async () => {
   assert.equal(bodies.length, before);
 });
 
+test("a stopped run with a crashed decide still lets decide clean up and report", async () => {
+  reset();
+  files.set("synthe/state:state.json", JSON.stringify({ round: 3, stalls: 3, spendUsd: 0.2, stopped: null, pending: { round: 3, at: "t", costUsd: 0.07 }, rounds: [] }));
+  writeFileSync(join(dir, "out.txt"), "");
+  const before = bodies.length;
+  assert.equal((await step("write")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=recover/);
+  assert.equal(bodies.length, before); // nothing scored, nothing spent
+  const d = await step("decide");
+  assert.equal(d.code, 0, d.log);
+  const state = JSON.parse(files.get("synthe/state:state.json")!);
+  assert.equal(state.pending, null);
+  assert.equal(state.rounds[0].outcome, "failed");
+  assert.match(state.stopped, /no winner/);
+  assert.match(issues.at(-1) ?? "", /finished|stopped/);
+});
+
 test("a revoked key fails the job, and decide records the failed round", async () => {
   reset();
   denyKey = true;

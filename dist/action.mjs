@@ -28220,7 +28220,12 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
         headers: { Authorization: `Bearer ${token}`, Accept: accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "synthe" },
         body: body === void 0 ? void 0 : JSON.stringify(body)
       });
-      if (attempt >= RETRIES || res.status !== 429 && res.status !== 403) return res;
+      if (attempt >= RETRIES) return res;
+      if (res.status >= 500) {
+        await sleep2(5e3);
+        continue;
+      }
+      if (res.status !== 429 && res.status !== 403) return res;
       const text = await res.clone().text();
       if (!isRateLimited(res.status, res.headers, text)) return res;
       const wait = Number(res.headers.get("retry-after"));
@@ -28903,7 +28908,7 @@ async function main() {
   const stop = stopReason(state, goal.merge_rule.max_rounds, goal.merge_rule.stall_rounds, goal.budget.max_usd);
   if (stop) {
     console.log(`Stopped: ${stop}`);
-    setOutput("go", "false");
+    setOutput("go", state.pending ? "recover" : "false");
     return;
   }
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, state.prompt);
