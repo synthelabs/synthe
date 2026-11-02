@@ -1,50 +1,58 @@
 # Synthe
 
-Your agent improves its own system prompt overnight and merges the wins.
+Synthe makes your AI agent's system prompt better while you sleep. Each hour it tries small changes to the prompt, tests them against the current one on simulated customer messages, and keeps a change only when it's clearly better. It either merges the change into your main branch for you, or opens a pull request for you to review. You choose at setup.
 
 ```bash
 npx synthe init
 ```
 
-Answer one question, paste your key, and go to sleep. In the morning, open the **Synthe: overnight prompt report** issue in your repo to see what merged and why.
+Setup asks what your agent should get better at, whether to merge changes automatically or have you review them, and for your Synthe key. In the morning, open the **Synthe: overnight prompt report** issue in your repo. It says what changed, why, and how to undo it.
 
-## What it does
+## Before you start
 
-Every hour, up to 12 times, Synthe:
+- A GitHub repo you can admin, with your agent's system prompt in it, either in its own file or as a string in your code.
+- The [GitHub CLI](https://cli.github.com), signed in (`gh auth login`), and Node 20 or later.
+- A Synthe key. At Crimson Hacks, get one at the Synthe table. It has $3 of credit, paid by Synthe.
+- **Your main branch gets Synthe's changes if you choose automatic merging.** If main deploys your app, each change goes live. Choose review mode at setup if that's not what you want. Repos that require reviews get review mode automatically.
 
-1. Proposes 2 new versions of your system prompt, each one or two exact edits aimed at the replies that lost last round.
-2. Puts each one head to head with your current prompt on simulated scenarios, including 10 the writer never sees.
-3. Merges the winner only if it wins scenario by scenario, gains on the 10 unseen scenarios and never breaks a guardrail your current prompt keeps.
-4. Reverts a merged prompt if the prompt it replaced later beats it clearly, head to head.
+## What it adds to your repo
 
-It only ever changes the system prompt. It never touches your other code, your CI or your secrets, and it never runs your agent's code.
+Setup commits three files: `synthe.json` (the goal, your rules and settings), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the hourly job). It saves your key as the repo secret `SYNTHE_ANTHROPIC_KEY`. After that, the only file Synthe ever changes is your prompt. It never runs your agent's code.
 
-## What it doesn't do
+## What happens each hour
 
-Scores come from simulated scenarios, not real users, so a higher score doesn't guarantee better results in production. Tools your agent calls aren't exercised.
+1. Synthe proposes 2 small changes to your prompt, aimed at the test cases where it does worst.
+2. It runs your agent's current prompt and each change on the test cases, and an AI judge compares the replies side by side.
+3. A change is kept only if its replies are better in clearly more cases than they're worse (more than luck would explain), better again on test cases it never saw, and it breaks none of your rules where your old prompt followed them.
+4. If a kept change later turns out worse than the prompt it replaced, Synthe puts the old one back.
 
-## Stop it
+It runs at most 12 rounds and stops by itself sooner when 3 rounds in a row find nothing better, or when it has used its $3.
 
-```bash
-npx synthe stop
-```
+## While it runs
 
-It also stops by itself when the budget ($3 by default) runs out, after 3 rounds with no winner, or after 12 rounds.
+- You can keep editing your prompt. Synthe always starts from the latest version on main. After it changes the prompt, pull before you edit it.
+- To keep your agent unchanged, for example before a demo, run `npx synthe stop`.
+- `npx synthe status` shows where it is.
+
+## What it doesn't test
+
+The test cases are simulated single messages, not real customers or full conversations, and your agent's tools aren't run. A better result here is a strong hint, not proof of how real customers will react.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `npx synthe init` | Set up this repo and start |
-| `npx synthe status` | Show progress |
-| `npx synthe stop` | Stop all runs |
-| `npx synthe try` | Run one round locally, changing nothing |
-| `npx synthe try --noise` | Judge your prompt against itself to see how noisy judging is |
+| `npx synthe status` | Show where it is |
+| `npx synthe stop` | Stop it. Nothing more runs or changes |
+| `npx synthe try` | Run one round on your machine, changing nothing (needs `ANTHROPIC_API_KEY`) |
+| `npx synthe try --noise` | Compare your prompt with itself to see how much the judge varies |
 
-## Requirements
+## Change what it aims for
 
-A GitHub repo you admin and the [GitHub CLI](https://cli.github.com), signed in. If your default branch requires reviews, Synthe leaves each winning pull request open for you to merge instead.
+- `synthe.json`: `objective` (what to get better at), `guardrails` (rules it must never break), `policy` (your business rules, which setup copies from your prompt so the judge knows what's allowed), `budget`, and `"merge_rule": { "mode": "propose" }` to review every change.
+- `.synthe/scenarios.jsonl`: the test cases, one per line, such as `{"id": "s31", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}`. `split` is `train` (Synthe learns from it) or `holdout` (kept hidden to check its changes). Adding cases to a finished run starts it again at the next hourly check.
 
-## Change the goal
+## Removing it
 
-Edit `synthe.json` for the objective, guardrails and budget (set `"merge_rule": { "mode": "propose" }` to review every change before it merges), and `.synthe/scenarios.jsonl` for the test cases. Scenario rows marked `holdout` stay hidden from the writer.
+Run `npx synthe stop`, then delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and the `SYNTHE_ANTHROPIC_KEY` secret.

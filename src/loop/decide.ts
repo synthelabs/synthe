@@ -1,16 +1,49 @@
-import type { Goal } from "../core/goal.ts";
+import { parseScenarios, type Goal } from "../core/goal.ts";
 import { judgeRound, type RoundScores } from "../core/merge-rule.ts";
 import { readPrompt, writePrompt } from "../core/prompt.ts";
 import { candidateProblem, promptPathProblem, sha256 } from "../core/safety.ts";
 import { resumeIfScenariosChanged, stopReason, type Landing, type RoundRecord, type State } from "../core/state.ts";
 import type { MergeProblem, Repo } from "../github/repo.ts";
-import { ISSUE_TITLE, renderReport } from "./report.ts";
+import { ISSUE_TITLE, exampleText, notTested, renderReport } from "./report.ts";
 import type { Candidate } from "./write.ts";
 import { WIN } from "./score.ts";
 
-export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[] }
+export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string }
 
 const LESSONS = 6;
+
+export interface Example { input: string; before: string; after: string }
+const clipText = (t: string, n = 280) => (t.length > n ? `${t.slice(0, n).trimEnd()}...` : t).replace(/\s+/g, " ").trim();
+
+// One real test case the change won, with both replies: what a team wants to see, and to show.
+function pickExample(scores: RoundScores, candidateId: string, scenarioText: string | null): Example | undefined {
+  if (!scenarioText) return undefined;
+  let rows: { id: string; input: string; split: string }[] = [];
+  try { rows = parseScenarios(scenarioText); } catch { return undefined; }
+  const won = scores.candidates.find((c) => c.id === candidateId)?.train.find((r) => r.score === WIN && typeof r.reply === "string");
+  const before = won && scores.baselineTrain.find((r) => r.id === won.id)?.reply;
+  const scenario = won && rows.find((r) => r.id === won.id && r.split === "train");
+  return won && before && scenario ? { input: clipText(scenario.input, 200), before: clipText(before), after: clipText(won.reply!) } : undefined;
+}
+
+
+// Details a change adds that a business would have to really offer: amounts, percentages, time limits, web
+// addresses and emails that are nowhere in the old prompt or the policy. A reviewer should check they're real.
+const DETAIL = /\$\s?\d[\d,]*(?:\.\d+)?|\b\d+(?:\.\d+)?\s?%|\b\d+[- ]?(?:days?|hours?|weeks?|months?|years?)\b|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\b(?:https?:\/\/)?[\w-]+(?:\.[\w-]+)*\.(?:com|org|net|io|co|ai|app|shop|store)(?:\/[\w\-/]*)?/gi;
+export function newDetails(edits: { find: string; replace: string }[] | undefined, known: string): string[] {
+  const norm = (t: string) => t.toLowerCase().replace(/\s+/g, "").replace(/^https?:\/\//, "");
+  const have = norm(known);
+  const added = (edits ?? []).flatMap((e) => e.replace.match(DETAIL) ?? []);
+  return [...new Set(added.map((d) => d.trim()))].filter((d) => !have.includes(norm(d))).slice(0, 8);
+}
+
+// The edits as a diff a reviewer can read at a glance.
+function diffLines(edits: { find: string; replace: string }[] | undefined): string[] {
+  return (edits ?? []).flatMap((e) => [
+    ...(e.find ? e.find.split("\n").map((l) => `- ${l}`) : []),
+    ...e.replace.split("\n").map((l) => `+ ${l}`),
+  ]).slice(0, 60);
+}
 
 // Merge problems a person has to fix; the run stops and the report says how.
 // (A merge blocked by branch rules isn't here: its pull request is left open as a proposal instead.)
@@ -132,14 +165,46 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
 
   // Opens the pull request, then merges it (auto mode) or leaves it for a person (propose mode, or a repo whose
   // branch rules require a review). Returns the pull request and whether it was only proposed, or null.
-  const land = async (text: string, kind: "merge" | "revert", title: string, why: string): Promise<{ pr: number; proposed: boolean } | null> => {
+  type Why = { changed: string; plain: string; technical: string; diff?: string[]; example?: Example; unverified?: string[] };
+  const land = async (text: string, kind: "merge" | "revert", title: string, why: Why): Promise<{ pr: number; proposed: boolean } | null> => {
     const branch = `synthe/round-${round}`;
     const landing: Landing = { branch, kind, text, priorPrompt: current!, propose: merge_rule.mode === "propose" };
     state.pending = { ...state.pending!, land: landing };
     await repo.writeState(state);
     const content = writePrompt(source!, goal.prompt, current!, text);
     const sha = await repo.commitFile({ branch, baseSha: head, path, content, message: title });
-    const pr = await repo.openPr({ branch, base, title, body: `${why}\n\nChosen by Synthe from simulated scenarios. Only \`${path}\` changed.${landing.propose ? " Merge it to keep the change, or close it to decline." : ""}` });
+    const short = (h: string | null | undefined) => (h ? `\`sha256:${h.slice(0, 12)}\`` : "unknown");
+    const { writer, runner, judge, checker } = goal.models;
+    const receipt = [
+      "Fingerprints of exactly what was tested, so anyone can check or reproduce this decision. You can ignore them.",
+      `- Commit tested: \`${head.slice(0, 12)}\``,
+      `- Prompt before: ${short(sha256(current!))}, after: ${short(sha256(text))}`,
+      `- Test cases: ${short(scenariosHash)}, goal file: ${short(input.goalHash)}`,
+      `- AI models: writer ${writer}, agent ${runner}, judge ${judge}, rule checker ${checker}`,
+    ].join("\n");
+    const when = `${now.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+    // Written for whoever opens the notification: what happened, what changed, why, what to do, and how to undo it.
+    // The fingerprints and the test's limits are there for anyone who wants to check, folded away.
+    const bodyFor = (proposed: boolean, blocked = false) => [
+      proposed
+        ? blocked
+          ? `**Waiting for your review.** Synthe found a better prompt, but this repo's rules require a review before merging into \`${base}\`. Merge this pull request to keep the change, or close it to decline. Synthe pauses until you decide.`
+          : `**Waiting for your review.** Synthe found a better prompt. Merge this pull request to keep the change, or close it to decline. Synthe pauses until you decide.`
+        : `**Already merged into \`${base}\`** at ${when}, because automatic merging was chosen at setup. If \`${base}\` deploys your app, this change is live.`,
+      `**What changed in \`${path}\`:** ${why.changed}`,
+      ...(why.diff?.length ? ["```diff\n" + why.diff.join("\n") + "\n```"] : []),
+      ...(why.unverified?.length ? [`**Check these are real:** this change adds ${why.unverified.map((d) => `\`${d}\``).join(", ")}, which ${why.unverified.length === 1 ? "isn't" : "aren't"} in your old prompt or your policy. Make sure your business really offers ${why.unverified.length === 1 ? "it" : "them"}${proposed ? " before merging" : ", or revert this change"}.`] : []),
+      `**Why:** ${why.plain}`,
+      ...(why.example ? [exampleText(why.example)] : []),
+      proposed
+        ? "After merging, pull before you edit the prompt yourself."
+        : "**Before you edit the prompt yourself, pull the latest changes,** so this change isn't overwritten. To undo it, click **Revert** on this pull request.",
+      "Tested on simulated customers only. It can't tell you how real customers will react.",
+      `<details><summary>Fingerprints of what was tested</summary>\n\n${receipt}\n\nThe judge's numbers: ${why.technical}\n\n</details>`,
+      `<details><summary>What this did not test</summary>\n\n${notTested(goal).slice(1).join("\n")}\n\n</details>`,
+    ].join("\n\n");
+    const body = bodyFor(Boolean(landing.propose));
+    const pr = await repo.openPr({ branch, base, title, body });
     if (landing.propose) {
       state.proposal = { ...landing, pr, round };
       return { pr, proposed: true };
@@ -155,6 +220,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       landing.propose = true;
       await repo.writeState(state);
       state.proposal = { ...landing, pr, round };
+      await repo.updatePrBody(pr, bodyFor(true, true));
       return { pr, proposed: true };
     }
     await repo.closePr(pr);
@@ -168,6 +234,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   if (!scores || !input.candidates) {
     record.outcome = "failed";
     record.reasons.push("the round did not finish; check the Actions log and the API key");
+    record.plain = "This round didn't finish. If it keeps happening, check the Actions log and that your key still has credit.";
   } else if (input.costUsd === null) {
     record.reasons.push("cost unknown, so nothing merges");
     state.spendUnknown = true;
@@ -185,6 +252,14 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     const replaced = last && !last.reverted && last.mergedHash === scores.baselineHash && scores.prior ? scores.prior : null;
     const verdict = judgeRound(scores, goal, replaced);
     record.reasons.push(...verdict.reasons);
+    record.tried = [
+      ...input.candidates.map((c) => ({
+        summary: c.summary ?? "A change to the prompt",
+        outcome: verdict.notes[c.id] ?? (candidateProblem(c.text, goal.prompt) ? "Refused by a safety check, so it wasn't tested." : "Not tested."),
+      })),
+      ...(input.rejected ?? []).map((r) => ({ summary: "An edit that couldn't be applied", outcome: `Not used: ${r.replace(/^candidate-\d+: /, "")}.` })),
+    ];
+    if (verdict.action === "skip") record.plain = "Nothing was clearly better, so your prompt stayed the same.";
     if (verdict.action === "merge") {
       const chosen = input.candidates.find((c) => c.id === verdict.candidateId);
       const text = chosen?.text;
@@ -192,10 +267,21 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       if (problem) {
         record.reasons.push(problem);
       } else {
-        const why = [chosen?.summary ? `What changed: ${chosen.summary}` : "", verdict.reasons.join(" ")].filter(Boolean).join("\n\n");
-        const landed = await land(text!, "merge", `Synthe: improve prompt (round ${round})`, why);
+        const changed = chosen?.summary ?? "A change to the prompt";
+        const example = pickExample(scores, verdict.candidateId, scenarioText);
+        const unverified = newDetails(chosen?.edits, `${current}\n${goal.policy ?? ""}`);
+        const name = chosen?.title ?? (changed.length > 60 ? `${changed.slice(0, 57)}...` : changed);
+        const landed = await land(text!, "merge", `Synthe: ${name}`,
+          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified });
+        if (landed) {
+          if (example) record.example = example;
+          if (chosen?.title) record.title = chosen.title;
+          if (unverified.length) record.unverified = unverified;
+        }
         if (landed) {
           Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses });
+          record.changed = chosen?.summary ?? "A change to the prompt";
+          record.plain = verdict.plain;
           if (!landed.proposed) {
             state.lastMerge = { pr: landed.pr, priorPrompt: current, mergedHash: sha256(text!), reverted: false };
             state.prompt = goal.prompt.kind === "inline" ? text! : null;
@@ -205,9 +291,11 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       }
     } else if (verdict.action === "revert") {
       const prior = state.lastMerge!.priorPrompt;
-      const landed = await land(prior, "revert", `Synthe: revert round ${round - 1}'s prompt`, verdict.reasons.join(" "));
+      const landed = await land(prior, "revert", "Synthe: undo the last prompt change", { changed: "Puts back the prompt from before Synthe's last change.", plain: verdict.plain, technical: verdict.reasons.join(" ") });
       if (landed) {
         Object.assign(record, { outcome: landed.proposed ? "proposed" : "reverted", pr: landed.pr });
+        record.changed = "Put back the prompt from before the last change";
+        record.plain = verdict.plain;
         if (!landed.proposed) {
           state.lastMerge!.reverted = true;
           state.prompt = goal.prompt.kind === "inline" ? prior : null;

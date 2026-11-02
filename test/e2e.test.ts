@@ -126,7 +126,8 @@ test("one full round merges the winner using the real bundle", async () => {
   const state = JSON.parse(files.get("synthe/state:state.json")!);
   assert.equal(state.rounds[0].outcome, "merged");
   assert.ok(state.spendUsd > 0);
-  assert.match(issues.at(-1) ?? "", /\| merged \| 100\.0 \|/);
+  assert.match(issues.at(-1) ?? "", /## Your prompt is getting better: 1 change merged so far/);
+  assert.match(issues.at(-1) ?? "", /\| 1 \| Merged \(#1\) \|/);
   assert.equal(models["claude-sonnet-5-5"], 2);
 });
 

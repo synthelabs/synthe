@@ -1,6 +1,6 @@
 {
   "name": "synthe",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Your agent improves its own prompt overnight and merges the wins.",
   "type": "module",
   "license": "Apache-2.0",

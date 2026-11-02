@@ -18,6 +18,7 @@ export interface Repo {
   mergePr(number: number, sha: string): Promise<MergeResult>;
   deleteBranch(branch: string): Promise<void>;
   closePr(number: number): Promise<void>;
+  updatePrBody(number: number, body: string): Promise<void>;
   findPr(branch: string): Promise<PrInfo | null>;
   upsertIssue(number: number | null, title: string, body: string): Promise<number>;
   readState(): Promise<State>;
@@ -110,6 +111,7 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
     },
     async deleteBranch(branch) { await call("DELETE", `/git/refs/heads/${encodeURIComponent(branch)}`); },
     async closePr(number) { await call("PATCH", `/pulls/${number}`, { state: "closed" }); },
+    async updatePrBody(number, body) { await call("PATCH", `/pulls/${number}`, { body }); },
     async findPr(branch) {
       const owner = slug.split("/")[0];
       const list = await json("GET", `/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`);

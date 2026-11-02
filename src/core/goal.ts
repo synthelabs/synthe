@@ -11,6 +11,7 @@ export interface Goal {
   version: 1;
   prompt: PromptLocation;
   objective: string;
+  policy?: string; // the business rules the agent must follow, so the judge can tell what is and isn't allowed
   guardrails: string[];
   scenarios: string;
   models: { writer: string; runner: string; judge: string; checker: string };
@@ -39,6 +40,7 @@ export function parseGoal(text: string): Goal {
   if (g.prompt.kind !== "file" && g.prompt.kind !== "inline") bad("prompt.kind must be file or inline");
   if (g.prompt.kind === "inline" && (!g.prompt.initial || !g.prompt.delimiter)) bad("inline prompts need initial and delimiter");
   if (!g.objective || typeof g.objective !== "string") bad("objective is required");
+  if (g.policy !== undefined && typeof g.policy !== "string") bad("policy must be text");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== undefined && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
