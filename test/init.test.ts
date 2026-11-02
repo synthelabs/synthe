@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ACTION, init, type Io } from "../src/cli/init.ts";
+import { ACTION, REGISTRY, init, type Io } from "../src/cli/init.ts";
 import { parseGoal, parseScenarios } from "../src/core/goal.ts";
 
 const repoDir = (prompt: string) => {
@@ -121,4 +121,27 @@ test("init copies the prompt's business rules into the goal file as its policy",
   const g = buildGoal({ kind: "file", path: "p.md" }, "x", guardrails, policy);
   assert.equal(g.policy, "Returns within 30 days of delivery.");
   assert.equal("policy" in buildGoal({ kind: "file", path: "p.md" }, "x", guardrails, ""), false);
+});
+
+test("sharing progress is asked, and on yes sends only the repo name, setup times and mode", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, ran } = fakeIo(dir);
+  let t = 0;
+  await init(io, dir, () => new Date(Date.UTC(2026, 10, 6, 23, 0, t++ * 90)));
+  const sent = ran.find((r) => r.args.includes("issue") && r.args.includes("create"))!;
+  assert.deepEqual(sent.args.slice(0, 7), ["issue", "create", "--repo", REGISTRY, "--title", "run: o/r", "--body-file"]);
+  const entry = JSON.parse(sent.stdin!);
+  assert.deepEqual(Object.keys(entry).sort(), ["finishedAt", "mode", "repo", "startedAt", "version"]);
+  assert.equal(entry.startedAt, "2026-11-06T23:00:00.000Z");
+  assert.ok(!sent.stdin!.includes(PROMPT) && !sent.stdin!.includes("sk-test"));
+});
+
+test("saying no to sharing sends nothing, and a failed share never blocks setup", async () => {
+  const noDir = repoDir(PROMPT);
+  const no = fakeIo(noDir, [], { "Share this run": "n" });
+  assert.equal(await init(no.io, noDir), true);
+  assert.ok(!no.ran.some((r) => r.args.includes("issue")));
+  const brokenDir = repoDir(PROMPT);
+  const broken = fakeIo(brokenDir, ["issue create"]);
+  assert.equal(await init(broken.io, brokenDir), true);
 });

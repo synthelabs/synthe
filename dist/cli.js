@@ -28716,6 +28716,7 @@ import { join as join2 } from "node:path";
 var ACTION = "synthelabs/synthe@v1";
 var SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 var WORKFLOW_FILE = ".github/workflows/synthe.yml";
+var REGISTRY = "synthelabs/synthe-runs";
 var SCENARIO_SCHEMA = {
   type: "object",
   properties: {
@@ -28787,7 +28788,8 @@ async function whyGitHubFails(io2) {
   }
   return "Run this inside your project's folder, after pushing it to GitHub (you need admin access to the repo).";
 }
-async function init(io2, root) {
+async function init(io2, root, now = () => /* @__PURE__ */ new Date()) {
+  const startedAt = now().toISOString();
   let slug;
   try {
     slug = (await io2.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
@@ -28880,6 +28882,15 @@ When Synthe finds a clearly better prompt, it merges it into ${branch}. If ${bra
       started = true;
     } catch {
       await new Promise((r) => setTimeout(r, 3e3));
+    }
+  }
+  const share = !/^n/i.test((await io2.ask("\nShare this run's progress with the Synthe team, to help us improve Synthe? We'd see rounds, merges, spend and why runs stop, never your prompt, scenarios or code (Y/n): ")).trim());
+  if (share) {
+    const entry = { repo: slug, startedAt, finishedAt: now().toISOString(), mode: goal.merge_rule.mode, version: ACTION };
+    try {
+      await io2.run("gh", ["issue", "create", "--repo", REGISTRY, "--title", `run: ${slug}`, "--body-file", "-"], `${JSON.stringify(entry, null, 2)}
+`);
+    } catch {
     }
   }
   io2.say(started ? `

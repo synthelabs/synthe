@@ -258,3 +258,24 @@ test("never add a guardrail break: fewer breaks than the current prompt can merg
   unknown.candidates[0].train[0].violation = null; // unknown is never allowed, even where the current prompt breaks
   assert.equal(judgeRound(unknown, goal(), null).action, "skip");
 });
+
+test("a run summary keeps only numbers, never prompt or reply text", async () => {
+  const { summarize, scorecard } = await import("../src/runs/summary.ts");
+  const state = {
+    ...newState(), round: 5, spendUsd: 0.372, stopped: "3 rounds in a row found no winner", issue: 3,
+    prompt: "SECRET PROMPT", lastMerge: { pr: 1, priorPrompt: "SECRET OLD", mergedHash: "h", reverted: false },
+    lessons: { promptHash: "h", rows: [{ id: "s1", reply: "SECRET REPLY", violation: false }] },
+    rounds: [
+      { round: 1, at: "2026-11-06T23:10:00Z", outcome: "skipped" as const, reasons: [], costUsd: 0.07 },
+      { round: 2, at: "2026-11-07T00:10:00Z", outcome: "merged" as const, reasons: [], costUsd: 0.09, pr: 1 },
+      { round: 3, at: "2026-11-07T01:10:00Z", outcome: "failed" as const, reasons: [], costUsd: null },
+    ],
+  };
+  const s = summarize({ repo: "team/bot", startedAt: "2026-11-06T23:00:00Z", finishedAt: "2026-11-06T23:04:30Z", mode: "auto" }, state, { up: 2, down: 0 });
+  assert.equal(JSON.stringify(s).includes("SECRET"), false);
+  assert.deepEqual([s.setupSeconds, s.rounds, s.merged, s.failed, s.spendUsd, s.firstMergeRound, s.status], [270, 5, 1, 1, 0.37, 2, "finished"]);
+  const none = summarize({ repo: "team/private" }, null);
+  assert.deepEqual([none.readable, none.status], [false, "not started"]);
+  const card = scorecard([s, none]);
+  assert.deepEqual([card.teamsRegistered, card.teamsStarted, card.teamsWithAMerge, card.medianSetupSeconds, card.thumbsUp], [2, 1, 1, 270, 2]);
+});

@@ -9,6 +9,8 @@ import { askJson, type Model } from "../model/client.ts";
 export const ACTION = "synthelabs/synthe@v1";
 export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 export const WORKFLOW_FILE = ".github/workflows/synthe.yml";
+// Teams that agree to share progress are listed here, one issue each, so the Synthe team can follow how runs go.
+export const REGISTRY = "synthelabs/synthe-runs";
 
 export interface Io {
   say(text: string): void;
@@ -86,7 +88,8 @@ async function whyGitHubFails(io: Io): Promise<string> {
   return "Run this inside your project's folder, after pushing it to GitHub (you need admin access to the repo).";
 }
 
-export async function init(io: Io, root: string) {
+export async function init(io: Io, root: string, now = () => new Date()) {
+  const startedAt = now().toISOString();
   let slug: string;
   try {
     slug = (await io.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
@@ -164,6 +167,15 @@ export async function init(io: Io, root: string) {
       await new Promise((r) => setTimeout(r, 3000));
     }
   }
+  // Opt-in, and only numbers about the run: never the prompt, the scenarios or any code.
+  const share = !/^n/i.test((await io.ask("\nShare this run's progress with the Synthe team, to help us improve Synthe? We'd see rounds, merges, spend and why runs stop, never your prompt, scenarios or code (Y/n): ")).trim());
+  if (share) {
+    const entry = { repo: slug, startedAt, finishedAt: now().toISOString(), mode: goal.merge_rule.mode, version: ACTION };
+    try {
+      await io.run("gh", ["issue", "create", "--repo", REGISTRY, "--title", `run: ${slug}`, "--body-file", "-"], `${JSON.stringify(entry, null, 2)}\n`);
+    } catch { /* sharing is a favour to us; never let it block a team's setup */ }
+  }
+
   io.say(started
     ? `\nSynthe is running. The first round takes a few minutes, then it runs every hour: up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} at most.`
     : `\nSet up. The first round starts within the hour, then it runs every hour: up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} at most.`);
