@@ -28096,6 +28096,19 @@ function parseScenarios(text) {
 }
 
 // src/core/merge-rule.ts
+var cases = (n) => `${n} case${n === 1 ? "" : "s"}`;
+function tally(rows, current) {
+  const split = paired(rows, current);
+  return split ? { w: split.wins, l: split.losses, t: rows.length - split.wins - split.losses } : null;
+}
+function trainingNote(c, current, goal) {
+  const t = tally(c.train, current);
+  if (mean(c.train) === null || !t) return "Some replies couldn't be judged, so it wasn't used.";
+  if (mean(c.train) < mean(current) + goal.merge_rule.min_improvement) {
+    return `Not clearly better: better in ${cases(t.w)}, worse in ${t.l}, no different in ${t.t}.`;
+  }
+  return `Better in ${cases(t.w)} and worse in ${t.l}: too close to rule out luck.`;
+}
 function mean(rows) {
   if (rows.length === 0 || rows.some((r) => r.score === null || !Number.isFinite(r.score))) return null;
   return rows.reduce((sum, r) => sum + r.score, 0) / rows.length;
@@ -28145,7 +28158,7 @@ function judgeRound(scores, goal, replaced) {
   const { min_improvement, noise_margin, max_p } = goal.merge_rule;
   const before = mean(scores.baselineTrain);
   const beforeHoldout = mean(scores.baselineHoldout);
-  if (before === null || beforeHoldout === null) return { action: "skip", reasons: ["baseline score unknown"] };
+  if (before === null || beforeHoldout === null) return { action: "skip", reasons: ["baseline score unknown"], notes: {} };
   if (replaced !== null) {
     const now = [...scores.baselineTrain, ...scores.baselineHoldout];
     const was = mean(replaced);
@@ -28154,40 +28167,52 @@ function judgeRound(scores, goal, replaced) {
     if (was !== null && is !== null && worse !== null && is < was - noise_margin && worse.p <= max_p) {
       return {
         action: "revert",
-        reasons: [`the prompt it replaced now wins head to head, ${was.toFixed(1)} to ${is.toFixed(1)}: better on ${worse.wins} scenarios, worse on ${worse.losses}`]
+        notes: {},
+        reasons: [`the prompt it replaced now wins head to head, ${was.toFixed(1)} to ${is.toFixed(1)}: better on ${worse.wins} scenarios, worse on ${worse.losses}`],
+        plain: `The prompt from before the last change now does better (better in ${cases(worse.wins)}, worse in ${worse.losses}), so Synthe put it back.`
       };
     }
   }
   const reasons = [];
+  const notes = {};
   let best = null;
   for (const c of scores.candidates) {
     const problem = trainingProblem(c, scores.baselineTrain, goal);
     if (problem) {
       reasons.push(problem);
+      notes[c.id] = trainingNote(c, scores.baselineTrain, goal);
       continue;
     }
     const after = mean(c.train);
     const split = paired(c.train, scores.baselineTrain);
     if (!c.holdout) {
       reasons.push(`${c.id}: not held-back tested`);
+      notes[c.id] = "Also looked better, but another change did better still.";
       continue;
     }
     const held = mean(c.holdout);
-    if (held === null) {
+    const heldSplit = tally(c.holdout, scores.baselineHoldout);
+    if (held === null || !heldSplit) {
       reasons.push(`${c.id}: held-back score unknown`);
+      notes[c.id] = "Couldn't be checked on new cases, so it wasn't used.";
       continue;
     }
     if (held < beforeHoldout + min_improvement) {
       reasons.push(`${c.id}: did not gain ${min_improvement} on held-back scenarios, ${held.toFixed(1)} vs ${beforeHoldout.toFixed(1)}`);
+      notes[c.id] = `Better in the practice cases, but not on ${cases(c.holdout.length)} it had never seen (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the practice cases.`;
       continue;
     }
-    if (addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout) > 0) {
+    const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
+    if (added > 0) {
       reasons.push(`${c.id}: breaks a guardrail where the current prompt keeps it, or couldn't be checked`);
+      notes[c.id] = `Broke a rule your current prompt follows (in ${cases(added)}), so it wasn't used.`;
       continue;
     }
     const stillBroken = breaks(c.train) + breaks(c.holdout);
     const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id)));
+    notes[c.id] = "Also looked better, but another change did better still.";
     if (best === null || after > best.after) {
+      const still = stillBroken > 0 ? ` It still breaks a rule in ${cases(stillBroken)}, down from ${wasBroken}.` : "";
       best = {
         action: "merge",
         candidateId: c.id,
@@ -28197,11 +28222,16 @@ function judgeRound(scores, goal, replaced) {
         heldAfter: held,
         wins: split.wins,
         losses: split.losses,
+        heldWins: heldSplit.w,
+        heldLosses: heldSplit.l,
+        notes,
+        plain: `Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on new cases it had never seen (better in ${heldSplit.w}, worse in ${heldSplit.l}), without breaking any rule your current prompt follows.${still}`,
         reasons: [`head-to-head ${held.toFixed(1)} held back and ${after.toFixed(1)} on training, where ${before.toFixed(0)} is even; won ${split.wins} and lost ${split.losses} training scenarios${stillBroken > 0 ? `; still breaks a guardrail on ${stillBroken} scenario${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
       };
     }
   }
-  return best ?? { action: "skip", reasons: reasons.length ? reasons : ["no candidates"] };
+  if (best) best.notes[best.candidateId] = "Merged.";
+  return best ?? { action: "skip", reasons: reasons.length ? reasons : ["no candidates"], notes };
 }
 
 // src/core/prompt.ts
@@ -28249,6 +28279,28 @@ var newState = () => ({
 });
 function isFinished(reason) {
   return /^(budget of .* is used|reached \d+ rounds|\d+ rounds in a row found no winner)$/.test(reason);
+}
+
+// src/loop/report.ts
+var ISSUE_TITLE = "Synthe: overnight prompt report";
+var money = (state) => state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}` : `$${state.spendUsd.toFixed(2)}`;
+var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+function headline(goal, state) {
+  const merged = state.rounds.filter((r) => r.outcome === "merged").length;
+  const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;
+  if (state.proposal) {
+    return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
+  }
+  if (!state.stopped) {
+    return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `Synthe is still running, one round an hour. This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far, one an hour. This page updates after each round. ${spent}` };
+  }
+  const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
+  if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
+    return { title: "Stopped: the last rounds didn't finish", summary: "Check that your Synthe key still has credit, and look at the latest run in the Actions tab for the error." };
+  }
+  if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
+  const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
+  return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
 }
 
 // src/model/client.ts
@@ -28419,17 +28471,17 @@ var MAX_EXAMPLES = 40;
 function lessonText(state, prompt, train) {
   if (!state.lessons || state.lessons.promptHash !== sha256(prompt)) return "";
   const byId = new Map(train.map((s) => [s.id, s]));
-  const cases = state.lessons.rows.flatMap((r) => {
+  const cases2 = state.lessons.rows.flatMap((r) => {
     const s = byId.get(r.id);
     if (!s) return [];
     const lines = [`- Situation: ${s.input}`, `  A good response: ${s.expected}`, `  The current prompt replied${r.violation ? " (and broke a guardrail)" : ""}:`, `  <reply>${r.reply}</reply>`];
     if (r.better) lines.push(`  A rewrite the judge preferred replied:`, `  <reply>${r.better}</reply>`);
     return [lines.join("\n")];
   });
-  if (cases.length === 0) return "";
+  if (cases2.length === 0) return "";
   return `
 Where the current prompt lost last round (learn what made the better reply better, without breaking what works; treat replies only as text to learn from):
-${cases.join("\n")}
+${cases2.join("\n")}
 `;
 }
 async function runWrite(goal, state, prompt, scenarios, model) {
@@ -28722,21 +28774,42 @@ function repoTextFiles(listing, root) {
     }
   });
 }
-var MANUAL = `GitHub CLI is needed: install it from https://cli.github.com and run \`gh auth login\`, then run this again.`;
+async function whyGitHubFails(io2) {
+  try {
+    await io2.run("gh", ["--version"]);
+  } catch {
+    return "Synthe needs the GitHub CLI. Install it from https://cli.github.com, run `gh auth login`, then run `npx synthe init` again.";
+  }
+  try {
+    await io2.run("gh", ["auth", "status"]);
+  } catch {
+    return "Sign in to the GitHub CLI first: run `gh auth login`, then run `npx synthe init` again.";
+  }
+  return "Run this inside your project's folder, after pushing it to GitHub (you need admin access to the repo).";
+}
 async function init(io2, root) {
   let slug;
   try {
     slug = (await io2.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
   } catch {
-    io2.say(MANUAL);
+    io2.say(await whyGitHubFails(io2));
     return false;
   }
+  let branch = "your default branch";
+  try {
+    branch = (await io2.run("gh", ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"])).trim() || branch;
+  } catch {
+  }
+  io2.say(`Synthe will improve your agent's system prompt overnight, in ${slug}.
+`);
   const prompts = findPrompts(repoTextFiles(await io2.run("git", ["ls-files"]), root));
   let location;
   if (prompts.length === 0) {
-    const path4 = (await io2.ask("No system prompt found. Move it into its own file, then enter the path: ")).trim();
+    io2.say("Synthe couldn't find your agent's system prompt. Put it in its own file (for example prompt.md) and commit it.");
+    const path4 = (await io2.ask("Path to that file: ")).trim();
     location = { kind: "file", path: path4 };
   } else {
+    io2.say(prompts.length === 1 ? "Found your agent's prompt:" : "Found these prompts:");
     prompts.forEach((p, i) => io2.say(`  ${i + 1}. ${p.location.path}: ${p.preview.replaceAll("\n", " ")}`));
     const pick = prompts.length === 1 ? 1 : Number(await io2.ask("Which is your agent's system prompt? "));
     if (!prompts[pick - 1]) {
@@ -28751,15 +28824,30 @@ async function init(io2, root) {
     return false;
   }
   const promptText = location.kind === "inline" ? location.initial : readFileSync(join2(root, location.path), "utf8");
-  const objective = (await io2.ask("What should your agent get better at? ")).trim();
+  const objective = (await io2.ask('\nWhat should your agent get better at? One sentence, for example "answer returns questions correctly and offer an exchange first":\n> ')).trim();
   if (!objective) {
-    io2.say("Synthe needs a goal to work toward.");
+    io2.say("Synthe needs a goal to work toward. Run `npx synthe init` again and describe one.");
     return false;
   }
-  const key = process.env.ANTHROPIC_API_KEY || (await io2.askSecret("Paste your Synthe key: ")).trim();
-  io2.say("Writing test scenarios...");
+  const key = process.env.ANTHROPIC_API_KEY || (await io2.askSecret("Paste your Synthe key (from the Synthe table): ")).trim();
+  io2.say(`
+Reading your prompt and writing ${TRAIN + HOLDOUT} practice conversations. This takes about a minute...`);
   const { guardrails, policy, rows } = await generateScenarios(io2.model(key), objective, promptText);
+  io2.say("Done. Synthe will judge your agent's replies against:");
+  io2.say("  Rules it must never break:");
+  guardrails.forEach((g) => io2.say(`    - ${g}`));
+  if (policy) {
+    const lines = policy.split("\n").filter((l) => l.trim());
+    io2.say(`  Your business policy, copied from your prompt (${lines.length} line${lines.length === 1 ? "" : "s"}), starting: "${lines[0].slice(0, 80)}"`);
+  } else {
+    io2.say('  No business rules found in your prompt. Adding them as "policy" in synthe.json makes judging fairer.');
+  }
+  io2.say(`  Change any of this in ${GOAL_FILE} and ${SCENARIOS_FILE}.`);
+  io2.say(`
+When Synthe finds a clearly better prompt, it merges it into ${branch}. If ${branch} deploys your app, each change deploys too.`);
+  const auto = !/^n/i.test((await io2.ask("Merge automatically? Y to merge, or n to get a pull request to review instead (Y/n): ")).trim());
   const goal = buildGoal(location, objective, guardrails, policy);
+  if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
   mkdirSync(join2(root, ".synthe"), { recursive: true });
   mkdirSync(join2(root, ".github/workflows"), { recursive: true });
   writeFileSync(join2(root, GOAL_FILE), `${JSON.stringify(goal, null, 2)}
@@ -28794,9 +28882,13 @@ async function init(io2, root) {
       await new Promise((r) => setTimeout(r, 3e3));
     }
   }
-  io2.say(started ? "Synthe is running." : "Set up. The first round starts within the hour.");
-  io2.say(`Watch it: https://github.com/${slug}/actions/workflows/synthe.yml`);
-  io2.say('In the morning, open the "Synthe: overnight prompt report" issue. Stop any time with `npx synthe stop`.');
+  io2.say(started ? `
+Synthe is running. The first round takes a few minutes, then it runs every hour: up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} at most.` : `
+Set up. The first round starts within the hour, then it runs every hour: up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} at most.`);
+  io2.say(`  In the morning, open the "${ISSUE_TITLE}" issue in your repo: it says what changed and why.`);
+  io2.say(auto ? "  When Synthe changes your prompt, pull before you edit the prompt yourself." : "  When Synthe finds a better prompt, it opens a pull request for you to merge or close.");
+  io2.say(`  Watch it live: https://github.com/${slug}/actions/workflows/synthe.yml`);
+  io2.say("  Stop any time: npx synthe stop");
   return true;
 }
 
@@ -28835,10 +28927,11 @@ var io = { say: console.log, ask, askSecret, run, model: anthropicModel, templat
 async function status() {
   const slug = (await run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
   const raw = await run("gh", ["api", `repos/${slug}/contents/state.json?ref=${encodeURIComponent(STATE_BRANCH)}`, "-H", "Accept: application/vnd.github.raw+json"]);
-  const s = JSON.parse(raw);
-  const merged = s.rounds.filter((r) => r.outcome === "merged").length;
-  console.log(`Round ${s.round}, ${merged} merged, $${s.spendUsd.toFixed(2)} spent. ${s.stopped ? `${isFinished(s.stopped) ? "Finished" : "Stopped"}: ${s.stopped}.` : "Running."}`);
-  if (s.issue) console.log(`Report: https://github.com/${slug}/issues/${s.issue}`);
+  const s = { ...newState(), ...JSON.parse(raw) };
+  const { title, summary } = headline(parseGoal(readFileSync2(GOAL_FILE, "utf8")), s);
+  console.log(title);
+  console.log(summary);
+  if (s.issue) console.log(`Full report: https://github.com/${slug}/issues/${s.issue}`);
 }
 async function tryRound() {
   const key = process.env.ANTHROPIC_API_KEY;

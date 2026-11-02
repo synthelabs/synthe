@@ -132,7 +132,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
 
   // Opens the pull request, then merges it (auto mode) or leaves it for a person (propose mode, or a repo whose
   // branch rules require a review). Returns the pull request and whether it was only proposed, or null.
-  const land = async (text: string, kind: "merge" | "revert", title: string, why: string): Promise<{ pr: number; proposed: boolean } | null> => {
+  const land = async (text: string, kind: "merge" | "revert", title: string, why: { changed: string; plain: string; technical: string }): Promise<{ pr: number; proposed: boolean } | null> => {
     const branch = `synthe/round-${round}`;
     const landing: Landing = { branch, kind, text, priorPrompt: current!, propose: merge_rule.mode === "propose" };
     state.pending = { ...state.pending!, land: landing };
@@ -142,14 +142,27 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     const short = (h: string | null | undefined) => (h ? `\`sha256:${h.slice(0, 12)}\`` : "unknown");
     const { writer, runner, judge, checker } = goal.models;
     const receipt = [
-      "**Receipt** (what exactly was scored, to check or reproduce this decision)",
+      "To check or reproduce this decision:",
       `- Scored commit: \`${head.slice(0, 12)}\``,
       `- Prompt before: ${short(sha256(current!))}, after: ${short(sha256(text))}`,
       `- Scenarios: ${short(scenariosHash)}, goal file: ${short(input.goalHash)}`,
       `- Models: writer ${writer}, runner ${runner}, judge ${judge}, checker ${checker}`,
     ].join("\n");
-    const body = [why, receipt, notTested(goal).join("\n"),
-      `Chosen by Synthe from simulated scenarios. Only \`${path}\` changed.${landing.propose ? " Merge it to keep the change, or close it to decline." : ""}`].join("\n\n");
+    // Written for whoever opens the notification: what changed, why, what to do, and how to undo it. The receipt
+    // and the test's limits are there for anyone who wants to check, folded away.
+    const body = [
+      landing.propose
+        ? `Synthe suggests a change to your agent's prompt in \`${path}\`.`
+        : `Synthe changed your agent's prompt in \`${path}\`.`,
+      `**What changed:** ${why.changed}`,
+      `**Why:** ${why.plain}`,
+      landing.propose
+        ? "**Merge this pull request to keep the change, or close it to decline.** Synthe pauses until you decide. After merging, pull before you edit the prompt yourself."
+        : "**Before you edit the prompt yourself, pull the latest changes,** so this change isn't overwritten. To undo it, click **Revert** on this pull request.",
+      "Tested on simulated conversations only. It can't tell you how real customers will react.",
+      `<details><summary>Receipt: exactly what was tested</summary>\n\n${why.technical}\n\n${receipt}\n\n</details>`,
+      `<details><summary>What this did not test</summary>\n\n${notTested(goal).slice(1).join("\n")}\n\n</details>`,
+    ].join("\n\n");
     const pr = await repo.openPr({ branch, base, title, body });
     if (landing.propose) {
       state.proposal = { ...landing, pr, round };
@@ -179,6 +192,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   if (!scores || !input.candidates) {
     record.outcome = "failed";
     record.reasons.push("the round did not finish; check the Actions log and the API key");
+    record.plain = "This round didn't finish. If it keeps happening, check the Actions log and that your key still has credit.";
   } else if (input.costUsd === null) {
     record.reasons.push("cost unknown, so nothing merges");
     state.spendUnknown = true;
@@ -196,6 +210,14 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     const replaced = last && !last.reverted && last.mergedHash === scores.baselineHash && scores.prior ? scores.prior : null;
     const verdict = judgeRound(scores, goal, replaced);
     record.reasons.push(...verdict.reasons);
+    record.tried = [
+      ...input.candidates.map((c) => ({
+        summary: c.summary ?? "A change to the prompt",
+        outcome: verdict.notes[c.id] ?? (candidateProblem(c.text, goal.prompt) ? "Refused by a safety check, so it wasn't tested." : "Not tested."),
+      })),
+      ...(input.rejected ?? []).map((r) => ({ summary: "An edit that couldn't be applied", outcome: `Not used: ${r.replace(/^candidate-\d+: /, "")}.` })),
+    ];
+    if (verdict.action === "skip") record.plain = "Nothing was clearly better, so your prompt stayed the same.";
     if (verdict.action === "merge") {
       const chosen = input.candidates.find((c) => c.id === verdict.candidateId);
       const text = chosen?.text;
@@ -203,10 +225,12 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       if (problem) {
         record.reasons.push(problem);
       } else {
-        const why = [chosen?.summary ? `What changed: ${chosen.summary}` : "", verdict.reasons.join(" ")].filter(Boolean).join("\n\n");
-        const landed = await land(text!, "merge", `Synthe: improve prompt (round ${round})`, why);
+        const changed = chosen?.summary ?? "A change to the prompt";
+        const landed = await land(text!, "merge", `Synthe: ${changed.length > 70 ? `${changed.slice(0, 67)}...` : changed}`, { changed, plain: verdict.plain, technical: verdict.reasons.join(" ") });
         if (landed) {
           Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses });
+          record.changed = chosen?.summary ?? "A change to the prompt";
+          record.plain = verdict.plain;
           if (!landed.proposed) {
             state.lastMerge = { pr: landed.pr, priorPrompt: current, mergedHash: sha256(text!), reverted: false };
             state.prompt = goal.prompt.kind === "inline" ? text! : null;
@@ -216,9 +240,11 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       }
     } else if (verdict.action === "revert") {
       const prior = state.lastMerge!.priorPrompt;
-      const landed = await land(prior, "revert", `Synthe: revert round ${round - 1}'s prompt`, verdict.reasons.join(" "));
+      const landed = await land(prior, "revert", "Synthe: undo the last prompt change", { changed: "Puts back the prompt from before Synthe's last change.", plain: verdict.plain, technical: verdict.reasons.join(" ") });
       if (landed) {
         Object.assign(record, { outcome: landed.proposed ? "proposed" : "reverted", pr: landed.pr });
+        record.changed = "Put back the prompt from before the last change";
+        record.plain = verdict.plain;
         if (!landed.proposed) {
           state.lastMerge!.reverted = true;
           state.prompt = goal.prompt.kind === "inline" ? prior : null;

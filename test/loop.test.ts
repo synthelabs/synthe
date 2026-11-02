@@ -21,7 +21,7 @@ test("merges exactly one file, pinned to the scored commit", async () => {
   assert.deepEqual(repo.merges, [{ pr: 1, sha: "sha-1" }]);
   assert.equal(repo.state.spendUsd, 0.1);
   assert.equal(repo.branches.size, 0);
-  assert.match(repo.issue, /\| 55\.0 \| 20 \/ 0 \|/);
+  assert.match(repo.issue, /### What changed\n\n- \*\*#1:\*\* .*Its replies were better in 20 cases and worse in 0.*To undo it, click \*\*Revert\*\* on #1\./);
 });
 
 test("evil candidates never merge", async () => {
@@ -216,14 +216,14 @@ test("a run that stops finding winners reads as finished and says how to continu
   await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55)));
   for (let i = 0; i < 3; i++) await runDecide(goal(), repo, stall(scored("Better prompt.", 60, 55, 60, 55)));
   assert.match(repo.state.stopped!, /no winner/);
-  assert.match(repo.issue, /\*\*Status:\*\* finished\. Merged 1 improvement\. Each beat the prompt before it head to head/);
-  assert.match(repo.issue, /add more or harder scenarios to `s\.jsonl`/);
+  assert.match(repo.issue, /## Done: your prompt got better overnight \(1 change merged\)\n\nSynthe stopped because the last 3 rounds found nothing clearly better/);
+  assert.match(repo.issue, /To keep improving, add cases your agent still gets wrong to `s\.jsonl`/);
 });
 
 test("failed rounds read as stopped, not finished", async () => {
   const repo = new MemoryRepo("Old prompt.");
   for (let i = 0; i < 3; i++) await runDecide(goal(), repo, { candidates: null, scores: null, costUsd: null });
-  assert.match(repo.issue, /\*\*Status:\*\* stopped: the last 3 rounds failed/);
+  assert.match(repo.issue, /## Stopped: the last rounds didn't finish/);
   assert.doesNotMatch(repo.issue, /finished/);
 });
 
@@ -231,7 +231,7 @@ test("a repo where Actions may not merge reads as stopped, with the setting to c
   const repo = new MemoryRepo("Old prompt.");
   repo.mergeResult = { merged: false, why: "403", problem: "permission" };
   await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55)));
-  assert.match(repo.issue, /\*\*Status:\*\* stopped: GitHub Actions isn't allowed to merge/);
+  assert.match(repo.issue, /## Stopped: Synthe needs you to fix something\n\nGitHub Actions isn't allowed to merge/);
 });
 
 test("a stalled run resumes when the scenarios change, and only then", async () => {
@@ -341,7 +341,8 @@ test("held-back rows planted in saved lessons still never reach the writer", asy
 test("the report shows each round's cost and how much went to writing", async () => {
   const repo = new MemoryRepo("Old prompt.");
   await runDecide(goal(), repo, { ...round(scored("Old prompt.", 50, 50, 50, 50)), costUsd: 0.12, writeUsd: 0.08 });
-  assert.match(repo.issue, /\| \$0\.12 \(writing \$0\.08\) \|/);
+  assert.match(repo.issue, /\| \$0\.12 \|/);
+  assert.match(repo.issue, /Round 1: skipped, cost \$0\.12 \(writing \$0\.08\)/);
 });
 
 test("a judge that always picks the first reply can't manufacture a winner", async () => {
@@ -507,7 +508,8 @@ test("a candidate with a bad edit is dropped and the report says why", async () 
 test("the merged pull request says what changed", async () => {
   const repo = new MemoryRepo("Old prompt.");
   await runDecide(goal(), repo, { ...win(), candidates: [{ id: "c1", text: "Better prompt.", summary: "Adds the refund rule." }] });
-  assert.match(repo.prs[0].body, /What changed: Adds the refund rule\./);
+  assert.match(repo.prs[0].body, /\*\*What changed:\*\* Adds the refund rule\./);
+  assert.equal(repo.prs[0].title, "Synthe: Adds the refund rule.");
 });
 
 test("the Actions log explains each candidate: its edits, its record, new guardrail breaks and sample losses", async () => {
@@ -544,8 +546,8 @@ test("propose mode opens the winning pull request with its evidence and leaves t
   assert.equal(repo.merges.length, 0);
   assert.equal(repo.files.get("prompt.md"), "Old prompt.");
   assert.equal(repo.state.lastMerge, null);
-  assert.match(repo.prs[0].body, /Merge it to keep the change, or close it to decline/);
-  assert.match(repo.issue, /waiting for review\. Synthe proposed #1/);
+  assert.match(repo.prs[0].body, /Merge this pull request to keep the change, or close it to decline/);
+  assert.match(repo.issue, /## A better prompt is waiting for your review: #1/);
 });
 
 test("while a proposal waits, nothing is scored, spent or proposed again", async () => {
@@ -726,4 +728,18 @@ test("the goal file's policy must be text", async () => {
   const base = { version: 1, prompt: { kind: "file", path: "p.md" }, objective: "x", scenarios: "s", budget: { max_usd: 1 } };
   assert.equal(parseGoal(JSON.stringify({ ...base, policy: "Rules." })).policy, "Rules.");
   assert.throws(() => parseGoal(JSON.stringify({ ...base, policy: 5 })), /policy must be text/);
+});
+
+test("the round table names each change Synthe tried and what happened to it, in plain words", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  const s = scored("Old prompt.", 50, 50, 70, 60);
+  s.candidates[0].train = rows([...Array(5).fill(100), ...Array(5).fill(60), ...Array(10).fill(45)]);
+  await runDecide(goal(), repo, {
+    candidates: [{ id: "c1", text: "Better prompt.", summary: "Stops approving every refund" }], scores: s, costUsd: 0.1,
+    rejected: ["candidate-2: an edit's text isn't in the prompt"],
+  });
+  assert.match(repo.issue, /Stops approving every refund <i>Better in 10 cases and worse in 10: too close to rule out luck\.<\/i>/);
+  assert.match(repo.issue, /An edit that couldn't be applied <i>Not used: an edit's text isn't in the prompt\.<\/i>/);
+  assert.match(repo.issue, /## Synthe is working on your prompt/);
+  assert.match(repo.issue, /Nothing to do\. Synthe runs every hour and stops by itself\./);
 });

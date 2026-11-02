@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { DEFAULTS, GOAL_FILE, type Goal, type PromptLocation, type Scenario } from "../core/goal.ts";
 import { findPrompts } from "../core/prompt.ts";
 import { promptPathProblem } from "../core/safety.ts";
+import { ISSUE_TITLE } from "../loop/report.ts";
 import { askJson, type Model } from "../model/client.ts";
 
 export const ACTION = "synthelabs/synthe@v1";
@@ -74,23 +75,37 @@ function repoTextFiles(listing: string, root: string) {
   });
 }
 
-const MANUAL = `GitHub CLI is needed: install it from https://cli.github.com and run \`gh auth login\`, then run this again.`;
+// Says exactly what's missing, so a team can fix it in one step.
+async function whyGitHubFails(io: Io): Promise<string> {
+  try { await io.run("gh", ["--version"]); } catch {
+    return "Synthe needs the GitHub CLI. Install it from https://cli.github.com, run `gh auth login`, then run `npx synthe init` again.";
+  }
+  try { await io.run("gh", ["auth", "status"]); } catch {
+    return "Sign in to the GitHub CLI first: run `gh auth login`, then run `npx synthe init` again.";
+  }
+  return "Run this inside your project's folder, after pushing it to GitHub (you need admin access to the repo).";
+}
 
 export async function init(io: Io, root: string) {
   let slug: string;
   try {
     slug = (await io.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
   } catch {
-    io.say(MANUAL);
+    io.say(await whyGitHubFails(io));
     return false;
   }
+  let branch = "your default branch";
+  try { branch = (await io.run("gh", ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"])).trim() || branch; } catch { /* keep the generic name */ }
+  io.say(`Synthe will improve your agent's system prompt overnight, in ${slug}.\n`);
 
   const prompts = findPrompts(repoTextFiles(await io.run("git", ["ls-files"]), root));
   let location: PromptLocation;
   if (prompts.length === 0) {
-    const path = (await io.ask("No system prompt found. Move it into its own file, then enter the path: ")).trim();
+    io.say("Synthe couldn't find your agent's system prompt. Put it in its own file (for example prompt.md) and commit it.");
+    const path = (await io.ask("Path to that file: ")).trim();
     location = { kind: "file", path };
   } else {
+    io.say(prompts.length === 1 ? "Found your agent's prompt:" : "Found these prompts:");
     prompts.forEach((p, i) => io.say(`  ${i + 1}. ${p.location.path}: ${p.preview.replaceAll("\n", " ")}`));
     const pick = prompts.length === 1 ? 1 : Number(await io.ask("Which is your agent's system prompt? "));
     if (!prompts[pick - 1]) { io.say("That isn't one of the options."); return false; }
@@ -100,13 +115,27 @@ export async function init(io: Io, root: string) {
   if (refused) { io.say(refused); return false; }
 
   const promptText = location.kind === "inline" ? location.initial : readFileSync(join(root, location.path), "utf8");
-  const objective = (await io.ask("What should your agent get better at? ")).trim();
-  if (!objective) { io.say("Synthe needs a goal to work toward."); return false; }
-  const key = process.env.ANTHROPIC_API_KEY || (await io.askSecret("Paste your Synthe key: ")).trim();
+  const objective = (await io.ask("\nWhat should your agent get better at? One sentence, for example \"answer returns questions correctly and offer an exchange first\":\n> ")).trim();
+  if (!objective) { io.say("Synthe needs a goal to work toward. Run `npx synthe init` again and describe one."); return false; }
+  const key = process.env.ANTHROPIC_API_KEY || (await io.askSecret("Paste your Synthe key (from the Synthe table): ")).trim();
 
-  io.say("Writing test scenarios...");
+  io.say(`\nReading your prompt and writing ${TRAIN + HOLDOUT} practice conversations. This takes about a minute...`);
   const { guardrails, policy, rows } = await generateScenarios(io.model(key), objective, promptText);
+  io.say("Done. Synthe will judge your agent's replies against:");
+  io.say("  Rules it must never break:");
+  guardrails.forEach((g) => io.say(`    - ${g}`));
+  if (policy) {
+    const lines = policy.split("\n").filter((l) => l.trim());
+    io.say(`  Your business policy, copied from your prompt (${lines.length} line${lines.length === 1 ? "" : "s"}), starting: "${lines[0].slice(0, 80)}"`);
+  } else {
+    io.say("  No business rules found in your prompt. Adding them as \"policy\" in synthe.json makes judging fairer.");
+  }
+  io.say(`  Change any of this in ${GOAL_FILE} and ${SCENARIOS_FILE}.`);
+
+  io.say(`\nWhen Synthe finds a clearly better prompt, it merges it into ${branch}. If ${branch} deploys your app, each change deploys too.`);
+  const auto = !/^n/i.test((await io.ask("Merge automatically? Y to merge, or n to get a pull request to review instead (Y/n): ")).trim());
   const goal = buildGoal(location, objective, guardrails, policy);
+  if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
 
   mkdirSync(join(root, ".synthe"), { recursive: true });
   mkdirSync(join(root, ".github/workflows"), { recursive: true });
@@ -135,8 +164,14 @@ export async function init(io: Io, root: string) {
       await new Promise((r) => setTimeout(r, 3000));
     }
   }
-  io.say(started ? "Synthe is running." : "Set up. The first round starts within the hour.");
-  io.say(`Watch it: https://github.com/${slug}/actions/workflows/synthe.yml`);
-  io.say("In the morning, open the \"Synthe: overnight prompt report\" issue. Stop any time with `npx synthe stop`.");
+  io.say(started
+    ? `\nSynthe is running. The first round takes a few minutes, then it runs every hour: up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} at most.`
+    : `\nSet up. The first round starts within the hour, then it runs every hour: up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} at most.`);
+  io.say(`  In the morning, open the "${ISSUE_TITLE}" issue in your repo: it says what changed and why.`);
+  io.say(auto
+    ? "  When Synthe changes your prompt, pull before you edit the prompt yourself."
+    : "  When Synthe finds a better prompt, it opens a pull request for you to merge or close.");
+  io.say(`  Watch it live: https://github.com/${slug}/actions/workflows/synthe.yml`);
+  io.say("  Stop any time: npx synthe stop");
   return true;
 }
