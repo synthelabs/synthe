@@ -26,7 +26,7 @@ const fakeIo = (dir: string, failing: string[] = [], answers: Record<string, str
   const said: string[] = [];
   const io: Io = {
     say: (t) => said.push(t),
-    ask: async (q) => Object.entries(answers).find(([k]) => q.includes(k))?.[1] ?? "Answer returns correctly",
+    ask: async (q) => Object.entries({ "automatically?": "y", ...answers }).find(([k]) => q.includes(k))?.[1] ?? "Answer returns correctly",
     askSecret: async () => "sk-test-team-key",
     template: () => readFileSync("templates/synthe.yml", "utf8"),
     model: () => ({ ask: async () => ({ text: scenarioReply, costUsd: 0.01 }) }),
@@ -86,21 +86,37 @@ test("when GitHub isn't ready, init says exactly what to fix and changes nothing
 test("init shows what it inferred and what happens next, in plain words", async () => {
   const dir = repoDir(PROMPT);
   const { io, said } = fakeIo(dir);
-  await init(io, dir);
+  await init(io, dir, () => new Date(2026, 10, 6, 23, 0));
   const text = said.join("\n");
-  assert.match(text, /Synthe will improve your agent's system prompt overnight, in o\/r/);
-  assert.match(text, /writing 30 practice conversations\. This takes about a minute/);
+  assert.match(text, /Synthe will improve your agent's system prompt overnight, in o\/r\. It tests new versions .* puts the clear winners into o\/r, or into pull requests/);
+  assert.match(text, /it can merge it into o\/r by itself, overnight\. If o\/r deploys your app, each change goes live/);
+  assert.match(text, /writing 30 test cases: 20 Synthe learns from and 10 it keeps hidden to check its changes/);
   assert.match(text, /Rules it must never break:\n    - Never lie/);
   assert.match(text, /Your business policy, copied from your prompt \(1 line\), starting: "Returns within 30 days of delivery\."/);
-  assert.match(text, /merges it into o\/r\. If o\/r deploys your app, each change deploys too/);
-  assert.match(text, /pull before you edit the prompt yourself/);
-  assert.match(text, /up to 12 rounds and \$3 at most/);
+  assert.match(text, /Added to o\/r \(committed and pushed\): synthe\.json, \.synthe\/scenarios\.jsonl and \.github\/workflows\/synthe\.yml\. Saved your key as the repo secret SYNTHE_ANTHROPIC_KEY\./);
+  assert.match(text, /at most 12 rounds, using at most \$3 of your key's credit/);
+  assert.match(text, /The last possible change is around 11:00 AM\. .*run: npx synthe stop/);
+  assert.match(text, /You can keep editing your prompt: Synthe always starts from the latest version on o\/r/);
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).merge_rule.mode, "auto");
+});
+
+test("the merge question comes before the key, and no clear answer means review mode", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, said } = fakeIo(dir, [], { "automatically?": "maybe" });
+  const order: string[] = [];
+  const ask = io.ask, secret = io.askSecret;
+  io.ask = async (q) => { order.push(q.includes("automatically") ? "merge" : "goal"); return ask(q); };
+  io.askSecret = async (q) => { order.push("key"); return secret(q); };
+  await init(io, dir);
+  assert.deepEqual(order.filter((x, i) => order.indexOf(x) === i), ["goal", "merge", "key"]);
+  assert.equal(order.filter((x) => x === "merge").length, 3);
+  assert.match(said.join("\n"), /No answer, so Synthe will open pull requests for you to review/);
+  assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).merge_rule.mode, "propose");
 });
 
 test("answering n to automatic merges sets review mode", async () => {
   const dir = repoDir(PROMPT);
-  const { io, said } = fakeIo(dir, [], { "Merge automatically?": "n" });
+  const { io, said } = fakeIo(dir, [], { "automatically?": "n" });
   await init(io, dir);
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).merge_rule.mode, "propose");
   assert.match(said.join("\n"), /opens a pull request for you to merge or close/);

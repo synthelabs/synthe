@@ -8,15 +8,19 @@ export function notTested(goal: Goal): string[] {
   return [
     "**What this did not test**",
     "- Tools or actions your agent takes: only the system prompt was run, with no tools.",
-    "- Conversations: each scenario is a single message, not a back-and-forth.",
-    "- Real customers: scenarios are simulated, and generated ones aren't reviewed by a person.",
+    "- Conversations: each test case is one customer message, not a back-and-forth.",
+    "- Real customers: the test cases are simulated, and the generated ones aren't reviewed by a person.",
     "- People's judgment: replies were compared by an AI judge.",
-    ...(goal.policy?.trim() ? [] : ["- Your business policy: synthe.json has no `policy`, so the judge only saw each scenario's good-response line."]),
+    ...(goal.policy?.trim() ? [] : ["- Your business rules: synthe.json has no `policy`, so the judge only saw what a good answer looks like for each test case."]),
   ];
 }
 
+export const exampleText = (e: { input: string; before: string; after: string }) =>
+  `**For example,** a customer wrote: "${e.input}"\n> **Before:** ${e.before}\n>\n> **After:** ${e.after}`;
+
 const money = (state: State) => (state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}` : `$${state.spendUsd.toFixed(2)}`);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const left = (goal: Goal, state: State) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")}, one an hour`;
 
 // The first thing a team reads in the morning: the outcome in one line, then what it means.
 export function headline(goal: Goal, state: State): { title: string; summary: string } {
@@ -27,8 +31,8 @@ export function headline(goal: Goal, state: State): { title: string; summary: st
   }
   if (!state.stopped) {
     return merged > 0
-      ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `Synthe is still running, one round an hour. This page updates after each round. ${spent}` }
-      : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far, one an hour. This page updates after each round. ${spent}` };
+      ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `Synthe is still running: ${left(goal, state)}. This page updates after each round. ${spent}` }
+      : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}. This page updates after each round. ${spent}` };
   }
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
@@ -38,8 +42,8 @@ export function headline(goal: Goal, state: State): { title: string; summary: st
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better`
     : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
   return merged > 0
-    ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` }
-    : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
+    ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` }
+    : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
 }
 
 function nextSteps(goal: Goal, state: State): string[] {
@@ -48,15 +52,22 @@ function nextSteps(goal: Goal, state: State): string[] {
   if (state.proposal) steps.push(`Review #${state.proposal.pr}: merge it to keep the change, or close it to decline.`);
   if (merged) steps.push("Pull the latest changes before you edit your prompt, so Synthe's changes aren't overwritten.");
   if (state.stopped && /no winner$/.test(state.stopped)) {
-    steps.push(`To keep improving, add cases your agent still gets wrong to \`${goal.scenarios}\` (one JSON line each: \`input\`, \`expected\`, \`split\`).${state.round < goal.merge_rule.max_rounds ? " The next hourly run picks them up and continues." : " Then raise `merge_rule.max_rounds` in `synthe.json`."}`);
+    steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push. It starts again at the next hourly check${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. One line per case, for example:\n  \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`\n  \`expected\` describes a good answer in a sentence. \`split\` is \`train\` (Synthe learns from it) or \`holdout\` (kept hidden to check its changes).`);
   }
-  if (!state.stopped && !state.proposal) steps.push("Nothing to do. Synthe runs every hour and stops by itself.");
-  if (!state.stopped || state.proposal) steps.push("To stop early: `npx synthe stop`.");
+  if (!state.stopped && !state.proposal) {
+    steps.push("Nothing to do. Synthe runs every hour and stops by itself.");
+    steps.push("To keep your agent unchanged, for example before a demo, run `npx synthe stop`.");
+  } else if (state.proposal) {
+    steps.push("To stop Synthe completely: `npx synthe stop`.");
+  }
+  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe, you can delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml` from your repo.");
   return steps;
 }
 
+const OUTCOME: Record<RoundRecord["outcome"], string> = { merged: "Merged", reverted: "Undone", proposed: "Waiting for review", declined: "Declined by you", skipped: "No change", failed: "Didn't finish" };
+
 function roundRow(r: RoundRecord): string {
-  const result = { merged: "Merged", reverted: "Undone", proposed: "Waiting for review", declined: "Declined by you", skipped: "No change", failed: "Didn't finish" }[r.outcome];
+  const result = OUTCOME[r.outcome];
   const tried = r.tried?.length
     ? r.tried.map((t) => `${t.summary} <i>${t.outcome}</i>`).join("<br>")
     : r.plain ?? r.reasons.join("; ");
@@ -74,6 +85,7 @@ export function renderReport(goal: Goal, state: State): string {
       const undo = r.outcome === "merged" ? ` To undo it, click **Revert** on #${r.pr}.` : "";
       const note = r.outcome === "proposed" ? " (waiting for your review)" : r.outcome === "reverted" ? " (an undo)" : "";
       lines.push(`- **#${r.pr}${note}:** ${r.changed ?? "A change to the prompt"}. ${r.plain ?? ""}${undo}`);
+      if (r.example) lines.push("", exampleText(r.example).split("\n").map((l) => `  ${l}`).join("\n"), "");
     }
     lines.push("");
   }
@@ -91,7 +103,8 @@ export function renderReport(goal: Goal, state: State): string {
     `- Goal: ${goal.objective}`,
     `- Rounds: ${state.round} of up to ${goal.merge_rule.max_rounds}. Spent ${money(state)} of $${goal.budget.max_usd}.`,
     `- Models: writer ${goal.models.writer}, runner ${goal.models.runner}, judge ${goal.models.judge}, checker ${goal.models.checker}.`,
-    ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${r.outcome}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}. ${r.reasons.join("; ").replaceAll("\n", " ")}`),
+    "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
+    ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}. ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),
     "", "</details>", "",
     ...notTested(goal), "",
     "Only your prompt file can change. Was this useful? React 👍 or 👎 on this issue to tell us.",

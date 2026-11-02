@@ -217,7 +217,8 @@ test("a run that stops finding winners reads as finished and says how to continu
   for (let i = 0; i < 3; i++) await runDecide(goal(), repo, stall(scored("Better prompt.", 60, 55, 60, 55)));
   assert.match(repo.state.stopped!, /no winner/);
   assert.match(repo.issue, /## Done: your prompt got better overnight \(1 change merged\)\n\nSynthe stopped because the last 3 rounds found nothing clearly better/);
-  assert.match(repo.issue, /To keep improving, add cases your agent still gets wrong to `s\.jsonl`/);
+  assert.match(repo.issue, /Nothing more will run or change/);
+  assert.match(repo.issue, /If you want Synthe to keep going, add test cases your agent still gets wrong to `s\.jsonl` and push/);
 });
 
 test("failed rounds read as stopped, not finished", async () => {
@@ -342,7 +343,7 @@ test("the report shows each round's cost and how much went to writing", async ()
   const repo = new MemoryRepo("Old prompt.");
   await runDecide(goal(), repo, { ...round(scored("Old prompt.", 50, 50, 50, 50)), costUsd: 0.12, writeUsd: 0.08 });
   assert.match(repo.issue, /\| \$0\.12 \|/);
-  assert.match(repo.issue, /Round 1: skipped, cost \$0\.12 \(writing \$0\.08\)/);
+  assert.match(repo.issue, /Round 1: no change, cost \$0\.12 \(writing \$0\.08\)/);
 });
 
 test("a judge that always picks the first reply can't manufacture a winner", async () => {
@@ -508,7 +509,8 @@ test("a candidate with a bad edit is dropped and the report says why", async () 
 test("the merged pull request says what changed", async () => {
   const repo = new MemoryRepo("Old prompt.");
   await runDecide(goal(), repo, { ...win(), candidates: [{ id: "c1", text: "Better prompt.", summary: "Adds the refund rule." }] });
-  assert.match(repo.prs[0].body, /\*\*What changed:\*\* Adds the refund rule\./);
+  assert.match(repo.prs[0].body, /\*\*What changed in `prompt\.md`:\*\* Adds the refund rule\./);
+  assert.match(repo.prs[0].body, /^\*\*Already merged into `main`\*\* at \d{4}-\d\d-\d\d \d\d:\d\d UTC, because automatic merging was chosen at setup\. If `main` deploys your app, this change is live\./);
   assert.equal(repo.prs[0].title, "Synthe: Adds the refund rule.");
 });
 
@@ -703,10 +705,10 @@ test("every merged pull request carries a receipt and says what wasn't tested", 
   repo.files.set("s.jsonl", "scenarios");
   await runDecide(goal(), repo, { ...win(), goalHash: sha256("goal file") });
   const body = repo.prs[0].body;
-  assert.match(body, /Scored commit: `head`/);
+  assert.match(body, /Commit tested: `head`/);
   assert.ok(body.includes(`Prompt before: \`sha256:${sha256("Old prompt.").slice(0, 12)}\`, after: \`sha256:${sha256("Better prompt.").slice(0, 12)}\``));
-  assert.ok(body.includes(`Scenarios: \`sha256:${sha256("scenarios").slice(0, 12)}\`, goal file: \`sha256:${sha256("goal file").slice(0, 12)}\``));
-  assert.match(body, /Models: writer claude-sonnet-5-5, runner claude-haiku-5-5, judge claude-haiku-5-5, checker claude-sonnet-5-5/);
+  assert.ok(body.includes(`Test cases: \`sha256:${sha256("scenarios").slice(0, 12)}\`, goal file: \`sha256:${sha256("goal file").slice(0, 12)}\``));
+  assert.match(body, /AI models: writer claude-sonnet-5-5, agent claude-haiku-5-5, judge claude-haiku-5-5, rule checker claude-sonnet-5-5/);
   assert.match(body, /What this did not test[\s\S]*only the system prompt was run[\s\S]*has no `policy`/);
   assert.match(repo.issue, /What this did not test/);
   const withPolicy = new MemoryRepo("Old prompt.");
@@ -738,8 +740,41 @@ test("the round table names each change Synthe tried and what happened to it, in
     candidates: [{ id: "c1", text: "Better prompt.", summary: "Stops approving every refund" }], scores: s, costUsd: 0.1,
     rejected: ["candidate-2: an edit's text isn't in the prompt"],
   });
-  assert.match(repo.issue, /Stops approving every refund <i>Better in 10 cases and worse in 10: too close to rule out luck\.<\/i>/);
+  assert.match(repo.issue, /Stops approving every refund <i>Not clearly better: better in 10 cases and worse in 10, which could be luck\.<\/i>/);
   assert.match(repo.issue, /An edit that couldn't be applied <i>Not used: an edit's text isn't in the prompt\.<\/i>/);
   assert.match(repo.issue, /## Synthe is working on your prompt/);
   assert.match(repo.issue, /Nothing to do\. Synthe runs every hour and stops by itself\./);
+});
+
+test("the writer is told which ideas already failed, so rounds don't pay to repeat them", async () => {
+  const state = { ...newState(), rounds: [
+    { round: 1, at: "t", outcome: "skipped" as const, reasons: [], costUsd: 0.1, tried: [{ summary: "Shortens the greeting", outcome: "Not clearly better" }] },
+    { round: 2, at: "t", outcome: "merged" as const, reasons: [], costUsd: 0.1, tried: [{ summary: "Fixes refunds", outcome: "Merged." }] },
+  ] };
+  const w = fake();
+  await runWrite(goal(), state, "Old", scenarios, w);
+  assert.ok(w.seen.every((a) => /don't propose these again:\n- Shortens the greeting/.test(a.user) && !a.user.includes("- Fixes refunds")));
+});
+
+
+test("the pull request shows the exact lines changed and one real example the change won", async () => {
+  const m = scripted({ Steady: { a: 60, b: 60, c: 60, d: 60, e: 60, f: 60, h: 60 } });
+  const cands = [{ id: "steady", text: "Steady", summary: "Says it more clearly", edits: [{ find: "Base", replace: "Steady" }] }];
+  const { scores } = await runScore(goal(), "Base", cands, named, m);
+  const repo = new MemoryRepo("Base");
+  repo.files.set("s.jsonl", named.map((x) => JSON.stringify(x)).join("\n"));
+  await runDecide(goal(), repo, { candidates: cands, scores, costUsd: 0.1 });
+  const body = repo.prs[0].body;
+  assert.match(body, /```diff\n- Base\n\+ Steady\n```/);
+  assert.match(body, /\*\*For example,\*\* a customer wrote: "q-\w"\n> \*\*Before:\*\* Base answers q-\w\n>\n> \*\*After:\*\* Steady answers q-\w/);
+  assert.match(repo.issue, /a customer wrote: "q-\w"/);
+  assert.ok(!/q-h/.test(body)); // never a hidden test case
+});
+
+test("a merge blocked by review rewrites the pull request to say it is waiting, not merged", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  repo.mergeResult = { merged: false, why: "405", problem: "blocked" };
+  await runDecide(goal(), repo, win());
+  assert.match(repo.prs[0].body, /^\*\*Waiting for your review\.\*\* .*this repo's rules require a review/);
+  assert.doesNotMatch(repo.prs[0].body, /Already merged/);
 });

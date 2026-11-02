@@ -1979,7 +1979,7 @@ var init_streaming = __esm({
          * independently read from at different speeds.
          */
         tee() {
-          const left = [];
+          const left2 = [];
           const right = [];
           const iterator = this[Symbol.asyncIterator]();
           const teeIterator = (queue) => {
@@ -1987,7 +1987,7 @@ var init_streaming = __esm({
               next: () => {
                 if (queue.length === 0) {
                   const result = iterator.next();
-                  left.push(result);
+                  left2.push(result);
                   right.push(result);
                 }
                 return queue.shift();
@@ -1995,7 +1995,7 @@ var init_streaming = __esm({
             };
           };
           return [
-            new Stream2(() => teeIterator(left), this.controller, __classPrivateFieldGet(this, _Stream_client, "f")),
+            new Stream2(() => teeIterator(left2), this.controller, __classPrivateFieldGet(this, _Stream_client, "f")),
             new Stream2(() => teeIterator(right), this.controller, __classPrivateFieldGet(this, _Stream_client, "f"))
           ];
         }
@@ -3407,7 +3407,7 @@ function withoutFirstParts(attributes, excess) {
   const input = withOwnParts(attributes[ATTR_GEN_AI_INPUT_MESSAGES]);
   const output = withOwnParts(attributes[ATTR_GEN_AI_OUTPUT_MESSAGES]);
   const lists = [instructions ?? [], ...[...input ?? [], ...output ?? []].map(({ parts }) => parts)];
-  let left = lists.reduce((sum, parts) => sum + parts.length, 0);
+  let left2 = lists.reduce((sum, parts) => sum + parts.length, 0);
   let truncated = false;
   for (const parts of lists) {
     let removed = 0;
@@ -3415,7 +3415,7 @@ function withoutFirstParts(attributes, excess) {
       const part = parts[removed];
       const size = utf8Length(JSON.stringify(part));
       const content = part["content"];
-      if (left === 1 && part.type === "text" && typeof content === "string") {
+      if (left2 === 1 && part.type === "text" && typeof content === "string") {
         const kept = startThatFits(part, content, size - excess);
         if (kept !== content) {
           parts[removed] = { ...part, content: kept };
@@ -3425,7 +3425,7 @@ function withoutFirstParts(attributes, excess) {
       }
       excess -= size + (removed + 1 < parts.length ? 1 : 0);
       removed++;
-      left--;
+      left2--;
       truncated = true;
     }
     parts.splice(0, removed);
@@ -7619,12 +7619,12 @@ var require_base64 = __commonJS({
             out += this._encodeByte(c >>> 1 * 6 & 63);
             out += this._encodeByte(c >>> 0 * 6 & 63);
           }
-          var left = data.length - i;
-          if (left > 0) {
-            var c = data[i] << 16 | (left === 2 ? data[i + 1] << 8 : 0);
+          var left2 = data.length - i;
+          if (left2 > 0) {
+            var c = data[i] << 16 | (left2 === 2 ? data[i + 1] << 8 : 0);
             out += this._encodeByte(c >>> 3 * 6 & 63);
             out += this._encodeByte(c >>> 2 * 6 & 63);
-            if (left === 2) {
+            if (left2 === 2) {
               out += this._encodeByte(c >>> 1 * 6 & 63);
             } else {
               out += this._paddingCharacter || "";
@@ -7990,12 +7990,12 @@ var require_sha256 = __commonJS({
           Hash2.prototype.finish = function(out) {
             if (!this.finished) {
               var bytesHashed = this.bytesHashed;
-              var left = this.bufferLength;
+              var left2 = this.bufferLength;
               var bitLenHi = bytesHashed / 536870912 | 0;
               var bitLenLo = bytesHashed << 3;
               var padLength = bytesHashed % 64 < 56 ? 64 : 128;
-              this.buffer[left] = 128;
-              for (var i = left + 1; i < padLength - 8; i++) {
+              this.buffer[left2] = 128;
+              for (var i = left2 + 1; i < padLength - 8; i++) {
                 this.buffer[i] = 0;
               }
               this.buffer[padLength - 8] = bitLenHi >>> 24 & 255;
@@ -22779,9 +22779,9 @@ function startsWith(messages, prefix) {
   return prefix.length <= messages.length && prefix.every((message, i) => sameMessage(message, messages[i]));
 }
 function sameMessage(a, b) {
-  const [left, right] = [toMessageParam(a), toMessageParam(b)];
-  const keys = Object.keys({ ...left, ...right });
-  return keys.every((key) => left[key] === right[key] || JSON.stringify(left[key]) === JSON.stringify(right[key]));
+  const [left2, right] = [toMessageParam(a), toMessageParam(b)];
+  const keys = Object.keys({ ...left2, ...right });
+  return keys.every((key) => left2[key] === right[key] || JSON.stringify(left2[key]) === JSON.stringify(right[key]));
 }
 function toMessageParam(message) {
   return "id" in message ? { role: message.role, content: message.content } : message;
@@ -28105,9 +28105,9 @@ function trainingNote(c, current, goal) {
   const t = tally(c.train, current);
   if (mean(c.train) === null || !t) return "Some replies couldn't be judged, so it wasn't used.";
   if (mean(c.train) < mean(current) + goal.merge_rule.min_improvement) {
-    return `Not clearly better: better in ${cases(t.w)}, worse in ${t.l}, no different in ${t.t}.`;
+    return `Not clearly better: better in ${cases(t.w)}, worse in ${t.l}, the same in ${t.t}.`;
   }
-  return `Better in ${cases(t.w)} and worse in ${t.l}: too close to rule out luck.`;
+  return `Not clearly better: better in ${cases(t.w)} and worse in ${t.l}, which could be luck.`;
 }
 function mean(rows) {
   if (rows.length === 0 || rows.some((r) => r.score === null || !Number.isFinite(r.score))) return null;
@@ -28194,25 +28194,25 @@ function judgeRound(scores, goal, replaced) {
     const heldSplit = tally(c.holdout, scores.baselineHoldout);
     if (held === null || !heldSplit) {
       reasons.push(`${c.id}: held-back score unknown`);
-      notes[c.id] = "Couldn't be checked on new cases, so it wasn't used.";
+      notes[c.id] = "Couldn't be checked on the hidden test cases, so it wasn't used.";
       continue;
     }
     if (held < beforeHoldout + min_improvement) {
       reasons.push(`${c.id}: did not gain ${min_improvement} on held-back scenarios, ${held.toFixed(1)} vs ${beforeHoldout.toFixed(1)}`);
-      notes[c.id] = `Better in the practice cases, but not on ${cases(c.holdout.length)} it had never seen (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the practice cases.`;
+      notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
       continue;
     }
     const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
     if (added > 0) {
       reasons.push(`${c.id}: breaks a guardrail where the current prompt keeps it, or couldn't be checked`);
-      notes[c.id] = `Broke a rule your current prompt follows (in ${cases(added)}), so it wasn't used.`;
+      notes[c.id] = `Broke one of your rules in ${cases(added)} where your current prompt follows it, so it wasn't used.`;
       continue;
     }
     const stillBroken = breaks(c.train) + breaks(c.holdout);
     const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id)));
     notes[c.id] = "Also looked better, but another change did better still.";
     if (best === null || after > best.after) {
-      const still = stillBroken > 0 ? ` It still breaks a rule in ${cases(stillBroken)}, down from ${wasBroken}.` : "";
+      const rules = wasBroken > 0 ? stillBroken > 0 ? ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in ${stillBroken}.` : ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in none.` : " It follows your rules in every test case.";
       best = {
         action: "merge",
         candidateId: c.id,
@@ -28225,7 +28225,7 @@ function judgeRound(scores, goal, replaced) {
         heldWins: heldSplit.w,
         heldLosses: heldSplit.l,
         notes,
-        plain: `Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on new cases it had never seen (better in ${heldSplit.w}, worse in ${heldSplit.l}), without breaking any rule your current prompt follows.${still}`,
+        plain: `Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}`,
         reasons: [`head-to-head ${held.toFixed(1)} held back and ${after.toFixed(1)} on training, where ${before.toFixed(0)} is even; won ${split.wins} and lost ${split.losses} training scenarios${stillBroken > 0 ? `; still breaks a guardrail on ${stillBroken} scenario${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
       };
     }
@@ -28285,6 +28285,7 @@ function isFinished(reason) {
 var ISSUE_TITLE = "Synthe: overnight prompt report";
 var money = (state) => state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}` : `$${state.spendUsd.toFixed(2)}`;
 var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")}, one an hour`;
 function headline(goal, state) {
   const merged = state.rounds.filter((r) => r.outcome === "merged").length;
   const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;
@@ -28292,7 +28293,7 @@ function headline(goal, state) {
     return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
   }
   if (!state.stopped) {
-    return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `Synthe is still running, one round an hour. This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far, one an hour. This page updates after each round. ${spent}` };
+    return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `Synthe is still running: ${left(goal, state)}. This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}. This page updates after each round. ${spent}` };
   }
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
@@ -28300,7 +28301,7 @@ function headline(goal, state) {
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
-  return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
+  return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
 }
 
 // src/model/client.ts
@@ -28487,6 +28488,11 @@ ${cases2.join("\n")}
 async function runWrite(goal, state, prompt, scenarios, model) {
   const train = scenarios.filter((s) => s.split === "train");
   const lessons = lessonText(state, prompt, train);
+  const tried = [...new Set(state.rounds.slice(-5).flatMap((r) => r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary)))];
+  const notAgain = tried.length ? `
+Already tried in earlier rounds without winning; don't propose these again:
+${tried.map((t) => `- ${t}`).join("\n")}
+` : "";
   const history = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}. ${r.reasons.join(" ")}`).join("\n") || "None yet.";
   const quoteRule = goal.prompt.kind === "inline" ? `
 The prompt lives inside a source-code string, so never use backslashes, ${goal.prompt.delimiter} or \${ in it.` : "";
@@ -28510,7 +28516,7 @@ ${train.slice(0, MAX_EXAMPLES).map((s) => `- ${s.input} => ${s.expected}`).join(
 
 Earlier rounds:
 ${history}
-${lessons}
+${notAgain}${lessons}
 Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why.`
   }));
   const candidates = [];
@@ -28802,7 +28808,7 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date()) {
     branch = (await io2.run("gh", ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"])).trim() || branch;
   } catch {
   }
-  io2.say(`Synthe will improve your agent's system prompt overnight, in ${slug}.
+  io2.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.
 `);
   const prompts = findPrompts(repoTextFiles(await io2.run("git", ["ls-files"]), root));
   let location;
@@ -28811,8 +28817,11 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date()) {
     const path4 = (await io2.ask("Path to that file: ")).trim();
     location = { kind: "file", path: path4 };
   } else {
-    io2.say(prompts.length === 1 ? "Found your agent's prompt:" : "Found these prompts:");
-    prompts.forEach((p, i) => io2.say(`  ${i + 1}. ${p.location.path}: ${p.preview.replaceAll("\n", " ")}`));
+    if (prompts.length === 1) io2.say(`Found your agent's prompt: ${prompts[0].location.path}: ${prompts[0].preview.replaceAll("\n", " ")}...`);
+    else {
+      io2.say("Found these prompts:");
+      prompts.forEach((p, i) => io2.say(`  ${i + 1}. ${p.location.path}: ${p.preview.replaceAll("\n", " ")}...`));
+    }
     const pick = prompts.length === 1 ? 1 : Number(await io2.ask("Which is your agent's system prompt? "));
     if (!prompts[pick - 1]) {
       io2.say("That isn't one of the options.");
@@ -28831,11 +28840,22 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date()) {
     io2.say("Synthe needs a goal to work toward. Run `npx synthe init` again and describe one.");
     return false;
   }
-  const key = process.env.ANTHROPIC_API_KEY || (await io2.askSecret("Paste your Synthe key (from the Synthe table): ")).trim();
   io2.say(`
-Reading your prompt and writing ${TRAIN + HOLDOUT} practice conversations. This takes about a minute...`);
+When Synthe finds a clearly better prompt, it can merge it into ${branch} by itself, overnight. If ${branch} deploys your app, each change goes live. Or it can open a pull request each time for you to review.`);
+  let auto = null;
+  for (let i = 0; i < 3 && auto === null; i++) {
+    const a = (await io2.ask(`Merge improvements into ${branch} automatically? Type y for automatic, or n to review each one: `)).trim();
+    auto = /^y/i.test(a) ? true : /^n/i.test(a) ? false : null;
+  }
+  if (auto === null) {
+    auto = false;
+    io2.say("No answer, so Synthe will open pull requests for you to review.");
+  }
+  const key = process.env.ANTHROPIC_API_KEY || (await io2.askSecret("Paste your Synthe key (from the Synthe table; it has $3 of credit, paid by Synthe): ")).trim();
+  io2.say(`
+Reading your prompt and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
   const { guardrails, policy, rows } = await generateScenarios(io2.model(key), objective, promptText);
-  io2.say("Done. Synthe will judge your agent's replies against:");
+  io2.say("Done. Synthe will check your agent's replies against:");
   io2.say("  Rules it must never break:");
   guardrails.forEach((g) => io2.say(`    - ${g}`));
   if (policy) {
@@ -28844,10 +28864,7 @@ Reading your prompt and writing ${TRAIN + HOLDOUT} practice conversations. This 
   } else {
     io2.say('  No business rules found in your prompt. Adding them as "policy" in synthe.json makes judging fairer.');
   }
-  io2.say(`  Change any of this in ${GOAL_FILE} and ${SCENARIOS_FILE}.`);
-  io2.say(`
-When Synthe finds a clearly better prompt, it merges it into ${branch}. If ${branch} deploys your app, each change deploys too.`);
-  const auto = !/^n/i.test((await io2.ask("Merge automatically? Y to merge, or n to get a pull request to review instead (Y/n): ")).trim());
+  io2.say(`  You can change these in ${GOAL_FILE}, and the test cases in ${SCENARIOS_FILE}.`);
   const goal = buildGoal(location, objective, guardrails, policy);
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
   mkdirSync(join2(root, ".synthe"), { recursive: true });
@@ -28875,6 +28892,8 @@ When Synthe finds a clearly better prompt, it merges it into ${branch}. If ${bra
   await io2.run("git", ["add", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE]);
   await io2.run("git", ["commit", "-m", "Add Synthe", "--", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE]);
   await io2.run("git", ["push"]);
+  io2.say(`
+Added to ${branch} (committed and pushed): ${GOAL_FILE}, ${SCENARIOS_FILE} and ${WORKFLOW_FILE}. Saved your key as the repo secret SYNTHE_ANTHROPIC_KEY.`);
   let started = false;
   for (let i = 0; i < 5 && !started; i++) {
     try {
@@ -28893,13 +28912,14 @@ When Synthe finds a clearly better prompt, it merges it into ${branch}. If ${bra
     } catch {
     }
   }
+  const last = new Date(now().getTime() + goal.merge_rule.max_rounds * 36e5).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   io2.say(started ? `
-Synthe is running. The first round takes a few minutes, then it runs every hour: up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} at most.` : `
-Set up. The first round starts within the hour, then it runs every hour: up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} at most.`);
-  io2.say(`  In the morning, open the "${ISSUE_TITLE}" issue in your repo: it says what changed and why.`);
-  io2.say(auto ? "  When Synthe changes your prompt, pull before you edit the prompt yourself." : "  When Synthe finds a better prompt, it opens a pull request for you to merge or close.");
+Synthe is running. The first round takes a few minutes, then it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.` : `
+Set up. The first round starts within the hour, then it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.`);
+  io2.say(`  The last possible change is around ${last}. To keep your agent unchanged before then, for example for a demo, run: npx synthe stop`);
+  io2.say(`  After the first round, a "${ISSUE_TITLE}" issue appears in your repo. It says what changed and why.`);
+  io2.say(auto ? `  You can keep editing your prompt: Synthe always starts from the latest version on ${branch}. After it changes the prompt, pull before you edit it, and if a push is rejected, run git pull and push again.` : "  When Synthe finds a better prompt, it opens a pull request for you to merge or close. It waits, spending nothing, until you decide.");
   io2.say(`  Watch it live: https://github.com/${slug}/actions/workflows/synthe.yml`);
-  io2.say("  Stop any time: npx synthe stop");
   return true;
 }
 

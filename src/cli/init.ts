@@ -99,7 +99,7 @@ export async function init(io: Io, root: string, now = () => new Date()) {
   }
   let branch = "your default branch";
   try { branch = (await io.run("gh", ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"])).trim() || branch; } catch { /* keep the generic name */ }
-  io.say(`Synthe will improve your agent's system prompt overnight, in ${slug}.\n`);
+  io.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.\n`);
 
   const prompts = findPrompts(repoTextFiles(await io.run("git", ["ls-files"]), root));
   let location: PromptLocation;
@@ -108,8 +108,8 @@ export async function init(io: Io, root: string, now = () => new Date()) {
     const path = (await io.ask("Path to that file: ")).trim();
     location = { kind: "file", path };
   } else {
-    io.say(prompts.length === 1 ? "Found your agent's prompt:" : "Found these prompts:");
-    prompts.forEach((p, i) => io.say(`  ${i + 1}. ${p.location.path}: ${p.preview.replaceAll("\n", " ")}`));
+    if (prompts.length === 1) io.say(`Found your agent's prompt: ${prompts[0].location.path}: ${prompts[0].preview.replaceAll("\n", " ")}...`);
+    else { io.say("Found these prompts:"); prompts.forEach((p, i) => io.say(`  ${i + 1}. ${p.location.path}: ${p.preview.replaceAll("\n", " ")}...`)); }
     const pick = prompts.length === 1 ? 1 : Number(await io.ask("Which is your agent's system prompt? "));
     if (!prompts[pick - 1]) { io.say("That isn't one of the options."); return false; }
     location = prompts[pick - 1].location;
@@ -120,11 +120,18 @@ export async function init(io: Io, root: string, now = () => new Date()) {
   const promptText = location.kind === "inline" ? location.initial : readFileSync(join(root, location.path), "utf8");
   const objective = (await io.ask("\nWhat should your agent get better at? One sentence, for example \"answer returns questions correctly and offer an exchange first\":\n> ")).trim();
   if (!objective) { io.say("Synthe needs a goal to work toward. Run `npx synthe init` again and describe one."); return false; }
-  const key = process.env.ANTHROPIC_API_KEY || (await io.askSecret("Paste your Synthe key (from the Synthe table): ")).trim();
+  io.say(`\nWhen Synthe finds a clearly better prompt, it can merge it into ${branch} by itself, overnight. If ${branch} deploys your app, each change goes live. Or it can open a pull request each time for you to review.`);
+  let auto: boolean | null = null;
+  for (let i = 0; i < 3 && auto === null; i++) {
+    const a = (await io.ask(`Merge improvements into ${branch} automatically? Type y for automatic, or n to review each one: `)).trim();
+    auto = /^y/i.test(a) ? true : /^n/i.test(a) ? false : null;
+  }
+  if (auto === null) { auto = false; io.say("No answer, so Synthe will open pull requests for you to review."); }
+  const key = process.env.ANTHROPIC_API_KEY || (await io.askSecret("Paste your Synthe key (from the Synthe table; it has $3 of credit, paid by Synthe): ")).trim();
 
-  io.say(`\nReading your prompt and writing ${TRAIN + HOLDOUT} practice conversations. This takes about a minute...`);
+  io.say(`\nReading your prompt and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
   const { guardrails, policy, rows } = await generateScenarios(io.model(key), objective, promptText);
-  io.say("Done. Synthe will judge your agent's replies against:");
+  io.say("Done. Synthe will check your agent's replies against:");
   io.say("  Rules it must never break:");
   guardrails.forEach((g) => io.say(`    - ${g}`));
   if (policy) {
@@ -133,10 +140,8 @@ export async function init(io: Io, root: string, now = () => new Date()) {
   } else {
     io.say("  No business rules found in your prompt. Adding them as \"policy\" in synthe.json makes judging fairer.");
   }
-  io.say(`  Change any of this in ${GOAL_FILE} and ${SCENARIOS_FILE}.`);
+  io.say(`  You can change these in ${GOAL_FILE}, and the test cases in ${SCENARIOS_FILE}.`);
 
-  io.say(`\nWhen Synthe finds a clearly better prompt, it merges it into ${branch}. If ${branch} deploys your app, each change deploys too.`);
-  const auto = !/^n/i.test((await io.ask("Merge automatically? Y to merge, or n to get a pull request to review instead (Y/n): ")).trim());
   const goal = buildGoal(location, objective, guardrails, policy);
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
 
@@ -157,6 +162,7 @@ export async function init(io: Io, root: string, now = () => new Date()) {
   await io.run("git", ["add", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE]);
   await io.run("git", ["commit", "-m", "Add Synthe", "--", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE]);
   await io.run("git", ["push"]);
+  io.say(`\nAdded to ${branch} (committed and pushed): ${GOAL_FILE}, ${SCENARIOS_FILE} and ${WORKFLOW_FILE}. Saved your key as the repo secret SYNTHE_ANTHROPIC_KEY.`);
 
   let started = false;
   for (let i = 0; i < 5 && !started; i++) {
@@ -176,14 +182,15 @@ export async function init(io: Io, root: string, now = () => new Date()) {
     } catch { /* sharing is a favour to us; never let it block a team's setup */ }
   }
 
+  const last = new Date(now().getTime() + goal.merge_rule.max_rounds * 3_600_000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   io.say(started
-    ? `\nSynthe is running. The first round takes a few minutes, then it runs every hour: up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} at most.`
-    : `\nSet up. The first round starts within the hour, then it runs every hour: up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} at most.`);
-  io.say(`  In the morning, open the "${ISSUE_TITLE}" issue in your repo: it says what changed and why.`);
+    ? `\nSynthe is running. The first round takes a few minutes, then it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.`
+    : `\nSet up. The first round starts within the hour, then it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.`);
+  io.say(`  The last possible change is around ${last}. To keep your agent unchanged before then, for example for a demo, run: npx synthe stop`);
+  io.say(`  After the first round, a "${ISSUE_TITLE}" issue appears in your repo. It says what changed and why.`);
   io.say(auto
-    ? "  When Synthe changes your prompt, pull before you edit the prompt yourself."
-    : "  When Synthe finds a better prompt, it opens a pull request for you to merge or close.");
+    ? `  You can keep editing your prompt: Synthe always starts from the latest version on ${branch}. After it changes the prompt, pull before you edit it, and if a push is rejected, run git pull and push again.`
+    : "  When Synthe finds a better prompt, it opens a pull request for you to merge or close. It waits, spending nothing, until you decide.");
   io.say(`  Watch it live: https://github.com/${slug}/actions/workflows/synthe.yml`);
-  io.say("  Stop any time: npx synthe stop");
   return true;
 }

@@ -19,14 +19,14 @@ Use this slide only after the overnight run works. Don't add results until we ha
 ## QR card
 
 **Synthe**
-Your agent improves overnight.
+Your AI agent's prompt gets better while you sleep.
 
-1. Grab a key from the Synthe table.
+1. Grab a key from the Synthe table ($3 of credit, on us).
 2. In your repo, run `npx synthe init`.
-3. Tell it what your agent should get better at.
-4. Check the report issue in your repo in the morning.
+3. Say what your agent should get better at, and choose: merge improvements into main automatically, or review each one.
+4. In the morning, open the report issue in your repo.
 
-Needs GitHub CLI, signed in. Stop any time: `npx synthe stop`
+Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop any time: `npx synthe stop`
 
 ## Table script
 

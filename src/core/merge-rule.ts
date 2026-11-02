@@ -34,9 +34,9 @@ function trainingNote(c: CandidateScore, current: ScoreRow[], goal: Goal): strin
   const t = tally(c.train, current);
   if (mean(c.train) === null || !t) return "Some replies couldn't be judged, so it wasn't used.";
   if (mean(c.train)! < mean(current)! + goal.merge_rule.min_improvement) {
-    return `Not clearly better: better in ${cases(t.w)}, worse in ${t.l}, no different in ${t.t}.`;
+    return `Not clearly better: better in ${cases(t.w)}, worse in ${t.l}, the same in ${t.t}.`;
   }
-  return `Better in ${cases(t.w)} and worse in ${t.l}: too close to rule out luck.`;
+  return `Not clearly better: better in ${cases(t.w)} and worse in ${t.l}, which could be luck.`;
 }
 
 // An unknown is never zero: one unmeasured row makes the whole mean unknown.
@@ -130,27 +130,29 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
     if (!c.holdout) { reasons.push(`${c.id}: not held-back tested`); notes[c.id] = "Also looked better, but another change did better still."; continue; }
     const held = mean(c.holdout);
     const heldSplit = tally(c.holdout, scores.baselineHoldout);
-    if (held === null || !heldSplit) { reasons.push(`${c.id}: held-back score unknown`); notes[c.id] = "Couldn't be checked on new cases, so it wasn't used."; continue; }
+    if (held === null || !heldSplit) { reasons.push(`${c.id}: held-back score unknown`); notes[c.id] = "Couldn't be checked on the hidden test cases, so it wasn't used."; continue; }
     if (held < beforeHoldout + min_improvement) {
       reasons.push(`${c.id}: did not gain ${min_improvement} on held-back scenarios, ${held.toFixed(1)} vs ${beforeHoldout.toFixed(1)}`);
-      notes[c.id] = `Better in the practice cases, but not on ${cases(c.holdout.length)} it had never seen (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the practice cases.`;
+      notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
       continue;
     }
     const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
     if (added > 0) {
       reasons.push(`${c.id}: breaks a guardrail where the current prompt keeps it, or couldn't be checked`);
-      notes[c.id] = `Broke a rule your current prompt follows (in ${cases(added)}), so it wasn't used.`;
+      notes[c.id] = `Broke one of your rules in ${cases(added)} where your current prompt follows it, so it wasn't used.`;
       continue;
     }
     const stillBroken = breaks(c.train) + breaks(c.holdout);
     const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout!.some((h) => h.id === r.id)));
     notes[c.id] = "Also looked better, but another change did better still.";
     if (best === null || after > best.after) {
-      const still = stillBroken > 0 ? ` It still breaks a rule in ${cases(stillBroken)}, down from ${wasBroken}.` : "";
+      const rules = wasBroken > 0
+        ? stillBroken > 0 ? ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in ${stillBroken}.` : ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in none.`
+        : " It follows your rules in every test case.";
       best = {
         action: "merge", candidateId: c.id, before, after, heldBefore: beforeHoldout, heldAfter: held, wins: split.wins, losses: split.losses,
         heldWins: heldSplit.w, heldLosses: heldSplit.l, notes,
-        plain: `Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on new cases it had never seen (better in ${heldSplit.w}, worse in ${heldSplit.l}), without breaking any rule your current prompt follows.${still}`,
+        plain: `Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}`,
         reasons: [`head-to-head ${held.toFixed(1)} held back and ${after.toFixed(1)} on training, where ${before.toFixed(0)} is even; won ${split.wins} and lost ${split.losses} training scenarios${stillBroken > 0 ? `; still breaks a guardrail on ${stillBroken} scenario${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`],
       };
     }

@@ -85,6 +85,9 @@ export async function runWrite(goal: Goal, state: State, prompt: string, scenari
   // Held-back scenarios stay out of this: the writer must never see what it is finally judged on.
   const train = scenarios.filter((s) => s.split === "train");
   const lessons = lessonText(state, prompt, train);
+  // Ideas from recent rounds that didn't win, so each round tries something new instead of paying for a repeat.
+  const tried = [...new Set(state.rounds.slice(-5).flatMap((r) => (r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary))))];
+  const notAgain = tried.length ? `\nAlready tried in earlier rounds without winning; don't propose these again:\n${tried.map((t) => `- ${t}`).join("\n")}\n` : "";
   const history = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}. ${r.reasons.join(" ")}`).join("\n") || "None yet.";
   const quoteRule = goal.prompt.kind === "inline"
     ? `\nThe prompt lives inside a source-code string, so never use backslashes, ${goal.prompt.delimiter} or \${ in it.` : "";
@@ -106,7 +109,7 @@ ${train.slice(0, MAX_EXAMPLES).map((s) => `- ${s.input} => ${s.expected}`).join(
 
 Earlier rounds:
 ${history}
-${lessons}
+${notAgain}${lessons}
 Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why.`,
   }));
   const candidates: Candidate[] = [];

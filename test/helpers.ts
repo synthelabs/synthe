@@ -62,6 +62,7 @@ export class MemoryRepo implements Repo {
   }
   async deleteBranch(b: string) { this.branches.delete(b); }
   async closePr(n: number) { this.prs[n - 1].closed = true; }
+  async updatePrBody(n: number, body: string) { this.prs[n - 1].body = body; }
   async upsertIssue(n: number | null, _t: string, body: string) { this.crash("upsertIssue"); this.issue = body; return n ?? 99; }
   async findPr(branch: string) {
     const pr = [...this.prs].reverse().find((p) => p.branch === branch);
