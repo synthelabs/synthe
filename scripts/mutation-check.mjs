@@ -7,6 +7,7 @@ const DECIDE = "src/loop/decide.ts";
 const SCORE = "src/loop/score.ts";
 const WRITE = "src/loop/write.ts";
 const STATE = "src/core/state.ts";
+const GITHUB = "src/github/repo.ts";
 
 const mutations = [
   ["no scenario wins needed", RULE, "if (split.p > max_p) return", "if (false) return"],
@@ -35,6 +36,12 @@ const mutations = [
   ["judge always sees the challenger first", SCORE, "const first = challengerFirst(s, who);", "const first = true;"],
   ["winner read from the wrong side", SCORE, 'const challengerWon = v.better === (first ? "A" : "B");', 'const challengerWon = v.better === "A";'],
   ["revert without a live prior challenge", DECIDE, " && scores.prior ? scores.prior : null", " ? scores.baselineTrain : null"],
+  ["an edit lands where its text appears twice", WRITE, 'if (text.indexOf(e.find, at + 1) !== -1) return { problem: "an edit\'s text appears more than once" };', ""],
+  ["any number of edits allowed", WRITE, "if (edits.length > MAX_EDITS) return", "if (false) return"],
+  ["spend saved only at the end", DECIDE, "  state.pending = { round, at: record.at, costUsd: input.costUsd };\n  await repo.writeState(state);", "  state.pending = { round, at: record.at, costUsd: input.costUsd };"],
+  ["a merge recovered after a crash is forgotten", DECIDE, "state.lastMerge = { pr: pr.number, priorPrompt: p.land.priorPrompt, mergedHash: sha256(p.land.text), reverted: false };", ""],
+  ["a rate limit stops the run", DECIDE, 'token: "GitHub refused the workflow\'s token",', 'token: "GitHub refused the workflow\'s token", rate_limited: "rate limited",'],
+  ["every 403 means no permission", GITHUB, 'const problem: MergeProblem = isRateLimited(res.status, res.headers, text) ? "rate_limited"', 'const problem: MergeProblem = false ? "rate_limited"'],
   ["unknown cost merges", DECIDE, "input.costUsd === null", "false"],
   ["identical candidate scored", SCORE, " && c.text.trim() !== baseline.trim()", ""],
   ["candidates trained on held-back scenarios", SCORE, "const duels = await challenge(c.id, c.text, train, trainReplies);", "const duels = await challenge(c.id, c.text, scenarios, new Map([...trainReplies, ...(await holdReplies())]));"],
@@ -49,7 +56,7 @@ for (const [name, file, from, to] of mutations) {
   process.once("SIGINT", restore);
   try {
     writeFileSync(file, original.replace(from, to));
-    const { status } = spawnSync("node", ["--test", "test/core.test.ts", "test/loop.test.ts"], { stdio: "ignore", timeout: 60000 });
+    const { status } = spawnSync("node", ["--test", "test/core.test.ts", "test/loop.test.ts", "test/github.test.ts"], { stdio: "ignore", timeout: 60000 });
     if (status === 0) survived++;
     console.log(`${status === 0 ? "SURVIVED " : "killed   "} ${name}`);
   } finally {

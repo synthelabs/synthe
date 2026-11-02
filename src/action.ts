@@ -26,7 +26,7 @@ async function main() {
     const written = load<any>("candidates.json");
     const scored = load<any>("scores.json");
     const costUsd = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
-    const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null });
+    const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     return;
   }

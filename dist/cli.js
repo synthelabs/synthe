@@ -28235,6 +28235,7 @@ var newState = () => ({
   issue: null,
   scenariosHash: null,
   lessons: null,
+  pending: null,
   rounds: []
 });
 function isFinished(reason) {
@@ -28480,15 +28481,49 @@ async function measureNoise(goal, prompt, scenarios, model) {
 
 // src/loop/write.ts
 var ANGLES = [
-  "Fix the cases where the current prompt does worst, with short, specific rules, without breaking what already works.",
-  "Rewrite it to be clearer and better organized, with the most important behavior first and nothing vague."
+  "Fix what made the current prompt lose in the cases below.",
+  "Remove or correct one instruction that is vague, missing or conflicts with the goal, which would lead to wrong answers in situations like these."
 ];
+var MAX_EDITS = 2;
+var MAX_EDIT_CHARS = 1500;
 var SCHEMA2 = {
   type: "object",
-  properties: { prompt: { type: "string" } },
-  required: ["prompt"],
+  properties: {
+    edits: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { find: { type: "string" }, replace: { type: "string" } },
+        required: ["find", "replace"],
+        additionalProperties: false
+      }
+    },
+    summary: { type: "string" }
+  },
+  required: ["edits", "summary"],
   additionalProperties: false
 };
+function applyEdits(prompt, edits) {
+  if (!Array.isArray(edits) || edits.length === 0) return { problem: "no edits" };
+  if (edits.length > MAX_EDITS) return { problem: `more than ${MAX_EDITS} edits` };
+  let text = prompt;
+  for (const e of edits) {
+    if (typeof e?.find !== "string" || typeof e?.replace !== "string") return { problem: "malformed edit" };
+    if (e.replace.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
+    if (e.find === "") {
+      text = `${text.trimEnd()}
+
+${e.replace.trim()}
+`;
+      continue;
+    }
+    const at = text.indexOf(e.find);
+    if (at === -1) return { problem: "an edit's text isn't in the prompt" };
+    if (text.indexOf(e.find, at + 1) !== -1) return { problem: "an edit's text appears more than once" };
+    text = text.slice(0, at) + e.replace + text.slice(at + e.find.length);
+  }
+  return text.trim() === prompt.trim() ? { problem: "edits change nothing" } : { text };
+}
 var MAX_EXAMPLES = 40;
 function lessonText(state, prompt, train) {
   if (!state.lessons || state.lessons.promptHash !== sha256(prompt)) return "";
@@ -28514,9 +28549,9 @@ async function runWrite(goal, state, prompt, scenarios, model) {
 The prompt lives inside a source-code string, so never use backslashes, ${goal.prompt.delimiter} or \${ in it.` : "";
   const results = await pool(ANGLES, ANGLES.length, async (angle) => askJson(model, {
     model: goal.models.writer,
-    maxTokens: 8e3,
+    maxTokens: 3e3,
     schema: SCHEMA2,
-    user: `You improve the system prompt of an AI agent.
+    user: `You improve the system prompt of an AI agent by making small, exact edits.
 
 Goal: ${goal.objective}
 Must never happen: ${goal.guardrails.join("; ") || "nothing listed"}
@@ -28533,12 +28568,18 @@ ${train.slice(0, MAX_EXAMPLES).map((s) => `- ${s.input} => ${s.expected}`).join(
 Earlier rounds:
 ${history}
 ${lessons}
-Return the complete improved system prompt.`
+Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why.`
   }));
-  return {
-    candidates: results.flatMap((r, i) => r.value?.prompt ? [{ id: `candidate-${i + 1}`, text: r.value.prompt }] : []),
-    costUsd: sumCosts(results.map((r) => r.costUsd))
-  };
+  const candidates = [];
+  const rejected = [];
+  results.forEach((r, i) => {
+    const id = `candidate-${i + 1}`;
+    if (!r.value) return void rejected.push(`${id}: no edits returned`);
+    const applied = applyEdits(prompt, r.value.edits);
+    if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
+    candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : void 0 });
+  });
+  return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
 }
 
 // src/cli/init.ts

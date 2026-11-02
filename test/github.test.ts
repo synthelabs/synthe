@@ -6,7 +6,9 @@ import { newState } from "../src/core/state.ts";
 
 const calls: { method: string; url: string; body: any }[] = [];
 const files = new Map<string, string>([["main:prompt.md", "Old"]]);
-let mergeStatus = 200;
+let merge = { status: 200, body: "x", headers: {} as Record<string, string> };
+let mergeQueue: typeof merge[] = []; // answered first, one per call, to test retries
+const waits: number[] = [];
 
 const server = createServer((req, res) => {
   let raw = "";
@@ -23,7 +25,16 @@ const server = createServer((req, res) => {
       const b = decodeURIComponent(path.slice(15));
       return b === "main" || [...files.keys()].some((k) => k.startsWith(`${b}:`)) ? send(200, { object: { sha: "headsha" } }) : send(404, {});
     }
-    if (path === "/git/refs") { files.set(`${body.ref.slice(11)}:.keep`, ""); return send(201, {}); }
+    if (path === "/git/refs") {
+      const b = body.ref.slice(11);
+      if ([...files.keys()].some((k) => k.startsWith(`${b}:`))) return send(422, { message: "Reference already exists" });
+      files.set(`${b}:.keep`, ""); return send(201, {});
+    }
+    if (path.startsWith("/git/refs/heads/") && req.method === "PATCH") return send(200, {});
+    if (path === "/pulls" && req.method === "GET") {
+      const head = url.searchParams.get("head");
+      return send(200, head === "o:synthe/round-1" ? [{ number: 7, state: "closed", merged_at: "2026-11-02T00:00:00Z" }] : []);
+    }
     if (path.startsWith("/contents/")) {
       const key = `${req.method === "PUT" ? body.branch : url.searchParams.get("ref")}:${path.slice(10)}`;
       if (req.method === "PUT") {
@@ -34,7 +45,11 @@ const server = createServer((req, res) => {
       return req.headers.accept?.includes("raw") ? send(200, files.get(key)) : send(200, { sha: "blob" });
     }
     if (path === "/pulls") return send(201, { number: 7 });
-    if (path === "/pulls/7/merge") return send(mergeStatus, { message: "x" });
+    if (path === "/pulls/7/merge") {
+      const m = mergeQueue.shift() ?? merge;
+      for (const [k, v] of Object.entries(m.headers)) res.setHeader(k, v);
+      return send(m.status, { message: m.body });
+    }
     if (path === "/issues") return send(201, { number: 3 });
     if (path.startsWith("/issues/")) return send(200, {});
     send(404, {});
@@ -44,7 +59,7 @@ const server = createServer((req, res) => {
 let repo: ReturnType<typeof githubRepo>;
 before(async () => {
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  repo = githubRepo("o/r", "tok", `http://127.0.0.1:${(server.address() as any).port}/repos`.replace("/repos", ""));
+  repo = githubRepo("o/r", "tok", `http://127.0.0.1:${(server.address() as any).port}`, async (ms) => { waits.push(ms); });
 });
 after(() => server.close());
 
@@ -62,12 +77,39 @@ test("commits on a new branch and merges with the pinned sha", async () => {
   assert.deepEqual(calls.at(-1)!.body, { sha: "newsha", merge_method: "squash" });
 });
 
-test("a 405 is reported as a blocked repo, a 409 as a moved branch", async () => {
-  mergeStatus = 405;
-  assert.equal(((await repo.mergePr(7, "s")) as any).blocked, true);
-  mergeStatus = 409;
-  assert.equal(((await repo.mergePr(7, "s")) as any).blocked, false);
-  mergeStatus = 200;
+test("each merge failure is told apart: rules, permissions, token, rate limit, moved branch", async () => {
+  const problem = async (status: number, body = "x", headers: Record<string, string> = {}) => {
+    merge = { status, body, headers };
+    const r = await repo.mergePr(7, "s");
+    merge = { status: 200, body: "x", headers: {} };
+    return r.merged ? "merged" : r.problem;
+  };
+  assert.equal(await problem(405), "blocked");
+  assert.equal(await problem(403, "Resource not accessible by integration"), "permission");
+  assert.equal(await problem(401), "token");
+  assert.equal(await problem(409), "moved");
+  assert.equal(await problem(403, "You have exceeded a secondary rate limit"), "rate_limited");
+  assert.equal(await problem(403, "x", { "x-ratelimit-remaining": "0" }), "rate_limited");
+  assert.equal(await problem(429), "rate_limited");
+});
+
+test("a rate limit is waited out and retried before giving up", async () => {
+  waits.length = 0;
+  mergeQueue = [{ status: 429, body: "slow down", headers: { "retry-after": "2" } }];
+  assert.deepEqual(await repo.mergePr(7, "s"), { merged: true });
+  assert.deepEqual(waits, [2000]);
+});
+
+test("a branch left behind by a crashed round is moved, not a failure", async () => {
+  files.set("synthe/round-9:.keep", "");
+  const sha = await repo.commitFile({ branch: "synthe/round-9", baseSha: "headsha", path: "prompt.md", content: "Again", message: "m" });
+  assert.equal(sha, "newsha");
+  assert.ok(calls.some((c) => c.method === "PATCH" && c.url.endsWith("/git/refs/heads/synthe%2Fround-9") && c.body.force === true));
+});
+
+test("finds a round's pull request by branch", async () => {
+  assert.deepEqual(await repo.findPr("synthe/round-1"), { number: 7, open: false, merged: true });
+  assert.equal(await repo.findPr("synthe/none"), null);
 });
 
 test("state starts new, then round-trips on its own branch", async () => {

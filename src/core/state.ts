@@ -17,11 +17,13 @@ export interface State {
   scenariosHash: string | null; // scenarios the last round was scored on
   // Training cases from the last round where the current prompt lost or broke a guardrail, for the next writer.
   lessons: { promptHash: string; rows: { id: string; reply: string; better?: string; violation: boolean }[] } | null;
+  // Set while a decide step is acting, so the next one can tell it died partway and clean up after it.
+  pending: { round: number; at: string; costUsd: number | null; land?: { branch: string; kind: "merge" | "revert"; text: string; priorPrompt: string } } | null;
   rounds: RoundRecord[];
 }
 
 export const newState = (): State => ({
-  round: 0, prompt: null, lastMerge: null, stalls: 0, spendUsd: 0, spendUnknown: false, stopped: null, issue: null, scenariosHash: null, lessons: null, rounds: [],
+  round: 0, prompt: null, lastMerge: null, stalls: 0, spendUsd: 0, spendUnknown: false, stopped: null, issue: null, scenariosHash: null, lessons: null, pending: null, rounds: [],
 });
 
 export function stopReason(s: State, maxRounds: number, stallRounds: number, maxUsd: number): string | null {

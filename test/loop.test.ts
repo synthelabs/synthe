@@ -127,7 +127,7 @@ test("merge then slump reverts to the prior prompt when it wins head to head", a
 
 test("blocked merges close the PR and explain the fix", async () => {
   const repo = new MemoryRepo("Old prompt.");
-  repo.mergeResult = { merged: false, why: "405", blocked: true };
+  repo.mergeResult = { merged: false, why: "405", problem: "blocked" };
   const r = await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55)));
   assert.equal(r?.outcome, "skipped");
   assert.equal(repo.prs[0].closed, true);
@@ -153,7 +153,7 @@ const fake = (over: Partial<Record<string, string | null>> = {}): Model & { seen
         const better = good("reply_a") === good("reply_b") ? "tie" : good("reply_a") ? "A" : "B";
         return { text: over.judge !== undefined ? over.judge : JSON.stringify({ better, a_guardrail_ok: true, b_guardrail_ok: true }), costUsd: 0.001 };
       }
-      if (a.schema) return { text: JSON.stringify({ prompt: "Improved." }), costUsd: 0.01 };
+      if (a.schema) return { text: JSON.stringify({ edits: [{ find: "Old", replace: "Improved." }], summary: "Says it better." }), costUsd: 0.01 };
       return { text: a.system === "Improved." ? "good reply" : "weak reply", costUsd: 0.001 };
     },
   };
@@ -227,7 +227,7 @@ test("failed rounds read as stopped, not finished", async () => {
 
 test("a blocked repo reads as stopped", async () => {
   const repo = new MemoryRepo("Old prompt.");
-  repo.mergeResult = { merged: false, why: "405", blocked: true };
+  repo.mergeResult = { merged: false, why: "405", problem: "blocked" };
   await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55)));
   assert.match(repo.issue, /\*\*Status:\*\* stopped: this repo blocks/);
 });
@@ -248,7 +248,7 @@ test("a stalled run resumes when the scenarios change, and only then", async () 
 test("a run stopped for another reason doesn't resume on new scenarios", async () => {
   const repo = new MemoryRepo("Old prompt.");
   repo.files.set("s.jsonl", "easy");
-  repo.mergeResult = { merged: false, why: "405", blocked: true };
+  repo.mergeResult = { merged: false, why: "405", problem: "blocked" };
   await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55)));
   repo.mergeResult = { merged: true };
   repo.files.set("s.jsonl", "harder");
@@ -373,4 +373,93 @@ test("a candidate the judge catches breaking a guardrail never merges, however m
   const r = await runDecide(goal(), repo, { candidates: [{ id: "bold", text: "Bold" }], scores, costUsd: 0.1 });
   assert.notEqual(r?.outcome, "merged");
   assert.match(r!.reasons.join(), /guardrail/);
+});
+
+const win = () => round(scored("Old prompt.", 50, 50, 60, 55));
+
+test("spend and the round are saved before decide touches the repo, so a crash can't freeze the run", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  repo.crashOn = "openPr";
+  await assert.rejects(runDecide(goal(), repo, win()));
+  assert.equal(repo.state.round, 1);
+  assert.equal(repo.state.spendUsd, 0.1);
+  assert.equal(repo.state.stalls, 1);
+  assert.equal(repo.state.pending?.land?.branch, "synthe/round-1");
+  // The next round cleans up the leftover branch, logs the crash, and carries on with a new round number.
+  const r = await runDecide(goal(), repo, win());
+  assert.equal(r?.round, 2);
+  assert.equal(r?.outcome, "merged");
+  assert.equal(repo.state.rounds[0].outcome, "failed");
+  assert.equal(repo.state.pending, null);
+  assert.ok(!repo.branches.has("synthe/round-1"));
+});
+
+test("a pull request left open by a crash is closed on the next round", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  repo.crashOn = "mergePr";
+  repo.mergeResult = { merged: false, why: "409", problem: "moved" };
+  await assert.rejects(runDecide(goal(), repo, win()));
+  repo.mergeResult = { merged: true };
+  await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 50, 50)));
+  assert.equal(repo.prs[0].closed, true);
+  assert.equal(repo.state.rounds[0].outcome, "failed");
+});
+
+test("a merge that landed just before a crash is recovered, so the revert check still protects it", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  repo.crashOn = "upsertIssue";
+  await assert.rejects(runDecide(goal(), repo, win()));
+  assert.equal(repo.files.get("prompt.md"), "Better prompt.");
+  assert.equal(repo.state.lastMerge, null); // lost with the crash...
+  await runDecide(goal(), repo, round(scored("Better prompt.", 50, 50, 50, 50)));
+  assert.equal(repo.state.rounds[0].outcome, "merged"); // ...and recovered
+  assert.equal(repo.state.lastMerge?.priorPrompt, "Old prompt.");
+  assert.equal(repo.state.lastMerge?.mergedHash, sha256("Better prompt."));
+});
+
+test("decide crashing every round still stops the run after the stall limit", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  for (let i = 0; i < 3; i++) { repo.crashOn = "upsertIssue"; await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 50, 50))).catch(() => {}); }
+  repo.crashOn = null;
+  assert.equal(await runDecide(goal(), repo, win()), null);
+  assert.match(repo.state.stopped!, /no winner/);
+});
+
+test("permission and token problems stop with a fix; rate limits and moved branches just fail the round", async () => {
+  for (const [problem, stops] of [["permission", /Allow GitHub Actions/], ["token", /token/], ["rate_limited", null], ["moved", null]] as const) {
+    const repo = new MemoryRepo("Old prompt.");
+    repo.mergeResult = { merged: false, why: "x", problem };
+    await runDecide(goal(), repo, win());
+    if (stops) assert.match(repo.state.stopped!, stops);
+    else assert.equal(repo.state.stopped, null);
+  }
+});
+
+test("edits apply only where their text appears exactly once", async () => {
+  const { applyEdits } = await import("../src/loop/write.ts");
+  assert.deepEqual(applyEdits("A. B. C.", [{ find: "B.", replace: "Bee." }]), { text: "A. Bee. C." });
+  assert.deepEqual(applyEdits("A.", [{ find: "", replace: "New rule." }]), { text: "A.\n\nNew rule.\n" });
+  assert.match((applyEdits("A. A.", [{ find: "A.", replace: "X" }]) as any).problem, /more than once/);
+  assert.match((applyEdits("A.", [{ find: "Z", replace: "X" }]) as any).problem, /isn't in the prompt/);
+  assert.match((applyEdits("A.", [1, 2, 3].map(() => ({ find: "", replace: "x" }))) as any).problem, /more than 2/);
+  assert.match((applyEdits("A.", []) as any).problem, /no edits/);
+  assert.match((applyEdits("A.", [{ find: "A.", replace: "A." }]) as any).problem, /change nothing/);
+  assert.match((applyEdits("A.", [{ find: "A.", replace: "x".repeat(1501) }]) as any).problem, /too long/);
+});
+
+test("a candidate with a bad edit is dropped and the report says why", async () => {
+  const m = fake();
+  m.ask = async (a) => ({ text: JSON.stringify({ edits: [{ find: "not there", replace: "x" }], summary: "s" }), costUsd: 0.01 });
+  const w = await runWrite(goal(), newState(), "Old", scenarios, m);
+  assert.equal(w.candidates.length, 0);
+  assert.match(w.rejected!.join(), /isn't in the prompt/);
+  const repo = new MemoryRepo("Old prompt.");
+  await runDecide(goal(), repo, { candidates: [], scores: scored("Old prompt.", 50, 50, 50, 50), costUsd: 0.1, rejected: w.rejected });
+  assert.match(repo.issue, /isn't in the prompt/);
+});
+
+test("the merged pull request says what changed", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  await runDecide(goal(), repo, { ...win(), candidates: [{ id: "c1", text: "Better prompt.", summary: "Adds the refund rule." }] });
+  assert.match(repo.prs[0].body, /What changed: Adds the refund rule\./);
 });

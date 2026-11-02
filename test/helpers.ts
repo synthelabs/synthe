@@ -29,7 +29,8 @@ export const scenarios: Scenario[] = [
 export class MemoryRepo implements Repo {
   files = new Map<string, string>();
   state: State = newState();
-  prs: { number: number; title: string; body: string; closed: boolean }[] = [];
+  prs: { number: number; title: string; body: string; closed: boolean; branch: string; merged: boolean }[] = [];
+  crashOn: "openPr" | "mergePr" | "upsertIssue" | null = null; // throws once at that step, like a job dying
   merges: { pr: number; sha: string }[] = [];
   commits: { path: string; content: string }[] = [];
   issue = "";
@@ -44,20 +45,28 @@ export class MemoryRepo implements Repo {
     this.branches.set(a.branch, a.content);
     return `sha-${this.commits.length}`;
   }
-  async openPr(a: { title: string; body: string }) {
-    this.prs.push({ number: this.prs.length + 1, title: a.title, body: a.body, closed: false });
+  private crash(step: string) { if (this.crashOn === step) { this.crashOn = null; throw new Error(`crashed at ${step}`); } }
+  async openPr(a: { branch: string; title: string; body: string }) {
+    this.crash("openPr");
+    this.prs.push({ number: this.prs.length + 1, title: a.title, body: a.body, closed: false, branch: a.branch, merged: false });
     return this.prs.length;
   }
   async mergePr(number: number, sha: string) {
     if (this.mergeResult.merged) {
       this.merges.push({ pr: number, sha });
+      this.prs[number - 1].merged = true;
       this.files.set(this.commits.at(-1)!.path, this.commits.at(-1)!.content);
     }
+    this.crash("mergePr");
     return this.mergeResult;
   }
   async deleteBranch(b: string) { this.branches.delete(b); }
   async closePr(n: number) { this.prs[n - 1].closed = true; }
-  async upsertIssue(n: number | null, _t: string, body: string) { this.issue = body; return n ?? 99; }
+  async upsertIssue(n: number | null, _t: string, body: string) { this.crash("upsertIssue"); this.issue = body; return n ?? 99; }
+  async findPr(branch: string) {
+    const pr = [...this.prs].reverse().find((p) => p.branch === branch);
+    return pr ? { number: pr.number, open: !pr.closed && !pr.merged, merged: pr.merged } : null;
+  }
   async readState() { return structuredClone(this.state); }
   async writeState(s: State) { this.state = structuredClone(s); }
 }

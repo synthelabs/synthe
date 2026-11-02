@@ -69,7 +69,10 @@ const anthropic = createServer((req, res) => {
       const a = good("reply_a"), b = good("reply_b");
       text = JSON.stringify({ better: a === b ? "tie" : a ? "A" : "B", a_guardrail_ok: true, b_guardrail_ok: true });
     }
-    else if (schema.includes("prompt")) text = JSON.stringify({ prompt: "You are careful and use the store policy." });
+    else if (schema.includes("edits")) {
+      const current = /<prompt>\n([\s\S]*?)\n<\/prompt>/.exec(user)![1];
+      text = JSON.stringify({ edits: [{ find: current, replace: "You are careful and use the store policy." }], summary: "Uses the store policy." });
+    }
     else text = b.system?.includes("careful") ? "A policy-aware answer." : "A vague answer.";
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify({ id: "m", type: "message", role: "assistant", model: b.model, stop_reason: "end_turn", stop_sequence: null, content: [{ type: "text", text }], usage: { input_tokens: 1000, output_tokens: 200 } }));

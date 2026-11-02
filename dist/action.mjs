@@ -28135,6 +28135,7 @@ var newState = () => ({
   issue: null,
   scenariosHash: null,
   lessons: null,
+  pending: null,
   rounds: []
 });
 function stopReason(s, maxRounds, stallRounds, maxUsd) {
@@ -28207,14 +28208,24 @@ function literalProblem(text, delimiter2) {
 }
 
 // src/github/repo.ts
+var isRateLimited = (status2, headers, text) => status2 === 429 || status2 === 403 && (headers.get("x-ratelimit-remaining") === "0" || /rate limit/i.test(text));
 var STATE_PATH = "state.json";
-function githubRepo(slug, token, api = "https://api.github.com") {
+var RETRIES = 2;
+var sleepFor = (ms) => new Promise((r) => setTimeout(r, ms));
+function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepFor) {
   const call = async (method, path4, body, accept = "application/vnd.github+json") => {
-    return fetch(`${api}/repos/${slug}${path4}`, {
-      method,
-      headers: { Authorization: `Bearer ${token}`, Accept: accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "synthe" },
-      body: body === void 0 ? void 0 : JSON.stringify(body)
-    });
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(`${api}/repos/${slug}${path4}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, Accept: accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "synthe" },
+        body: body === void 0 ? void 0 : JSON.stringify(body)
+      });
+      if (attempt >= RETRIES || res.status !== 429 && res.status !== 403) return res;
+      const text = await res.clone().text();
+      if (!isRateLimited(res.status, res.headers, text)) return res;
+      const wait = Number(res.headers.get("retry-after"));
+      await sleep2(Math.min(Number.isFinite(wait) && wait > 0 ? wait * 1e3 : 2e4, 6e4));
+    }
   };
   const json = async (method, path4, body) => {
     const res = await call(method, path4, body);
@@ -28235,7 +28246,12 @@ function githubRepo(slug, token, api = "https://api.github.com") {
     });
     return out.commit.sha;
   };
-  const createBranch = (branch, sha) => json("POST", "/git/refs", { ref: `refs/heads/${branch}`, sha });
+  const createBranch = async (branch, sha) => {
+    const res = await call("POST", "/git/refs", { ref: `refs/heads/${branch}`, sha });
+    if (res.ok) return;
+    if (res.status === 422) return void await json("PATCH", `/git/refs/heads/${encodeURIComponent(branch)}`, { sha, force: true });
+    throw new Error(`GitHub POST /git/refs: ${res.status} ${(await res.text()).slice(0, 300)}`);
+  };
   const repo = {
     async defaultBranch() {
       return (await json("GET", "")).default_branch;
@@ -28259,14 +28275,22 @@ function githubRepo(slug, token, api = "https://api.github.com") {
     async mergePr(number, sha) {
       const res = await call("PUT", `/pulls/${number}/merge`, { sha, merge_method: "squash" });
       if (res.ok) return { merged: true };
-      const why = `${res.status} ${(await res.text()).slice(0, 200)}`;
-      return { merged: false, why, blocked: res.status === 405 || res.status === 403 };
+      const text = await res.text();
+      const why = `${res.status} ${text.slice(0, 200)}`;
+      const problem = isRateLimited(res.status, res.headers, text) ? "rate_limited" : res.status === 405 ? "blocked" : res.status === 401 ? "token" : res.status === 403 ? "permission" : res.status === 409 ? "moved" : "other";
+      return { merged: false, why, problem };
     },
     async deleteBranch(branch) {
       await call("DELETE", `/git/refs/heads/${encodeURIComponent(branch)}`);
     },
     async closePr(number) {
       await call("PATCH", `/pulls/${number}`, { state: "closed" });
+    },
+    async findPr(branch) {
+      const owner = slug.split("/")[0];
+      const list = await json("GET", `/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`);
+      const pr = Array.isArray(list) ? list[0] : void 0;
+      return pr ? { number: pr.number, open: pr.state === "open", merged: Boolean(pr.merged_at) } : null;
     },
     async upsertIssue(number, title, body) {
       if (number !== null) {
@@ -28599,23 +28623,70 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
 
 // src/loop/decide.ts
 var LESSONS = 6;
+var NEEDS_A_PERSON = {
+  blocked: "this repo blocks automatic merges; exempt Synthe's token in the branch rules",
+  permission: "GitHub Actions isn't allowed to merge here; turn on 'Allow GitHub Actions to create and approve pull requests' in the repo's Actions settings",
+  token: "GitHub refused the workflow's token"
+};
+async function recover(goal, repo, state) {
+  const p = state.pending;
+  if (!p) return false;
+  const record = { round: p.round, at: p.at, outcome: "failed", reasons: ["the decide step stopped partway; check the Actions log"], costUsd: p.costUsd };
+  if (p.land) {
+    const pr = await repo.findPr(p.land.branch);
+    if (pr?.merged) {
+      Object.assign(record, { outcome: p.land.kind === "merge" ? "merged" : "reverted", pr: pr.number });
+      record.reasons = ["this merge went through just before the decide step stopped, and was recovered"];
+      if (p.land.kind === "merge") {
+        state.lastMerge = { pr: pr.number, priorPrompt: p.land.priorPrompt, mergedHash: sha256(p.land.text), reverted: false };
+        state.stalls = 0;
+      } else if (state.lastMerge) {
+        state.lastMerge.reverted = true;
+      }
+      state.prompt = goal.prompt.kind === "inline" ? p.land.text : null;
+    } else if (pr?.open) {
+      await repo.closePr(pr.number);
+    }
+    await repo.deleteBranch(p.land.branch);
+  }
+  state.rounds.push(record);
+  state.pending = null;
+  return true;
+}
 async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
   const state = await repo.readState();
   const { merge_rule, budget } = goal;
+  const recovered = await recover(goal, repo, state);
   const base = await repo.defaultBranch();
   const head = await repo.headSha(base);
   const scenarioText = await repo.readFile(goal.scenarios, head);
   const scenariosHash = scenarioText === null ? null : sha256(scenarioText);
   if (scenariosHash !== null) resumeIfScenariosChanged(state, scenariosHash);
-  if (stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd)) return null;
+  if (stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd)) {
+    if (recovered) {
+      state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
+      state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+      await repo.writeState(state);
+    }
+    return null;
+  }
   const path4 = goal.prompt.path;
   const source = await repo.readFile(path4, head);
   const current = source === null ? null : readPrompt(source, goal, state.prompt);
   const round = state.round + 1;
-  const record = { round, at: now.toISOString(), outcome: "skipped", reasons: [], costUsd: input2.costUsd, writeUsd: input2.writeUsd ?? null };
+  const record = { round, at: now.toISOString(), outcome: "skipped", reasons: [...input2.rejected ?? []], costUsd: input2.costUsd, writeUsd: input2.writeUsd ?? null };
   const scores = input2.scores;
-  const land = async (text, title, why) => {
+  const priorStalls = state.stalls;
+  state.round = round;
+  state.spendUsd += input2.costUsd ?? 0;
+  state.stalls = priorStalls + 1;
+  state.pending = { round, at: record.at, costUsd: input2.costUsd };
+  await repo.writeState(state);
+  let stall = true;
+  const land = async (text, kind, title, why) => {
     const branch = `synthe/round-${round}`;
+    state.pending = { ...state.pending, land: { branch, kind, text, priorPrompt: current } };
+    await repo.writeState(state);
     const content = writePrompt(source, goal.prompt, current, text);
     const sha = await repo.commitFile({ branch, baseSha: head, path: path4, content, message: title });
     const pr = await repo.openPr({ branch, base, title, body: `${why}
@@ -28629,54 +28700,53 @@ Chosen by Synthe from simulated scenarios. Only \`${path4}\` changed.` });
     await repo.closePr(pr);
     await repo.deleteBranch(branch);
     record.reasons.push(`merge failed: ${merged.why}`);
-    if (merged.blocked) state.stopped = "this repo blocks automatic merges; exempt Synthe's token in the branch rules";
+    const stop = NEEDS_A_PERSON[merged.problem];
+    if (stop) state.stopped = stop;
     return null;
   };
   if (!scores || !input2.candidates) {
     record.outcome = "failed";
     record.reasons.push("the round did not finish; check the Actions log and the API key");
-    state.stalls += 1;
   } else if (input2.costUsd === null) {
     record.reasons.push("cost unknown, so nothing merges");
     state.spendUnknown = true;
+    stall = false;
   } else if (source === null || current === null || sha256(current) !== scores.baselineHash) {
     record.reasons.push("the prompt changed during this round");
+    stall = false;
   } else if (promptPathProblem(path4)) {
     record.reasons.push(promptPathProblem(path4));
     state.stopped = promptPathProblem(path4);
+    stall = false;
   } else {
     const last = state.lastMerge;
     const replaced = last && !last.reverted && last.mergedHash === scores.baselineHash && scores.prior ? scores.prior : null;
     const verdict = judgeRound(scores, goal, replaced);
     record.reasons.push(...verdict.reasons);
     if (verdict.action === "merge") {
-      const text = input2.candidates.find((c) => c.id === verdict.candidateId)?.text;
+      const chosen = input2.candidates.find((c) => c.id === verdict.candidateId);
+      const text = chosen?.text;
       const problem = text === void 0 ? "candidate missing" : candidateProblem(text, goal.prompt) ?? (text.trim() === current.trim() ? "candidate is the current prompt" : null);
       if (problem) {
         record.reasons.push(problem);
-        state.stalls += 1;
       } else {
-        const pr = await land(text, `Synthe: improve prompt (round ${round})`, verdict.reasons.join(" "));
+        const why = [chosen?.summary ? `What changed: ${chosen.summary}` : "", verdict.reasons.join(" ")].filter(Boolean).join("\n\n");
+        const pr = await land(text, "merge", `Synthe: improve prompt (round ${round})`, why);
         if (pr !== null) {
           Object.assign(record, { outcome: "merged", pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses });
           state.lastMerge = { pr, priorPrompt: current, mergedHash: sha256(text), reverted: false };
           state.prompt = goal.prompt.kind === "inline" ? text : null;
-          state.stalls = 0;
-        } else {
-          state.stalls += 1;
+          stall = false;
         }
       }
     } else if (verdict.action === "revert") {
       const prior = state.lastMerge.priorPrompt;
-      const pr = await land(prior, `Synthe: revert round ${round - 1}'s prompt`, verdict.reasons.join(" "));
+      const pr = await land(prior, "revert", `Synthe: revert round ${round - 1}'s prompt`, verdict.reasons.join(" "));
       if (pr !== null) {
         Object.assign(record, { outcome: "reverted", pr });
         state.lastMerge.reverted = true;
         state.prompt = goal.prompt.kind === "inline" ? prior : null;
       }
-      state.stalls += 1;
-    } else {
-      state.stalls += 1;
     }
   }
   if (scores) {
@@ -28689,11 +28759,11 @@ Chosen by Synthe from simulated scenarios. Only \`${path4}\` changed.` });
     lessons.sort((a, b) => Number(b.violation) - Number(a.violation));
     state.lessons = { promptHash: scores.baselineHash, rows: lessons.slice(0, LESSONS) };
   }
-  state.round = round;
+  state.stalls = record.outcome === "merged" ? 0 : stall ? priorStalls + 1 : priorStalls;
   state.scenariosHash = scenariosHash;
-  state.spendUsd += input2.costUsd ?? 0;
+  state.pending = null;
   state.rounds.push(record);
-  state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
+  state.stopped = state.stopped ?? stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
   state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
   await repo.writeState(state);
   return record;
@@ -28701,15 +28771,49 @@ Chosen by Synthe from simulated scenarios. Only \`${path4}\` changed.` });
 
 // src/loop/write.ts
 var ANGLES = [
-  "Fix the cases where the current prompt does worst, with short, specific rules, without breaking what already works.",
-  "Rewrite it to be clearer and better organized, with the most important behavior first and nothing vague."
+  "Fix what made the current prompt lose in the cases below.",
+  "Remove or correct one instruction that is vague, missing or conflicts with the goal, which would lead to wrong answers in situations like these."
 ];
+var MAX_EDITS = 2;
+var MAX_EDIT_CHARS = 1500;
 var SCHEMA2 = {
   type: "object",
-  properties: { prompt: { type: "string" } },
-  required: ["prompt"],
+  properties: {
+    edits: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { find: { type: "string" }, replace: { type: "string" } },
+        required: ["find", "replace"],
+        additionalProperties: false
+      }
+    },
+    summary: { type: "string" }
+  },
+  required: ["edits", "summary"],
   additionalProperties: false
 };
+function applyEdits(prompt, edits) {
+  if (!Array.isArray(edits) || edits.length === 0) return { problem: "no edits" };
+  if (edits.length > MAX_EDITS) return { problem: `more than ${MAX_EDITS} edits` };
+  let text = prompt;
+  for (const e of edits) {
+    if (typeof e?.find !== "string" || typeof e?.replace !== "string") return { problem: "malformed edit" };
+    if (e.replace.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
+    if (e.find === "") {
+      text = `${text.trimEnd()}
+
+${e.replace.trim()}
+`;
+      continue;
+    }
+    const at = text.indexOf(e.find);
+    if (at === -1) return { problem: "an edit's text isn't in the prompt" };
+    if (text.indexOf(e.find, at + 1) !== -1) return { problem: "an edit's text appears more than once" };
+    text = text.slice(0, at) + e.replace + text.slice(at + e.find.length);
+  }
+  return text.trim() === prompt.trim() ? { problem: "edits change nothing" } : { text };
+}
 var MAX_EXAMPLES = 40;
 function lessonText(state, prompt, train) {
   if (!state.lessons || state.lessons.promptHash !== sha256(prompt)) return "";
@@ -28735,9 +28839,9 @@ async function runWrite(goal, state, prompt, scenarios, model) {
 The prompt lives inside a source-code string, so never use backslashes, ${goal.prompt.delimiter} or \${ in it.` : "";
   const results = await pool(ANGLES, ANGLES.length, async (angle) => askJson(model, {
     model: goal.models.writer,
-    maxTokens: 8e3,
+    maxTokens: 3e3,
     schema: SCHEMA2,
-    user: `You improve the system prompt of an AI agent.
+    user: `You improve the system prompt of an AI agent by making small, exact edits.
 
 Goal: ${goal.objective}
 Must never happen: ${goal.guardrails.join("; ") || "nothing listed"}
@@ -28754,12 +28858,18 @@ ${train.slice(0, MAX_EXAMPLES).map((s) => `- ${s.input} => ${s.expected}`).join(
 Earlier rounds:
 ${history}
 ${lessons}
-Return the complete improved system prompt.`
+Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why.`
   }));
-  return {
-    candidates: results.flatMap((r, i) => r.value?.prompt ? [{ id: `candidate-${i + 1}`, text: r.value.prompt }] : []),
-    costUsd: sumCosts(results.map((r) => r.costUsd))
-  };
+  const candidates = [];
+  const rejected = [];
+  results.forEach((r, i) => {
+    const id = `candidate-${i + 1}`;
+    if (!r.value) return void rejected.push(`${id}: no edits returned`);
+    const applied = applyEdits(prompt, r.value.edits);
+    if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
+    candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : void 0 });
+  });
+  return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
 }
 
 // src/action.ts
@@ -28783,7 +28893,7 @@ async function main() {
     const written = load("candidates.json");
     const scored = load("scores.json");
     const costUsd2 = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
-    const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null });
+    const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null, rejected: written?.rejected });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     return;
   }
