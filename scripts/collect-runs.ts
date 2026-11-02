@@ -1,6 +1,7 @@
 // Collects how every registered team's run is going, as numbers only, for the hackathon dashboard.
 // Usage: node scripts/collect-runs.ts [--repos owner/a,owner/b] [--out runs.json]
-// Without --repos it reads the registry (teams that agreed to share at `npx synthe init`). Needs `gh` signed in.
+// Without --repos it reads the registry: open issues, one per team that agreed to share at `npx synthe init` (a team
+// that closes its issue has stopped sharing). Needs `gh` signed in.
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { REGISTRY } from "../src/cli/init.ts";
@@ -15,7 +16,7 @@ const SLUG = /^[\w.-]+\/[\w.-]+$/;
 function registrations(): Registration[] {
   const listed = arg("--repos");
   if (listed) return listed.split(",").map((repo) => ({ repo: repo.trim() }));
-  const issues = JSON.parse(gh("api", "--paginate", `repos/${REGISTRY}/issues?state=all&per_page=100`)) as { title: string; body: string | null; pull_request?: unknown }[];
+  const issues = JSON.parse(gh("api", "--paginate", `repos/${REGISTRY}/issues?state=open&per_page=100`)) as { title: string; body: string | null; pull_request?: unknown }[];
   const seen = new Map<string, Registration>();
   for (const i of issues) {
     const repo = i.title.replace(/^run: /, "").trim();
