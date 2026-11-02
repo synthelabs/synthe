@@ -351,7 +351,7 @@ test("a judge that always picks the first reply can't manufacture a winner", asy
   const many = [...Array(40)].map((_, i): Scenario => ({ id: `s${i}`, input: `q-${i}`, expected: "good", split: i < 30 ? "train" : "holdout" }));
   const { scores } = await runScore(goal(), "Base", [{ id: "c", text: "Other" }], many, m);
   const wins = scores.candidates[0].train.filter((r) => r.score === 100).length;
-  assert.ok(wins > 5 && wins < 25, `position decided ${wins} of 30`); // both orders are used
+  assert.equal(wins, 15); // exactly half each way, so position alone decides nothing
   assert.notEqual(judgeRound(scores, goal(), null).action, "merge");
 });
 
@@ -600,4 +600,86 @@ test("the goal file rejects an unknown merge mode", async () => {
   assert.equal(parseGoal(JSON.stringify(base)).merge_rule.mode, "auto");
   assert.equal(parseGoal(JSON.stringify({ ...base, merge_rule: { mode: "propose" } })).merge_rule.mode, "propose");
   assert.throws(() => parseGoal(JSON.stringify({ ...base, merge_rule: { mode: "yolo" } })), /auto or propose/);
+});
+
+
+test("the reply order flips at random between rounds, so a position bias can't repeat on the same scenarios", async () => {
+  const firsts = async (r: number) => {
+    const m = scripted({});
+    await runScore(goal(), "Base", [{ id: "c", text: "Other" }], named, m, null, () => r);
+    return m.seen.filter((a) => a.schema && !JSON.stringify(a.schema).includes("quote")).map((a) => /<reply_a>\nOther/.test(a.user)).sort().join();
+  };
+  const order = async (r: number) => {
+    const m = scripted({});
+    await runScore(goal(), "Base", [{ id: "c", text: "Other" }], named, m, null, () => r);
+    return m.seen.filter((a) => a.schema && !JSON.stringify(a.schema).includes("quote")).map((a) => `${/Situation: q-(\w)/.exec(a.user)![1]}:${/<reply_a>\nOther/.test(a.user)}`).sort().join();
+  };
+  assert.equal(await firsts(0.1), await firsts(0.9)); // same balance either way
+  assert.notEqual(await order(0.1), await order(0.9)); // but which scenarios get which order flips
+});
+
+test("when no candidate survives and nothing else needs judging, scoring costs nothing", async () => {
+  const m = scripted({});
+  const r = await runScore(goal(), "Base", [], named, m);
+  assert.equal(m.seen.length, 0);
+  assert.equal(r.costUsd, 0);
+  assert.equal(judgeRound(r.scores, goal(), null).action, "skip");
+});
+
+test("edits whose find text is too long are rejected, so one edit can't swap out the whole prompt", async () => {
+  const { applyEdits } = await import("../src/loop/write.ts");
+  const prompt = "x".repeat(1600);
+  assert.match((applyEdits(prompt, [{ find: prompt, replace: "short" }]) as any).problem, /too long/);
+});
+
+// The judge flags both replies on q-c; the re-check answers per reply.
+const bothFlagC = (check: Check) => {
+  const m = scripted({ Bold: { a: 99, b: 99, c: 99, d: 99, e: 99, f: 99, h: 99 } }, check);
+  const ask = m.ask;
+  m.ask = async (a) => {
+    const r = await ask(a);
+    if (!a.schema || JSON.stringify(a.schema).includes("quote")) return r;
+    const v = JSON.parse(r.text!);
+    const ok = !a.user.includes("q-c");
+    return { ...r, text: JSON.stringify({ ...v, a_guardrail_ok: ok, b_guardrail_ok: ok }) };
+  };
+  return m;
+};
+
+test("a candidate's break is excused as 'already broken' only if the current prompt's break is confirmed too", async () => {
+  const quote = (reply: string) => ({ breaks: true, guardrail: "x", quote: reply });
+  // The current prompt's flag on q-c was false: the candidate's real break there is new, and blocks.
+  const falseFlag = await decideBold(bothFlagC((reply) => (reply.startsWith("Base") ? { breaks: false, guardrail: "", quote: "" } : quote(reply))));
+  assert.notEqual(falseFlag?.outcome, "merged");
+  // The current prompt really breaks it there too: the candidate adds nothing, and merges.
+  assert.equal((await decideBold(bothFlagC((reply) => quote(reply))))?.outcome, "merged");
+});
+
+test("a proposal a reviewer edited before merging is tracked as what actually merged", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  await runDecide(propose(), repo, win());
+  repo.prs[0].merged = true;
+  repo.files.set("prompt.md", "Better prompt, reviewed.");
+  await runDecide(propose(), repo, { candidates: null, scores: null, costUsd: null });
+  assert.equal((repo.state.lastMerge as any)?.mergedHash, sha256("Better prompt, reviewed."));
+});
+
+test("an inline prompt a reviewer rewrote is reported, not silently lost", async () => {
+  const g = goal({ prompt: { kind: "inline", path: "a.ts", delimiter: "`", initial: "Old prompt." }, merge_rule: { ...goal().merge_rule, mode: "propose" } });
+  const repo = new MemoryRepo("const p = `Old prompt.`;", "a.ts");
+  await runDecide(g, repo, round(scored("Old prompt.", 50, 50, 60, 55)));
+  repo.prs[0].merged = true;
+  repo.files.set("a.ts", "const p = `Something else entirely.`;");
+  await runDecide(g, repo, { candidates: null, scores: null, costUsd: null });
+  assert.match(repo.state.stopped!, /can't find it; set prompt.initial/);
+});
+
+test("a merge blocked by review and kept as a proposal survives a crash", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  repo.mergeResult = { merged: false, why: "405", problem: "blocked" };
+  repo.crashOn = "upsertIssue";
+  await assert.rejects(runDecide(goal(), repo, win()));
+  await runDecide(goal(), repo, { candidates: null, scores: null, costUsd: null });
+  assert.equal(repo.prs[0].closed, false);
+  assert.equal(repo.state.proposal?.pr, 1);
 });

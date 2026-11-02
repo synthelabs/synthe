@@ -174,6 +174,14 @@ test("while a proposal waits for review, the write step makes no model calls and
   assert.equal(bodies.length, before);
 });
 
+test("a proposal opened in a run's last round is still checked after the run stops", async () => {
+  reset();
+  files.set("synthe/state:state.json", JSON.stringify({ round: 12, stalls: 0, spendUsd: 0.1, stopped: "reached 12 rounds", pending: null, rounds: [], proposal: { pr: 1, round: 12, branch: "synthe/round-12", kind: "merge", text: "New", priorPrompt: "Old", propose: true } }));
+  writeFileSync(join(dir, "out.txt"), "");
+  assert.equal((await step("write")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=check/);
+});
+
 test("a revoked key fails the job, and decide records the failed round", async () => {
   reset();
   denyKey = true;

@@ -21,16 +21,23 @@ const NEEDS_A_PERSON: Partial<Record<MergeProblem, string>> = {
 
 // A proposal was merged or closed by a person: keep a merge on record (so the revert check protects it) or note
 // that it was declined, and let rounds continue.
-function settle(goal: Goal, state: State, merged: boolean) {
+async function settle(goal: Goal, repo: Repo, state: State, merged: boolean) {
   const p = state.proposal!;
   const record = state.rounds.find((r) => r.pr === p.pr && r.outcome === "proposed");
-  if (merged && p.kind === "merge") {
-    state.lastMerge = { pr: p.pr, priorPrompt: p.priorPrompt, mergedHash: sha256(p.text), reverted: false };
-    state.prompt = goal.prompt.kind === "inline" ? p.text : null;
-    state.stalls = 0;
-  } else if (merged && state.lastMerge) {
-    state.lastMerge.reverted = true;
-    state.prompt = goal.prompt.kind === "inline" ? p.text : null;
+  if (merged) {
+    // A reviewer may have edited the pull request before merging, so track what is really on the default branch.
+    const source = await repo.readFile(goal.prompt.path, await repo.headSha(await repo.defaultBranch()));
+    const live = source === null ? null : readPrompt(source, goal, p.text);
+    if (live === null) {
+      state.stopped = `the merged pull request changed the prompt in ${goal.prompt.path} so Synthe can't find it; set prompt.initial in synthe.json to the new text`;
+    } else if (p.kind === "merge") {
+      state.lastMerge = { pr: p.pr, priorPrompt: p.priorPrompt, mergedHash: sha256(live), reverted: false };
+      state.prompt = goal.prompt.kind === "inline" ? live : null;
+      state.stalls = 0;
+    } else {
+      if (state.lastMerge) state.lastMerge.reverted = true;
+      state.prompt = goal.prompt.kind === "inline" ? live : null;
+    }
   }
   if (record) {
     record.outcome = merged ? (p.kind === "merge" ? "merged" : "reverted") : "declined";
@@ -84,7 +91,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       await repo.writeState(state);
       return null;
     }
-    settle(goal, state, Boolean(pr?.merged));
+    await settle(goal, repo, state, Boolean(pr?.merged));
     if (!input.scores) {
       state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
       state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
@@ -144,7 +151,10 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     }
     if (merged.problem === "blocked") {
       record.reasons.push(`this repo requires a review to merge, so Synthe left #${pr} open for you`);
-      state.proposal = { ...landing, propose: true, pr, round };
+      // Saved first, so crash recovery keeps this pull request open for review instead of closing it.
+      landing.propose = true;
+      await repo.writeState(state);
+      state.proposal = { ...landing, pr, round };
       return { pr, proposed: true };
     }
     await repo.closePr(pr);

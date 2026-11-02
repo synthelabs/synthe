@@ -44,7 +44,7 @@ export function applyEdits(prompt: string, edits: unknown): { text: string } | {
   let text = prompt;
   for (const e of edits as Edit[]) {
     if (typeof e?.find !== "string" || typeof e?.replace !== "string") return { problem: "malformed edit" };
-    if (e.replace.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
+    if (e.replace.length > MAX_EDIT_CHARS || e.find.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
     if (e.find === "") { text = `${text.trimEnd()}\n\n${e.replace.trim()}\n`; continue; }
     const at = text.indexOf(e.find);
     if (at === -1) return { problem: "an edit's text isn't in the prompt" };
@@ -115,7 +115,8 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
   return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
 }
 
-const clip = (t: string, n = 300) => (t.length > n ? `${t.slice(0, n)}...` : t).replaceAll("\n", " / ");
+// Shortens text to one line for the Actions log.
+export const clip = (t: string | undefined, n = 300) => (t === undefined ? "(none)" : t.length > n ? `${t.slice(0, n)}...` : t).replaceAll("\n", " / ");
 
 // Plain lines for the Actions log, so anyone can see what each candidate tried.
 export function explainWrite(w: Written): string[] {

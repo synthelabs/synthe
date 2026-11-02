@@ -9,6 +9,7 @@ const files = new Map<string, string>([["main:prompt.md", "Old"]]);
 let merge = { status: 200, body: "x", headers: {} as Record<string, string> };
 let mergeQueue: typeof merge[] = []; // answered first, one per call, to test retries
 const waits: number[] = [];
+let failOnce: { path: string; status: number } | null = null; // the next request to this path fails once
 
 const server = createServer((req, res) => {
   let raw = "";
@@ -20,6 +21,7 @@ const server = createServer((req, res) => {
     const send = (code: number, value?: unknown) => { res.statusCode = code; res.end(value === undefined ? "" : typeof value === "string" ? value : JSON.stringify(value)); };
     const path = url.pathname.replace("/repos/o/r", "");
     assert.equal(req.headers.authorization, "Bearer tok");
+    if (failOnce && path === failOnce.path) { const status = failOnce.status; failOnce = null; return send(status, { message: "x" }); }
     if (path === "") return send(200, { default_branch: "main" });
     if (path.startsWith("/git/ref/heads/")) {
       const b = decodeURIComponent(path.slice(15));
@@ -100,11 +102,16 @@ test("a rate limit is waited out and retried before giving up", async () => {
   assert.deepEqual(waits, [2000]);
 });
 
-test("a GitHub server error is retried after a short pause", async () => {
+test("a GitHub server error is retried for reads, but a merge or create is never repeated", async () => {
+  waits.length = 0;
+  failOnce = { path: "/contents/prompt.md", status: 502 };
+  assert.equal(await repo.readFile("prompt.md", "main"), "Old");
+  assert.deepEqual(waits, [5000]);
   waits.length = 0;
   mergeQueue = [{ status: 502, body: "bad gateway", headers: {} }];
-  assert.deepEqual(await repo.mergePr(7, "s"), { merged: true });
-  assert.deepEqual(waits, [5000]);
+  const r = await repo.mergePr(7, "s");
+  assert.equal(r.merged, false); // the merge may have gone through; repeating it could misread the result
+  assert.deepEqual(waits, []);
 });
 
 test("a branch left behind by a crashed round is moved, not a failure", async () => {

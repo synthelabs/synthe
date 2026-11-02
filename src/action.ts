@@ -33,6 +33,14 @@ async function main() {
 
   const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
   const state = await repo.readState();
+  // Checked before the stop reasons: a proposal opened in a run's last round still needs settling.
+  if (state.proposal && !state.pending) {
+    // Waiting for a person to merge or close a proposal: no model calls. "check" skips scoring but lets decide
+    // look at the pull request.
+    console.log(`Waiting for review of #${state.proposal.pr}`);
+    setOutput("go", "check");
+    return;
+  }
   // Decide makes the same check on the same commit and saves it; this job only needs to know whether to run.
   if (existsSync(goal.scenarios)) resumeIfScenariosChanged(state, sha256(readFileSync(goal.scenarios, "utf8")));
   const stop = stopReason(state, goal.merge_rule.max_rounds, goal.merge_rule.stall_rounds, goal.budget.max_usd);
@@ -41,13 +49,6 @@ async function main() {
     // A decide step that died partway still needs its own cleanup and a final report, even when the run is over.
     // "recover" skips scoring (it only runs on "true") but lets decide run.
     setOutput("go", state.pending ? "recover" : "false");
-    return;
-  }
-  if (state.proposal) {
-    // Waiting for a person to merge or close a proposal: no model calls. "check" skips scoring but lets decide
-    // look at the pull request.
-    console.log(`Waiting for review of #${state.proposal.pr}`);
-    setOutput("go", "check");
     return;
   }
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, state.prompt);
@@ -69,8 +70,8 @@ async function main() {
     const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior);
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
     for (const line of explainScores(scored.scores, scenarios)) console.log(line);
-    const { confirmed, dismissed, failed } = scored.checks;
-    if (confirmed + dismissed + failed > 0) console.log(`guardrail re-checks of new breaks: ${confirmed} confirmed, ${dismissed} dismissed, ${failed} failed (a failed check still blocks)`);
+    const { confirmed, dismissed, failed, excusedConfirmed } = scored.checks;
+    if (confirmed + dismissed + failed + excusedConfirmed > 0) console.log(`guardrail re-checks: new breaks ${confirmed} confirmed, ${dismissed} dismissed, ${failed} failed (a failed check still blocks); ${excusedConfirmed} confirmed as already broken by the current prompt`);
     save("scores.json", scored);
   } else {
     throw new Error(`unknown step: ${step}`);

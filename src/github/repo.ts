@@ -40,8 +40,14 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       if (attempt >= RETRIES) return res;
-      // GitHub's own hiccups (500, 502, 503, 504) usually pass in seconds.
-      if (res.status >= 500) { await sleep(5_000); continue; }
+      // GitHub's own hiccups (500, 502, 503, 504) usually pass in seconds. Only requests that are safe to repeat are
+      // retried: a POST or PUT may have taken effect before the error, so repeating it could open a second pull
+      // request or issue, or misread a merge that already happened.
+      if (res.status >= 500) {
+        if (method === "POST" || method === "PUT") return res;
+        await sleep(5_000);
+        continue;
+      }
       if (res.status !== 429 && res.status !== 403) return res;
       const text = await res.clone().text();
       if (!isRateLimited(res.status, res.headers, text)) return res;

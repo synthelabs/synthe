@@ -3,7 +3,7 @@ import { paired, trainingProblem, mean, type RoundScores, type ScoreRow } from "
 import { candidateProblem, sha256 } from "../core/safety.ts";
 import { sumCosts } from "../core/cost.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
-import type { Candidate } from "./write.ts";
+import { clip, type Candidate } from "./write.ts";
 
 const CONCURRENCY = 6;
 const REPLY_KEPT = 800; // characters of each reply kept so the next writer can study what won and lost
@@ -36,7 +36,7 @@ const CHECK_SCHEMA = {
 };
 const squash = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
 
-function scorer(goal: Goal, model: Model) {
+function scorer(goal: Goal, model: Model, random: () => number = Math.random) {
   const costs: (number | null)[] = [];
 
   const reply = async (prompt: string, s: Scenario): Promise<string | null> => {
@@ -45,12 +45,9 @@ function scorer(goal: Goal, model: Model) {
     return r.text;
   };
 
-  // Which reply is shown first depends on the scenario and the challenger, so position can't favour either side.
-  const challengerFirst = (s: Scenario, who: string) => parseInt(sha256(`${s.id}:${who}`)[0], 16) % 2 === 0;
-
-  // The current prompt's reply against a challenger's, from the challenger's side.
-  const duel = async (s: Scenario, who: string, current: string, challenger: string): Promise<Judged> => {
-    const first = challengerFirst(s, who);
+  // The current prompt's reply against a challenger's, from the challenger's side. first: the challenger's reply is
+  // shown as A.
+  const duel = async (s: Scenario, first: boolean, current: string, challenger: string): Promise<Judged> => {
     const [a, b] = first ? [challenger, current] : [current, challenger];
     const judged = await askJson<Duel>(model, {
       model: goal.models.judge, maxTokens: 500, schema: SCHEMA,
@@ -83,14 +80,18 @@ Which reply better meets the goal for this situation? Answer "A" or "B", or "tie
   };
 
   // Every scenario in the set: the challenger's reply judged against the current prompt's reply for it.
-  const challenge = (who: string, prompt: string, set: Scenario[], currentReplies: Map<string, string | null>) =>
-    pool(set, CONCURRENCY, async (s): Promise<Judged> => {
+  // The challenger's reply is shown first on exactly half the set (alternating), flipped at random on each call,
+  // so a judge that leans toward one position can't favour either side, in this round or across rounds.
+  const challenge = (_who: string, prompt: string, set: Scenario[], currentReplies: Map<string, string | null>) => {
+    const flip = random() < 0.5;
+    return pool(set, CONCURRENCY, async (s): Promise<Judged> => {
       const current = currentReplies.get(s.id) ?? null;
       const mine = await reply(prompt, s);
       // A missing reply on either side is unknown, never a win or a loss.
       if (current === null || mine === null) return { row: { id: s.id, score: null, violation: null }, currentViolation: null };
-      return duel(s, who, current, mine);
+      return duel(s, (set.indexOf(s) % 2 === 0) !== flip, current, mine);
     });
+  };
 
   const repliesFor = async (prompt: string, set: Scenario[]) =>
     new Map(await pool(set, CONCURRENCY, async (s) => [s.id, await reply(prompt, s)] as const));
@@ -135,11 +136,17 @@ function currentRows(set: Scenario[], replies: Map<string, string | null>, duels
 
 // prior is the prompt the last merge replaced, when that merge is still live: it challenges the current prompt so a
 // merge that turned out worse can be reverted.
-export async function runScore(goal: Goal, baseline: string, candidates: Candidate[], scenarios: Scenario[], model: Model, prior: string | null = null) {
-  const { costs, challenge, repliesFor, confirmBreak } = scorer(goal, model);
+export async function runScore(goal: Goal, baseline: string, candidates: Candidate[], scenarios: Scenario[], model: Model, prior: string | null = null, random: () => number = Math.random) {
+  const { costs, challenge, repliesFor, confirmBreak } = scorer(goal, model, random);
   const train = scenarios.filter((s) => s.split === "train");
   const holdout = scenarios.filter((s) => s.split === "holdout");
   const safe = candidates.filter((c) => candidateProblem(c.text, goal.prompt) === null && c.text.trim() !== baseline.trim());
+  const hasPrior = prior !== null && prior.trim() !== baseline.trim();
+  // Nothing to compare: don't pay for the current prompt's replies. Head to head, it is simply even.
+  if (safe.length === 0 && !hasPrior) {
+    const even = (set: Scenario[]) => set.map((x): ScoreRow => ({ id: x.id, score: EVEN, violation: null }));
+    return { scores: { baselineHash: sha256(baseline), baselineTrain: even(train), baselineHoldout: even(holdout), candidates: [] } as RoundScores, costUsd: 0, calls: 0, checks: { confirmed: 0, dismissed: 0, failed: 0, excusedConfirmed: 0 } };
+  }
 
   const trainReplies = await repliesFor(baseline, train);
   // Held-back replies cost money, so they are only made when something will be judged against them.
@@ -167,9 +174,9 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
     leader.holdout = duels.map((d) => d.row);
   }
 
-  if (prior !== null && prior.trim() !== baseline.trim()) {
-    const t = await challenge("prior", prior, train, trainReplies);
-    const h = await challenge("prior", prior, holdout, await holdReplies());
+  if (hasPrior) {
+    const t = await challenge("prior", prior!, train, trainReplies);
+    const h = await challenge("prior", prior!, holdout, await holdReplies());
     trainDuels.push(t);
     holdDuels.push(h);
     scores.prior = [...t, ...h].map((d) => ({ ...d.row, reply: undefined }));
@@ -180,14 +187,24 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
     ? currentRows(holdout, held, holdDuels).map((r) => ({ ...r, reply: undefined }))
     : holdout.map((s) => ({ id: s.id, score: EVEN, violation: null }));
 
-  // Re-check the leader's new guardrail breaks (ones the current prompt doesn't have) before they can block it.
-  const checks = { confirmed: 0, dismissed: 0, failed: 0 };
+  // Re-check the leader's guardrail breaks before they can block it. A break the current prompt also has is only
+  // excused if the current prompt's break is confirmed too: a false flag on the current prompt must not let a
+  // real new break through.
+  const checks = { confirmed: 0, dismissed: 0, failed: 0, excusedConfirmed: 0 };
   if (leader) {
-    const before = new Map([...scores.baselineTrain, ...scores.baselineHoldout].map((r) => [r.id, r.violation]));
+    const currentRow = new Map([...scores.baselineTrain, ...scores.baselineHoldout].map((r) => [r.id, r]));
+    const currentText = (id: string) => trainReplies.get(id) ?? held?.get(id) ?? null;
     const byId = new Map(scenarios.map((x) => [x.id, x]));
-    const judged = [...trainDuels[scores.candidates.indexOf(leader)], ...holdDuels[0]];
-    await pool(judged.filter((d) => d.row.violation === true && before.get(d.row.id) !== true && d.full), CONCURRENCY, async (d) => {
-      const verdict = await confirmBreak(byId.get(d.row.id)!, d.full!);
+    const judged = [...trainDuels[scores.candidates.indexOf(leader)], ...(holdDuels[0] ?? [])];
+    await pool(judged.filter((d) => d.row.violation === true && d.full), CONCURRENCY, async (d) => {
+      const scenario = byId.get(d.row.id)!;
+      const cur = currentRow.get(d.row.id);
+      if (cur?.violation === true) {
+        const text = currentText(d.row.id);
+        if (text !== null && (await confirmBreak(scenario, text)) === true) { checks.excusedConfirmed++; return; }
+        cur.violation = false; // not confirmed, so the candidate's break counts as new and is checked below
+      }
+      const verdict = await confirmBreak(scenario, d.full!);
       if (verdict === false) { d.row.violation = false; checks.dismissed++; } else if (verdict) checks.confirmed++; else checks.failed++;
     });
   }
@@ -207,7 +224,6 @@ export async function measureNoise(goal: Goal, prompt: string, scenarios: Scenar
   return { wins: split?.wins ?? null, losses: split?.losses ?? null, ties, p: split?.p ?? null, costUsd: sumCosts(costs) };
 }
 
-const clip = (t: string | undefined, n = 300) => (t === undefined ? "(none)" : t.length > n ? `${t.slice(0, n)}...` : t).replaceAll("\n", " / ");
 
 // Plain lines for the Actions log: how each candidate did, where it broke a guardrail (new or already broken by
 // the current prompt), and a few losses with both replies, so anyone can see why nothing merged.
