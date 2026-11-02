@@ -798,3 +798,9 @@ test("the pull request is titled with the fix, flags new details, and the report
   await runDecide(goal({ merge_rule: { ...goal().merge_rule, mode: "propose" } }), review, win());
   assert.match(review.issue, /\*\*Mode:\*\* review\./);
 });
+
+test("a change summary ending in a full stop isn't given a second one", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  await runDecide(goal(), repo, { ...win(), candidates: [{ id: "c1", text: "Better prompt.", summary: "Fixes refunds." }] });
+  assert.match(repo.issue, /Fixes refunds\. Its replies/);
+});

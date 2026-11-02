@@ -89,7 +89,7 @@ export function renderReport(goal: Goal, state: State): string {
       const note = r.outcome === "proposed" ? " (waiting for your review)" : r.outcome === "reverted" ? " (an undo)" : "";
       const label = r.title ? `**#${r.pr}${note}: ${r.title[0].toUpperCase()}${r.title.slice(1)}.**` : `**#${r.pr}${note}:**`;
       const check = r.unverified?.length ? ` **Check these are real:** ${r.unverified.map((d) => `\`${d}\``).join(", ")} ${r.unverified.length === 1 ? "isn't" : "aren't"} in your old prompt or policy.` : "";
-      lines.push(`- ${label} ${r.changed ?? "A change to the prompt"}. ${r.plain ?? ""}${check}${undo}`);
+      lines.push(`- ${label} ${(r.changed ?? "A change to the prompt").replace(/[.\s]+$/, "")}. ${r.plain ?? ""}${check}${undo}`);
       if (r.example) lines.push("", exampleText(r.example).split("\n").map((l) => `  ${l}`).join("\n"), "");
     }
     lines.push("");

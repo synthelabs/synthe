@@ -28583,7 +28583,7 @@ function renderReport(goal, state) {
       const note = r.outcome === "proposed" ? " (waiting for your review)" : r.outcome === "reverted" ? " (an undo)" : "";
       const label = r.title ? `**#${r.pr}${note}: ${r.title[0].toUpperCase()}${r.title.slice(1)}.**` : `**#${r.pr}${note}:**`;
       const check = r.unverified?.length ? ` **Check these are real:** ${r.unverified.map((d) => `\`${d}\``).join(", ")} ${r.unverified.length === 1 ? "isn't" : "aren't"} in your old prompt or policy.` : "";
-      lines.push(`- ${label} ${r.changed ?? "A change to the prompt"}. ${r.plain ?? ""}${check}${undo}`);
+      lines.push(`- ${label} ${(r.changed ?? "A change to the prompt").replace(/[.\s]+$/, "")}. ${r.plain ?? ""}${check}${undo}`);
       if (r.example) lines.push("", exampleText(r.example).split("\n").map((l) => `  ${l}`).join("\n"), "");
     }
     lines.push("");
@@ -28717,7 +28717,7 @@ ${train.slice(0, MAX_EXAMPLES).map((s) => `- ${s.input} => ${s.expected}`).join(
 Earlier rounds:
 ${history}
 ${notAgain}${lessons}
-Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why. In "title", name the fix in a few lowercase words a customer-support team would use, starting with a verb, such as "stop approving every refund" (under 50 characters).`
+Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why. In "title", name the problem this fixes in a few plain lowercase words, the way a support team would say it to each other, starting with a verb: for example "stop approving every refund" or "stop inventing delivery dates", not "add policy-faithful guidance" (under 50 characters).`
   }));
   const candidates = [];
   const rejected = [];
