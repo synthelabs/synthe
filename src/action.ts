@@ -62,6 +62,8 @@ async function main() {
     const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior);
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
     for (const line of explainScores(scored.scores, scenarios)) console.log(line);
+    const { confirmed, dismissed, failed } = scored.checks;
+    if (confirmed + dismissed + failed > 0) console.log(`guardrail re-checks of new breaks: ${confirmed} confirmed, ${dismissed} dismissed, ${failed} failed (a failed check still blocks)`);
     save("scores.json", scored);
   } else {
     throw new Error(`unknown step: ${step}`);

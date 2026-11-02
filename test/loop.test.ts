@@ -258,12 +258,18 @@ test("a run stopped for another reason doesn't resume on new scenarios", async (
 // Scenarios whose inputs name themselves, so a fake judge can score each prompt per scenario.
 const named: Scenario[] = [..."abcdef"].map((id): Scenario => ({ id, input: `q-${id}`, expected: "good", split: "train" }))
   .concat([{ id: "h", input: "q-h", expected: "good", split: "holdout" }]);
-const scripted = (table: Record<string, Record<string, number>>): Model & { seen: Ask[] } => {
+type Check = (reply: string) => { breaks: boolean; guardrail: string; quote: string } | string;
+const scripted = (table: Record<string, Record<string, number>>, check?: Check): Model & { seen: Ask[] } => {
   const seen: Ask[] = [];
   return {
     seen,
     async ask(a) {
       seen.push(a);
+      if (a.schema && JSON.stringify(a.schema).includes("quote")) {
+        const reply = /<reply>\n([^\n]*)/.exec(a.user)![1];
+        const v = check ? check(reply) : { breaks: false, guardrail: "", quote: "" };
+        return { text: typeof v === "string" ? v : JSON.stringify(v), costUsd: 0.001 };
+      }
       if (a.schema) {
         const id = /Situation: q-(\w)/.exec(a.user)![1];
         const score = (tag: string) => table[new RegExp(`<${tag}>\\n(\\S+) answers`).exec(a.user)![1]]?.[id] ?? 50;
@@ -358,12 +364,49 @@ test("after a merge, the replaced prompt challenges the new one and wins a rever
   assert.equal(repo.files.get("prompt.md"), "Old");
 });
 
-test("a candidate the judge catches breaking a guardrail never merges, however much it wins", async () => {
-  const m = scripted({ Bold: { a: 99, b: 99, c: 99, d: 99, e: 99, f: 99, h: 99 } });
+// A judge that flags Bold's reply to q-c as breaking a guardrail while comparing, with a re-check that answers as told.
+const flagsC = (check?: Check) => {
+  const m = scripted({ Bold: { a: 99, b: 99, c: 99, d: 99, e: 99, f: 99, h: 99 } }, check);
   const ask = m.ask;
   m.ask = async (a) => {
     const r = await ask(a);
-    if (!a.schema) return r;
+    if (!a.schema || JSON.stringify(a.schema).includes("quote")) return r;
+    const v = JSON.parse(r.text!);
+    const boldIsA = /<reply_a>\nBold/.test(a.user);
+    return { ...r, text: JSON.stringify({ ...v, [boldIsA ? "a_guardrail_ok" : "b_guardrail_ok"]: !a.user.includes("q-c") }) };
+  };
+  return m;
+};
+const decideBold = async (m: Model) => {
+  const { scores } = await runScore(goal(), "Base", [{ id: "bold", text: "Bold" }], named, m);
+  const repo = new MemoryRepo("Base");
+  return runDecide(goal(), repo, { candidates: [{ id: "bold", text: "Bold" }], scores, costUsd: 0.1 });
+};
+
+test("a new guardrail break confirmed on re-check, with a real quote, blocks the merge", async () => {
+  const r = await decideBold(flagsC(() => ({ breaks: true, guardrail: "no lies", quote: "Bold answers q-c" })));
+  assert.notEqual(r?.outcome, "merged");
+  assert.match(r!.reasons.join(), /guardrail/);
+});
+
+test("a guardrail flag the re-check dismisses doesn't block a clear winner", async () => {
+  assert.equal((await decideBold(flagsC(() => ({ breaks: false, guardrail: "", quote: "" }))))?.outcome, "merged");
+});
+
+test("a re-check that claims a break but quotes words not in the reply is dismissed", async () => {
+  assert.equal((await decideBold(flagsC(() => ({ breaks: true, guardrail: "no lies", quote: "We will refund you in full today" }))))?.outcome, "merged");
+});
+
+test("a re-check that fails still blocks", async () => {
+  assert.notEqual((await decideBold(flagsC(() => "not json")))?.outcome, "merged");
+});
+
+test("(old) a candidate the judge catches breaking a guardrail never merges, however much it wins", async () => {
+  const m = scripted({ Bold: { a: 99, b: 99, c: 99, d: 99, e: 99, f: 99, h: 99 } }, () => ({ breaks: true, guardrail: "x", quote: "Bold answers q-c" }));
+  const ask = m.ask;
+  m.ask = async (a) => {
+    const r = await ask(a);
+    if (!a.schema || JSON.stringify(a.schema).includes("quote")) return r;
     const v = JSON.parse(r.text!);
     const boldIsA = /<reply_a>\nBold/.test(a.user);
     return { ...r, text: JSON.stringify({ ...v, [boldIsA ? "a_guardrail_ok" : "b_guardrail_ok"]: !a.user.includes("q-c") }) };
