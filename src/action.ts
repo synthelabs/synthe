@@ -7,8 +7,8 @@ import { sha256 } from "./core/safety.ts";
 import { githubRepo } from "./github/repo.ts";
 import { anthropicModel } from "./model/client.ts";
 import { runDecide } from "./loop/decide.ts";
-import { runScore } from "./loop/score.ts";
-import { runWrite } from "./loop/write.ts";
+import { explainScores, runScore } from "./loop/score.ts";
+import { explainWrite, runWrite } from "./loop/write.ts";
 
 const OUT = ".synthe-out";
 const input = (name: string) => process.env[`INPUT_${name.toUpperCase()}`] ?? "";
@@ -51,6 +51,7 @@ async function main() {
   if (step === "write") {
     const written = await runWrite(goal, state, prompt, scenarios, model);
     console.log(`Wrote ${written.candidates.length} candidates for ${written.costUsd === null ? "an unknown cost" : `$${written.costUsd.toFixed(4)}`}`);
+    for (const line of explainWrite(written)) console.log(line);
     save("candidates.json", written);
     setOutput("go", "true");
   } else if (step === "score") {
@@ -60,6 +61,7 @@ async function main() {
     const prior = last && !last.reverted && last.mergedHash === sha256(prompt) ? last.priorPrompt : null;
     const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior);
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
+    for (const line of explainScores(scored.scores, scenarios)) console.log(line);
     save("scores.json", scored);
   } else {
     throw new Error(`unknown step: ${step}`);

@@ -28631,6 +28631,26 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
   for (const c of scores.candidates) if (c.holdout) c.holdout = c.holdout.map((r) => ({ ...r, reply: void 0 }));
   return { scores, costUsd: sumCosts(costs), calls: costs.length };
 }
+var clip = (t, n = 300) => (t === void 0 ? "(none)" : t.length > n ? `${t.slice(0, n)}...` : t).replaceAll("\n", " / ");
+function explainScores(scores, scenarios, samples = 3) {
+  const input2 = new Map(scenarios.map((s) => [s.id, s.input]));
+  const current = new Map([...scores.baselineTrain, ...scores.baselineHoldout].map((r) => [r.id, r]));
+  const tally = (rows) => `won ${rows.filter((r) => r.score === WIN).length}, lost ${rows.filter((r) => r.score === LOSS).length}, tied ${rows.filter((r) => r.score === TIE).length}, unknown ${rows.filter((r) => r.score === null).length}`;
+  const lines = [`current prompt breaks a guardrail on ${[...current.values()].filter((r) => r.violation === true).length} of ${current.size} scenarios judged`];
+  for (const c of scores.candidates) {
+    lines.push(`${c.id} training: ${tally(c.train)}${c.holdout ? `; held back: ${tally(c.holdout)}` : ""}`);
+    for (const r of [...c.train, ...c.holdout ?? []]) {
+      if (r.violation === false) continue;
+      const already = current.get(r.id)?.violation === true;
+      lines.push(`  ${r.id} guardrail ${r.violation === null ? "unknown" : already ? "broken (already broken before)" : "broken (NEW)"}: ${clip(input2.get(r.id), 120)}`);
+    }
+    for (const r of c.train.filter((x) => x.score === LOSS).slice(0, samples)) {
+      lines.push(`  lost ${r.id}: ${clip(input2.get(r.id), 120)}`, `    current:   ${clip(current.get(r.id)?.reply)}`, `    candidate: ${clip(r.reply)}`);
+    }
+  }
+  if (scores.prior) lines.push(`replaced prompt vs current: ${tally(scores.prior)}`);
+  return lines;
+}
 
 // src/loop/decide.ts
 var LESSONS = 6;
@@ -28878,9 +28898,17 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
     const applied = applyEdits(prompt, r.value.edits);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
-    candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : void 0 });
+    candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : void 0, edits: r.value.edits });
   });
   return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
+}
+var clip2 = (t, n = 300) => (t.length > n ? `${t.slice(0, n)}...` : t).replaceAll("\n", " / ");
+function explainWrite(w) {
+  const lines = w.candidates.flatMap((c) => [
+    `${c.id}: ${c.summary ?? "(no summary)"}`,
+    ...(c.edits ?? []).map((e) => `  ${e.find ? `replace "${clip2(e.find)}"` : "add at the end"} -> "${clip2(e.replace)}"`)
+  ]);
+  return [...lines, ...(w.rejected ?? []).map((r) => `rejected ${r}`)];
 }
 
 // src/action.ts
@@ -28924,6 +28952,7 @@ async function main() {
   if (step === "write") {
     const written = await runWrite(goal, state, prompt, scenarios, model);
     console.log(`Wrote ${written.candidates.length} candidates for ${written.costUsd === null ? "an unknown cost" : `$${written.costUsd.toFixed(4)}`}`);
+    for (const line of explainWrite(written)) console.log(line);
     save("candidates.json", written);
     setOutput("go", "true");
   } else if (step === "score") {
@@ -28933,6 +28962,7 @@ async function main() {
     const prior = last && !last.reverted && last.mergedHash === sha256(prompt) ? last.priorPrompt : null;
     const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior);
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
+    for (const line of explainScores(scored.scores, scenarios)) console.log(line);
     save("scores.json", scored);
   } else {
     throw new Error(`unknown step: ${step}`);

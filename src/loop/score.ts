@@ -160,3 +160,28 @@ export async function measureNoise(goal: Goal, prompt: string, scenarios: Scenar
   const ties = rows.filter((r) => r.score === TIE).length;
   return { wins: split?.wins ?? null, losses: split?.losses ?? null, ties, p: split?.p ?? null, costUsd: sumCosts(costs) };
 }
+
+const clip = (t: string | undefined, n = 300) => (t === undefined ? "(none)" : t.length > n ? `${t.slice(0, n)}...` : t).replaceAll("\n", " / ");
+
+// Plain lines for the Actions log: how each candidate did, where it broke a guardrail (new or already broken by
+// the current prompt), and a few losses with both replies, so anyone can see why nothing merged.
+export function explainScores(scores: RoundScores, scenarios: Scenario[], samples = 3): string[] {
+  const input = new Map(scenarios.map((s) => [s.id, s.input]));
+  const current = new Map([...scores.baselineTrain, ...scores.baselineHoldout].map((r) => [r.id, r]));
+  const tally = (rows: ScoreRow[]) =>
+    `won ${rows.filter((r) => r.score === WIN).length}, lost ${rows.filter((r) => r.score === LOSS).length}, tied ${rows.filter((r) => r.score === TIE).length}, unknown ${rows.filter((r) => r.score === null).length}`;
+  const lines = [`current prompt breaks a guardrail on ${[...current.values()].filter((r) => r.violation === true).length} of ${current.size} scenarios judged`];
+  for (const c of scores.candidates) {
+    lines.push(`${c.id} training: ${tally(c.train)}${c.holdout ? `; held back: ${tally(c.holdout)}` : ""}`);
+    for (const r of [...c.train, ...(c.holdout ?? [])]) {
+      if (r.violation === false) continue;
+      const already = current.get(r.id)?.violation === true;
+      lines.push(`  ${r.id} guardrail ${r.violation === null ? "unknown" : already ? "broken (already broken before)" : "broken (NEW)"}: ${clip(input.get(r.id), 120)}`);
+    }
+    for (const r of c.train.filter((x) => x.score === LOSS).slice(0, samples)) {
+      lines.push(`  lost ${r.id}: ${clip(input.get(r.id), 120)}`, `    current:   ${clip(current.get(r.id)?.reply)}`, `    candidate: ${clip(r.reply)}`);
+    }
+  }
+  if (scores.prior) lines.push(`replaced prompt vs current: ${tally(scores.prior)}`);
+  return lines;
+}

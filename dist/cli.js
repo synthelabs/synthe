@@ -28583,7 +28583,7 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
     const applied = applyEdits(prompt, r.value.edits);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
-    candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : void 0 });
+    candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : void 0, edits: r.value.edits });
   });
   return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
 }

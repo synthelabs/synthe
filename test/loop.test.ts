@@ -464,3 +464,19 @@ test("the merged pull request says what changed", async () => {
   await runDecide(goal(), repo, { ...win(), candidates: [{ id: "c1", text: "Better prompt.", summary: "Adds the refund rule." }] });
   assert.match(repo.prs[0].body, /What changed: Adds the refund rule\./);
 });
+
+test("the Actions log explains each candidate: its edits, its record, new guardrail breaks and sample losses", async () => {
+  const { explainWrite } = await import("../src/loop/write.ts");
+  const { explainScores } = await import("../src/loop/score.ts");
+  const w = explainWrite({ candidates: [{ id: "c1", text: "x", summary: "Stops approving refunds.", edits: [{ find: "approve it", replace: "check the window" }] }], costUsd: 0.01, rejected: ["c2: edit too long"] });
+  assert.deepEqual(w, ["c1: Stops approving refunds.", '  replace "approve it" -> "check the window"', "rejected c2: edit too long"]);
+  const s = scored("p", 50, 50, 0, 50);
+  s.baselineTrain[0].reply = "Sure, approved!";
+  s.candidates[0].train[0] = { ...s.candidates[0].train[0], reply: "Let me check.", violation: true };
+  s.candidates[0].train[1] = { ...s.candidates[0].train[1], violation: null };
+  const lines = explainScores(s, [{ id: "s0", input: "Refund my coat?", expected: "x", split: "train" }]);
+  assert.ok(lines.some((l) => /c1 training: won 0, lost 20/.test(l)));
+  assert.ok(lines.some((l) => /s0 guardrail broken \(NEW\): Refund my coat\?/.test(l)));
+  assert.ok(lines.some((l) => /s1 guardrail unknown/.test(l)));
+  assert.ok(lines.some((l) => /current: +Sure, approved!/.test(l)) && lines.some((l) => /candidate: Let me check\./.test(l)));
+});

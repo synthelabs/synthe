@@ -4,7 +4,7 @@ import { sumCosts } from "../core/cost.ts";
 import { sha256 } from "../core/safety.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
 
-export interface Candidate { id: string; text: string; summary?: string }
+export interface Candidate { id: string; text: string; summary?: string; edits?: Edit[] }
 export interface Written { candidates: Candidate[]; costUsd: number | null; rejected?: string[] }
 
 // Each candidate is one or two exact edits to the current prompt, GEPA-style, not a rewrite: everything else stays
@@ -110,7 +110,18 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
     const applied = applyEdits(prompt, r.value.edits);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
-    candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : undefined });
+    candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : undefined, edits: r.value.edits });
   });
   return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
+}
+
+const clip = (t: string, n = 300) => (t.length > n ? `${t.slice(0, n)}...` : t).replaceAll("\n", " / ");
+
+// Plain lines for the Actions log, so anyone can see what each candidate tried.
+export function explainWrite(w: Written): string[] {
+  const lines = w.candidates.flatMap((c) => [
+    `${c.id}: ${c.summary ?? "(no summary)"}`,
+    ...(c.edits ?? []).map((e) => `  ${e.find ? `replace "${clip(e.find)}"` : "add at the end"} -> "${clip(e.replace)}"`),
+  ]);
+  return [...lines, ...(w.rejected ?? []).map((r) => `rejected ${r}`)];
 }
