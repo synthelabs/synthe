@@ -2,7 +2,7 @@
 
 Friday, November 6. Nothing here has been used or sent yet.
 
-## Slide for Andrew
+## Intro slide
 
 **Synthe: your agent gets better while you sleep.**
 

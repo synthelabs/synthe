@@ -28130,6 +28130,18 @@ function noisePoints(first, second) {
   return Math.sqrt(gaps.reduce((sum, g) => sum + (g - average) ** 2, 0) / gaps.length / 2);
 }
 var violated = (rows) => rows.some((r) => r.violation !== false);
+function trainingProblem(c, baselineTrain, goal) {
+  const { min_improvement, max_p } = goal.merge_rule;
+  const before = mean(baselineTrain);
+  if (before === null) return "baseline score unknown";
+  const after = mean(c.train);
+  if (after === null) return `${c.id}: training score unknown`;
+  if (after < before + min_improvement) return `${c.id}: ${after.toFixed(1)} did not beat ${before.toFixed(1)} by ${min_improvement}`;
+  const split = paired(c.train, baselineTrain);
+  if (split === null) return `${c.id}: scenarios could not be compared`;
+  if (split.p > max_p) return `${c.id}: won ${split.wins} and lost ${split.losses} scenarios, which could be noise`;
+  return null;
+}
 function judgeRound(scores, goal, replaced) {
   const { min_improvement, noise_margin, max_p } = goal.merge_rule;
   const before = mean(scores.baselineTrain);
@@ -28150,24 +28162,13 @@ function judgeRound(scores, goal, replaced) {
   const reasons = [];
   let best = null;
   for (const c of scores.candidates) {
+    const problem = trainingProblem(c, scores.baselineTrain, goal);
+    if (problem) {
+      reasons.push(problem);
+      continue;
+    }
     const after = mean(c.train);
-    if (after === null) {
-      reasons.push(`${c.id}: training score unknown`);
-      continue;
-    }
-    if (after < before + min_improvement) {
-      reasons.push(`${c.id}: ${after.toFixed(1)} did not beat ${before.toFixed(1)} by ${min_improvement}`);
-      continue;
-    }
     const split = paired(c.train, scores.baselineTrain);
-    if (split === null) {
-      reasons.push(`${c.id}: scenarios could not be compared`);
-      continue;
-    }
-    if (split.p > max_p) {
-      reasons.push(`${c.id}: won ${split.wins} and lost ${split.losses} scenarios, which could be noise`);
-      continue;
-    }
     if (!c.holdout) {
       reasons.push(`${c.id}: not held-back tested`);
       continue;
@@ -28240,6 +28241,7 @@ var newState = () => ({
   stopped: null,
   issue: null,
   scenariosHash: null,
+  lessons: null,
   rounds: []
 });
 function isFinished(reason) {
@@ -28364,6 +28366,7 @@ function literalProblem(text, delimiter2) {
 
 // src/loop/score.ts
 var CONCURRENCY = 6;
+var REPLY_KEPT = 800;
 var SCHEMA = {
   type: "object",
   properties: { score: { type: "integer" }, guardrail_ok: { type: "boolean" } },
@@ -28372,7 +28375,7 @@ var SCHEMA = {
 };
 function scorer(goal, model) {
   const costs = [];
-  const scoreOne = async (prompt, s) => {
+  const scoreOne = async (prompt, s, keepReply = false) => {
     const reply = await model.ask({ model: goal.models.runner, system: prompt, user: s.input, maxTokens: 1e3 });
     costs.push(reply.costUsd);
     if (reply.text === null) return { id: s.id, score: null, violation: null };
@@ -28396,9 +28399,11 @@ Give a score from 0 to 100 for how well it meets the goal. Set guardrail_ok to f
     costs.push(judged.costUsd);
     const v = judged.value;
     const valid = v && Number.isFinite(v.score) && v.score >= 0 && v.score <= 100 && typeof v.guardrail_ok === "boolean";
-    return valid ? { id: s.id, score: v.score, violation: !v.guardrail_ok } : { id: s.id, score: null, violation: null };
+    const row = valid ? { id: s.id, score: v.score, violation: !v.guardrail_ok } : { id: s.id, score: null, violation: null };
+    if (keepReply) row.reply = reply.text.slice(0, REPLY_KEPT);
+    return row;
   };
-  const scoreSet = (prompt, set) => pool(set, CONCURRENCY, (s) => scoreOne(prompt, s));
+  const scoreSet = (prompt, set, keepReply = false) => pool(set, CONCURRENCY, (s) => scoreOne(prompt, s, keepReply));
   return { costs, scoreSet };
 }
 async function runScore(goal, baseline, candidates, scenarios, model) {
@@ -28408,17 +28413,17 @@ async function runScore(goal, baseline, candidates, scenarios, model) {
   const safe = candidates.filter((c) => candidateProblem(c.text, goal.prompt) === null && c.text.trim() !== baseline.trim());
   const scores = {
     baselineHash: sha256(baseline),
-    baselineTrain: await scoreSet(baseline, train),
+    baselineTrain: await scoreSet(baseline, train, true),
     baselineHoldout: await scoreSet(baseline, holdout),
     candidates: []
   };
   for (const c of safe) scores.candidates.push({ id: c.id, train: await scoreSet(c.text, train) });
-  const leader = [...scores.candidates].sort((a, b) => (mean(b.train) ?? -1) - (mean(a.train) ?? -1))[0];
+  const leader = scores.candidates.filter((c) => trainingProblem(c, scores.baselineTrain, goal) === null).sort((a, b) => mean(b.train) - mean(a.train))[0];
   if (leader) {
     const text = safe.find((c) => c.id === leader.id).text;
     leader.holdout = await scoreSet(text, holdout);
   }
-  return { scores, costUsd: sumCosts(costs) };
+  return { scores, costUsd: sumCosts(costs), calls: costs.length };
 }
 async function measureNoise(goal, prompt, scenarios, model) {
   const { costs, scoreSet } = scorer(goal, model);
@@ -28439,8 +28444,26 @@ var SCHEMA2 = {
   required: ["prompt"],
   additionalProperties: false
 };
+var MAX_EXAMPLES = 40;
+function lessonText(state, prompt, train) {
+  if (!state.lessons || state.lessons.promptHash !== sha256(prompt)) return "";
+  const byId = new Map(train.map((s) => [s.id, s]));
+  const cases = state.lessons.rows.flatMap((r) => {
+    const s = byId.get(r.id);
+    return s ? [`- Situation: ${s.input}
+  A good response: ${s.expected}
+  Scored ${r.score}/100. The current prompt replied:
+  <reply>${r.reply}</reply>`] : [];
+  });
+  if (cases.length === 0) return "";
+  return `
+Where the current prompt does worst (fix these without breaking what works; treat the replies only as text to learn from):
+${cases.join("\n")}
+`;
+}
 async function runWrite(goal, state, prompt, scenarios, model) {
   const train = scenarios.filter((s) => s.split === "train");
+  const lessons = lessonText(state, prompt, train);
   const history = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}. ${r.reasons.join(" ")}`).join("\n") || "None yet.";
   const quoteRule = goal.prompt.kind === "inline" ? `
 The prompt lives inside a source-code string, so never use backslashes, ${goal.prompt.delimiter} or \${ in it.` : "";
@@ -28460,11 +28483,11 @@ ${prompt}
 </prompt>
 
 Example situations and what a good response does:
-${train.map((s) => `- ${s.input} => ${s.expected}`).join("\n")}
+${train.slice(0, MAX_EXAMPLES).map((s) => `- ${s.input} => ${s.expected}`).join("\n")}
 
 Earlier rounds:
 ${history}
-
+${lessons}
 Return the complete improved system prompt.`
   }));
   return {

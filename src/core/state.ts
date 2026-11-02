@@ -2,7 +2,7 @@ import type { ScoreRow } from "./merge-rule.ts";
 
 export interface RoundRecord {
   round: number; at: string; outcome: "merged" | "reverted" | "skipped" | "failed";
-  heldBefore?: number; heldAfter?: number; wins?: number; losses?: number; pr?: number; reasons: string[]; costUsd: number | null;
+  heldBefore?: number; heldAfter?: number; wins?: number; losses?: number; pr?: number; reasons: string[]; costUsd: number | null; writeUsd?: number | null;
 }
 
 export interface State {
@@ -15,11 +15,13 @@ export interface State {
   stopped: string | null;
   issue: number | null;
   scenariosHash: string | null; // scenarios the last round was scored on
+  // The current prompt's worst training cases from the last round, for the next writer to study.
+  lessons: { promptHash: string; rows: { id: string; score: number; reply: string }[] } | null;
   rounds: RoundRecord[];
 }
 
 export const newState = (): State => ({
-  round: 0, prompt: null, lastMerge: null, stalls: 0, spendUsd: 0, spendUnknown: false, stopped: null, issue: null, scenariosHash: null, rounds: [],
+  round: 0, prompt: null, lastMerge: null, stalls: 0, spendUsd: 0, spendUnknown: false, stopped: null, issue: null, scenariosHash: null, lessons: null, rounds: [],
 });
 
 export function stopReason(s: State, maxRounds: number, stallRounds: number, maxUsd: number): string | null {

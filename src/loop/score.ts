@@ -1,11 +1,12 @@
 import type { Goal, Scenario } from "../core/goal.ts";
-import { mean, noisePoints, type RoundScores, type ScoreRow } from "../core/merge-rule.ts";
+import { mean, noisePoints, trainingProblem, type RoundScores, type ScoreRow } from "../core/merge-rule.ts";
 import { candidateProblem, sha256 } from "../core/safety.ts";
 import { sumCosts } from "../core/cost.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
 import type { Candidate } from "./write.ts";
 
 const CONCURRENCY = 6;
+const REPLY_KEPT = 800; // characters of each current-prompt reply kept for the next writer to study
 
 const SCHEMA = {
   type: "object",
@@ -17,7 +18,7 @@ const SCHEMA = {
 function scorer(goal: Goal, model: Model) {
   const costs: (number | null)[] = [];
 
-  const scoreOne = async (prompt: string, s: Scenario): Promise<ScoreRow> => {
+  const scoreOne = async (prompt: string, s: Scenario, keepReply = false): Promise<ScoreRow> => {
     const reply = await model.ask({ model: goal.models.runner, system: prompt, user: s.input, maxTokens: 1000 });
     costs.push(reply.costUsd);
     if (reply.text === null) return { id: s.id, score: null, violation: null };
@@ -39,9 +40,11 @@ Give a score from 0 to 100 for how well it meets the goal. Set guardrail_ok to f
     costs.push(judged.costUsd);
     const v = judged.value;
     const valid = v && Number.isFinite(v.score) && v.score >= 0 && v.score <= 100 && typeof v.guardrail_ok === "boolean";
-    return valid ? { id: s.id, score: v.score, violation: !v.guardrail_ok } : { id: s.id, score: null, violation: null };
+    const row: ScoreRow = valid ? { id: s.id, score: v.score, violation: !v.guardrail_ok } : { id: s.id, score: null, violation: null };
+    if (keepReply) row.reply = reply.text.slice(0, REPLY_KEPT);
+    return row;
   };
-  const scoreSet = (prompt: string, set: Scenario[]) => pool(set, CONCURRENCY, (s) => scoreOne(prompt, s));
+  const scoreSet = (prompt: string, set: Scenario[], keepReply = false) => pool(set, CONCURRENCY, (s) => scoreOne(prompt, s, keepReply));
   return { costs, scoreSet };
 }
 
@@ -53,19 +56,21 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
 
   const scores: RoundScores = {
     baselineHash: sha256(baseline),
-    baselineTrain: await scoreSet(baseline, train),
+    baselineTrain: await scoreSet(baseline, train, true),
     baselineHoldout: await scoreSet(baseline, holdout),
     candidates: [],
   };
   for (const c of safe) scores.candidates.push({ id: c.id, train: await scoreSet(c.text, train) });
 
-  // Only the training leader spends held-back scenarios.
-  const leader = [...scores.candidates].sort((a, b) => (mean(b.train) ?? -1) - (mean(a.train) ?? -1))[0];
+  // Only the best candidate that passed training spends held-back scenarios; if none passed, none are spent.
+  const leader = scores.candidates
+    .filter((c) => trainingProblem(c, scores.baselineTrain, goal) === null)
+    .sort((a, b) => mean(b.train)! - mean(a.train)!)[0];
   if (leader) {
     const text = safe.find((c) => c.id === leader.id)!.text;
     leader.holdout = await scoreSet(text, holdout);
   }
-  return { scores, costUsd: sumCosts(costs) };
+  return { scores, costUsd: sumCosts(costs), calls: costs.length };
 }
 
 // Scores the same prompt twice, to show how much of a score is noise.

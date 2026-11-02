@@ -26,7 +26,7 @@ async function main() {
     const written = load<any>("candidates.json");
     const scored = load<any>("scores.json");
     const costUsd = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
-    const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd });
+    const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     return;
   }
@@ -47,12 +47,16 @@ async function main() {
   const model = anthropicModel(input("anthropic-api-key"));
 
   if (step === "write") {
-    save("candidates.json", await runWrite(goal, state, prompt, scenarios, model));
+    const written = await runWrite(goal, state, prompt, scenarios, model);
+    console.log(`Wrote ${written.candidates.length} candidates for ${written.costUsd === null ? "an unknown cost" : `$${written.costUsd.toFixed(4)}`}`);
+    save("candidates.json", written);
     setOutput("go", "true");
   } else if (step === "score") {
     const written = load<any>("candidates.json");
     if (!written) throw new Error("candidates are missing");
-    save("scores.json", await runScore(goal, prompt, written.candidates, scenarios, model));
+    const scored = await runScore(goal, prompt, written.candidates, scenarios, model);
+    console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
+    save("scores.json", scored);
   } else {
     throw new Error(`unknown step: ${step}`);
   }

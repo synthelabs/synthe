@@ -203,7 +203,7 @@ test("a run that stops finding winners reads as finished and says how to continu
   for (let i = 0; i < 3; i++) await runDecide(goal(), repo, stall(scored("Better prompt.", 60, 55, 60, 55)));
   assert.match(repo.state.stopped!, /no winner/);
   assert.match(repo.issue, /\*\*Status:\*\* finished\. Merged 1 improvement\. Held-back score went from 50\.0 to 55\.0\./);
-  assert.match(repo.issue, /add harder scenarios to `s\.jsonl`/);
+  assert.match(repo.issue, /add more or harder scenarios to `s\.jsonl`/);
 });
 
 test("failed rounds read as stopped, not finished", async () => {
@@ -241,4 +241,81 @@ test("a run stopped for another reason doesn't resume on new scenarios", async (
   repo.mergeResult = { merged: true };
   repo.files.set("s.jsonl", "harder");
   assert.equal(await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55))), null);
+});
+
+// Scenarios whose inputs name themselves, so a fake judge can score each prompt per scenario.
+const named = [..."abcdef"].map((id) => ({ id, input: `q-${id}`, expected: "good", split: "train" as const }))
+  .concat([{ id: "h", input: "q-h", expected: "good", split: "holdout" as const }]);
+const scripted = (table: Record<string, Record<string, number>>): Model & { seen: Ask[] } => {
+  const seen: Ask[] = [];
+  return {
+    seen,
+    async ask(a) {
+      seen.push(a);
+      if (a.schema) {
+        const prompt = /<reply>\n(\S+) answers/.exec(a.user)![1];
+        const id = /Situation: q-(\w)/.exec(a.user)![1];
+        return { text: JSON.stringify({ score: table[prompt]?.[id] ?? 50, guardrail_ok: true }), costUsd: 0.001 };
+      }
+      return { text: `${a.system} answers ${a.user}`, costUsd: 0.001 };
+    },
+  };
+};
+
+test("the held-back test goes to the best candidate that passed training, not the highest average", async () => {
+  // Spiky averages higher but wins only half its scenarios; Steady wins all six by a little.
+  const m = scripted({
+    Spiky: { a: 100, b: 100, c: 100, d: 40, e: 40, f: 40 },
+    Steady: { a: 60, b: 60, c: 60, d: 60, e: 60, f: 60, h: 60 },
+  });
+  const cands = [{ id: "spiky", text: "Spiky" }, { id: "steady", text: "Steady" }];
+  const { scores } = await runScore(goal(), "Base", cands, named, m);
+  assert.equal(scores.candidates.find((c) => c.id === "spiky")!.holdout, undefined);
+  assert.ok(scores.candidates.find((c) => c.id === "steady")!.holdout);
+  const repo = new MemoryRepo("Base");
+  const r = await runDecide(goal(), repo, { candidates: cands, scores, costUsd: 0.1 });
+  assert.equal(r?.outcome, "merged");
+  assert.equal(repo.files.get("prompt.md"), "Steady");
+});
+
+test("no held-back scenarios are spent when no candidate passes training", async () => {
+  const m = scripted({ Meh: { a: 51, b: 50, c: 50, d: 50, e: 50, f: 50 } });
+  const { scores } = await runScore(goal(), "Base", [{ id: "meh", text: "Meh" }], named, m);
+  assert.equal(scores.candidates[0].holdout, undefined);
+  const heldCalls = m.seen.filter((a) => a.user.includes("q-h"));
+  assert.equal(heldCalls.length, 2); // the current prompt's reply and its judge call, nothing for the candidate
+});
+
+test("the writer studies the current prompt's worst training replies, never held-back ones", async () => {
+  const m = scripted({ Base: { a: 10, b: 95, c: 30, d: 100, e: 80, f: 90, h: 0 } });
+  const { scores } = await runScore(goal(), "Base", [{ id: "x", text: "Other" }], named, m);
+  const repo = new MemoryRepo("Base");
+  await runDecide(goal(), repo, { candidates: [{ id: "x", text: "Other" }], scores, costUsd: 0.1 });
+  const lessons = repo.state.lessons!;
+  assert.equal(lessons.promptHash, sha256("Base"));
+  assert.deepEqual(lessons.rows.map((r) => r.id), ["a", "c", "e", "f", "b"]); // a perfect score is no lesson
+  assert.ok(lessons.rows.every((r) => r.id !== "h"));
+
+  const w = fake();
+  await runWrite(goal(), repo.state, "Base", named, w);
+  assert.ok(w.seen.every((a) => a.user.includes("Base answers q-a") && a.user.includes("Scored 10/100")));
+  assert.ok(w.seen.every((a) => !a.user.includes("q-h")));
+
+  // Once the prompt has changed, last round's replies say nothing about it.
+  const w2 = fake();
+  await runWrite(goal(), repo.state, "Newer prompt", named, w2);
+  assert.ok(w2.seen.every((a) => !a.user.includes("Base answers")));
+});
+
+test("held-back rows planted in saved lessons still never reach the writer", async () => {
+  const state = { ...newState(), lessons: { promptHash: sha256("Base"), rows: [{ id: "h", score: 0, reply: "LEAKED" }] } };
+  const w = fake();
+  await runWrite(goal(), state, "Base", named, w);
+  assert.ok(w.seen.every((a) => !a.user.includes("LEAKED") && !a.user.includes("q-h")));
+});
+
+test("the report shows each round's cost and how much went to writing", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  await runDecide(goal(), repo, { ...round(scored("Old prompt.", 50, 50, 50, 50)), costUsd: 0.12, writeUsd: 0.08 });
+  assert.match(repo.issue, /\| \$0\.12 \(writing \$0\.08\) \|/);
 });

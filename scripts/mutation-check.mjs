@@ -9,10 +9,10 @@ const WRITE = "src/loop/write.ts";
 const STATE = "src/core/state.ts";
 
 const mutations = [
-  ["no scenario wins needed", RULE, "if (split.p > max_p)", "if (false)"],
+  ["no scenario wins needed", RULE, "if (split.p > max_p) return", "if (false) return"],
   ["no held-back gain needed", RULE, "held < beforeHoldout + min_improvement", "held < beforeHoldout"],
   ["no training gain needed", RULE, "after < before + min_improvement", "after < before"],
-  ["unpaired scenarios allowed", RULE, 'if (split === null) { reasons.push(`${c.id}: scenarios could not be compared`); continue; }', 'if (split === null) { best = null; }'],
+  ["unpaired scenarios allowed", RULE, 'if (split === null) return `${c.id}: scenarios could not be compared`;', ""],
   ["unknown scores pair as wins", RULE, 'if (typeof other !== "number" || !Number.isFinite(other) || typeof r.score !== "number" || !Number.isFinite(r.score)) return null;', ""],
   ["different scenario counts allowed", RULE, " || after.length !== before.length", ""],
   ["duplicate candidate rows allowed", RULE, " || new Set(after.map((r) => r.id)).size !== after.length", ""],
@@ -30,6 +30,9 @@ const mutations = [
   ["prompt change ignored", DECIDE, "sha256(current) !== scores.baselineHash", "false"],
   ["any stop resumes on new scenarios", STATE, "!/rounds in a row found no winner$/.test(s.stopped) || ", ""],
   ["resumes without a scenario change", STATE, " || s.scenariosHash === scenariosHash", ""],
+  ["held-back test goes to the highest average", SCORE, "\n    .filter((c) => trainingProblem(c, scores.baselineTrain, goal) === null)", ""],
+  ["writer studies held-back replies", WRITE, "lessonText(state, prompt, train)", "lessonText(state, prompt, scenarios)"],
+  ["writer studies a stale prompt's replies", WRITE, " || state.lessons.promptHash !== sha256(prompt)", ""],
   ["unknown cost merges", DECIDE, "input.costUsd === null", "false"],
   ["identical candidate scored", SCORE, " && c.text.trim() !== baseline.trim()", ""],
   ["every candidate tested held back", SCORE, "for (const c of safe) scores.candidates.push({ id: c.id, train: await scoreSet(c.text, train) });", "for (const c of safe) scores.candidates.push({ id: c.id, train: await scoreSet(c.text, scenarios) });"],

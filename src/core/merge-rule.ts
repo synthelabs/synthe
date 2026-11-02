@@ -1,7 +1,8 @@
 import type { Goal } from "./goal.ts";
 
 // One scenario's result. A null score means it could not be measured.
-export interface ScoreRow { id: string; score: number | null; violation: boolean | null }
+// reply is kept only for the current prompt's training rows, so the next writer can study what went wrong.
+export interface ScoreRow { id: string; score: number | null; violation: boolean | null; reply?: string }
 
 export interface CandidateScore { id: string; train: ScoreRow[]; holdout?: ScoreRow[] }
 
@@ -62,6 +63,21 @@ export function noisePoints(first: ScoreRow[], second: ScoreRow[]): number | nul
 
 const violated = (rows: ScoreRow[]) => rows.some((r) => r.violation !== false);
 
+// Why a candidate fails on the training scenarios, or null if it passes. Scoring uses this to pick which
+// candidate earns the held-back test, and judgeRound uses it again, so the two can never disagree.
+export function trainingProblem(c: CandidateScore, baselineTrain: ScoreRow[], goal: Goal): string | null {
+  const { min_improvement, max_p } = goal.merge_rule;
+  const before = mean(baselineTrain);
+  if (before === null) return "baseline score unknown";
+  const after = mean(c.train);
+  if (after === null) return `${c.id}: training score unknown`;
+  if (after < before + min_improvement) return `${c.id}: ${after.toFixed(1)} did not beat ${before.toFixed(1)} by ${min_improvement}`;
+  const split = paired(c.train, baselineTrain);
+  if (split === null) return `${c.id}: scenarios could not be compared`;
+  if (split.p > max_p) return `${c.id}: won ${split.wins} and lost ${split.losses} scenarios, which could be noise`;
+  return null;
+}
+
 // replaced holds the scores of the prompt the last merge replaced, or null when there is nothing to check.
 export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[] | null): Verdict {
   const { min_improvement, noise_margin, max_p } = goal.merge_rule;
@@ -86,12 +102,10 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
   const reasons: string[] = [];
   let best: Extract<Verdict, { action: "merge" }> | null = null;
   for (const c of scores.candidates) {
-    const after = mean(c.train);
-    if (after === null) { reasons.push(`${c.id}: training score unknown`); continue; }
-    if (after < before + min_improvement) { reasons.push(`${c.id}: ${after.toFixed(1)} did not beat ${before.toFixed(1)} by ${min_improvement}`); continue; }
-    const split = paired(c.train, scores.baselineTrain);
-    if (split === null) { reasons.push(`${c.id}: scenarios could not be compared`); continue; }
-    if (split.p > max_p) { reasons.push(`${c.id}: won ${split.wins} and lost ${split.losses} scenarios, which could be noise`); continue; }
+    const problem = trainingProblem(c, scores.baselineTrain, goal);
+    if (problem) { reasons.push(problem); continue; }
+    const after = mean(c.train)!;
+    const split = paired(c.train, scores.baselineTrain)!;
     if (!c.holdout) { reasons.push(`${c.id}: not held-back tested`); continue; }
     const held = mean(c.holdout);
     if (held === null) { reasons.push(`${c.id}: held-back score unknown`); continue; }

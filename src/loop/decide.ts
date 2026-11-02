@@ -7,7 +7,9 @@ import type { Repo } from "../github/repo.ts";
 import { ISSUE_TITLE, renderReport } from "./report.ts";
 import type { Candidate } from "./write.ts";
 
-export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null }
+export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null }
+
+const LESSONS = 6;
 
 export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now = new Date()): Promise<RoundRecord | null> {
   const state = await repo.readState();
@@ -23,7 +25,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   const source = await repo.readFile(path, head);
   const current = source === null ? null : readPrompt(source, goal, state.prompt);
   const round = state.round + 1;
-  const record: RoundRecord = { round, at: now.toISOString(), outcome: "skipped", reasons: [], costUsd: input.costUsd };
+  const record: RoundRecord = { round, at: now.toISOString(), outcome: "skipped", reasons: [], costUsd: input.costUsd, writeUsd: input.writeUsd ?? null };
   const scores = input.scores;
 
   const land = async (text: string, title: string, why: string): Promise<number | null> => {
@@ -92,6 +94,15 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     }
   }
 
+  if (scores) {
+    // Training rows only: held-back scenarios are never in scores.baselineTrain, so the writer can't learn them.
+    const worst = scores.baselineTrain
+      .filter((r): r is typeof r & { score: number; reply: string } => typeof r.score === "number" && r.score < 100 && typeof r.reply === "string")
+      .sort((a, b) => a.score - b.score)
+      .slice(0, LESSONS)
+      .map(({ id, score, reply }) => ({ id, score, reply }));
+    state.lessons = { promptHash: scores.baselineHash, rows: worst };
+  }
   state.round = round;
   state.scenariosHash = scenariosHash;
   state.spendUsd += input.costUsd ?? 0;

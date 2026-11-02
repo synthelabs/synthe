@@ -18,15 +18,15 @@ function status(goal: Goal, state: State): string[] {
   const gain = first && last && !reverted && first.heldBefore !== undefined && last.heldAfter !== undefined
     ? ` Held-back score went from ${first.heldBefore.toFixed(1)} to ${last.heldAfter.toFixed(1)}.` : "";
   const result = merged.length === 0
-    ? "No rewrite beat your prompt, so it stays as it was."
+    ? "No rewrite won clearly enough to merge, so your prompt stays as it was."
     : `Merged ${merged.length} improvement${merged.length === 1 ? "" : "s"}.${gain}`;
   const lines = [`**Status:** finished. ${result}`, ""];
   if (/no winner$/.test(state.stopped)) {
     lines.push(
-      `In the last ${goal.merge_rule.stall_rounds} rounds no rewrite beat the current prompt by ${goal.merge_rule.min_improvement} points, so it is close to the best these scenarios can measure.`,
+      `In the last ${goal.merge_rule.stall_rounds} rounds no rewrite won clearly enough to merge. Either the current prompt already handles these scenarios well, or the differences are too small for this many scenarios to show.`,
       state.round < goal.merge_rule.max_rounds
-        ? `**To keep improving,** add harder scenarios to \`${goal.scenarios}\`, especially cases your agent still gets wrong. The next scheduled run picks them up and continues.`
-        : `**To keep improving,** add harder scenarios to \`${goal.scenarios}\`, especially cases your agent still gets wrong, and raise \`merge_rule.max_rounds\` in \`synthe.json\`.`,
+        ? `**To keep improving,** add more or harder scenarios to \`${goal.scenarios}\`, especially cases your agent still gets wrong. The next scheduled run picks them up and continues.`
+        : `**To keep improving,** add more or harder scenarios to \`${goal.scenarios}\`, especially cases your agent still gets wrong, and raise \`merge_rule.max_rounds\` in \`synthe.json\`.`,
     );
   } else {
     lines.push(/^budget/.test(state.stopped) ? `It used its $${goal.budget.max_usd} budget.` : `It ran all ${goal.merge_rule.max_rounds} rounds.`);
@@ -44,13 +44,15 @@ export function renderReport(goal: Goal, state: State): string {
     "",
     `**Rounds:** ${state.round} of up to ${goal.merge_rule.max_rounds}. **Merged:** ${merged.length}. **Spent:** ${money} of $${goal.budget.max_usd}.`,
     "",
-    "| Round | Result | Held-back score | Scenarios won / lost | PR | Why |",
-    "| --- | --- | --- | --- | --- | --- |",
+    "| Round | Result | Held-back score | Scenarios won / lost | PR | Cost | Why |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
   ];
   for (const r of [...state.rounds].reverse()) {
     const score = r.heldAfter !== undefined ? `${r.heldBefore?.toFixed(1)} to ${r.heldAfter.toFixed(1)}` : "";
     const split = r.wins !== undefined ? `${r.wins} / ${r.losses}` : "";
-    lines.push(`| ${r.round} | ${r.outcome} | ${score} | ${split} | ${r.pr ? `#${r.pr}` : ""} | ${r.reasons.join("; ").replaceAll("|", "/").slice(0, 200)} |`);
+    const cost = r.costUsd === null ? "unknown"
+      : `$${r.costUsd.toFixed(2)}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}`;
+    lines.push(`| ${r.round} | ${r.outcome} | ${score} | ${split} | ${r.pr ? `#${r.pr}` : ""} | ${cost} | ${r.reasons.join("; ").replaceAll("|", "/").slice(0, 200)} |`);
   }
   lines.push("", "Scores come from simulated scenarios, not live traffic, and generated scenarios aren't reviewed by a person. Only the prompt can change. Stop any time with `npx synthe stop`.");
   return lines.join("\n");

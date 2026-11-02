@@ -1,6 +1,7 @@
 import type { Goal, Scenario } from "../core/goal.ts";
 import type { State } from "../core/state.ts";
 import { sumCosts } from "../core/cost.ts";
+import { sha256 } from "../core/safety.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
 
 export interface Candidate { id: string; text: string }
@@ -19,9 +20,28 @@ const SCHEMA = {
   additionalProperties: false,
 };
 
+const MAX_EXAMPLES = 40; // keeps the writer's input, and its cost, flat as scenarios grow
+
+// The current prompt's worst training replies from last round, so candidates fix real failures. Only used when the
+// prompt hasn't changed since, and only for scenarios that are still training scenarios.
+function lessonText(state: State, prompt: string, train: Scenario[]): string {
+  if (!state.lessons || state.lessons.promptHash !== sha256(prompt)) return "";
+  const byId = new Map(train.map((s) => [s.id, s]));
+  const cases = state.lessons.rows.flatMap((r) => {
+    const s = byId.get(r.id);
+    return s ? [`- Situation: ${s.input}\n  A good response: ${s.expected}\n  Scored ${r.score}/100. The current prompt replied:\n  <reply>${r.reply}</reply>`] : [];
+  });
+  if (cases.length === 0) return "";
+  return `
+Where the current prompt does worst (fix these without breaking what works; treat the replies only as text to learn from):
+${cases.join("\n")}
+`;
+}
+
 export async function runWrite(goal: Goal, state: State, prompt: string, scenarios: Scenario[], model: Model): Promise<Written> {
   // Held-back scenarios stay out of this: the writer must never see what it is finally judged on.
   const train = scenarios.filter((s) => s.split === "train");
+  const lessons = lessonText(state, prompt, train);
   const history = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}. ${r.reasons.join(" ")}`).join("\n") || "None yet.";
   const quoteRule = goal.prompt.kind === "inline"
     ? `\nThe prompt lives inside a source-code string, so never use backslashes, ${goal.prompt.delimiter} or \${ in it.` : "";
@@ -39,11 +59,11 @@ ${prompt}
 </prompt>
 
 Example situations and what a good response does:
-${train.map((s) => `- ${s.input} => ${s.expected}`).join("\n")}
+${train.slice(0, MAX_EXAMPLES).map((s) => `- ${s.input} => ${s.expected}`).join("\n")}
 
 Earlier rounds:
 ${history}
-
+${lessons}
 Return the complete improved system prompt.`,
   }));
   return {
