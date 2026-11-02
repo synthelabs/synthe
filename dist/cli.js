@@ -28049,7 +28049,7 @@ var init_sdk = __esm({
 
 // src/cli/main.ts
 import { spawn as spawn2 } from "node:child_process";
-import { readFileSync as readFileSync2 } from "node:fs";
+import { existsSync, readFileSync as readFileSync2 } from "node:fs";
 import { createInterface as createInterface2 } from "node:readline/promises";
 
 // src/core/goal.ts
@@ -28970,51 +28970,109 @@ async function askSecret(question) {
 }
 var template = () => readFileSync2(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template };
+function setUpHere() {
+  if (existsSync(GOAL_FILE)) return true;
+  console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
+  process.exitCode = 1;
+  return false;
+}
+async function repoSlug() {
+  try {
+    return (await run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
+  } catch {
+    console.log("Couldn't reach this project on GitHub. Check you're signed in to the GitHub CLI (`gh auth status`) and inside your project's folder.");
+    process.exitCode = 1;
+    return null;
+  }
+}
 async function status() {
-  const slug = (await run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
-  const raw = await run("gh", ["api", `repos/${slug}/contents/state.json?ref=${encodeURIComponent(STATE_BRANCH)}`, "-H", "Accept: application/vnd.github.raw+json"]);
+  if (!setUpHere()) return;
+  const slug = await repoSlug();
+  if (!slug) return;
+  let raw;
+  try {
+    raw = await run("gh", ["api", `repos/${slug}/contents/state.json?ref=${encodeURIComponent(STATE_BRANCH)}`, "-H", "Accept: application/vnd.github.raw+json"]);
+  } catch {
+    console.log("Synthe is set up but hasn't finished a round yet. The first one starts within the hour.");
+    console.log(`Watch it: https://github.com/${slug}/actions/workflows/synthe.yml`);
+    return;
+  }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const { title, summary } = headline(parseGoal(readFileSync2(GOAL_FILE, "utf8")), s);
+  const goal = parseGoal(readFileSync2(GOAL_FILE, "utf8"));
+  const { title, summary } = headline(goal, s);
   console.log(title);
   console.log(summary);
+  console.log(goal.merge_rule.mode === "propose" ? "Mode: review." : "Mode: automatic merging.");
   if (s.issue) console.log(`Full report: https://github.com/${slug}/issues/${s.issue}`);
 }
+async function stop() {
+  if (!setUpHere()) return;
+  try {
+    await run("gh", ["workflow", "disable", "synthe.yml"]);
+  } catch (e) {
+    console.log(`Couldn't stop Synthe: ${e.message.trim().split("\n")[0]}`);
+    console.log("Check you're signed in to the GitHub CLI (`gh auth status`), inside your project's folder.");
+    process.exitCode = 1;
+    return;
+  }
+  console.log("Stopped. Synthe won't run or change anything again. To start it again: gh workflow enable synthe.yml");
+}
 async function tryRound() {
+  if (!setUpHere()) return;
   const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error("Set ANTHROPIC_API_KEY first.");
+  if (!key) {
+    console.log("`npx synthe try` runs one round on your computer, changing nothing, and needs your Synthe key:");
+    console.log("  ANTHROPIC_API_KEY=your-key npx synthe try");
+    process.exitCode = 1;
+    return;
+  }
   const goal = parseGoal(readFileSync2(GOAL_FILE, "utf8"));
   const prompt = readPrompt(readFileSync2(goal.prompt.path, "utf8"), goal, null);
-  if (prompt === null) throw new Error("Prompt not found.");
+  if (prompt === null) {
+    console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
+    process.exitCode = 1;
+    return;
+  }
   const scenarios = parseScenarios(readFileSync2(goal.scenarios, "utf8"));
   const model = anthropicModel(key);
   if (process.argv.includes("--noise")) {
+    console.log("Comparing your prompt with itself on every test case...");
     const n = await measureNoise(goal, prompt, scenarios, model);
-    const split = n.wins === null ? "unknown (some replies or judgments failed)" : `won ${n.wins}, lost ${n.losses}, tied ${n.ties}`;
-    console.log(`Your prompt against itself: ${split}. Any lean here is noise; a real win has to beat it clearly.`);
-    console.log(`Cost: ${n.costUsd === null ? "unknown" : `$${n.costUsd.toFixed(4)}`}`);
+    console.log(n.wins === null ? "Some replies couldn't be judged, so this can't say how much the judge varies." : `Your prompt against itself: better in ${n.wins} test cases, worse in ${n.losses}, the same in ${n.ties}. The prompts are identical, so any lean is just the judge varying. A real improvement has to beat that clearly.`);
+    console.log(`Cost: ${n.costUsd === null ? "unknown" : `$${n.costUsd.toFixed(2)}`}`);
     return;
   }
+  console.log("Trying one round on your computer. This takes a few minutes and changes nothing in your repo...");
   const written = await runWrite(goal, newState(), prompt, scenarios, model);
   const { scores, costUsd: costUsd2 } = await runScore(goal, prompt, written.candidates, scenarios, model);
-  console.log(JSON.stringify(judgeRound(scores, goal, null), null, 2));
-  console.log(`Cost: ${written.costUsd === null || costUsd2 === null ? "unknown" : `$${(written.costUsd + costUsd2).toFixed(4)}`}`);
+  const verdict = judgeRound(scores, goal, null);
+  for (const c of written.candidates) console.log(`- ${c.title ?? c.summary ?? c.id}: ${verdict.notes[c.id] ?? "not tested"}`);
+  for (const r of written.rejected ?? []) console.log(`- An edit that couldn't be applied: ${r.replace(/^candidate-\d+: /, "")}`);
+  console.log(verdict.action === "merge" ? `In a real run, Synthe would merge this. ${verdict.plain}` : "In a real run, nothing would change this round.");
+  console.log(`Cost: ${written.costUsd === null || costUsd2 === null ? "unknown" : `$${(written.costUsd + costUsd2).toFixed(2)}`}`);
 }
-var HELP = `synthe init    set up this repo and start improving
-synthe status  show progress
-synthe stop    stop all runs
-synthe try     run one round locally, changing nothing
-               add --noise to judge your prompt against itself and see how noisy judging is`;
+var HELP = `Synthe makes your AI agent's system prompt better while you sleep.
+
+Start here, inside your project's folder:
+  npx synthe init     set up this repo and start
+
+Then:
+  npx synthe status   where it is and what it changed
+  npx synthe stop     stop it; nothing more runs or changes
+  npx synthe try      run one round on your computer, changing nothing (needs ANTHROPIC_API_KEY)
+  npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
+
+More: https://github.com/synthelabs/synthe#readme`;
 async function main() {
   const command = process.argv[2];
   if (command === "init") process.exitCode = await init(io, process.cwd()) ? 0 : 1;
-  else if (command === "stop") {
-    await run("gh", ["workflow", "disable", "synthe.yml"]);
-    console.log("Stopped. Nothing else will merge.");
-  } else if (command === "status") await status();
+  else if (command === "stop") await stop();
+  else if (command === "status") await status();
   else if (command === "try") await tryRound();
   else console.log(HELP);
 }
 main().catch((e) => {
-  console.error(e.message);
+  console.error(`Synthe hit an error: ${e.message}`);
+  console.error("If this keeps happening, open an issue at https://github.com/synthelabs/synthe/issues");
   process.exit(1);
 });

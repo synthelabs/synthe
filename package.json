@@ -1,17 +1,35 @@
 {
   "name": "synthe",
   "version": "1.1.0",
-  "description": "Your agent improves its own prompt overnight and merges the wins.",
+  "description": "Your AI agent's system prompt gets better while you sleep: Synthe tests small changes overnight and merges only the clear wins.",
+  "keywords": [
+    "ai",
+    "agent",
+    "llm",
+    "prompt",
+    "prompt-optimization",
+    "github-actions",
+    "evals",
+    "claude"
+  ],
+  "homepage": "https://github.com/synthelabs/synthe#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synthelabs/synthe.git"
+  },
+  "bugs": {
+    "url": "https://github.com/synthelabs/synthe/issues"
+  },
   "type": "module",
   "license": "Apache-2.0",
   "bin": {
     "synthe": "dist/cli.js"
   },
   "files": [
-    "dist",
+    "dist/cli.js",
     "templates",
-    "action.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
@@ -23,10 +41,8 @@
     "mutation": "node scripts/mutation-check.mjs",
     "simulate": "node scripts/simulate-gate.ts"
   },
-  "dependencies": {
-    "@anthropic-ai/sdk": "1.3.0"
-  },
   "devDependencies": {
+    "@anthropic-ai/sdk": "1.3.0",
     "esbuild": "0.28.2",
     "typescript": "7.0.2",
     "@types/node": "26.6.6"
