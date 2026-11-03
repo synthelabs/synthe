@@ -30,7 +30,7 @@ async function ask(question: string) {
 }
 
 const template = () => readFileSync(new URL("../templates/synthe.yml", import.meta.url), "utf8");
-const io: Io = { say: console.log, ask, askSecret, run, model: anthropicModel, template };
+const io: Io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 
 // Each command checks it's in a set-up project first, so a team gets a next step instead of a raw error.
 function setUpHere(): boolean {

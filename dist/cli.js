@@ -28450,7 +28450,7 @@ var JUDGING = /\b(judg(e|es|ed|ing)|grad(er|ers|ing)|evaluat(or|ors|ion|ing)|rub
 var FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark)\w*/gi;
 var family = (w) => w.toLowerCase().slice(0, 4);
 var ownFamilies = (known) => new Set((known.match(FAMILY) ?? []).map(family));
-var mentions = (t, own) => (t.match(JUDGING) ?? []).filter((w) => !own.has(family(w))).length;
+var judgingWords = (t, own) => (t.match(JUDGING) ?? []).filter((w) => !own.has(family(w)));
 var SCHEMA = {
   type: "object",
   properties: {
@@ -28478,7 +28478,8 @@ ${known}`);
   for (const e of edits) {
     if (typeof e?.find !== "string" || typeof e?.replace !== "string") return { problem: "malformed edit" };
     if (e.replace.length > MAX_EDIT_CHARS || e.find.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
-    if (mentions(e.replace, own) > mentions(e.find, own)) return { problem: "an edit talks about judging or scores" };
+    const added = judgingWords(e.replace, own);
+    if (added.length > judgingWords(e.find, own).length) return { problem: `an edit talks about judging or scores ("${added[0].toLowerCase()}")` };
     if (e.find === "") {
       text = `${text.trimEnd()}
 
@@ -28994,7 +28995,7 @@ ${branch} only takes changes through pull requests, so Synthe opened one with it
       await io2.run("gh", ["workflow", "run", "synthe.yml", "--repo", slug]);
       started = true;
     } catch {
-      await new Promise((r) => setTimeout(r, 3e3));
+      await io2.sleep(3e3);
     }
   }
   io2.say("\nOne last question. Sharing helps us improve Synthe: we'd see your repo name, rounds, merges, spend and why runs stop, never your prompt, test cases or code.");
@@ -29059,7 +29060,7 @@ async function ask(question) {
   return answer;
 }
 var template = () => readFileSync2(new URL("../templates/synthe.yml", import.meta.url), "utf8");
-var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template };
+var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 function setUpHere() {
   if (existsSync(GOAL_FILE)) return true;
   console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");

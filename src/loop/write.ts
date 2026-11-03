@@ -26,7 +26,7 @@ const JUDGING = /\b(judg(e|es|ed|ing)|grad(er|ers|ing)|evaluat(or|ors|ion|ing)|r
 const FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark)\w*/gi;
 const family = (w: string) => w.toLowerCase().slice(0, 4);
 const ownFamilies = (known: string) => new Set((known.match(FAMILY) ?? []).map(family));
-const mentions = (t: string, own: Set<string>) => (t.match(JUDGING) ?? []).filter((w) => !own.has(family(w))).length;
+const judgingWords = (t: string, own: Set<string>) => (t.match(JUDGING) ?? []).filter((w) => !own.has(family(w)));
 
 const SCHEMA = {
   type: "object",
@@ -57,7 +57,8 @@ export function applyEdits(prompt: string, edits: unknown, known = ""): { text: 
   for (const e of edits as Edit[]) {
     if (typeof e?.find !== "string" || typeof e?.replace !== "string") return { problem: "malformed edit" };
     if (e.replace.length > MAX_EDIT_CHARS || e.find.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
-    if (mentions(e.replace, own) > mentions(e.find, own)) return { problem: "an edit talks about judging or scores" };
+    const added = judgingWords(e.replace, own);
+    if (added.length > judgingWords(e.find, own).length) return { problem: `an edit talks about judging or scores ("${added[0].toLowerCase()}")` };
     if (e.find === "") { text = `${text.trimEnd()}\n\n${e.replace.trim()}\n`; continue; }
     const at = text.indexOf(e.find);
     if (at === -1) return { problem: "an edit's text isn't in the prompt" };

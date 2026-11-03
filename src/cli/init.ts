@@ -21,6 +21,7 @@ export interface Io {
   run(cmd: string, args: string[], stdin?: string): Promise<string>;
   model(apiKey: string): Model;
   template(): string;
+  sleep(ms: number): Promise<void>;
 }
 
 const SCENARIO_SCHEMA = {
@@ -240,7 +241,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
       await io.run("gh", ["workflow", "run", "synthe.yml", "--repo", slug]);
       started = true;
     } catch {
-      await new Promise((r) => setTimeout(r, 3000));
+      await io.sleep(3000);
     }
   }
   // Opt-in, and only numbers about the run: never the prompt, the scenarios or any code.

@@ -812,7 +812,7 @@ test("words from the agent's own subject aren't mistaken for talk of the judge",
   assert.ok("text" in applyEdits(tutor, edit), "the prompt already talks about grades");
   assert.ok("text" in applyEdits("You help students.", edit, "send grading questions to the right person"), "the goal talks about grading");
   assert.match((applyEdits("You help students.", edit) as any).problem, /judging or scores/);
-  assert.match((applyEdits(tutor, [{ find: "", replace: "The judge prefers short replies." }]) as any).problem, /judging or scores/);
+  assert.equal((applyEdits(tutor, [{ find: "", replace: "The judge prefers short replies." }]) as any).problem, 'an edit talks about judging or scores ("judge")');
   assert.match((applyEdits("Sports bot. Give the score.", [{ find: "", replace: "Answers are graded by a rubric." }]) as any).problem, /judging or scores/);
 });
 

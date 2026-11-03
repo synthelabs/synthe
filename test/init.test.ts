@@ -29,6 +29,7 @@ const fakeIo = (dir: string, failing: string[] = [], answers: Record<string, str
     ask: async (q) => Object.entries({ "automatically?": "y", "Share this run": "y", ...answers }).find(([k]) => q.includes(k))?.[1] ?? "Answer returns correctly",
     askSecret: async () => "sk-ant-test-team-key",
     template: () => readFileSync("templates/synthe.yml", "utf8"),
+    sleep: async () => {},
     model: () => ({ ask: async () => ({ text: scenarioReply, costUsd: 0.01 }) }),
     async run(cmd, args, stdin) {
       ran.push({ cmd, args, stdin });
