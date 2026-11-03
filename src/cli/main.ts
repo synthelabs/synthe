@@ -6,10 +6,11 @@ import { judgeRound } from "../core/merge-rule.ts";
 import { readPrompt } from "../core/prompt.ts";
 import { newState, type State } from "../core/state.ts";
 import { headline } from "../loop/report.ts";
-import { anthropicModel } from "../model/client.ts";
+import { anthropicModel, modelProblem } from "../model/client.ts";
 import { measureNoise, runScore } from "../loop/score.ts";
 import { runWrite } from "../loop/write.ts";
 import { init, type Io } from "./init.ts";
+import { askSecret } from "./secret.ts";
 
 const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
   const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -28,18 +29,8 @@ async function ask(question: string) {
   return answer;
 }
 
-async function askSecret(question: string) {
-  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-  process.stdout.write(question);
-  (rl as any)._writeToOutput = () => {};
-  const answer = await rl.question("");
-  rl.close();
-  process.stdout.write("\n");
-  return answer;
-}
-
 const template = () => readFileSync(new URL("../templates/synthe.yml", import.meta.url), "utf8");
-const io: Io = { say: console.log, ask, askSecret, run, model: anthropicModel, template };
+const io: Io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 
 // Each command checks it's in a set-up project first, so a team gets a next step instead of a raw error.
 function setUpHere(): boolean {
@@ -75,7 +66,8 @@ async function status() {
   const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s);
   console.log(title);
-  console.log(summary);
+  // The summary is written for the report issue; in a terminal, "this page" is the issue, which is linked below.
+  console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
   console.log(goal.merge_rule.mode === "propose" ? "Mode: review." : "Mode: automatic merging.");
   if (s.issue) console.log(`Full report: https://github.com/${slug}/issues/${s.issue}`);
 }
@@ -154,7 +146,13 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(`Synthe hit an error: ${e.message}`);
-  console.error("If this keeps happening, open an issue at https://github.com/synthelabs/synthe/issues");
+  const problem = modelProblem(e);
+  if (problem) {
+    console.error(problem);
+    if (process.argv[2] === "init") console.error("Nothing in your repo was changed. Then run `npx synthe init` again.");
+  } else {
+    console.error(`Synthe hit an error: ${e.message}`);
+    console.error("If this keeps happening, open an issue at https://github.com/synthelabs/synthe/issues");
+  }
   process.exit(1);
 });

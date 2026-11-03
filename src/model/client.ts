@@ -44,3 +44,18 @@ export async function pool<T, R>(items: T[], limit: number, fn: (item: T) => Pro
   }));
   return results;
 }
+
+// What a team should do about a failed model call, in plain words. Null when it isn't a known problem with the key or
+// the API, so the caller shows the raw error.
+export function modelProblem(e: unknown): string | null {
+  const err = e as { status?: unknown; message?: unknown } | null;
+  const status = typeof err?.status === "number" ? err.status : null;
+  const text = typeof err?.message === "string" ? err.message : "";
+  if (status === 401) return "Your Synthe key was rejected. Check you copied all of it (it starts with sk-ant-), or ask the Synthe table for a new one.";
+  if (/credit balance is too low/i.test(text)) return "Your Synthe key has no credit left. Ask the Synthe table for a new key.";
+  if (/usage limit|spend limit/i.test(text)) return "Your Synthe key has reached its spending limit. Ask the Synthe table for a new key.";
+  if (status === 403) return "Your Synthe key isn't allowed to use this model. Ask the Synthe table for a new key.";
+  if (status === 429 || status === 529 || (status !== null && status >= 500)) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
+  if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
+  return null;
+}

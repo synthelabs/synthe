@@ -4,7 +4,12 @@ import type { Delimiter, Goal, PromptLocation } from "./goal.ts";
 export function readPrompt(source: string, goal: Goal, tracked: string | null): string | null {
   if (goal.prompt.kind === "file") return source;
   const text = tracked ?? goal.prompt.initial;
-  return source.split(text).length === 2 ? text : null;
+  if (source.split(text).length === 2) return text;
+  // The team edited the prompt since Synthe last saw it. Follow the edit when it's the only prompt-like string of the
+  // same kind left in the file; with two or more, Synthe can't tell which one is the prompt.
+  const { path, delimiter } = goal.prompt;
+  const left = findPrompts([{ path, text: source }]).flatMap((f) => (f.location.kind === "inline" && f.location.delimiter === delimiter ? [f.location.initial] : []));
+  return left.length === 1 && source.split(left[0]).length === 2 ? left[0] : null;
 }
 
 export function writePrompt(source: string, location: PromptLocation, current: string, next: string): string {

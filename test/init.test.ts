@@ -27,8 +27,9 @@ const fakeIo = (dir: string, failing: string[] = [], answers: Record<string, str
   const io: Io = {
     say: (t) => said.push(t),
     ask: async (q) => Object.entries({ "automatically?": "y", "Share this run": "y", ...answers }).find(([k]) => q.includes(k))?.[1] ?? "Answer returns correctly",
-    askSecret: async () => "sk-test-team-key",
+    askSecret: async () => "sk-ant-test-team-key",
     template: () => readFileSync("templates/synthe.yml", "utf8"),
+    sleep: async () => {},
     model: () => ({ ask: async () => ({ text: scenarioReply, costUsd: 0.01 }) }),
     async run(cmd, args, stdin) {
       ran.push({ cmd, args, stdin });
@@ -55,8 +56,8 @@ test("init sets up everything and starts the first run", async () => {
   const workflow = readFileSync(join(dir, ".github/workflows/synthe.yml"), "utf8");
   assert.ok(workflow.includes(ACTION) && !workflow.includes("__ACTION__"));
   const secret = ran.find((r) => r.args[0] === "secret")!;
-  assert.equal(secret.stdin, "sk-test-team-key");
-  assert.ok(!secret.args.join(" ").includes("sk-test"));
+  assert.equal(secret.stdin, "sk-ant-test-team-key");
+  assert.ok(!secret.args.join(" ").includes("sk-ant"));
   assert.ok(ran.some((r) => r.args.includes("run")));
   assert.ok(said.join().includes("synthe stop"));
 });
@@ -170,4 +171,124 @@ test("saying no to sharing sends nothing, and a failed share never blocks setup"
   const brokenDir = repoDir(PROMPT);
   const broken = fakeIo(brokenDir, ["issue create"]);
   assert.equal(await init(broken.io, brokenDir), true);
+});
+
+test("a pasted key is never drawn on screen", async () => {
+  const { PassThrough } = await import("node:stream");
+  const { askSecret } = await import("../src/cli/secret.ts");
+  const input = Object.assign(new PassThrough(), { isTTY: true, setRawMode() { return input; } });
+  let shown = "";
+  const output = Object.assign(new PassThrough(), { isTTY: true, columns: 80 });
+  output.on("data", (d) => { shown += d; });
+  const answer = askSecret("Paste your Synthe key: ", input, output);
+  input.write("sk-ant-visible-secret\r");
+  assert.equal(await answer, "sk-ant-visible-secret");
+  assert.ok(shown.includes("Paste your Synthe key"));
+  assert.ok(!shown.includes("visible-secret"), `key was shown: ${JSON.stringify(shown)}`);
+});
+
+test("test cases still work when the model writes a few more or fewer than asked", async () => {
+  const { generateScenarios } = await import("../src/cli/init.ts");
+  const reply = (n: number) => JSON.stringify({ guardrails: ["Never lie"], policy: "", scenarios: Array.from({ length: n }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })) });
+  const split = async (n: number) => {
+    const { rows } = await generateScenarios({ async ask() { return { text: reply(n), costUsd: 0.01 }; } }, "x", "p");
+    return [rows.filter((r) => r.split === "train").length, rows.filter((r) => r.split === "holdout").length];
+  };
+  assert.deepEqual(await split(34), [20, 10]);
+  assert.deepEqual(await split(29), [19, 10]);
+  assert.deepEqual(await split(24), [16, 8]);
+});
+
+test("too few test cases asks once more, then says plainly that nothing changed", async () => {
+  const { generateScenarios } = await import("../src/cli/init.ts");
+  const reply = (n: number) => JSON.stringify({ guardrails: ["Never lie"], policy: "", scenarios: Array.from({ length: n }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })) });
+  let calls = 0;
+  const { rows } = await generateScenarios({ async ask() { return { text: reply(calls++ === 0 ? 5 : 30), costUsd: 0.01 }; } }, "x", "p");
+  assert.equal(rows.length, 30);
+  assert.equal(calls, 2);
+  calls = 0;
+  await assert.rejects(generateScenarios({ async ask() { calls++; return { text: null, costUsd: 0.01 }; } }, "x", "p"), /Nothing in your repo was changed/);
+  assert.equal(calls, 2);
+});
+
+test("a key already in ANTHROPIC_API_KEY is only used when the team presses Enter", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, ran, said } = fakeIo(dir);
+  const asked: string[] = [];
+  io.askSecret = async (q) => { asked.push(q); return ""; };
+  assert.equal(await init(io, dir, undefined, "sk-ant-their-own-key"), true);
+  assert.match(asked[0], /press Enter to use the key already in ANTHROPIC_API_KEY/);
+  assert.equal(ran.find((r) => r.args[0] === "secret")!.stdin, "sk-ant-their-own-key");
+  assert.match(said.join("\n"), /Using the key in ANTHROPIC_API_KEY/);
+
+  const pastedDir = repoDir(PROMPT);
+  const pasted = fakeIo(pastedDir);
+  assert.equal(await init(pasted.io, pastedDir, undefined, "sk-ant-their-own-key"), true);
+  assert.equal(pasted.ran.find((r) => r.args[0] === "secret")!.stdin, "sk-ant-test-team-key");
+});
+
+test("a paste that isn't a key is asked again, and three misses set nothing up", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, ran, said } = fakeIo(dir);
+  io.askSecret = async () => "npx synthe init";
+  assert.equal(await init(io, dir, undefined, ""), false);
+  assert.equal(said.filter((t) => /start with sk-ant-/.test(t)).length, 3);
+  assert.match(said.join("\n"), /No key, so nothing was set up/);
+  assert.ok(!ran.some((r) => r.args[0] === "secret" || r.args[0] === "push"));
+  assert.equal(existsSync(join(dir, "synthe.json")), false);
+});
+
+test("a prompt too long for Synthe to change stops setup before any spend", async () => {
+  const dir = repoDir("You help hikers. ".repeat(1300));
+  const { io, ran, said } = fakeIo(dir);
+  let calls = 0;
+  io.model = () => ({ async ask() { calls++; return { text: scenarioReply, costUsd: 0.01 }; } });
+  assert.equal(await init(io, dir), false);
+  assert.match(said.join("\n"), /Your prompt is 22,100 characters, and Synthe works on prompts up to 20,000/);
+  assert.equal(calls, 0);
+  assert.ok(!ran.some((r) => r.args[0] === "secret"));
+});
+
+test("on a branch other than the default, init stops before spending and says which branch to use", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, ran, said } = fakeIo(dir);
+  const run = io.run;
+  io.run = async (cmd, args, stdin) => (args[0] === "rev-parse" ? "my-feature\n" : run(cmd, args, stdin));
+  let calls = 0;
+  io.model = () => ({ async ask() { calls++; return { text: scenarioReply, costUsd: 0.01 }; } });
+  assert.equal(await init(io, dir), false);
+  assert.match(said.join("\n"), /You're on the branch my-feature\. Synthe adds itself to o\/r[\s\S]*git checkout o\/r/);
+  assert.equal(calls, 0);
+  assert.ok(!ran.some((r) => r.args[0] === "secret"));
+});
+
+test("a protected default branch gets Synthe's files as a pull request, and nothing starts until it's merged", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, ran, said } = fakeIo(dir);
+  const run = io.run;
+  io.run = async (cmd, args, stdin) => {
+    if (cmd === "git" && args.join(" ") === "push") { ran.push({ cmd, args }); throw new Error("remote: error: GH006: Protected branch update failed"); }
+    if (args[0] === "pr") { ran.push({ cmd, args }); return "https://github.com/o/r/pull/7\n"; }
+    return run(cmd, args, stdin);
+  };
+  assert.equal(await init(io, dir), true);
+  assert.ok(ran.some((r) => r.cmd === "git" && r.args.join(" ") === "push --force origin HEAD:refs/heads/synthe/setup"));
+  const pr = ran.find((r) => r.args[0] === "pr")!;
+  assert.deepEqual(pr.args.slice(0, 9), ["pr", "create", "--repo", "o/r", "--base", "o/r", "--head", "synthe/setup", "--title"]);
+  assert.ok(!ran.some((r) => r.args.includes("workflow")), "the workflow isn't on the default branch yet");
+  assert.ok(ran.some((r) => r.cmd === "git" && r.args.join(" ") === "reset --keep HEAD~1"), "so git pull after the merge isn't divergent");
+  const text = said.join("\n");
+  assert.match(text, /only takes changes through pull requests, so Synthe opened one with its files: https:\/\/github\.com\/o\/r\/pull\/7/);
+  assert.match(text, /Set up, waiting for you to merge https:\/\/github\.com\/o\/r\/pull\/7/);
+  assert.doesNotMatch(text, /Synthe is running|committed and pushed/);
+});
+
+test("when Actions is turned off, init says so instead of promising a first round", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, said } = fakeIo(dir, ["workflow run"]);
+  const run = io.run;
+  io.run = async (cmd, args, stdin) => (args.includes("repos/o/r/actions/permissions") ? "false\n" : run(cmd, args, stdin));
+  assert.equal(await init(io, dir), true);
+  assert.match(said.join("\n"), /GitHub Actions is turned off for this repo, so Synthe can't run yet\. Turn it on at https:\/\/github\.com\/o\/r\/settings\/actions/);
+  assert.doesNotMatch(said.join("\n"), /starts within the hour/);
 });

@@ -9999,7 +9999,7 @@ function platformSupported() {
   return O_NOFOLLOW !== 0;
 }
 async function makeDirAndAncestors(dir) {
-  const missing = [];
+  const missing2 = [];
   let current = dir;
   for (; ; ) {
     try {
@@ -10010,13 +10010,13 @@ async function makeDirAndAncestors(dir) {
       if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "ELOOP")
         throw e;
     }
-    missing.push(current);
+    missing2.push(current);
     const parent = path.dirname(current);
     if (parent === current)
       break;
     current = parent;
   }
-  for (const directory of missing.reverse()) {
+  for (const directory of missing2.reverse()) {
     try {
       await fsp.mkdir(directory, { mode: OWNER_ONLY_DIR_MODE });
     } catch (e) {
@@ -14459,8 +14459,8 @@ var init_errors2 = __esm({
 });
 
 // node_modules/@anthropic-ai/sdk/lib/internal/toolsets/run.mjs
-function notExecutedText(family) {
-  return Object.prototype.hasOwnProperty.call(NOT_EXECUTED_BY_FAMILY, family) ? NOT_EXECUTED_BY_FAMILY[family] : NOT_EXECUTED;
+function notExecutedText(family2) {
+  return Object.prototype.hasOwnProperty.call(NOT_EXECUTED_BY_FAMILY, family2) ? NOT_EXECUTED_BY_FAMILY[family2] : NOT_EXECUTED;
 }
 function toolsetResultBlock(toolUse, content, isError = false) {
   if (isError && (content === "" || Array.isArray(content) && content.length === 0)) {
@@ -14484,9 +14484,9 @@ function throwIfAborted(signal) {
     throw new APIUserAbortError();
 }
 async function runToolsetMember(toolset, toolUse, options = {}) {
-  const family = toolsetFamily(toolset);
-  if (toolUse.toolset_name !== family) {
-    throw new ToolsetContractError(`tool_use ${JSON.stringify(toolUse.id)} (toolset_name=${JSON.stringify(toolUse.toolset_name ?? null)}, name=${JSON.stringify(toolUse.name)}) is not a member call of the ${JSON.stringify(family)} toolset`);
+  const family2 = toolsetFamily(toolset);
+  if (toolUse.toolset_name !== family2) {
+    throw new ToolsetContractError(`tool_use ${JSON.stringify(toolUse.id)} (toolset_name=${JSON.stringify(toolUse.toolset_name ?? null)}, name=${JSON.stringify(toolUse.name)}) is not a member call of the ${JSON.stringify(family2)} toolset`);
   }
   const ctx = { ...options, toolUse, toolUseBlock: toolUse };
   try {
@@ -23241,11 +23241,11 @@ async function generateToolResponse(params, runnable, available, lastMessage, re
     const call = calls?.get(toolUse.id);
     const started = call?.status === "started" ? call.result : void 0;
     if (toolUse.toolset_name) {
-      const family = toolUse.toolset_name;
-      const sequence = sequences.get(family) ?? { tail: Promise.resolve(), failed: false };
-      sequences.set(family, sequence);
-      const registered = params.tools.some((t) => isRunnableToolset(t) && toolsetFamily(t) === family);
-      const run2 = started ?? sequence.tail.then(() => sequence.failed ? toolsetResultBlock(toolUse, notExecutedText(family), true) : runToolsetCall(params, family, toolUse, requestOptions, client, toolOtelContext));
+      const family2 = toolUse.toolset_name;
+      const sequence = sequences.get(family2) ?? { tail: Promise.resolve(), failed: false };
+      sequences.set(family2, sequence);
+      const registered = params.tools.some((t) => isRunnableToolset(t) && toolsetFamily(t) === family2);
+      const run2 = started ?? sequence.tail.then(() => sequence.failed ? toolsetResultBlock(toolUse, notExecutedText(family2), true) : runToolsetCall(params, family2, toolUse, requestOptions, client, toolOtelContext));
       sequence.tail = run2.then(({ is_error }) => {
         if (is_error && registered)
           sequence.failed = true;
@@ -23276,10 +23276,10 @@ async function generateToolResponse(params, runnable, available, lastMessage, re
     content: toolResults
   };
 }
-async function runToolsetCall(params, family, toolUse, requestOptions, client, toolOtelContext) {
-  const toolset = params.tools.find((t) => isRunnableToolset(t) && toolsetFamily(t) === family);
+async function runToolsetCall(params, family2, toolUse, requestOptions, client, toolOtelContext) {
+  const toolset = params.tools.find((t) => isRunnableToolset(t) && toolsetFamily(t) === family2);
   if (!toolset) {
-    return toolsetResultBlock(toolUse, `Error: Toolset '${quotedName(family)}' member '${quotedName(toolUse.name)}' not found`, true);
+    return toolsetResultBlock(toolUse, `Error: Toolset '${quotedName(family2)}' member '${quotedName(toolUse.name)}' not found`, true);
   }
   const spanOptions = {
     signal: requestOptions?.signal,
@@ -23812,9 +23812,9 @@ var init_BetaToolRunner = __esm({
             if (isRunnableToolset(tool)) {
               throw new ToolsetContractError(`addTools() can't add the '${quotedName(toolsetFamily(tool))}' toolset: ${USE_A_NEW_RUNNER}`);
             }
-            const family = definitionFamily(tool);
-            if (families.has(family)) {
-              throw new ToolsetContractError(`addTools() can't replace the '${quotedName(family)}' toolset: ${USE_A_NEW_RUNNER}`);
+            const family2 = definitionFamily(tool);
+            if (families.has(family2)) {
+              throw new ToolsetContractError(`addTools() can't replace the '${quotedName(family2)}' toolset: ${USE_A_NEW_RUNNER}`);
             }
           }
           for (const tool of tools) {
@@ -23902,21 +23902,21 @@ var init_BetaToolRunner = __esm({
         const onToolCall = (toolUse) => {
           const known = calls.has(toolUse.id);
           const malformed = !toolUse.toolset_name && __classPrivateFieldGet(this, _BetaToolRunner_instances, "m", _BetaToolRunner_toolsetFamilies).call(this).has(toolUse.name);
-          const family = malformed ? toolUse.name : toolUse.toolset_name;
-          if (family) {
-            if (known || malformed || toolsets.has(family)) {
-              toolsets.set(family, "waiting");
+          const family2 = malformed ? toolUse.name : toolUse.toolset_name;
+          if (family2) {
+            if (known || malformed || toolsets.has(family2)) {
+              toolsets.set(family2, "waiting");
               return;
             }
-            toolsets.set(family, "running");
-            const result2 = runToolsetCall(__classPrivateFieldGet(this, _BetaToolRunner_instances, "m", _BetaToolRunner_toolsetParams).call(this), family, toolUse, __classPrivateFieldGet(this, _BetaToolRunner_options, "f"), __classPrivateFieldGet(this, _BetaToolRunner_thread, "f")._client, __classPrivateFieldGet(this, _BetaToolRunner_toolRunnerOtelContext, "f"));
+            toolsets.set(family2, "running");
+            const result2 = runToolsetCall(__classPrivateFieldGet(this, _BetaToolRunner_instances, "m", _BetaToolRunner_toolsetParams).call(this), family2, toolUse, __classPrivateFieldGet(this, _BetaToolRunner_options, "f"), __classPrivateFieldGet(this, _BetaToolRunner_thread, "f")._client, __classPrivateFieldGet(this, _BetaToolRunner_toolRunnerOtelContext, "f"));
             calls.set(toolUse.id, { status: "started", result: result2 });
             result2.then(({ is_error }) => {
-              if (is_error || toolsets.get(family) === "waiting")
-                toolsets.set(family, "waiting");
+              if (is_error || toolsets.get(family2) === "waiting")
+                toolsets.set(family2, "waiting");
               else
-                toolsets.delete(family);
-            }, () => toolsets.set(family, "waiting"));
+                toolsets.delete(family2);
+            }, () => toolsets.set(family2, "waiting"));
             return;
           }
           if (known) {
@@ -28050,7 +28050,7 @@ var init_sdk = __esm({
 // src/cli/main.ts
 import { spawn as spawn2 } from "node:child_process";
 import { existsSync, readFileSync as readFileSync2 } from "node:fs";
-import { createInterface as createInterface2 } from "node:readline/promises";
+import { createInterface as createInterface3 } from "node:readline/promises";
 
 // src/core/goal.ts
 var STATE_BRANCH = "synthe/state";
@@ -28238,7 +28238,10 @@ function judgeRound(scores, goal, replaced) {
 function readPrompt(source, goal, tracked) {
   if (goal.prompt.kind === "file") return source;
   const text = tracked ?? goal.prompt.initial;
-  return source.split(text).length === 2 ? text : null;
+  if (source.split(text).length === 2) return text;
+  const { path: path4, delimiter: delimiter2 } = goal.prompt;
+  const left2 = findPrompts([{ path: path4, text: source }]).flatMap((f) => f.location.kind === "inline" && f.location.delimiter === delimiter2 ? [f.location.initial] : []);
+  return left2.length === 1 && source.split(left2[0]).length === 2 ? left2[0] : null;
 }
 var PROMPT_FILE = /(^|\/)[^/]*(prompt|system|instructions)[^/]*\.(md|txt)$/i;
 var SKIP_PATH = /(^|\/)(node_modules|dist|build|\.next|\.git|venv|\.venv|__pycache__)\//;
@@ -28286,18 +28289,22 @@ var ISSUE_TITLE = "Synthe: overnight prompt report";
 var money = (state) => state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}` : `$${state.spendUsd.toFixed(2)}`;
 var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")}, one an hour`;
+var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
 function headline(goal, state) {
   const merged = state.rounds.filter((r) => r.outcome === "merged").length;
   const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;
   if (state.proposal) {
     return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
   }
+  if (!state.stopped && missing(state.rounds.at(-1))) {
+    return { title: "Synthe needs you to fix something", summary: `${state.rounds.at(-1).plain} ${spent}` };
+  }
   if (!state.stopped) {
     return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `Synthe is still running: ${left(goal, state)}. This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}. This page updates after each round. ${spent}` };
   }
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
-    return { title: "Stopped: the last rounds didn't finish", summary: "Check that your Synthe key still has credit, and look at the latest run in the Actions tab for the error." };
+    return { title: "Stopped: the last rounds didn't finish", summary: missing(recent.at(-1)) ? recent.at(-1).plain : "Check that your Synthe key still has credit, and look at the latest run in the Actions tab for the error." };
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
@@ -28368,6 +28375,18 @@ async function pool(items, limit2, fn) {
   }));
   return results;
 }
+function modelProblem(e) {
+  const err = e;
+  const status2 = typeof err?.status === "number" ? err.status : null;
+  const text = typeof err?.message === "string" ? err.message : "";
+  if (status2 === 401) return "Your Synthe key was rejected. Check you copied all of it (it starts with sk-ant-), or ask the Synthe table for a new one.";
+  if (/credit balance is too low/i.test(text)) return "Your Synthe key has no credit left. Ask the Synthe table for a new key.";
+  if (/usage limit|spend limit/i.test(text)) return "Your Synthe key has reached its spending limit. Ask the Synthe table for a new key.";
+  if (status2 === 403) return "Your Synthe key isn't allowed to use this model. Ask the Synthe table for a new key.";
+  if (status2 === 429 || status2 === 529 || status2 !== null && status2 >= 500) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
+  if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
+  return null;
+}
 
 // src/core/safety.ts
 import { createHash } from "node:crypto";
@@ -28428,7 +28447,10 @@ var ANGLES = [
 var MAX_EDITS = 2;
 var MAX_EDIT_CHARS = 1500;
 var JUDGING = /\b(judg(e|es|ed|ing)|grad(er|ers|ing)|evaluat(or|ors|ion|ing)|rubric|scor(e|es|ed|ing)|test cases?|held[- ]back|benchmark)\b/gi;
-var mentions = (t) => (t.match(JUDGING) ?? []).length;
+var FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark)\w*/gi;
+var family = (w) => w.toLowerCase().slice(0, 4);
+var ownFamilies = (known) => new Set((known.match(FAMILY) ?? []).map(family));
+var judgingWords = (t, own) => (t.match(JUDGING) ?? []).filter((w) => !own.has(family(w)));
 var SCHEMA = {
   type: "object",
   properties: {
@@ -28447,14 +28469,17 @@ var SCHEMA = {
   required: ["edits", "summary", "title"],
   additionalProperties: false
 };
-function applyEdits(prompt, edits) {
+function applyEdits(prompt, edits, known = "") {
   if (!Array.isArray(edits) || edits.length === 0) return { problem: "no edits" };
+  const own = ownFamilies(`${prompt}
+${known}`);
   if (edits.length > MAX_EDITS) return { problem: `more than ${MAX_EDITS} edits` };
   let text = prompt;
   for (const e of edits) {
     if (typeof e?.find !== "string" || typeof e?.replace !== "string") return { problem: "malformed edit" };
     if (e.replace.length > MAX_EDIT_CHARS || e.find.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
-    if (mentions(e.replace) > mentions(e.find)) return { problem: "an edit talks about judging or scores" };
+    const added = judgingWords(e.replace, own);
+    if (added.length > judgingWords(e.find, own).length) return { problem: `an edit talks about judging or scores ("${added[0].toLowerCase()}")` };
     if (e.find === "") {
       text = `${text.trimEnd()}
 
@@ -28525,7 +28550,8 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
   results.forEach((r, i) => {
     const id = `candidate-${i + 1}`;
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
-    const applied = applyEdits(prompt, r.value.edits);
+    const applied = applyEdits(prompt, r.value.edits, `${goal.objective}
+${goal.policy ?? ""}`);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
     candidates.push({
       id,
@@ -28729,6 +28755,8 @@ import { join as join2 } from "node:path";
 var ACTION = "synthelabs/synthe@v1";
 var SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 var WORKFLOW_FILE = ".github/workflows/synthe.yml";
+var SETUP_BRANCH = "synthe/setup";
+var SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt overnight. Merging this starts it: it runs once an hour, at most 12 rounds and $3 of credit, and stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the hourly job). Stop it any time with `npx synthe stop`.";
 var REGISTRY = "synthelabs/synthe-runs";
 var SCENARIO_SCHEMA = {
   type: "object",
@@ -28750,27 +28778,34 @@ var SCENARIO_SCHEMA = {
 };
 var TRAIN = 20;
 var HOLDOUT = 10;
+var ASK_FOR = TRAIN + HOLDOUT + 4;
+var ENOUGH = 24;
 async function generateScenarios(model, objective, promptText) {
-  const { value } = await askJson(model, {
-    model: DEFAULTS.models.writer,
-    maxTokens: 16e3,
-    schema: SCENARIO_SCHEMA,
-    user: `An AI agent has this system prompt:
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { value } = await askJson(model, {
+      model: DEFAULTS.models.writer,
+      maxTokens: 16e3,
+      schema: SCENARIO_SCHEMA,
+      user: `An AI agent has this system prompt:
 <prompt>
-${promptText.slice(0, 8e3)}
+${promptText.slice(0, MAX_PROMPT_CHARS)}
 </prompt>
 
 Its team wants it to get better at: ${objective}
 
-Write ${TRAIN + HOLDOUT} varied, realistic user messages for testing it, each with a one-sentence description of what a good response does. Include hard and edge cases. Also list 2 guardrails: things it must never do. In "policy", copy the business rules the prompt states (what the agent may and may not offer, limits, fees, deadlines), word for word where possible, without inventing any; leave it empty if the prompt states none.`
-  });
-  if (!value || value.scenarios.length < TRAIN + HOLDOUT) throw new Error("could not generate scenarios; run init again");
-  const rows = value.scenarios.slice(0, TRAIN + HOLDOUT).map((s, i) => ({
-    id: `s${i + 1}`,
-    ...s,
-    split: i < TRAIN ? "train" : "holdout"
-  }));
-  return { guardrails: value.guardrails.slice(0, 5), policy: typeof value.policy === "string" ? value.policy.trim().slice(0, 4e3) : "", rows };
+Write ${ASK_FOR} varied, realistic user messages for testing it, each with a one-sentence description of what a good response does. Include hard and edge cases. Also list 2 guardrails: things it must never do. In "policy", copy the business rules the prompt states (what the agent may and may not offer, limits, fees, deadlines), word for word where possible, without inventing any; leave it empty if the prompt states none.`
+    });
+    if (!value || !Array.isArray(value.scenarios) || value.scenarios.length < ENOUGH) continue;
+    const n = Math.min(value.scenarios.length, TRAIN + HOLDOUT);
+    const holdout = Math.round(n / 3);
+    const rows = value.scenarios.slice(0, n).map((s, i) => ({
+      id: `s${i + 1}`,
+      ...s,
+      split: i < n - holdout ? "train" : "holdout"
+    }));
+    return { guardrails: value.guardrails.slice(0, 5), policy: typeof value.policy === "string" ? value.policy.trim().slice(0, 4e3) : "", rows };
+  }
+  throw new Error("Synthe couldn't write test cases for your prompt this time. Nothing in your repo was changed; run `npx synthe init` again.");
 }
 function buildGoal(prompt, objective, guardrails, policy = "") {
   return { version: 1, prompt, objective, ...policy ? { policy } : {}, guardrails, scenarios: SCENARIOS_FILE, ...DEFAULTS };
@@ -28797,6 +28832,19 @@ async function yesNo(io2, question) {
   }
   return null;
 }
+async function askKey(io2, envKey) {
+  const question = envKey?.trim() ? "Paste your Synthe key (from the Synthe table), or press Enter to use the key already in ANTHROPIC_API_KEY: " : "Paste your Synthe key (from the Synthe table; it has $3 of credit, paid by Synthe): ";
+  for (let i = 0; i < 3; i++) {
+    const typed = (await io2.askSecret(question)).trim();
+    const key = typed || envKey?.trim() || "";
+    if (/^sk-ant-\S+$/.test(key)) {
+      if (!typed) io2.say("Using the key in ANTHROPIC_API_KEY.");
+      return key;
+    }
+    io2.say(typed ? "That doesn't look like a key: Synthe keys start with sk-ant-. Paste it again." : "Paste your key, then press Enter.");
+  }
+  return null;
+}
 async function whyGitHubFails(io2) {
   try {
     await io2.run("gh", ["--version"]);
@@ -28810,7 +28858,7 @@ async function whyGitHubFails(io2) {
   }
   return "Run this inside your project's folder, after pushing it to GitHub (you need admin access to the repo).";
 }
-async function init(io2, root, now = () => /* @__PURE__ */ new Date()) {
+async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = process.env.ANTHROPIC_API_KEY) {
   const startedAt = now().toISOString();
   let slug;
   try {
@@ -28823,6 +28871,15 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date()) {
   try {
     branch = (await io2.run("gh", ["repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"])).trim() || branch;
   } catch {
+  }
+  let here = "";
+  try {
+    here = (await io2.run("git", ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+  } catch {
+  }
+  if (here && branch !== "your default branch" && here !== branch) {
+    io2.say(`You're on the branch ${here}. Synthe adds itself to ${branch}, because GitHub only runs hourly jobs from there. Run \`git checkout ${branch}\`, then \`npx synthe init\` again.`);
+    return false;
   }
   io2.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.
 `);
@@ -28851,6 +28908,10 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date()) {
     return false;
   }
   const promptText = location.kind === "inline" ? location.initial : readFileSync(join2(root, location.path), "utf8");
+  if (promptText.length > MAX_PROMPT_CHARS) {
+    io2.say(`Your prompt is ${promptText.length.toLocaleString("en-US")} characters, and Synthe works on prompts up to ${MAX_PROMPT_CHARS.toLocaleString("en-US")}. Shorten it, for example by moving reference material such as a menu or FAQ into a separate file your agent loads, then run \`npx synthe init\` again.`);
+    return false;
+  }
   const objective = (await io2.ask('\nWhat should your agent get better at? One sentence, for example "answer returns questions correctly and offer an exchange first":\n> ')).trim();
   if (!objective) {
     io2.say("Synthe needs a goal to work toward. Run `npx synthe init` again and describe one.");
@@ -28864,7 +28925,11 @@ When Synthe finds a clearly better prompt, it can merge it into ${branch} by its
     io2.say("No clear answer, so Synthe will open pull requests for you to review.");
   }
   io2.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
-  const key = process.env.ANTHROPIC_API_KEY || (await io2.askSecret("Paste your Synthe key (from the Synthe table; it has $3 of credit, paid by Synthe): ")).trim();
+  const key = await askKey(io2, envKey);
+  if (!key) {
+    io2.say("No key, so nothing was set up. Get a key from the Synthe table, then run `npx synthe init` again.");
+    return false;
+  }
   io2.say(`
 Reading your prompt and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
   const { guardrails, policy, rows } = await generateScenarios(io2.model(key), objective, promptText);
@@ -28904,16 +28969,33 @@ Reading your prompt and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe l
   }
   await io2.run("git", ["add", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE]);
   await io2.run("git", ["commit", "-m", "Add Synthe", "--", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE]);
-  await io2.run("git", ["push"]);
-  io2.say(`
+  let setupPr = null;
+  try {
+    await io2.run("git", ["push"]);
+    io2.say(`
 Added to ${branch} (committed and pushed): ${GOAL_FILE}, ${SCENARIOS_FILE} and ${WORKFLOW_FILE}. Saved your key as the repo secret SYNTHE_ANTHROPIC_KEY.`);
+  } catch {
+    try {
+      await io2.run("git", ["push", "--force", "origin", `HEAD:refs/heads/${SETUP_BRANCH}`]);
+      setupPr = (await io2.run("gh", ["pr", "create", "--repo", slug, "--base", branch, "--head", SETUP_BRANCH, "--title", "Add Synthe", "--body", SETUP_PR_BODY])).trim();
+      await io2.run("git", ["reset", "--keep", "HEAD~1"]).catch(() => void 0);
+    } catch (e) {
+      io2.say(`
+GitHub refused the push to ${branch}, and Synthe couldn't open a pull request instead: ${e.message.trim().split("\n")[0]}`);
+      io2.say(`Your key is saved as the repo secret SYNTHE_ANTHROPIC_KEY, and Synthe's files are committed on this computer. Get that commit into ${branch} the way your team usually adds changes; Synthe starts within the hour after that. Don't run init again: that would write new test cases.`);
+      return false;
+    }
+    io2.say(`
+${branch} only takes changes through pull requests, so Synthe opened one with its files: ${setupPr}`);
+    io2.say(`Merge it to start Synthe, then run \`git pull\`. Your key is saved as the repo secret SYNTHE_ANTHROPIC_KEY.`);
+  }
   let started = false;
-  for (let i = 0; i < 5 && !started; i++) {
+  for (let i = 0; i < 5 && !started && !setupPr; i++) {
     try {
       await io2.run("gh", ["workflow", "run", "synthe.yml", "--repo", slug]);
       started = true;
     } catch {
-      await new Promise((r) => setTimeout(r, 3e3));
+      await io2.sleep(3e3);
     }
   }
   io2.say("\nOne last question. Sharing helps us improve Synthe: we'd see your repo name, rounds, merges, spend and why runs stop, never your prompt, test cases or code.");
@@ -28927,15 +29009,34 @@ Added to ${branch} (committed and pushed): ${GOAL_FILE}, ${SCENARIOS_FILE} and $
     } catch {
     }
   }
+  const actionsOff = !started && !setupPr && await io2.run("gh", ["api", `repos/${slug}/actions/permissions`, "--jq", ".enabled"]).then((o) => o.trim() === "false", () => false);
+  const limits = `then it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.`;
   const last = new Date(now().getTime() + goal.merge_rule.max_rounds * 36e5).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
   io2.say(started ? `
-Synthe is running. The first round takes a few minutes, then it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.` : `
-Set up. The first round starts within the hour, then it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.`);
+Synthe is running. The first round takes a few minutes, ${limits}` : setupPr ? `
+Set up, waiting for you to merge ${setupPr}. The first round starts within the hour after that (or right away with \`gh workflow run synthe.yml\`), ${limits}` : actionsOff ? `
+Set up, but GitHub Actions is turned off for this repo, so Synthe can't run yet. Turn it on at https://github.com/${slug}/settings/actions, then start the first round with \`gh workflow run synthe.yml\`. After that it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.` : `
+Set up. The first round starts within the hour, ${limits}`);
   io2.say(`  The last possible change is around ${last}. To keep your agent unchanged before then, for example for a demo, run: npx synthe stop`);
   io2.say(`  After the first round, a "${ISSUE_TITLE}" issue appears in your repo. It says what changed and why.`);
   io2.say(auto ? `  You can keep editing your prompt: Synthe always starts from the latest version on ${branch}. After it changes the prompt, pull before you edit it, and if a push is rejected, run git pull and push again.` : "  When Synthe finds a better prompt, it opens a pull request for you to merge or close. It waits, spending nothing, until you decide.");
   io2.say(`  Watch it live: https://github.com/${slug}/actions/workflows/synthe.yml`);
   return true;
+}
+
+// src/cli/secret.ts
+import { createInterface as createInterface2 } from "node:readline/promises";
+import { Writable } from "node:stream";
+async function askSecret(question, input = process.stdin, output = process.stdout) {
+  const muted = new Writable({ write(_chunk, _encoding, done) {
+    done();
+  } });
+  const rl = createInterface2({ input, output: muted, terminal: true });
+  output.write(question);
+  const answer = await rl.question("");
+  rl.close();
+  output.write("\n");
+  return answer;
 }
 
 // src/cli/main.ts
@@ -28953,23 +29054,13 @@ var run = (cmd, args, stdin) => new Promise((resolve2, reject) => {
   child.stdin.end(stdin ?? "");
 });
 async function ask(question) {
-  const rl = createInterface2({ input: process.stdin, output: process.stdout });
+  const rl = createInterface3({ input: process.stdin, output: process.stdout });
   const answer = await rl.question(question);
   rl.close();
   return answer;
 }
-async function askSecret(question) {
-  const rl = createInterface2({ input: process.stdin, output: process.stdout, terminal: true });
-  process.stdout.write(question);
-  rl._writeToOutput = () => {
-  };
-  const answer = await rl.question("");
-  rl.close();
-  process.stdout.write("\n");
-  return answer;
-}
 var template = () => readFileSync2(new URL("../templates/synthe.yml", import.meta.url), "utf8");
-var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template };
+var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 function setUpHere() {
   if (existsSync(GOAL_FILE)) return true;
   console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
@@ -29001,7 +29092,7 @@ async function status() {
   const goal = parseGoal(readFileSync2(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s);
   console.log(title);
-  console.log(summary);
+  console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
   console.log(goal.merge_rule.mode === "propose" ? "Mode: review." : "Mode: automatic merging.");
   if (s.issue) console.log(`Full report: https://github.com/${slug}/issues/${s.issue}`);
 }
@@ -29072,7 +29163,13 @@ async function main() {
   else console.log(HELP);
 }
 main().catch((e) => {
-  console.error(`Synthe hit an error: ${e.message}`);
-  console.error("If this keeps happening, open an issue at https://github.com/synthelabs/synthe/issues");
+  const problem = modelProblem(e);
+  if (problem) {
+    console.error(problem);
+    if (process.argv[2] === "init") console.error("Nothing in your repo was changed. Then run `npx synthe init` again.");
+  } else {
+    console.error(`Synthe hit an error: ${e.message}`);
+    console.error("If this keeps happening, open an issue at https://github.com/synthelabs/synthe/issues");
+  }
   process.exit(1);
 });

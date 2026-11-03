@@ -3,7 +3,7 @@ import type { Delimiter, PromptLocation } from "./goal.ts";
 
 export const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
-const MAX_PROMPT_CHARS = 20_000;
+export const MAX_PROMPT_CHARS = 20_000;
 
 // From Synthe's synthe_risk.py: paths that run code, ship dependencies, alter CI or hold secrets.
 const SENSITIVE_PATHS = [
