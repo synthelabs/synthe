@@ -28076,6 +28076,7 @@ function parseGoal(text) {
   if (g.checks !== void 0 && (!Array.isArray(g.checks) || g.checks.length > MAX_CHECKS || g.checks.some((c) => typeof c !== "string" || !c.trim() || c.length > 300))) {
     bad(`checks must be a list of up to ${MAX_CHECKS} sentences`);
   }
+  if (g.share !== void 0 && !["none", "numbers", "detail"].includes(g.share)) bad("share must be none, numbers or detail");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
@@ -29073,7 +29074,6 @@ var SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 var WORKFLOW_FILE = ".github/workflows/synthe.yml";
 var SETUP_BRANCH = "synthe/setup";
 var SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
-var REGISTRY = "synthelabs/synthe-runs";
 var SCENARIO_SCHEMA = {
   type: "object",
   properties: {
@@ -29202,7 +29202,6 @@ async function whyGitHubFails(io2) {
   return "Run this inside your project's folder, after pushing it to GitHub (you need admin access to the repo).";
 }
 async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = process.env.ANTHROPIC_API_KEY) {
-  const startedAt = now().toISOString();
   let slug;
   try {
     slug = (await io2.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
@@ -29276,6 +29275,17 @@ When Synthe finds a clearly better prompt, it can merge it into ${branch} by its
     io2.say("No clear answer, so Synthe will open pull requests for you to review.");
   }
   io2.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
+  const shareQuestion = "Share how this run goes with the Synthe team? 1 = nothing, 2 = numbers only (rounds, checks, spend, why it stopped), 3 = numbers and what changed (your goal, your checks, Synthe's prompt edits and one example reply; never your whole prompt, test cases or code). Type 1, 2 or 3: ";
+  let share = "none";
+  for (let i = 0; i < 3; i++) {
+    const answer = (await io2.ask(shareQuestion)).trim();
+    if (answer === "1" || answer === "2" || answer === "3") {
+      share = answer === "1" ? "none" : answer === "2" ? "numbers" : "detail";
+      break;
+    }
+    if (i < 2) io2.say("Please type 1, 2 or 3.");
+  }
+  io2.say(`Sharing with Synthe: ${share === "detail" ? "numbers and what changed" : share === "numbers" ? "numbers only" : "nothing"}. Change \`share\` in synthe.json any time.`);
   const key = await askKey(io2, envKey);
   if (!key) {
     io2.say("No key, so nothing was set up. Get a key from the Synthe table, then run `npx synthe init` again.");
@@ -29316,6 +29326,7 @@ Reading your prompt${context2.names.length ? ` and ${context2.names.join(" and "
     io2.say(`Checks saved in ${GOAL_FILE}. Change them there any time, and run \`npx synthe calibrate\` for a fuller check.`);
   }
   const goal = buildGoal(location, objective, guardrails, policy, brief, checks);
+  goal.share = share;
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
   mkdirSync(join2(root, ".synthe"), { recursive: true });
   mkdirSync(join2(root, ".github/workflows"), { recursive: true });
@@ -29368,17 +29379,6 @@ ${branch} only takes changes through pull requests, so Synthe opened one with it
       started = true;
     } catch {
       await io2.sleep(3e3);
-    }
-  }
-  io2.say("\nOne last question. Sharing helps us improve Synthe: we'd see your repo name, rounds, merges, spend and why runs stop, never your prompt, test cases or code.");
-  const share = await yesNo(io2, "Share this run's progress with the Synthe team? Type y or n: ") === true;
-  io2.say(share ? "Sharing progress with Synthe: on." : "Sharing progress with Synthe: off.");
-  if (share) {
-    const entry = { repo: slug, startedAt, finishedAt: now().toISOString(), mode: goal.merge_rule.mode, version: ACTION };
-    try {
-      await io2.run("gh", ["issue", "create", "--repo", REGISTRY, "--title", `run: ${slug}`, "--body-file", "-"], `${JSON.stringify(entry, null, 2)}
-`);
-    } catch {
     }
   }
   const actionsOff = !started && !setupPr && await io2.run("gh", ["api", `repos/${slug}/actions/permissions`, "--jq", ".enabled"]).then((o) => o.trim() === "false", () => false);

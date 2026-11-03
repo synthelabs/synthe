@@ -18,6 +18,7 @@ export interface Goal {
   // The team's own measure of a good reply: plain sentences, each checkable from one reply. On every test case, the
   // reply that fails fewer of them wins; the AI judge only breaks ties.
   checks?: string[];
+  share?: "none" | "numbers" | "detail";
   guardrails: string[];
   scenarios: string;
   models: { writer: string; runner: string; judge: string; checker: string };
@@ -51,6 +52,7 @@ export function parseGoal(text: string): Goal {
   if (g.checks !== undefined && (!Array.isArray(g.checks) || g.checks.length > MAX_CHECKS || g.checks.some((c: unknown) => typeof c !== "string" || !c.trim() || c.length > 300))) {
     bad(`checks must be a list of up to ${MAX_CHECKS} sentences`);
   }
+  if (g.share !== undefined && !["none", "numbers", "detail"].includes(g.share)) bad("share must be none, numbers or detail");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== undefined && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");

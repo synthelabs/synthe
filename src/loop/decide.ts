@@ -334,6 +334,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
         if (landed) {
           if (example) record.example = example;
           if (chosen?.title) record.title = chosen.title;
+          if (chosen?.edits) record.edits = chosen.edits;
           if (unverified.length) record.unverified = unverified;
         }
         if (landed) {

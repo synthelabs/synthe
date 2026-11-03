@@ -8,11 +8,17 @@ const SCORE = "src/loop/score.ts";
 const WRITE = "src/loop/write.ts";
 const STATE = "src/core/state.ts";
 const GITHUB = "src/github/repo.ts";
+const SHARE = "src/core/share.ts";
+const WORKFLOW = "templates/synthe.yml";
 
 // Every test file, so a new one is never left out of the check.
 const TESTS = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
 
 const mutations = [
+  ["share level none still sends", "src/action.ts", 'record && (goal.share === "numbers" || goal.share === "detail")', "record"],
+  ["numbers-only sends text", SHARE, 'if (goal.share !== "detail") return payload;', 'if (goal.share === "none") return payload;'],
+  ["a share failure fails the round", SHARE, 'return `Sharing skipped: ${error instanceof Error && error.message === "timed out" ? "request timed out" : "request failed"}.`;', "throw error;"],
+  ["a cancelled run still decides", WORKFLOW, "if: !cancelled() && needs.write.result", "if: always() && needs.write.result"],
   ["no scenario wins needed", RULE, "if (split.p > max_p) return", "if (false) return"],
   ["no held-back gain needed", RULE, "held < beforeHoldout + min_improvement", "held < beforeHoldout"],
   ["no training gain needed", RULE, "after < before + min_improvement", "after < before"],

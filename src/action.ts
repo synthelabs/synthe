@@ -7,6 +7,8 @@ import { sha256 } from "./core/safety.ts";
 import { githubRepo, type Repo } from "./github/repo.ts";
 import { anthropicModel } from "./model/client.ts";
 import { runDecide } from "./loop/decide.ts";
+import { sharePayload, shareRound } from "./core/share.ts";
+import packageJson from "../package.json" with { type: "json" };
 import { roundSummary } from "./loop/report.ts";
 import { failureOf, type Failure } from "./loop/failure.ts";
 import { explainScores, runScore } from "./loop/score.ts";
@@ -56,6 +58,9 @@ async function main() {
           ? "GitHub refused to start the next round (403): this repo's Synthe workflow predates 1.6.1. Run `npx synthe upgrade` in the repo so rounds start one after another; until then, run `npx synthe restart` to start each one."
           : `Could not queue the next round. Run \`npx synthe restart\` to continue (GitHub's hourly backup may also pick it up). ${e instanceof Error ? e.message : String(e)}`);
       }
+    }
+    if (record && (goal.share === "numbers" || goal.share === "detail")) {
+      console.log(await shareRound(sharePayload(goal, await repo.readState(), record, packageJson.version), process.env));
     }
     // The run's own page then says what happened, for whoever opens it from the Actions tab.
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(goal, await repo.readState(), record, process.env.GITHUB_REPOSITORY!));

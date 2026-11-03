@@ -792,7 +792,8 @@ test("new business details a change adds are flagged for the team to check, know
 
 test("the pull request is titled with the fix, flags new details, and the report states the mode", async () => {
   const repo = new MemoryRepo("Old prompt.");
-  await runDecide(goal(), repo, { ...win(), candidates: [{ id: "c1", text: "Better prompt.", title: "stop approving every refund", summary: "Replaces the refund rule", edits: [{ find: "Old prompt.", replace: "Refunds cost a $7.95 fee." }] }] });
+  const record = await runDecide(goal(), repo, { ...win(), candidates: [{ id: "c1", text: "Better prompt.", title: "stop approving every refund", summary: "Replaces the refund rule", edits: [{ find: "Old prompt.", replace: "Refunds cost a $7.95 fee." }] }] });
+  assert.deepEqual(record?.edits, [{ find: "Old prompt.", replace: "Refunds cost a $7.95 fee." }]);
   assert.equal(repo.prs[0].title, "Synthe: stop approving every refund");
   assert.match(repo.prs[0].body, /\*\*Check these are real:\*\* this change adds `\$7\.95`, which isn't in your old prompt or your policy\. Make sure your business really offers it, or revert this change\./);
   assert.match(repo.issue, /\*\*#1: Stop approving every refund\.\*\* Replaces the refund rule\..*\*\*Check these are real:\*\* `\$7\.95` isn't in your old prompt or policy\./);
