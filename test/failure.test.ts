@@ -14,7 +14,7 @@ const BUSY: Failure = { step: "score", kind: "busy", message: "Anthropic's API i
 const KEY: Failure = { step: "write", kind: "key", message: "Your Synthe key has no credit left. Ask the Synthe table for a new key." };
 const failedRound = (error: Failure | null) => ({ candidates: null, scores: null, costUsd: null, error });
 
-test("a model failure is sorted into busy (try next hour), key (needs a person) or other", () => {
+test("a model failure is sorted into busy (retry on backup), key (needs a person) or other", () => {
   assert.equal(failureOf("score", { status: 529, message: "529 Overloaded" }).kind, "busy");
   assert.equal(failureOf("score", { status: 429, message: "429 rate_limit_error" }).kind, "busy");
   assert.equal(failureOf("write", { status: 500, message: "500 Internal server error" }).kind, "busy");
@@ -52,25 +52,32 @@ test("a round Anthropic was too busy for is recorded as failed but doesn't count
   assert.equal(record!.outcome, "failed");
   assert.equal(record!.failure, "busy");
   assert.equal(repo.state.stalls, 0);
+  // GitHub's schedule can't be relied on to retry, so a busy round queues another try right away.
+  assert.equal(repo.state.chainReady, true, "a busy round tries again right away");
   assert.match(record!.plain!, /Anthropic's API was busy/);
-  assert.match(record!.plain!, /try again next hour/);
+  assert.match(record!.plain!, /tries again right away, up to twice/);
   assert.doesNotMatch(record!.plain!, /credit/);
 });
 
 test("three busy rounds in a row don't stop the run, and the report says it will try again", async () => {
   const repo = new MemoryRepo("Old prompt.");
-  for (let i = 0; i < 3; i++) await runDecide(goal(), repo, failedRound(BUSY));
+  const ready: boolean[] = [];
+  for (let i = 0; i < 3; i++) { await runDecide(goal(), repo, failedRound(BUSY)); ready.push(repo.state.chainReady === true); }
+  // Two immediate retries, then it stops queueing so a long outage can't burn every round in minutes.
+  assert.deepEqual(ready, [true, true, false]);
   assert.equal(repo.state.stopped, null);
   assert.equal(repo.state.round, 3);
   assert.equal(repo.state.stalls, 0);
   assert.match(repo.issue, /## Synthe is working on your prompt/);
-  assert.match(repo.issue, /Anthropic's API was busy; Synthe tries again next hour/);
+  assert.match(repo.issue, /Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`/);
   assert.match(repo.issue, /- Nothing to do\. Anthropic's API was busy during the last round/);
   assert.doesNotMatch(repo.issue, /credit|Stopped/);
   // A busy hour between stalls doesn't reset them either: only a merge does.
   await runDecide(goal(), repo, failedRound(null));
   await runDecide(goal(), repo, failedRound(BUSY));
   assert.equal(repo.state.stalls, 1);
+  // A different failure in between resets the busy streak, so this busy round gets its retry.
+  assert.equal(repo.state.chainReady, true);
 });
 
 test("a key failure says what to do: get a new key and update the repo secret", async () => {
@@ -81,7 +88,7 @@ test("a key failure says what to do: get a new key and update the repo secret", 
   assert.match(record!.plain!, /Your Synthe key has no credit left\. Get a new key from the Synthe table, then run `gh secret set SYNTHE_ANTHROPIC_KEY` in your repo/);
   assert.doesNotMatch(record!.plain!, /Ask the Synthe table/);
   assert.match(repo.issue, /## Synthe needs you to fix something/);
-  assert.match(repo.issue, /Synthe tries again at the next hourly run/);
+  assert.match(repo.issue, /Run `npx synthe restart` after replacing the key/);
   assert.doesNotMatch(repo.issue, /Nothing to do/);
 });
 
@@ -107,12 +114,12 @@ test("when the last rounds all failed, the headline names the cause instead of a
   assert.match(unknown.issue, /## Stopped: the last rounds didn't finish\n\nLook at the latest run in the Actions tab for the error/);
 });
 
-test("each new workflow wakes every 10 minutes at a random offset, so a dropped wake-up doesn't cost the night", () => {
+test("each new workflow has one hourly backup at a nonzero random minute", () => {
   const template = readFileSync("templates/synthe.yml", "utf8");
-  assert.match(template, /cron: "__MINUTE__-59\/10 \* \* \* \*"/);
-  assert.match(renderWorkflow(template, () => 0), /cron: "0-59\/10 \* \* \* \*"/);
-  assert.match(renderWorkflow(template, () => 0.5), /cron: "5-59\/10 \* \* \* \*"/);
-  assert.match(renderWorkflow(template, () => 0.9999999), /cron: "9-59\/10 \* \* \* \*"/);
+  assert.match(template, /cron: "__MINUTE__ \* \* \* \*"/);
+  assert.match(renderWorkflow(template, () => 0), /cron: "1 \* \* \* \*"/);
+  assert.match(renderWorkflow(template, () => 0.5), /cron: "30 \* \* \* \*"/);
+  assert.match(renderWorkflow(template, () => 0.9999999), /cron: "59 \* \* \* \*"/);
   assert.doesNotMatch(renderWorkflow(template), /__MINUTE__|__ACTION__/);
 });
 
@@ -123,6 +130,12 @@ test("every job has a time limit, and write and score failures reach decide with
   assert.match(jobs.write, /\n    timeout-minutes: 15\n/);
   assert.match(jobs.score, /\n    timeout-minutes: 15\n/);
   assert.match(jobs.decide, /\n    timeout-minutes: 10\n/);
+  assert.match(jobs.decide, /actions: write/);
+  assert.doesNotMatch(jobs.write + jobs.score, /actions: write/);
+  assert.match(template, /pull_request:\n    types: \[closed\]/);
+  assert.match(template, /cancel-in-progress: false/);
+  assert.match(template, /'synthe-ignored-\{0\}'/);
+  assert.match(template, /\|\| 'synthe'/);
   for (const [job, name] of [["write", "write-error"], ["score", "score-error"]]) {
     assert.match(jobs[job], new RegExp(`if: failure\\(\\)\\n        with: \\{ name: ${name}, path: \\.synthe-out/error\\.json`));
   }

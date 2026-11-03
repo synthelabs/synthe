@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { after, before, test } from "node:test";
-import { githubRepo } from "../src/github/repo.ts";
+import { githubRepo, Refusal } from "../src/github/repo.ts";
 import { newState } from "../src/core/state.ts";
 
 const calls: { method: string; url: string; body: any }[] = [];
@@ -10,8 +10,11 @@ let merge = { status: 200, body: "x", headers: {} as Record<string, string> };
 let mergeQueue: typeof merge[] = []; // answered first, one per call, to test retries
 const waits: number[] = [];
 let failOnce: { path: string; status: number } | null = null; // the next request to this path fails once
+let dispatchStatus = 204;
 
 const server = createServer((req, res) => {
+  // Synthe only calls /repos/...; other local tools sometimes probe new ports with a bare GET /.
+  if (!req.url?.startsWith("/repos/")) { res.statusCode = 404; return res.end(); }
   let raw = "";
   req.on("data", (d) => (raw += d));
   req.on("end", () => {
@@ -23,6 +26,7 @@ const server = createServer((req, res) => {
     assert.equal(req.headers.authorization, "Bearer tok");
     if (failOnce && path === failOnce.path) { const status = failOnce.status; failOnce = null; return send(status, { message: "x" }); }
     if (path === "") return send(200, { default_branch: "main" });
+    if (path === "/actions/workflows/synthe.yml/dispatches") return send(dispatchStatus, { message: dispatchStatus === 403 ? "Resource not accessible by integration" : "rate limit" });
     if (path.startsWith("/git/ref/heads/")) {
       const b = decodeURIComponent(path.slice(15));
       return b === "main" || [...files.keys()].some((k) => k.startsWith(`${b}:`)) ? send(200, { object: { sha: "headsha" } }) : send(404, {});
@@ -68,6 +72,17 @@ after(() => server.close());
 test("reads files, and missing is null", async () => {
   assert.equal(await repo.readFile("prompt.md", "main"), "Old");
   assert.equal(await repo.readFile("nope.md", "main"), null);
+});
+
+test("dispatches the default-branch workflow and distinguishes permission from rate limiting", async () => {
+  dispatchStatus = 204;
+  await repo.dispatchWorkflow();
+  assert.deepEqual(calls.at(-1)!.body, { ref: "main" });
+  dispatchStatus = 403;
+  await assert.rejects(repo.dispatchWorkflow(), (e: unknown) => e instanceof Refusal && e.problem === "permission" && /403/.test(e.message));
+  dispatchStatus = 429;
+  await assert.rejects(repo.dispatchWorkflow(), (e: unknown) => e instanceof Refusal && e.problem === "rate_limited" && /429/.test(e.message));
+  dispatchStatus = 204;
 });
 
 test("commits on a new branch and merges with the pinned sha", async () => {

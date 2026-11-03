@@ -14,8 +14,13 @@ const merges: { sha: string }[] = [];
 const models: Record<string, number> = {};
 const bodies: any[] = [];
 let denyKey = false;
+let dispatches = 0;
+let dispatchStatus = 204;
+let failStateWrite = false;
 
 const github = createServer((req, res) => {
+  // Synthe only calls /repos/...; other local tools sometimes probe new ports with a bare GET /.
+  if (!req.url?.startsWith("/repos/")) { res.statusCode = 404; return res.end(); }
   let raw = "";
   req.on("data", (d) => (raw += d));
   req.on("end", () => {
@@ -24,6 +29,7 @@ const github = createServer((req, res) => {
     const path = url.pathname.replace("/repos/o/r", "");
     const send = (code: number, v?: unknown) => { res.statusCode = code; res.end(v === undefined ? "" : typeof v === "string" ? v : JSON.stringify(v)); };
     if (path === "") return send(200, { default_branch: "main" });
+    if (path === "/actions/workflows/synthe.yml/dispatches") { dispatches++; return send(dispatchStatus, dispatchStatus === 204 ? undefined : { message: "Resource not accessible by integration" }); }
     if (path.startsWith("/git/ref/heads/")) {
       const b = decodeURIComponent(path.slice(15));
       return [...files.keys()].some((k) => k.startsWith(`${b}:`)) ? send(200, { object: { sha: `${b}-head` } }) : send(404, {});
@@ -37,7 +43,7 @@ const github = createServer((req, res) => {
     if (path.startsWith("/contents/")) {
       const name = decodeURI(path.slice(10));
       const key = `${req.method === "PUT" ? body.branch : url.searchParams.get("ref")!.replace(/-head$/, "")}:${name}`;
-      if (req.method === "PUT") { files.set(key, Buffer.from(body.content, "base64").toString()); return send(200, { commit: { sha: `sha-${files.size}` } }); }
+      if (req.method === "PUT") { if (failStateWrite && key === "synthe/state:state.json") return send(403, { message: "blocked" }); files.set(key, Buffer.from(body.content, "base64").toString()); return send(200, { commit: { sha: `sha-${files.size}` } }); }
       if (!files.has(key)) return send(404, {});
       return req.headers.accept?.includes("raw") ? send(200, files.get(key)) : send(200, { sha: "blob" });
     }
@@ -58,6 +64,8 @@ const anthropic = createServer((req, res) => {
   let raw = "";
   req.on("data", (d) => (raw += d));
   req.on("end", () => {
+    // Only the SDK's POSTs are Anthropic calls. Other local tools sometimes probe new ports with a bare GET.
+    if (req.method !== "POST") { res.statusCode = 404; return res.end(); }
     if (denyKey) { res.statusCode = 401; res.setHeader("content-type", "application/json"); return res.end('{"type":"error","error":{"type":"authentication_error","message":"bad key"}}'); }
     const b = JSON.parse(raw);
     bodies.push(b);
@@ -88,6 +96,7 @@ const step = (name: string, outputs = join(dir, "out.txt"), event = "workflow_di
     cwd: dir,
     env: {
       GITHUB_EVENT_NAME: event,
+      GITHUB_EVENT_PATH: join(dir, "event.json"),
       PATH: process.env.PATH, GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: `http://127.0.0.1:${port(github)}`, GITHUB_OUTPUT: outputs,
       ANTHROPIC_BASE_URL: `http://127.0.0.1:${port(anthropic)}`, INPUT_STEP: name, "INPUT_GITHUB-TOKEN": "tok",
       // The decide job must work with no model key at all.
@@ -109,6 +118,9 @@ const reset = () => {
   files.clear();
   merges.length = 0;
   issues.length = 0;
+  dispatches = 0;
+  dispatchStatus = 204;
+  failStateWrite = false;
   files.set("main:prompt.md", readFileSync(join(dir, "prompt.md"), "utf8"));
   files.set("main:synthe.json", readFileSync(join(dir, "synthe.json"), "utf8"));
 };
@@ -130,6 +142,8 @@ test("one full round merges the winner using the real bundle", async () => {
   assert.equal(files.get("main:prompt.md"), "You are careful and use the store policy.");
   const state = JSON.parse(files.get("synthe/state:state.json")!);
   assert.equal(state.rounds[0].outcome, "merged");
+  assert.equal(dispatches, 1);
+  assert.equal(state.chainReady, true);
   assert.ok(state.spendUsd > 0);
   assert.match(issues.at(-1) ?? "", /## Your prompt is getting better: 1 change merged so far/);
   assert.match(issues.at(-1) ?? "", /\| 1 \| Merged \(#1\) \|/);
@@ -151,6 +165,7 @@ test("a stopped run says so and doesn't call the model", async () => {
   assert.equal(r.code, 0);
   assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=false/);
   assert.equal(bodies.length, before);
+  assert.equal(dispatches, 0);
 });
 
 test("a stopped run with a crashed decide still lets decide clean up and report", async () => {
@@ -178,6 +193,28 @@ test("while a proposal waits for review, the write step makes no model calls and
   assert.equal((await step("write")).code, 0);
   assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=check/);
   assert.equal(bodies.length, before);
+  assert.equal((await step("decide")).code, 0);
+  assert.equal(dispatches, 0);
+});
+
+test("a round that cannot record state cannot chain", async () => {
+  reset();
+  for (const s of ["write", "score"]) assert.equal((await step(s)).code, 0);
+  failStateWrite = true;
+  assert.notEqual((await step("decide")).code, 0);
+  assert.equal(dispatches, 0);
+});
+
+test("the last allowed round never dispatches another", async () => {
+  reset();
+  const configured = JSON.parse(readFileSync(join(dir, "synthe.json"), "utf8"));
+  configured.merge_rule = { ...(configured.merge_rule ?? {}), max_rounds: 1 };
+  const text = JSON.stringify(configured);
+  files.set("main:synthe.json", text);
+  writeFileSync(join(dir, "synthe.json"), text);
+  for (const s of ["write", "score", "decide"]) assert.equal((await step(s)).code, 0);
+  assert.equal(JSON.parse(files.get("synthe/state:state.json")!).round, 1);
+  assert.equal(dispatches, 0);
 });
 
 test("a proposal opened in a run's last round is still checked after the run stops", async () => {
@@ -198,6 +235,7 @@ test("a revoked key fails the job, and decide records the failed round", async (
   assert.equal(d.code, 0, d.log);
   assert.equal(merges.length, 0);
   assert.equal(JSON.parse(files.get("synthe/state:state.json")!).rounds[0].outcome, "failed");
+  assert.equal(dispatches, 0);
 });
 
 test("a key never appears in logs or state", async () => {
@@ -239,4 +277,84 @@ test("a scheduled wake-up soon after the last round exits without model calls; s
   writeFileSync(join(dir, "out.txt"), "");
   assert.equal((await step("write", join(dir, "out.txt"), "schedule")).code, 0);
   assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/, "an hour on, a wake-up runs a round");
+});
+
+test("an older workflow's denied dispatch leaves a successful round for the schedule and explains upgrade", async () => {
+  reset();
+  dispatchStatus = 403;
+  for (const s of ["write", "score"]) assert.equal((await step(s)).code, 0);
+  const decided = await step("decide");
+  assert.equal(decided.code, 0, decided.log);
+  assert.match(decided.log, /refused to start the next round \(403\).*npx synthe upgrade.*npx synthe restart/);
+  assert.equal(JSON.parse(files.get("synthe/state:state.json")!).chainReady, false);
+});
+
+test("a backup that replaces a pending chain can start the next round", async () => {
+  reset();
+  files.set("synthe/state:state.json", JSON.stringify({ round: 1, chainReady: true, rounds: [{ round: 1, at: new Date().toISOString(), outcome: "skipped", reasons: [], costUsd: 0.05 }] }));
+  writeFileSync(join(dir, "out.txt"), "");
+  assert.equal((await step("write", join(dir, "out.txt"), "schedule")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/);
+});
+
+test("a backup replacing a proposal-close run can resume review immediately", async () => {
+  reset();
+  pulls = [{ number: 1, state: "closed", merged_at: null }];
+  files.set("synthe/state:state.json", JSON.stringify({ round: 1, proposal: { pr: 1, round: 1, branch: "synthe/round-1", kind: "merge", text: "New", priorPrompt: "Old" }, rounds: [{ round: 1, at: new Date().toISOString(), outcome: "proposed", pr: 1, reasons: [], costUsd: 0.1 }] }));
+  writeFileSync(join(dir, "out.txt"), "");
+  assert.equal((await step("write", join(dir, "out.txt"), "schedule")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/);
+});
+
+test("a closed PR starts a round only for the current same-repo Synthe proposal", async () => {
+  reset();
+  pulls = [{ number: 1, state: "closed", merged_at: null }];
+  files.set("synthe/state:state.json", JSON.stringify({ round: 1, proposal: { pr: 1, round: 1, branch: "synthe/round-1", kind: "merge", text: "New", priorPrompt: "Old" }, rounds: [{ round: 1, at: "t", outcome: "proposed", pr: 1, reasons: [], costUsd: 0.1 }] }));
+  const event = (owner: string, branch = "synthe/round-1", number = 1) => ({ action: "closed", pull_request: { number, head: { ref: branch, repo: { full_name: owner } } } });
+  for (const payload of [event("fork/r"), event("o/r", "feature"), event("o/r", "synthe/round-2"), event("o/r", "synthe/round-1", 2)]) {
+    writeFileSync(join(dir, "event.json"), JSON.stringify(payload));
+    writeFileSync(join(dir, "out.txt"), "");
+    const before = bodies.length;
+    assert.equal((await step("write", join(dir, "out.txt"), "pull_request")).code, 0);
+    assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=false/);
+    assert.equal(bodies.length, before);
+  }
+  writeFileSync(join(dir, "event.json"), JSON.stringify(event("o/r")));
+  writeFileSync(join(dir, "out.txt"), "");
+  assert.equal((await step("write", join(dir, "out.txt"), "pull_request")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/);
+});
+
+test("a stale same-repo proposal close replacing a pending chain remains a round starter", async () => {
+  reset();
+  files.set("synthe/state:state.json", JSON.stringify({ round: 2, chainReady: true, rounds: [{ round: 2, at: new Date().toISOString(), outcome: "skipped", reasons: [], costUsd: 0.1 }] }));
+  writeFileSync(join(dir, "event.json"), JSON.stringify({ action: "closed", pull_request: { number: 1, head: { ref: "synthe/round-1", repo: { full_name: "o/r" } } } }));
+  writeFileSync(join(dir, "out.txt"), "");
+  assert.equal((await step("write", join(dir, "out.txt"), "pull_request")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/);
+});
+
+test("a prefixed same-repo PR replacement cannot silently consume the queued chain", async () => {
+  reset();
+  files.set("synthe/state:state.json", JSON.stringify({ round: 2, chainReady: true, rounds: [{ round: 2, at: new Date().toISOString(), outcome: "skipped", reasons: [], costUsd: 0.1 }] }));
+  writeFileSync(join(dir, "event.json"), JSON.stringify({ action: "closed", pull_request: { number: 1, head: { ref: "synthe/round-test", repo: { full_name: "o/r" } } } }));
+  writeFileSync(join(dir, "out.txt"), "");
+  assert.equal((await step("write", join(dir, "out.txt"), "pull_request")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/);
+});
+
+test("merging Synthe's setup pull request starts round 1; closing it, a fork's, or a later one doesn't", async () => {
+  const setup = (merged: boolean, owner = "o/r") => ({ action: "closed", pull_request: { number: 9, merged, head: { ref: "synthe/setup", repo: { full_name: owner } } } });
+  const go = async (payload: unknown) => {
+    writeFileSync(join(dir, "event.json"), JSON.stringify(payload));
+    writeFileSync(join(dir, "out.txt"), "");
+    assert.equal((await step("write", join(dir, "out.txt"), "pull_request")).code, 0);
+    return /go=true/.test(readFileSync(join(dir, "out.txt"), "utf8"));
+  };
+  reset();
+  assert.equal(await go(setup(false)), false, "closed without merging");
+  assert.equal(await go(setup(true, "fork/r")), false, "a fork's branch of the same name");
+  assert.equal(await go(setup(true)), true, "merged: the first round starts");
+  files.set("synthe/state:state.json", JSON.stringify({ round: 2, rounds: [{ round: 2, at: "2026-11-03T00:00:00Z", outcome: "skipped", reasons: [], costUsd: 0.1 }] }));
+  assert.equal(await go(setup(true)), false, "a setup branch merged again later doesn't start an extra round");
 });

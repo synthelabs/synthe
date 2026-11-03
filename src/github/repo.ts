@@ -25,6 +25,7 @@ const classify = (res: Response, text: string): MergeProblem =>
     : "other";
 
 export interface Repo {
+  dispatchWorkflow(): Promise<void>;
   defaultBranch(): Promise<string>;
   headSha(branch: string): Promise<string>;
   readFile(path: string, ref: string): Promise<string | null>;
@@ -106,6 +107,15 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
   };
 
   const repo: Repo = {
+    async dispatchWorkflow() {
+      const res = await call("POST", "/actions/workflows/synthe.yml/dispatches", { ref: await repo.defaultBranch() });
+      if (res.ok) return;
+      const detail = (await res.text()).slice(0, 300);
+      const problem = classify(res, detail);
+      if (problem === "permission" || problem === "token") throw new Refusal(problem, "GitHub denied Actions write access", `GitHub workflow dispatch: ${res.status} ${detail}`);
+      if (problem === "rate_limited") throw new Refusal(problem, "GitHub rate limited workflow dispatch", `GitHub workflow dispatch: ${res.status} ${detail}`);
+      throw new Error(`GitHub workflow dispatch: ${res.status} ${detail}`);
+    },
     async defaultBranch() { return (await json("GET", "")).default_branch; },
     async headSha(branch) { return (await json("GET", `/git/ref/heads/${encodeURIComponent(branch)}`)).object.sha; },
     async readFile(path, ref) {

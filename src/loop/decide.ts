@@ -9,6 +9,7 @@ import type { Candidate } from "./write.ts";
 import type { Failure } from "./failure.ts";
 import { WIN } from "./score.ts";
 
+export const BUSY_RETRIES = 2;
 export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null }
 
 const LESSONS = 6;
@@ -139,7 +140,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   if (state.proposal) {
     const pr = await repo.findPr(state.proposal.branch);
     if (pr?.open) {
-      // Wake-ups check an open proposal every 10 minutes; only write when something changed, so the state branch
+      // Backup runs check an open proposal; only write when something changed, so the state branch
       // and the report don't get a new commit or edit each time.
       if (recovered || state.issue === null) {
         await writeReport(goal, repo, state);
@@ -282,7 +283,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     if (error?.kind === "busy") {
       // Overload or rate limits pass by themselves, so a busy hour mustn't use up the rounds allowed without a winner.
       record.reasons.push(`Anthropic's API was busy during the ${error.step} step: ${error.message}`);
-      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe will try again next hour.";
+      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
       stall = false;
     } else if (error?.kind === "key") {
       record.reasons.push(`the ${error.step} step's key was refused: ${error.message}`);
@@ -379,6 +380,14 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   state.pending = null;
   state.rounds.push(record);
   state.stopped = state.stopped ?? stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
+  // A busy API usually clears within minutes, and GitHub's hourly schedule can't be counted on to retry (it fired
+  // once in 16 hours, and not at all for 10-minute crons, in Nov 2026), so a busy round queues one more try right
+  // away, at most BUSY_RETRIES in a row. Every try is still a round, so max_rounds bounds this too.
+  const busyRun = state.rounds.slice().reverse().findIndex((r) => r.failure !== "busy");
+  const busyInARow = busyRun === -1 ? state.rounds.length : busyRun;
+  const finished = Boolean(input.scores && input.candidates && record.outcome !== "failed");
+  const retryBusy = record.failure === "busy" && busyInARow <= BUSY_RETRIES;
+  state.chainReady = (finished || retryBusy) && !state.stopped && !state.proposal && !state.pending && state.round < merge_rule.max_rounds && !record.reasons.some((reason) => reason.startsWith("merge failed:"));
   await writeReport(goal, repo, state);
   await repo.writeState(state);
   return record;

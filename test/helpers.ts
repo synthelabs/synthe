@@ -37,8 +37,10 @@ export class MemoryRepo implements Repo {
   issue = "";
   mergeResult: MergeResult = { merged: true };
   branches = new Map<string, string>();
+  dispatches = 0;
   constructor(prompt: string, path = "prompt.md") { this.files.set(path, prompt); }
   async defaultBranch() { return "main"; }
+  async dispatchWorkflow() { this.dispatches++; }
   async headSha() { return "head"; }
   async readFile(path: string) { return this.files.get(path) ?? null; }
   async commitFile(a: { branch: string; baseSha: string; path: string; content: string; message: string }) {

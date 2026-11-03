@@ -133,6 +133,7 @@ test("a repo that requires review gets the winning pull request left open as a p
   assert.equal(repo.prs[0].closed, false);
   assert.equal(repo.state.stopped, null);
   assert.equal(repo.state.proposal?.pr, 1);
+  assert.equal(repo.state.chainReady, false);
   assert.match(r!.reasons.join(), /requires a review to merge, so Synthe left #1 open/);
 });
 
@@ -744,7 +745,8 @@ test("the round table names each change Synthe tried and what happened to it, in
   assert.match(repo.issue, /Stops approving every refund <i>Not clearly better: better in 10 cases and worse in 10, which could be luck\.<\/i>/);
   assert.match(repo.issue, /An edit that couldn't be applied <i>Not used: an edit's text isn't in the prompt\.<\/i>/);
   assert.match(repo.issue, /## Synthe is working on your prompt/);
-  assert.match(repo.issue, /Nothing to do\. Synthe runs every hour and stops by itself\./);
+  assert.match(repo.issue, /Nothing to do\. Completed rounds start back to back and Synthe stops by itself\./);
+  assert.doesNotMatch(repo.issue, /one an hour|every hour|next hour/);
 });
 
 test("the writer is told which ideas already failed, so rounds don't pay to repeat them", async () => {

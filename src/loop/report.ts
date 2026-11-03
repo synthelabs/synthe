@@ -1,7 +1,7 @@
 import type { Goal } from "../core/goal.ts";
 import { isFinished, type RoundRecord, type State } from "../core/state.ts";
 
-export const ISSUE_TITLE = "Synthe: overnight prompt report";
+export const ISSUE_TITLE = "Synthe: prompt report";
 
 // What a round can't tell you, said every time, so an offline win is never mistaken for proof of business results.
 export function notTested(goal: Goal): string[] {
@@ -20,11 +20,11 @@ export const exampleText = (e: { input: string; before: string; after: string })
 
 const money = (state: State) => (state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}` : `$${state.spendUsd.toFixed(2)}`);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
-const left = (goal: Goal, state: State) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")}, one an hour`;
+const left = (goal: Goal, state: State) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")} back to back`;
 
 // A prompt Synthe can't find needs a person, and the report says so instead of blaming the key.
 const missing = (r: RoundRecord | undefined) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
-// A key that stopped working needs a person too; a busy API doesn't, because the next hourly run tries again.
+// A key that stopped working needs a person too; a busy API waits for the hourly backup.
 const badKey = (r: RoundRecord | undefined) => r?.outcome === "failed" && r.failure === "key";
 const busy = (r: RoundRecord | undefined) => r?.outcome === "failed" && r.failure === "busy";
 
@@ -47,7 +47,7 @@ export function headline(goal: Goal, state: State, stoppedByTeam = false): { tit
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tries again next hour." : "";
+    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
     return merged > 0
       ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` }
       : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
@@ -81,16 +81,16 @@ function nextSteps(goal: Goal, state: State): string[] {
   if (state.stopped && badKey(last)) steps.push(`${last!.plain} Then run \`npx synthe restart\` to start Synthe again.`);
   else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
   if (state.stopped && /no winner$/.test(state.stopped)) {
-    steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push. It starts again at the next hourly check${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. One line per case, for example:\n  \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`\n  \`expected\` describes a good answer in a sentence. \`split\` is \`train\` (Synthe learns from it) or \`holdout\` (kept hidden to check its changes).`);
+    steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push, then run \`npx synthe restart\`${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. One line per case, for example:\n  \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`\n  \`expected\` describes a good answer in a sentence. \`split\` is \`train\` (Synthe learns from it) or \`holdout\` (kept hidden to check its changes).`);
   }
   if (!state.stopped && !state.proposal && missing(last)) {
-    steps.push(`${last!.plain} Synthe tries again every hour, without spending anything until it finds the prompt.`);
+    steps.push(`${last!.plain} Once it's fixed, run \`npx synthe restart\`. Until then Synthe spends nothing.`);
   } else if (!state.stopped && !state.proposal && badKey(last)) {
-    steps.push(`${last!.plain} Synthe tries again at the next hourly run.`);
+    steps.push(`${last!.plain} Run \`npx synthe restart\` after replacing the key.`);
   } else if (!state.stopped && !state.proposal) {
     steps.push(busy(last)
-      ? "Nothing to do. Anthropic's API was busy during the last round, so Synthe tries again next hour, and stops by itself."
-      : "Nothing to do. Synthe runs every hour and stops by itself.");
+      ? "Nothing to do. Anthropic's API was busy during the last round, so Synthe tried again; if it has stopped, run `npx synthe restart`. Otherwise Synthe stops by itself."
+      : "Nothing to do. Completed rounds start back to back and Synthe stops by itself.");
     steps.push("To keep your agent unchanged, for example before a demo, run `npx synthe stop`.");
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");

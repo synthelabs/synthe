@@ -6,7 +6,7 @@ Friday, November 6. Nothing here has been used or sent yet.
 
 **Synthe: your agent gets better while you sleep.**
 
-Run one command before you leave tonight. Synthe rewrites your agent's system prompt, tests each version, and merges only what wins. Wake up to a better agent and a report of what changed.
+Run one command before you leave tonight. Synthe rewrites your agent's system prompt, tests each version, and merges only what wins. Completed rounds run back to back; 12 rounds usually finish in about half an hour. Open the report to see what changed.
 
 ```
 npx synthe init
@@ -24,7 +24,7 @@ Your AI agent's prompt gets better while you sleep.
 1. Grab a key from the Synthe table ($3 of credit, on us).
 2. In your repo, run `npx synthe init`.
 3. Say what your agent should get better at, confirm the checks Synthe proposes to measure it, and choose: merge improvements into main automatically, or review each one.
-4. In the morning, open the report issue in your repo.
+4. After the run, open the report issue in your repo.
 
 Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop any time: `npx synthe stop`
 
@@ -38,7 +38,7 @@ Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop a
 
 ## Before merging overnight
 
-Tell every team: automatic merges land on your default branch. If the repo deploys from it, each merge deploys. A team that doesn't want that can set `"merge_rule": { "mode": "propose" }` in `synthe.json`, and Synthe leaves each winning pull request for them to merge in the morning. Repos that require reviews get this automatically.
+Tell every team: automatic merges land on your default branch. If the repo deploys from it, each merge deploys. A team that doesn't want that can set `"merge_rule": { "mode": "propose" }` in `synthe.json`, and Synthe pauses for each winning pull request until they merge or close it. Repos that require reviews get this automatically.
 
 ## Capped keys, Thursday November 5
 
