@@ -37,7 +37,7 @@ jobs:
     needs: write
     if: needs.write.outputs.go == 'true'
     runs-on: ubuntu-latest
-    # About 40 model calls back to back at 6 at a time (a few minutes); the cap leaves room for retries.
+    # About 150 model calls, 6 at a time: a minute or two in live runs. The cap leaves room for the client's retries.
     timeout-minutes: 15
     permissions: { contents: read }
     steps:
