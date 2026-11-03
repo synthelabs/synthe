@@ -10,6 +10,7 @@ import { anthropicModel, modelProblem } from "../model/client.ts";
 import { measureNoise, runScore } from "../loop/score.ts";
 import { runWrite } from "../loop/write.ts";
 import { init, type Io } from "./init.ts";
+import { stoppedLine } from "./stopped.ts";
 import { askSecret } from "./secret.ts";
 
 const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
@@ -54,6 +55,8 @@ async function status() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
+  const stopped = await stoppedLine(run, slug);
+  if (stopped) console.log(stopped);
   let raw: string;
   try {
     raw = await run("gh", ["api", `repos/${slug}/contents/state.json?ref=${encodeURIComponent(STATE_BRANCH)}`, "-H", "Accept: application/vnd.github.raw+json"]);

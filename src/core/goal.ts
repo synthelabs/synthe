@@ -55,12 +55,27 @@ export function parseGoal(text: string): Goal {
 export interface Scenario { id: string; input: string; expected: string; split: "train" | "holdout" }
 
 export function parseScenarios(text: string): Scenario[] {
-  const rows: Scenario[] = text.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
-  for (const s of rows) {
-    if (!s.id || !s.input || !s.expected || (s.split !== "train" && s.split !== "holdout")) {
-      throw new Error(`scenario ${s.id ?? "?"} needs id, input, expected and split`);
+  const file = ".synthe/scenarios.jsonl"; // named in every message, so a team knows which file to open
+  const rows: Scenario[] = [];
+  const lineOf = new Map<string, number>();
+  text.split("\n").forEach((l, i) => {
+    if (!l.trim()) return;
+    // Counts blank lines too, so the number matches what an editor shows.
+    const line = i + 1;
+    let s: any;
+    try {
+      s = JSON.parse(l);
+    } catch (e) {
+      throw new Error(`${file} line ${line} isn't valid JSON: ${(e as Error).message}`);
     }
-  }
+    const problems = ["id", "input", "expected"].filter((k) => !s?.[k]).map((k) => `"${k}" is missing`);
+    if (s?.split !== "train" && s?.split !== "holdout") problems.push(`"split" must be "train" or "holdout"`);
+    if (problems.length) throw new Error(`${file} line ${line} has a problem: ${problems.join("; ")}.`);
+    // Paired comparisons match rows by id, so a repeated id would break scoring later with a vaguer error.
+    if (lineOf.has(s.id)) throw new Error(`${file}: lines ${lineOf.get(s.id)} and ${line} both use the id "${s.id}"; give each test case its own id`);
+    lineOf.set(s.id, line);
+    rows.push(s);
+  });
   if (!rows.some((s) => s.split === "train") || !rows.some((s) => s.split === "holdout")) {
     throw new Error("scenarios need both train and holdout rows");
   }
