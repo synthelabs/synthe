@@ -105,9 +105,9 @@ export function repoContext(files: { path: string; text: string }[], location: P
   return { names: picked.map((f) => f.path), text: picked.map((f) => `--- ${f.path}\n${redactSecrets(f.text)}`).join("\n\n") };
 }
 
-// A random minute for the hourly run, so many teams set up at once don't all call Anthropic at the same moment.
+// A random offset for the 10-minute wake-ups, so many teams set up at once don't all call Anthropic at the same moment.
 export function renderWorkflow(template: string, random: () => number = Math.random): string {
-  const minute = Math.min(59, Math.floor(random() * 60));
+  const minute = Math.min(9, Math.floor(random() * 10));
   return template.replaceAll("__ACTION__", ACTION).replaceAll("__MINUTE__", String(minute));
 }
 

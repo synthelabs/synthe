@@ -3,8 +3,10 @@ name: Synthe
 on:
   workflow_dispatch:
   schedule:
-    # init picks a random minute, so teams' runs don't all call Anthropic at the same moment.
-    - cron: "__MINUTE__ * * * *"
+    # A wake-up every 10 minutes, at a random offset init picks so teams don't all call at once. GitHub drops
+    # scheduled runs when it's busy (once, one hourly trigger in 16 hours), so frequent wake-ups make sure a round
+    # still happens about every hour; a wake-up that comes too soon after the last round exits in seconds.
+    - cron: "__MINUTE__-59/10 * * * *"
 concurrency:
   group: synthe
   cancel-in-progress: false

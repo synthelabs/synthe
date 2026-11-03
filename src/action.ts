@@ -13,6 +13,8 @@ import { explainScores, runScore } from "./loop/score.ts";
 import { explainWrite, runWrite } from "./loop/write.ts";
 
 const OUT = ".synthe-out";
+// Wake-ups are every 10 minutes, so 50 keeps rounds about an hour apart however the wake-ups fall.
+const ROUND_GAP_MS = 50 * 60_000;
 const input = (name: string) => process.env[`INPUT_${name.toUpperCase()}`] ?? "";
 const setOutput = (k: string, v: string) => { if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `${k}=${v}\n`); };
 const save = (name: string, value: unknown) => { mkdirSync(OUT, { recursive: true }); writeFileSync(`${OUT}/${name}`, JSON.stringify(value)); };
@@ -65,6 +67,15 @@ async function main() {
     // A decide step that died partway still needs its own cleanup and a final report, even when the run is over.
     // "recover" skips scoring (it only runs on "true") but lets decide run.
     setOutput("go", state.pending ? "recover" : "false");
+    return;
+  }
+  // Scheduled wake-ups come every 10 minutes so a dropped one doesn't cost the night, but rounds stay about an hour
+  // apart. Setup, restart and a manual run start a round right away.
+  const last = state.rounds.at(-1);
+  const since = last ? Date.now() - Date.parse(last.at) : Infinity;
+  if (step === "write" && process.env.GITHUB_EVENT_NAME === "schedule" && since < ROUND_GAP_MS) {
+    console.log(`Last round was ${Math.round(since / 60_000)} minutes ago; the next one starts after ${ROUND_GAP_MS / 60_000}.`);
+    setOutput("go", "false");
     return;
   }
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, state.prompt);

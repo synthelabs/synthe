@@ -85,3 +85,17 @@ test("after npx synthe stop, status reads as stopped, not still running", async 
   assert.doesNotMatch(paused.summary, /still running/);
   assert.match(headline(goal(), s).summary, /still running/);
 });
+
+test("checking an open proposal again writes nothing new", async () => {
+  const { MemoryRepo } = await import("./helpers.ts");
+  const { runDecide } = await import("../src/loop/decide.ts");
+  const repo = new MemoryRepo("Old prompt.");
+  repo.prs.push({ number: 1, title: "Synthe: x", body: "", closed: false, branch: "synthe/round-1", merged: false });
+  repo.state = { ...newState(), round: 1, issue: 4, rounds: [{ ...round(1, "proposed"), pr: 1 }],
+    proposal: { pr: 1, round: 1, branch: "synthe/round-1", kind: "merge", text: "New prompt.", priorPrompt: "Old prompt.", propose: true } };
+  let writes = 0;
+  const write = repo.writeState.bind(repo);
+  repo.writeState = async (s) => { writes++; return write(s); };
+  for (let i = 0; i < 3; i++) assert.equal(await runDecide(goal(), repo, { candidates: null, scores: null, costUsd: null }), null);
+  assert.equal(writes, 0);
+});

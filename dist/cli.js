@@ -29146,7 +29146,7 @@ function repoContext(files, location) {
 ${redactSecrets(f.text)}`).join("\n\n") };
 }
 function renderWorkflow(template2, random = Math.random) {
-  const minute = Math.min(59, Math.floor(random() * 60));
+  const minute = Math.min(9, Math.floor(random() * 10));
   return template2.replaceAll("__ACTION__", ACTION).replaceAll("__MINUTE__", String(minute));
 }
 function repoTextFiles(listing, root) {

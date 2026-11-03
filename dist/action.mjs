@@ -29288,8 +29288,10 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
   if (state.proposal) {
     const pr = await repo.findPr(state.proposal.branch);
     if (pr?.open) {
-      await writeReport(goal, repo, state);
-      await repo.writeState(state);
+      if (recovered || state.issue === null) {
+        await writeReport(goal, repo, state);
+        await repo.writeState(state);
+      }
       return null;
     }
     await settle(goal, repo, state, Boolean(pr?.merged));
@@ -29524,6 +29526,7 @@ function failureOf(step, e) {
 
 // src/action.ts
 var OUT = ".synthe-out";
+var ROUND_GAP_MS = 50 * 6e4;
 var input = (name) => process.env[`INPUT_${name.toUpperCase()}`] ?? "";
 var setOutput = (k, v) => {
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `${k}=${v}
@@ -29570,6 +29573,13 @@ async function main() {
     setOutput("go", state.pending ? "recover" : "false");
     return;
   }
+  const last = state.rounds.at(-1);
+  const since = last ? Date.now() - Date.parse(last.at) : Infinity;
+  if (step === "write" && process.env.GITHUB_EVENT_NAME === "schedule" && since < ROUND_GAP_MS) {
+    console.log(`Last round was ${Math.round(since / 6e4)} minutes ago; the next one starts after ${ROUND_GAP_MS / 6e4}.`);
+    setOutput("go", "false");
+    return;
+  }
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, state.prompt);
   if (prompt === null) throw new Error(`could not find the prompt in ${goal.prompt.path}`);
   const scenarios = parseScenarios(readFileSync(goal.scenarios, "utf8"));
@@ -29583,8 +29593,8 @@ async function main() {
   } else if (step === "score") {
     const written = load("candidates.json");
     if (!written) throw new Error("candidates are missing");
-    const last = state.lastMerge;
-    const prior = last && !last.reverted && last.mergedHash === sha256(prompt) ? last.priorPrompt : null;
+    const last2 = state.lastMerge;
+    const prior = last2 && !last2.reverted && last2.mergedHash === sha256(prompt) ? last2.priorPrompt : null;
     const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior);
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
     for (const line of explainScores(scored.scores, scenarios)) console.log(line);

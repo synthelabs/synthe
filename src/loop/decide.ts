@@ -139,8 +139,12 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   if (state.proposal) {
     const pr = await repo.findPr(state.proposal.branch);
     if (pr?.open) {
-      await writeReport(goal, repo, state);
-      await repo.writeState(state);
+      // Wake-ups check an open proposal every 10 minutes; only write when something changed, so the state branch
+      // and the report don't get a new commit or edit each time.
+      if (recovered || state.issue === null) {
+        await writeReport(goal, repo, state);
+        await repo.writeState(state);
+      }
       return null;
     }
     await settle(goal, repo, state, Boolean(pr?.merged));

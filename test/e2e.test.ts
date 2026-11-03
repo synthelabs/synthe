@@ -83,10 +83,11 @@ const anthropic = createServer((req, res) => {
 const port = (s: any) => s.address().port;
 let dir: string;
 
-const step = (name: string, outputs = join(dir, "out.txt")) => new Promise<{ code: number; log: string }>((done) => {
+const step = (name: string, outputs = join(dir, "out.txt"), event = "workflow_dispatch") => new Promise<{ code: number; log: string }>((done) => {
   const child = spawn("node", [bundle], {
     cwd: dir,
     env: {
+      GITHUB_EVENT_NAME: event,
       PATH: process.env.PATH, GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: `http://127.0.0.1:${port(github)}`, GITHUB_OUTPUT: outputs,
       ANTHROPIC_BASE_URL: `http://127.0.0.1:${port(anthropic)}`, INPUT_STEP: name, "INPUT_GITHUB-TOKEN": "tok",
       // The decide job must work with no model key at all.
@@ -216,4 +217,26 @@ test("a proposal the team already merged is settled in the same run, so no hour 
   assert.equal((await step("write")).code, 0);
   assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/);
   assert.ok(bodies.length > before, "the round was written, not skipped");
+});
+
+test("a scheduled wake-up soon after the last round exits without model calls; setup and restart don't wait", async () => {
+  reset();
+  const recent = new Date(Date.now() - 20 * 60_000).toISOString();
+  files.set("synthe/state:state.json", JSON.stringify({ round: 1, stalls: 0, spendUsd: 0.05, stopped: null, pending: null, proposal: null, rounds: [{ round: 1, at: recent, outcome: "skipped", reasons: [], costUsd: 0.05 }] }));
+  writeFileSync(join(dir, "out.txt"), "");
+  const before = bodies.length;
+  const woke = await step("write", join(dir, "out.txt"), "schedule");
+  assert.equal(woke.code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=false/);
+  assert.match(woke.log, /Last round was 20 minutes ago/);
+  assert.equal(bodies.length, before, "no model calls");
+
+  writeFileSync(join(dir, "out.txt"), "");
+  assert.equal((await step("write", join(dir, "out.txt"), "workflow_dispatch")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/, "a manual run starts a round at once");
+
+  files.set("synthe/state:state.json", JSON.stringify({ round: 1, stalls: 0, spendUsd: 0.05, stopped: null, pending: null, proposal: null, rounds: [{ round: 1, at: new Date(Date.now() - 55 * 60_000).toISOString(), outcome: "skipped", reasons: [], costUsd: 0.05 }] }));
+  writeFileSync(join(dir, "out.txt"), "");
+  assert.equal((await step("write", join(dir, "out.txt"), "schedule")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/, "an hour on, a wake-up runs a round");
 });
