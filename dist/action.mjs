@@ -29152,6 +29152,13 @@ function explainScores(scores, scenarios, samples = 3) {
   const current = new Map([...scores.baselineTrain, ...scores.baselineHoldout].map((r) => [r.id, r]));
   const tally2 = (rows) => `won ${rows.filter((r) => r.score === WIN).length}, lost ${rows.filter((r) => r.score === LOSS).length}, tied ${rows.filter((r) => r.score === TIE).length}, unknown ${rows.filter((r) => r.score === null).length}`;
   const lines = [`current prompt breaks a guardrail on ${[...current.values()].filter((r) => r.violation === true).length} of ${current.size} scenarios judged`];
+  const rate = (rows) => {
+    const r = checkRate(rows);
+    return r === null ? "unknown" : `${r}%`;
+  };
+  if (scores.baselineTrain.some((r) => typeof r.applicable === "number")) {
+    lines.push(`checks passed on learned-from cases: current ${rate(scores.baselineTrain)}${scores.candidates.map((c) => `, ${c.id} ${rate(c.train)}`).join("")}`);
+  }
   for (const c of scores.candidates) {
     lines.push(`${c.id} training: ${tally2(c.train)}${c.holdout ? `; held back: ${tally2(c.holdout)}` : ""}`);
     for (const r of [...c.train, ...c.holdout ?? []]) {

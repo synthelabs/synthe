@@ -48,6 +48,8 @@ test("the team's checks decide each test case, even against the judge's preferen
   const c = scores.candidates[0];
   assert.ok(c.train.every((r) => r.score === 100 && r.failed === 0 && r.applicable === 2), "New passes more checks, so it wins every case");
   assert.equal(checkRate(scores.baselineTrain), 50);
+  const { explainScores } = await import("../src/loop/score.ts");
+  assert.ok(explainScores(scores, cases).includes("checks passed on learned-from cases: current 50%, c1 100%"));
   assert.deepEqual(scores.baselineTrain[0].failedChecks, ["Asks for the order number first"]);
   const verdict = judgeRound(scores, withChecks(), null);
   assert.equal(verdict.action, "merge");

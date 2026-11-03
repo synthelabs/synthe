@@ -1,5 +1,5 @@
 import type { Goal, Scenario } from "../core/goal.ts";
-import { paired, trainingProblem, mean, type RoundScores as BaseScores, type ScoreRow } from "../core/merge-rule.ts";
+import { checkRate, paired, trainingProblem, mean, type RoundScores as BaseScores, type ScoreRow } from "../core/merge-rule.ts";
 import { candidateProblem, sha256 } from "../core/safety.ts";
 import { sumCosts } from "../core/cost.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
@@ -318,6 +318,11 @@ export function explainScores(scores: RoundScores, scenarios: Scenario[], sample
   const tally = (rows: ScoreRow[]) =>
     `won ${rows.filter((r) => r.score === WIN).length}, lost ${rows.filter((r) => r.score === LOSS).length}, tied ${rows.filter((r) => r.score === TIE).length}, unknown ${rows.filter((r) => r.score === null).length}`;
   const lines = [`current prompt breaks a guardrail on ${[...current.values()].filter((r) => r.violation === true).length} of ${current.size} scenarios judged`];
+  // The team's own number, on the learned-from cases, for each prompt in the round.
+  const rate = (rows: ScoreRow[]) => { const r = checkRate(rows); return r === null ? "unknown" : `${r}%`; };
+  if (scores.baselineTrain.some((r) => typeof r.applicable === "number")) {
+    lines.push(`checks passed on learned-from cases: current ${rate(scores.baselineTrain)}${scores.candidates.map((c) => `, ${c.id} ${rate(c.train)}`).join("")}`);
+  }
   for (const c of scores.candidates) {
     lines.push(`${c.id} training: ${tally(c.train)}${c.holdout ? `; held back: ${tally(c.holdout)}` : ""}`);
     for (const r of [...c.train, ...(c.holdout ?? [])]) {
