@@ -5,6 +5,7 @@ import { parseGoal } from "../src/core/goal.ts";
 import { scrub, sharePayload, shareRound, stopCode } from "../src/core/share.ts";
 import { newState, type RoundRecord } from "../src/core/state.ts";
 import { renderReport } from "../src/loop/report.ts";
+import { shouldShare } from "../src/core/share.ts";
 import { goal } from "./helpers.ts";
 
 const record: RoundRecord = {
@@ -24,9 +25,15 @@ test("share levels send only the chosen data", () => {
   const detail = sharePayload(goal({ share: "detail", objective: "PRIVATE GOAL", checks: ["PRIVATE CHECK"] }), state, record, "1.6.2");
   assert.ok("detail" in detail);
   if (!("detail" in detail)) throw new Error("detail missing");
-  assert.deepEqual(detail.detail, { objective: "PRIVATE GOAL", checks: ["PRIVATE CHECK"], change: { title: "An edit", summary: "A better reply", edits: [{ find: "old", replace: "new" }] }, example: record.example });
+  assert.deepEqual(detail.detail, { objective: "PRIVATE GOAL", checks: ["PRIVATE CHECK"], change: { title: "An edit", summary: "A better reply", edits: [{ find: "old", replace: "new" }] }, example: { before: "old reply", after: "new reply" } });
   assert.equal(parseGoal(JSON.stringify(goal())).share, undefined);
   assert.throws(() => parseGoal(JSON.stringify({ ...goal(), share: "all" })), /share must be none, numbers or detail/);
+});
+
+test("an existing install without share sends nothing", () => {
+  const existing = parseGoal(JSON.stringify(goal()));
+  assert.equal(existing.share, undefined);
+  assert.equal(shouldShare(existing), false);
 });
 
 test("detail scrubs every text field and stays inside endpoint limits", () => {
@@ -94,8 +101,8 @@ test("shareRound times out without failing its caller", async () => {
 });
 
 test("the report names the share level and workflow skips cancellation", () => {
-  for (const [share, label] of [[undefined, "nothing"], ["none", "nothing"], ["numbers", "numbers only"], ["detail", "numbers and what changed"]] as const) {
-    assert.match(renderReport(goal({ share }), { ...state, rounds: [record] }), new RegExp(`Sharing with Synthe: ${label}\\. Change \`share\` in synthe.json`));
+  for (const [share, label] of [[undefined, "off"], ["none", "off"], ["numbers", "numbers only"], ["detail", "numbers and what changed"]] as const) {
+    assert.match(renderReport(goal({ share }), { ...state, rounds: [record] }), new RegExp(`Sharing with Synthe: ${label}\\. Turn it off with "share": "none" in synthe.json`));
   }
   const workflow = readFileSync("templates/synthe.yml", "utf8");
   assert.match(workflow, /if: \$\{\{ !cancelled\(\) && needs.write.result != 'skipped' && needs.write.outputs.go != 'false' \}\}/);

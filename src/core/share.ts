@@ -9,6 +9,7 @@ const SECRETS: [RegExp, string][] = [
   [/(?<![\w.])\+?\d[\d ().-]{8,}\d(?![\w.])/g, "[phone removed]"],
 ];
 export const scrub = (text: string): string => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
+export const shouldShare = (goal: Goal): boolean => goal.share === "numbers" || goal.share === "detail";
 const limited = (text: string, max: number) => scrub(text).slice(0, max);
 const measure = (value: number | null | undefined, max: number): number | null =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : null;
@@ -48,7 +49,6 @@ export function sharePayload(goal: Goal, state: State, record: RoundRecord, vers
         edits,
       } : null,
       example: record.example ? {
-        input: limited(record.example.input, 2000),
         before: limited(record.example.before, 2000),
         after: limited(record.example.after, 2000),
       } : null,

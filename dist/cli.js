@@ -29201,7 +29201,7 @@ async function whyGitHubFails(io2) {
   }
   return "Run this inside your project's folder, after pushing it to GitHub (you need admin access to the repo).";
 }
-async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = process.env.ANTHROPIC_API_KEY) {
+async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = process.env.ANTHROPIC_API_KEY, env = process.env) {
   let slug;
   try {
     slug = (await io2.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
@@ -29275,17 +29275,9 @@ When Synthe finds a clearly better prompt, it can merge it into ${branch} by its
     io2.say("No clear answer, so Synthe will open pull requests for you to review.");
   }
   io2.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
-  const shareQuestion = "Share how this run goes with the Synthe team? 1 = nothing, 2 = numbers only (rounds, checks, spend, why it stopped), 3 = numbers and what changed (your goal, your checks, Synthe's prompt edits and one example reply; never your whole prompt, test cases or code). Type 1, 2 or 3: ";
-  let share = "none";
-  for (let i = 0; i < 3; i++) {
-    const answer = (await io2.ask(shareQuestion)).trim();
-    if (answer === "1" || answer === "2" || answer === "3") {
-      share = answer === "1" ? "none" : answer === "2" ? "numbers" : "detail";
-      break;
-    }
-    if (i < 2) io2.say("Please type 1, 2 or 3.");
-  }
-  io2.say(`Sharing with Synthe: ${share === "detail" ? "numbers and what changed" : share === "numbers" ? "numbers only" : "nothing"}. Change \`share\` in synthe.json any time.`);
+  const sharingOff = ["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "") || ["0", "false"].includes(env.SYNTHE_TELEMETRY?.toLowerCase() ?? "");
+  const share = sharingOff ? "none" : "detail";
+  io2.say(sharingOff ? "Sharing with Synthe: off (DO_NOT_TRACK is set)." : `Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example reply. Never your whole prompt, test cases or code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.`);
   const key = await askKey(io2, envKey);
   if (!key) {
     io2.say("No key, so nothing was set up. Get a key from the Synthe table, then run `npx synthe init` again.");

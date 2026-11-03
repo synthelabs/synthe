@@ -15,7 +15,8 @@ const WORKFLOW = "templates/synthe.yml";
 const TESTS = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
 
 const mutations = [
-  ["share level none still sends", "src/action.ts", 'record && (goal.share === "numbers" || goal.share === "detail")', "record"],
+  ["an absent share setting sends data", SHARE, 'goal.share === "numbers" || goal.share === "detail"', 'goal.share !== "none"'],
+  ["DO_NOT_TRACK is ignored", "src/cli/init.ts", '["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "")', 'false'],
   ["numbers-only sends text", SHARE, 'if (goal.share !== "detail") return payload;', 'if (goal.share === "none") return payload;'],
   ["a share failure fails the round", SHARE, 'return `Sharing skipped: ${error instanceof Error && error.message === "timed out" ? "request timed out" : "request failed"}.`;', "throw error;"],
   ["a cancelled run still decides", WORKFLOW, "if: ${{ !cancelled() && needs.write.result", "if: ${{ always() && needs.write.result"],

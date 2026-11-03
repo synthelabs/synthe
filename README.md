@@ -8,6 +8,12 @@ npx synthe init
 
 Setup reads your README and the code around your prompt, asks what your agent should get better at (and, optionally, a few real messages users send it), proposes checks that measure a good reply for you to confirm, shows you a few of your agent's real replies so you can fix any check that doesn't mean what you mean, asks whether to merge changes automatically or have you review them, and asks for your Synthe key. When the run finishes, open the **Synthe: prompt report** issue in your repo. It says what changed, why, and how to undo it.
 
+## Data
+
+New installs share how each run goes with the Synthe team: rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example reply. The numbers go to the private `synthelabs/synthe-runs` repository; the rest goes to the private `synthelabs/synthe-feedback` repository. The Synthe team reads both. Synthe never sends your whole prompt, test cases or code, and removes keys, emails and phone numbers before sending.
+
+To turn sharing off any time, set `"share": "none"` in `synthe.json`. Set `"share": "numbers"` to send numbers only, or run init with `DO_NOT_TRACK=1` to start with sharing off. Existing installs without a `share` setting stay off. To ask us to delete your team's data, open an issue on `synthelabs/synthe`.
+
 ## Before you start
 
 - A GitHub repo you can admin, with your agent's system prompt in it, either in its own file or as a string in your code.

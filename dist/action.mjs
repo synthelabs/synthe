@@ -28756,7 +28756,7 @@ function renderReport(goal, state) {
     "",
     `- Goal: ${goal.objective}`,
     `- Rounds: ${state.round} of up to ${goal.merge_rule.max_rounds}. Spent ${money(state)} of $${goal.budget.max_usd}.`,
-    `- Sharing with Synthe: ${goal.share === "detail" ? "numbers and what changed" : goal.share === "numbers" ? "numbers only" : "nothing"}. Change \`share\` in synthe.json.`,
+    `- Sharing with Synthe: ${goal.share === "detail" ? "numbers and what changed" : goal.share === "numbers" ? "numbers only" : "off"}. Turn it off with "share": "none" in synthe.json.`,
     `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
     ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}. ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),
@@ -29544,6 +29544,7 @@ var SECRETS = [
   [/(?<![\w.])\+?\d[\d ().-]{8,}\d(?![\w.])/g, "[phone removed]"]
 ];
 var scrub = (text) => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
+var shouldShare = (goal) => goal.share === "numbers" || goal.share === "detail";
 var limited = (text, max) => scrub(text).slice(0, max);
 var measure = (value, max) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : null;
 function stopCode(stopped) {
@@ -29580,7 +29581,6 @@ function sharePayload(goal, state, record, version) {
         edits
       } : null,
       example: record.example ? {
-        input: limited(record.example.input, 2e3),
         before: limited(record.example.before, 2e3),
         after: limited(record.example.after, 2e3)
       } : null
@@ -29731,7 +29731,7 @@ async function main() {
         console.log(e instanceof Error && /403/.test(e.message) ? "GitHub refused to start the next round (403): this repo's Synthe workflow predates 1.6.1. Run `npx synthe upgrade` in the repo so rounds start one after another; until then, run `npx synthe restart` to start each one." : `Could not queue the next round. Run \`npx synthe restart\` to continue (GitHub's hourly backup may also pick it up). ${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    if (record && (goal2.share === "numbers" || goal2.share === "detail")) {
+    if (record && shouldShare(goal2)) {
       console.log(await shareRound(sharePayload(goal2, await repo.readState(), record, package_default.version), process.env));
     }
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(goal2, await repo.readState(), record, process.env.GITHUB_REPOSITORY));

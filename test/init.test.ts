@@ -27,7 +27,7 @@ const fakeIo = (dir: string, failing: string[] = [], answers: Record<string, str
   const said: string[] = [];
   const io: Io = {
     say: (t) => said.push(t),
-    ask: async (q) => Object.entries({ "automatically?": "y", "Share how this run goes": "2", "Real message": "", "Use these checks": "y", ...answers }).find(([k]) => q.includes(k))?.[1] ?? "Answer returns correctly",
+    ask: async (q) => Object.entries({ "automatically?": "y", "Real message": "", "Use these checks": "y", ...answers }).find(([k]) => q.includes(k))?.[1] ?? "Answer returns correctly",
     askSecret: async () => "sk-ant-test-team-key",
     template: () => readFileSync("templates/synthe.yml", "utf8"),
     sleep: async () => {},
@@ -119,7 +119,7 @@ test("init shows what it inferred and what happens next, in plain words", async 
   assert.match(text, /up to 12 rounds and \$3 of your key's credit/);
   assert.match(text, /A 12-round session usually takes about half an hour/);
   assert.match(text, /Automatic merging: on\. Changes go into o\/r as soon as they win\./);
-  assert.match(text, /Sharing with Synthe: numbers only\. Change `share` in synthe.json/);
+  assert.match(text, /Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend/);
   assert.match(text, /You can keep editing your prompt: Synthe always starts from the latest version on o\/r/);
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).merge_rule.mode, "auto");
 });
@@ -163,19 +163,29 @@ test("init copies the prompt's business rules into the goal file as its policy",
   assert.equal("policy" in buildGoal({ kind: "file", path: "p.md" }, "x", guardrails, ""), false);
 });
 
-test("share choice is asked before writing synthe.json and never creates a registry issue", async () => {
-  for (const [answer, level, label] of [["1", "none", "nothing"], ["2", "numbers", "numbers only"], ["3", "detail", "numbers and what changed"], ["", "none", "nothing"]]) {
+test("init announces sharing before writing synthe.json, defaults to detail, and asks no share question", async () => {
     const dir = repoDir(PROMPT);
-    const { io, ran, said } = fakeIo(dir, [], { "Share how this run goes": answer });
+    const { io, ran, said } = fakeIo(dir);
     const questions: string[] = [];
     const ask = io.ask;
     io.ask = async (question) => { questions.push(question); return ask(question); };
+    const say = io.say;
+    io.say = (message) => { if (message.startsWith("Synthe shares how this run goes")) assert.equal(existsSync(join(dir, "synthe.json")), false); say(message); };
     assert.equal(await init(io, dir), true);
-    assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share, level);
-    assert.equal(questions.filter((q) => q.startsWith("Share how this run goes")).length, answer ? 1 : 3);
-    assert.ok(questions.findIndex((q) => q.startsWith("Share how this run goes")) < questions.findIndex((q) => q.includes("Use these checks")) || !questions.some((q) => q.includes("Use these checks")));
-    assert.match(said.join("\n"), new RegExp(`Sharing with Synthe: ${label}\\. Change `));
+    assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share, "detail");
+    assert.ok(!questions.some((q) => /share how this run goes|type 1, 2 or 3/i.test(q)));
+    assert.ok(said.includes('Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example reply. Never your whole prompt, test cases or code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'));
     assert.ok(!ran.some((r) => r.args[0] === "issue" && r.args[1] === "create"));
+});
+
+test("init respects DO_NOT_TRACK and SYNTHE_TELEMETRY opt-outs", async () => {
+  for (const env of [{ DO_NOT_TRACK: "1" }, { DO_NOT_TRACK: "true" }, { SYNTHE_TELEMETRY: "0" }, { SYNTHE_TELEMETRY: "false" }]) {
+    const dir = repoDir(PROMPT);
+    const { io, said } = fakeIo(dir);
+    assert.equal(await init(io, dir, () => new Date(), undefined, env), true);
+    assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share, "none");
+    assert.ok(said.includes("Sharing with Synthe: off (DO_NOT_TRACK is set)."));
+    assert.ok(!said.some((line) => line.startsWith("Synthe shares how this run goes")));
   }
 });
 

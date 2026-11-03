@@ -23,7 +23,7 @@ Your AI agent's prompt gets better while you build everything else.
 
 1. Grab a key from the Synthe table ($3 of credit, on us).
 2. In your repo, run `npx synthe@latest init`.
-3. Say what your agent should get better at, confirm the checks Synthe proposes to measure it, and choose: merge improvements into main automatically, or review each one. Last, choose whether to share how it goes with us (nothing, numbers, or numbers and what changed).
+3. Say what your agent should get better at, confirm the checks Synthe proposes to measure it, and choose: merge improvements into main automatically, or review each one. Synthe shares how the run goes with us (no full prompts, test cases or code); turn it off with "share": "none" in synthe.json.
 4. After the run, open the report issue in your repo.
 
 Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop any time: `npx synthe stop`
@@ -86,7 +86,7 @@ Ask each team at the table. It should take 3 minutes. Write down their words.
 
 | Field | Where it comes from |
 |---|---|
-| Sharing choice (nothing, numbers, numbers and changes) | Our table notes; a team with lines in synthelabs/synthe-feedback chose numbers and changes |
+| Sharing choice (nothing, numbers, numbers and changes) | Whether lines appear in synthelabs/synthe-runs and synthelabs/synthe-feedback |
 | Rounds run, merges, checks passed (start and end) | Shared numbers in synthelabs/synthe-runs |
 | Goal, checks, edits, one example reply | Private synthelabs/synthe-feedback, only if they chose to share it |
 | Real cost | Key spend in the Console, plus shared numbers |
