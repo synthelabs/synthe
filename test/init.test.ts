@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { ACTION, REGISTRY, init, type Io } from "../src/cli/init.ts";
+import { upgrade } from "../src/cli/upgrade.ts";
 import { parseGoal, parseScenarios } from "../src/core/goal.ts";
 
 const repoDir = (prompt: string) => {
@@ -60,6 +61,24 @@ test("init sets up everything and starts the first run", async () => {
   assert.ok(!secret.args.join(" ").includes("sk-ant"));
   assert.ok(ran.some((r) => r.args.includes("run")));
   assert.ok(said.join().includes("synthe stop"));
+  assert.match(said.join("\n"), /GitHub accepted the first dispatch/);
+});
+
+test("upgrade changes only the workflow, keeps the backup minute, and is idempotent", () => {
+  const dir = repoDir(PROMPT);
+  mkdirSync(join(dir, ".github/workflows"), { recursive: true });
+  const workflow = join(dir, ".github/workflows/synthe.yml");
+  writeFileSync(workflow, '# old\non:\n  schedule:\n    - cron: "6-59/10 * * * *"\njobs:\n  write:\n    uses: synthelabs/synthe@v1\n');
+  writeFileSync(join(dir, "synthe.json"), '{"merge_rule":{"mode":"propose"}}\n');
+  mkdirSync(join(dir, ".synthe"));
+  writeFileSync(join(dir, ".synthe/scenarios.jsonl"), "case\n");
+  const before = ["prompt.md", "synthe.json", ".synthe/scenarios.jsonl"].map((f) => readFileSync(join(dir, f), "utf8"));
+  const template = readFileSync("templates/synthe.yml", "utf8");
+  assert.match(upgrade(dir, template), /Updated .*kept backup minute 6/);
+  assert.match(readFileSync(workflow, "utf8"), /cron: "6 \* \* \* \*"/);
+  assert.match(readFileSync(workflow, "utf8"), /actions: write/);
+  assert.match(upgrade(dir, template), /already up to date\. No files changed/);
+  assert.deepEqual(["prompt.md", "synthe.json", ".synthe/scenarios.jsonl"].map((f) => readFileSync(join(dir, f), "utf8")), before);
 });
 
 test("the key is never written into a file", async () => {
@@ -95,8 +114,8 @@ test("init shows what it inferred and what happens next, in plain words", async 
   assert.match(text, /Rules it must never break:\n    - Never lie/);
   assert.match(text, /Your business policy, copied from your prompt \(1 line\), starting: "Returns within 30 days of delivery\."/);
   assert.match(text, /Added to o\/r \(committed and pushed\): synthe\.json, \.synthe\/scenarios\.jsonl and \.github\/workflows\/synthe\.yml\. Saved your key as the repo secret SYNTHE_ANTHROPIC_KEY\./);
-  assert.match(text, /at most 12 rounds, using at most \$3 of your key's credit/);
-  assert.match(text, /The last possible change is around 11:00 AM [A-Z]{2,5}[+\-\d:]*\. .*run: npx synthe stop/);
+  assert.match(text, /up to 12 rounds and \$3 of your key's credit/);
+  assert.match(text, /A 12-round session usually takes about half an hour/);
   assert.match(text, /Automatic merging: on\. Changes go into o\/r as soon as they win\./);
   assert.match(text, /Sharing progress with Synthe: on\./);
   assert.match(text, /You can keep editing your prompt: Synthe always starts from the latest version on o\/r/);

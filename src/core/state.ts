@@ -31,11 +31,13 @@ export interface State {
   // A pull request Synthe opened and left for a person to merge (propose mode, or a repo that requires review).
   // Rounds wait, without model calls, until it is merged or closed.
   proposal: (Landing & { pr: number; round: number }) | null;
+  // A completed round has queued its successor. A backup run may replace that pending run.
+  chainReady?: boolean;
   rounds: RoundRecord[];
 }
 
 export const newState = (): State => ({
-  round: 0, prompt: null, lastMerge: null, stalls: 0, spendUsd: 0, spendUnknown: false, stopped: null, issue: null, scenariosHash: null, lessons: null, pending: null, proposal: null, rounds: [],
+  round: 0, prompt: null, lastMerge: null, stalls: 0, spendUsd: 0, spendUnknown: false, stopped: null, issue: null, scenariosHash: null, lessons: null, pending: null, proposal: null, chainReady: false, rounds: [],
 });
 
 export function stopReason(s: State, maxRounds: number, stallRounds: number, maxUsd: number): string | null {

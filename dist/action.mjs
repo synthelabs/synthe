@@ -28180,6 +28180,7 @@ var newState = () => ({
   lessons: null,
   pending: null,
   proposal: null,
+  chainReady: false,
   rounds: []
 });
 function stopReason(s, maxRounds, stallRounds, maxUsd) {
@@ -28321,6 +28322,15 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
     throw new Error(detail);
   };
   const repo = {
+    async dispatchWorkflow() {
+      const res = await call("POST", "/actions/workflows/synthe.yml/dispatches", { ref: await repo.defaultBranch() });
+      if (res.ok) return;
+      const detail = (await res.text()).slice(0, 300);
+      const problem = classify(res, detail);
+      if (problem === "permission" || problem === "token") throw new Refusal(problem, "GitHub denied Actions write access", `GitHub workflow dispatch: ${res.status} ${detail}`);
+      if (problem === "rate_limited") throw new Refusal(problem, "GitHub rate limited workflow dispatch", `GitHub workflow dispatch: ${res.status} ${detail}`);
+      throw new Error(`GitHub workflow dispatch: ${res.status} ${detail}`);
+    },
     async defaultBranch() {
       return (await json("GET", "")).default_branch;
     },
@@ -28623,7 +28633,7 @@ var exampleText = (e) => `**For example,** someone wrote: "${e.input}"
 > **After:** ${e.after}`;
 var money = (state) => state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}` : `$${state.spendUsd.toFixed(2)}`;
 var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")}, one an hour`;
+var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")} back to back`;
 var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
 var badKey = (r) => r?.outcome === "failed" && r.failure === "key";
 var busy = (r) => r?.outcome === "failed" && r.failure === "busy";
@@ -28643,7 +28653,7 @@ function headline(goal, state, stoppedByTeam = false) {
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tries again next hour." : "";
+    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe retries on the hourly backup run." : "";
     return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
@@ -28669,16 +28679,16 @@ function nextSteps(goal, state) {
   if (state.stopped && badKey(last)) steps.push(`${last.plain} Then run \`npx synthe restart\` to start Synthe again.`);
   else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
   if (state.stopped && /no winner$/.test(state.stopped)) {
-    steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push. It starts again at the next hourly check${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. One line per case, for example:
+    steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push. The hourly backup checks for changes${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. You can also run \`npx synthe restart\`. One line per case, for example:
   \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`
   \`expected\` describes a good answer in a sentence. \`split\` is \`train\` (Synthe learns from it) or \`holdout\` (kept hidden to check its changes).`);
   }
   if (!state.stopped && !state.proposal && missing(last)) {
-    steps.push(`${last.plain} Synthe tries again every hour, without spending anything until it finds the prompt.`);
+    steps.push(`${last.plain} The hourly backup retries without spending anything until it finds the prompt.`);
   } else if (!state.stopped && !state.proposal && badKey(last)) {
-    steps.push(`${last.plain} Synthe tries again at the next hourly run.`);
+    steps.push(`${last.plain} Run \`npx synthe restart\` after replacing the key.`);
   } else if (!state.stopped && !state.proposal) {
-    steps.push(busy(last) ? "Nothing to do. Anthropic's API was busy during the last round, so Synthe tries again next hour, and stops by itself." : "Nothing to do. Synthe runs every hour and stops by itself.");
+    steps.push(busy(last) ? "Nothing to do. Anthropic's API was busy during the last round, so the hourly backup retries. Synthe stops by itself." : "Nothing to do. Completed rounds start back to back and Synthe stops by itself.");
     steps.push("To keep your agent unchanged, for example before a demo, run `npx synthe stop`.");
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");
@@ -29414,7 +29424,7 @@ ${notTested(goal).slice(1).join("\n")}
     if (error) record.failure = error.kind;
     if (error?.kind === "busy") {
       record.reasons.push(`Anthropic's API was busy during the ${error.step} step: ${error.message}`);
-      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe will try again next hour.";
+      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe will retry on the hourly backup run.";
       stall = false;
     } else if (error?.kind === "key") {
       record.reasons.push(`the ${error.step} step's key was refused: ${error.message}`);
@@ -29511,6 +29521,7 @@ ${goal.policy ?? ""}`);
   state.pending = null;
   state.rounds.push(record);
   state.stopped = state.stopped ?? stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
+  state.chainReady = Boolean(input2.scores && input2.candidates && record.outcome !== "failed" && !state.stopped && !state.proposal && !state.pending && state.round < merge_rule.max_rounds && !record.reasons.some((reason) => reason.startsWith("merge failed:")));
   await writeReport(goal, repo, state);
   await repo.writeState(state);
   return record;
@@ -29554,13 +29565,40 @@ async function main() {
     const written = load("candidates.json");
     const scored = load("scores.json");
     const costUsd2 = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
-    const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load("error.json") });
+    const goal2 = parseGoal(goalText);
+    const record = await runDecide(goal2, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load("error.json") });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
-    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(parseGoal(goalText), await repo.readState(), record, process.env.GITHUB_REPOSITORY));
+    const state2 = await repo.readState();
+    if (record && state2.chainReady && state2.round === record.round && state2.round < goal2.merge_rule.max_rounds && !state2.stopped && !state2.proposal && !state2.pending) {
+      try {
+        await repo.dispatchWorkflow();
+        console.log(`Queued round ${state2.round + 1}.`);
+      } catch (e) {
+        state2.chainReady = false;
+        try {
+          await repo.writeState(state2);
+        } catch (saveError) {
+          console.log(`Could not clear chain marker: ${saveError}`);
+        }
+        console.log(e instanceof Error && /403/.test(e.message) ? "GitHub denied workflow dispatch (403). Rounds will continue on the schedule. Run `npx synthe upgrade` to add Actions write permission." : `Could not queue the next round; the hourly backup will retry. ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(goal2, await repo.readState(), record, process.env.GITHUB_REPOSITORY));
     return;
   }
   const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
   const state = await repo.readState();
+  if (step === "write" && process.env.GITHUB_EVENT_NAME === "pull_request") {
+    const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
+    const pr = event.pull_request;
+    const own = pr?.head?.repo?.full_name === process.env.GITHUB_REPOSITORY;
+    const sameProposal = state.proposal && pr.number === state.proposal.pr && pr.head.ref === state.proposal.branch;
+    if (event.action !== "closed" || !own || !pr.head.ref.startsWith("synthe/round-") || !sameProposal && !(state.chainReady && !state.proposal)) {
+      console.log("Closed pull request is not the current Synthe proposal; skipping.");
+      setOutput("go", "false");
+      return;
+    }
+  }
   if (state.proposal && !state.pending && (step !== "write" || await stillWaiting(repo, state.proposal.branch))) {
     console.log(`Waiting for review of #${state.proposal.pr}`);
     setOutput("go", "check");
@@ -29575,7 +29613,7 @@ async function main() {
   }
   const last = state.rounds.at(-1);
   const since = last ? Date.now() - Date.parse(last.at) : Infinity;
-  if (step === "write" && process.env.GITHUB_EVENT_NAME === "schedule" && since < ROUND_GAP_MS) {
+  if (step === "write" && process.env.GITHUB_EVENT_NAME === "schedule" && since < ROUND_GAP_MS && !state.chainReady && !state.proposal) {
     console.log(`Last round was ${Math.round(since / 6e4)} minutes ago; the next one starts after ${ROUND_GAP_MS / 6e4}.`);
     setOutput("go", "false");
     return;

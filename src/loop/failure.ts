@@ -1,7 +1,7 @@
 import { modelProblem } from "../model/client.ts";
 
 // Why a write or score step failed, saved for the decide step so its report gives the right advice.
-// busy: Anthropic was overloaded, rate-limited or unreachable, so the next hourly run will likely work.
+// busy: Anthropic was overloaded, rate-limited or unreachable, so the hourly backup will retry.
 // key: the key was rejected or is out of credit or allowance, so a person has to replace it.
 export type FailureKind = "busy" | "key" | "other";
 export interface Failure { step: string; kind: FailureKind; message: string }

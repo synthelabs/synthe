@@ -13,7 +13,7 @@ import { explainScores, runScore } from "./loop/score.ts";
 import { explainWrite, runWrite } from "./loop/write.ts";
 
 const OUT = ".synthe-out";
-// Wake-ups are every 10 minutes, so 50 keeps rounds about an hour apart however the wake-ups fall.
+// Only the hourly backup uses this gate. A queued chain round starts immediately.
 const ROUND_GAP_MS = 50 * 60_000;
 const input = (name: string) => process.env[`INPUT_${name.toUpperCase()}`] ?? "";
 const setOutput = (k: string, v: string) => { if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `${k}=${v}\n`); };
@@ -41,15 +41,41 @@ async function main() {
     const written = load<any>("candidates.json");
     const scored = load<any>("scores.json");
     const costUsd = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
-    const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json") });
+    const goal = parseGoal(goalText);
+    const record = await runDecide(goal, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json") });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
+    const state = await repo.readState();
+    if (record && state.chainReady && state.round === record.round && state.round < goal.merge_rule.max_rounds && !state.stopped && !state.proposal && !state.pending) {
+      try {
+        await repo.dispatchWorkflow();
+        console.log(`Queued round ${state.round + 1}.`);
+      } catch (e) {
+        state.chainReady = false;
+        try { await repo.writeState(state); } catch (saveError) { console.log(`Could not clear chain marker: ${saveError}`); }
+        console.log(e instanceof Error && /403/.test(e.message)
+          ? "GitHub denied workflow dispatch (403). Rounds will continue on the schedule. Run `npx synthe upgrade` to add Actions write permission."
+          : `Could not queue the next round; the hourly backup will retry. ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     // The run's own page then says what happened, for whoever opens it from the Actions tab.
-    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(parseGoal(goalText), await repo.readState(), record, process.env.GITHUB_REPOSITORY!));
+    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(goal, await repo.readState(), record, process.env.GITHUB_REPOSITORY!));
     return;
   }
 
   const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
   const state = await repo.readState();
+  if (step === "write" && process.env.GITHUB_EVENT_NAME === "pull_request") {
+    const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH!, "utf8"));
+    const pr = event.pull_request;
+    const own = pr?.head?.repo?.full_name === process.env.GITHUB_REPOSITORY;
+    const sameProposal = state.proposal && pr.number === state.proposal.pr && pr.head.ref === state.proposal.branch;
+    // A stale same-repo proposal close can replace a pending chain run. If a chain is ready, it is a valid starter.
+    if (event.action !== "closed" || !own || !pr.head.ref.startsWith("synthe/round-") || (!sameProposal && !(state.chainReady && !state.proposal))) {
+      console.log("Closed pull request is not the current Synthe proposal; skipping.");
+      setOutput("go", "false");
+      return;
+    }
+  }
   // Checked before the stop reasons: a proposal opened in a run's last round still needs settling.
   // Only write decides this: score runs only when write said go, and its token can't read pull requests.
   if (state.proposal && !state.pending && (step !== "write" || await stillWaiting(repo, state.proposal.branch))) {
@@ -69,11 +95,10 @@ async function main() {
     setOutput("go", state.pending ? "recover" : "false");
     return;
   }
-  // Scheduled wake-ups come every 10 minutes so a dropped one doesn't cost the night, but rounds stay about an hour
-  // apart. Setup, restart and a manual run start a round right away.
+  // A backup may replace one pending chain run. Its chainReady flag makes that backup a valid round starter.
   const last = state.rounds.at(-1);
   const since = last ? Date.now() - Date.parse(last.at) : Infinity;
-  if (step === "write" && process.env.GITHUB_EVENT_NAME === "schedule" && since < ROUND_GAP_MS) {
+  if (step === "write" && process.env.GITHUB_EVENT_NAME === "schedule" && since < ROUND_GAP_MS && !state.chainReady && !state.proposal) {
     console.log(`Last round was ${Math.round(since / 60_000)} minutes ago; the next one starts after ${ROUND_GAP_MS / 60_000}.`);
     setOutput("go", "false");
     return;

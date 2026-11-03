@@ -1,6 +1,6 @@
 # Synthe
 
-Synthe makes your AI agent's system prompt better while you sleep. Each hour it tries small changes to the prompt, tests them against the current one on simulated user messages, and keeps a change only when it's clearly better. It either merges the change into your main branch for you, or opens a pull request for you to review. You choose at setup.
+Synthe makes your AI agent's system prompt better while you sleep. It tries small changes to the prompt, tests them against the current one on simulated user messages, and keeps a change only when it's clearly better. Completed rounds start the next one immediately. It either merges the change into your main branch for you, or opens a pull request for you to review. You choose at setup.
 
 ```bash
 npx synthe init
@@ -17,16 +17,16 @@ Setup reads your README and the code around your prompt, asks what your agent sh
 
 ## What it adds to your repo
 
-Setup commits three files: `synthe.json` (the goal, your rules and settings), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the hourly job). It saves your key as the repo secret `SYNTHE_ANTHROPIC_KEY`. After that, the only file Synthe ever changes is your prompt. It never runs your agent's code.
+Setup commits three files: `synthe.json` (the goal, your rules and settings), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). It saves your key as the repo secret `SYNTHE_ANTHROPIC_KEY`. After that, the only file Synthe ever changes is your prompt. It never runs your agent's code.
 
-## What happens each hour
+## What happens each round
 
 1. Synthe proposes 2 small changes to your prompt, aimed at the test cases where it does worst.
 2. It runs your agent's current prompt and each change on the test cases. On each one, the reply that passes more of your checks wins; when they pass the same number, an AI judge compares the replies side by side.
 3. A change is kept only if its replies are better in clearly more cases than they're worse (more than luck would explain), better again on test cases it never saw, and it breaks none of your rules where your old prompt followed them.
 4. If a kept change later turns out worse than the prompt it replaced, Synthe puts the old one back.
 
-It runs at most 12 rounds and stops by itself sooner when 3 rounds in a row find nothing better, or when it has used its $3.
+It runs at most 12 rounds, usually finishing a full session in about half an hour. It stops sooner when 3 rounds in a row find nothing better, or when it has used its $3. An hourly scheduled run is a backup if the chain stops. Review mode pauses until the team merges or closes Synthe's pull request.
 
 ## While it runs
 
@@ -43,6 +43,7 @@ The test cases are simulated single messages, not real users or full conversatio
 | Command | What it does |
 | --- | --- |
 | `npx synthe init` | Set up this repo and start |
+| `npx synthe upgrade` | Update only the workflow for chained rounds; commit and push the changed workflow |
 | `npx synthe status` | Show where it is |
 | `npx synthe stop` | Stop it. Nothing more runs or changes |
 | `npx synthe restart` | Start it again, after `stop` or once you've fixed what stopped it |
@@ -53,7 +54,7 @@ The test cases are simulated single messages, not real users or full conversatio
 ## Change what it aims for
 
 - `synthe.json`: `checks` (up to 5 plain sentences, each something a good reply does, such as "Asks for the order number before anything else"; these decide every test case), `brief` (what your agent is for), `objective` (what to get better at), `guardrails` (rules it must never break), `policy` (your business rules, which setup copies from your prompt so the judge knows what's allowed), `budget`, and `"merge_rule": { "mode": "propose" }` to review every change.
-- `.synthe/scenarios.jsonl`: the test cases, one per line, such as `{"id": "s31", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}`. `split` is `train` (Synthe learns from it) or `holdout` (kept hidden to check its changes). Adding cases to a finished run starts it again at the next hourly check.
+- `.synthe/scenarios.jsonl`: the test cases, one per line, such as `{"id": "s31", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}`. `split` is `train` (Synthe learns from it) or `holdout` (kept hidden to check its changes). Adding cases to a finished run lets the hourly backup restart it; `npx synthe restart` starts it immediately.
 
 ## Removing it
 

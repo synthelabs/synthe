@@ -13,7 +13,7 @@ export function restartState(goal: Goal, state: State): { state: State; note: st
   const failedOut = recent.length > 0 && recent.every((r) => r.outcome === "failed");
   const roundsRaised = /^reached \d+ rounds$/.test(stopped) && state.round < goal.merge_rule.max_rounds;
   if (isFinished(stopped) && !failedOut && !roundsRaised) {
-    if (/no winner$/.test(stopped)) return { why: `The last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better. To keep going, add test cases your agent still gets wrong to ${goal.scenarios} and push; Synthe starts again by itself at the next hourly check.` };
+    if (/no winner$/.test(stopped)) return { why: `The last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better. To keep going, add test cases your agent still gets wrong to ${goal.scenarios} and push; the hourly backup checks for changes. You can also run \`npx synthe restart\`.` };
     if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget, so this run is finished.` };
     return { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` };
   }

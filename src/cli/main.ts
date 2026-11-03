@@ -14,6 +14,7 @@ import { calibrate } from "./calibrate.ts";
 import { restartState } from "./restart.ts";
 import { stoppedLine } from "./stopped.ts";
 import { askSecret } from "./secret.ts";
+import { upgrade } from "./upgrade.ts";
 
 const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
   const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -63,7 +64,7 @@ async function status() {
   try {
     raw = await run("gh", ["api", `repos/${slug}/contents/state.json?ref=${encodeURIComponent(STATE_BRANCH)}`, "-H", "Accept: application/vnd.github.raw+json"]);
   } catch {
-    console.log("Synthe is set up but hasn't finished a round yet. The first one starts within the hour.");
+    console.log("Synthe is set up but hasn't finished a round yet. Check its Actions run, or start it with `gh workflow run synthe.yml`.");
     console.log(`Watch it: https://github.com/${slug}/actions/workflows/synthe.yml`);
     return;
   }
@@ -125,7 +126,7 @@ async function restart() {
     process.exitCode = 1;
     return;
   }
-  console.log(`Started again.${note} The next round begins in a few minutes, then once an hour.`);
+  console.log(`Started again.${note} GitHub accepted the dispatch. Completed rounds start back to back.`);
   console.log(`Watch it: https://github.com/${slug}/actions/workflows/synthe.yml`);
 }
 
@@ -196,6 +197,7 @@ Start here, inside your project's folder:
 
 Then:
   npx synthe status   where it is and what it changed
+  npx synthe upgrade  update only the installed workflow for chained rounds
   npx synthe stop     stop it; nothing more runs or changes
   npx synthe restart  start it again, after stop or once you've fixed what stopped it
   npx synthe try      run one round on your computer, changing nothing (needs ANTHROPIC_API_KEY)
@@ -207,6 +209,7 @@ More: https://github.com/synthelabs/synthe#readme`;
 async function main() {
   const command = process.argv[2];
   if (command === "init") process.exitCode = (await init(io, process.cwd())) ? 0 : 1;
+  else if (command === "upgrade") console.log(upgrade(process.cwd(), template()));
   else if (command === "stop") await stop();
   else if (command === "status") await status();
   else if (command === "restart") await restart();

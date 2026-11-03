@@ -139,7 +139,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   if (state.proposal) {
     const pr = await repo.findPr(state.proposal.branch);
     if (pr?.open) {
-      // Wake-ups check an open proposal every 10 minutes; only write when something changed, so the state branch
+      // Backup runs check an open proposal; only write when something changed, so the state branch
       // and the report don't get a new commit or edit each time.
       if (recovered || state.issue === null) {
         await writeReport(goal, repo, state);
@@ -282,7 +282,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     if (error?.kind === "busy") {
       // Overload or rate limits pass by themselves, so a busy hour mustn't use up the rounds allowed without a winner.
       record.reasons.push(`Anthropic's API was busy during the ${error.step} step: ${error.message}`);
-      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe will try again next hour.";
+      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe will retry on the hourly backup run.";
       stall = false;
     } else if (error?.kind === "key") {
       record.reasons.push(`the ${error.step} step's key was refused: ${error.message}`);
@@ -379,6 +379,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   state.pending = null;
   state.rounds.push(record);
   state.stopped = state.stopped ?? stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
+  state.chainReady = Boolean(input.scores && input.candidates && record.outcome !== "failed" && !state.stopped && !state.proposal && !state.pending && state.round < merge_rule.max_rounds && !record.reasons.some((reason) => reason.startsWith("merge failed:")));
   await writeReport(goal, repo, state);
   await repo.writeState(state);
   return record;

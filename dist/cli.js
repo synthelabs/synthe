@@ -28049,7 +28049,7 @@ var init_sdk = __esm({
 
 // src/cli/main.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "node:fs";
 import { createInterface as createInterface3 } from "node:readline/promises";
 
 // src/core/goal.ts
@@ -28307,6 +28307,7 @@ var newState = () => ({
   lessons: null,
   pending: null,
   proposal: null,
+  chainReady: false,
   rounds: []
 });
 function isFinished(reason) {
@@ -28317,7 +28318,7 @@ function isFinished(reason) {
 var ISSUE_TITLE = "Synthe: overnight prompt report";
 var money = (state) => state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}` : `$${state.spendUsd.toFixed(2)}`;
 var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")}, one an hour`;
+var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")} back to back`;
 var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
 var badKey = (r) => r?.outcome === "failed" && r.failure === "key";
 var busy = (r) => r?.outcome === "failed" && r.failure === "busy";
@@ -28337,7 +28338,7 @@ function headline(goal, state, stoppedByTeam = false) {
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tries again next hour." : "";
+    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe retries on the hourly backup run." : "";
     return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
@@ -29065,7 +29066,7 @@ var ACTION = "synthelabs/synthe@v1";
 var SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 var WORKFLOW_FILE = ".github/workflows/synthe.yml";
 var SETUP_BRANCH = "synthe/setup";
-var SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt overnight. Merging this starts it: it runs once an hour, at most 12 rounds and $3 of credit, and stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the hourly job). Stop it any time with `npx synthe stop`.";
+var SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. After the first run, completed rounds start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
 var REGISTRY = "synthelabs/synthe-runs";
 var SCENARIO_SCHEMA = {
   type: "object",
@@ -29145,8 +29146,8 @@ function repoContext(files, location) {
   return { names: picked.map((f) => f.path), text: picked.map((f) => `--- ${f.path}
 ${redactSecrets(f.text)}`).join("\n\n") };
 }
-function renderWorkflow(template2, random = Math.random) {
-  const minute = Math.min(9, Math.floor(random() * 10));
+function renderWorkflow(template2, random = Math.random, chosenMinute) {
+  const minute = chosenMinute ?? Math.min(59, 1 + Math.floor(random() * 59));
   return template2.replaceAll("__ACTION__", ACTION).replaceAll("__MINUTE__", String(minute));
 }
 function repoTextFiles(listing, root) {
@@ -29214,7 +29215,7 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
   } catch {
   }
   if (here && branch !== "your default branch" && here !== branch) {
-    io2.say(`You're on the branch ${here}. Synthe adds itself to ${branch}, because GitHub only runs hourly jobs from there. Run \`git checkout ${branch}\`, then \`npx synthe init\` again.`);
+    io2.say(`You're on the branch ${here}. Synthe adds itself to ${branch}, because GitHub only runs scheduled backup jobs from there. Run \`git checkout ${branch}\`, then \`npx synthe init\` again.`);
     return false;
   }
   io2.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.
@@ -29347,7 +29348,7 @@ Added to ${branch} (committed and pushed): ${GOAL_FILE}, ${SCENARIOS_FILE} and $
     } catch (e) {
       io2.say(`
 GitHub refused the push to ${branch}, and Synthe couldn't open a pull request instead: ${e.message.trim().split("\n")[0]}`);
-      io2.say(`Your key is saved as the repo secret SYNTHE_ANTHROPIC_KEY, and Synthe's files are committed on this computer. Get that commit into ${branch} the way your team usually adds changes; Synthe starts within the hour after that. Don't run init again: that would write new test cases.`);
+      io2.say(`Your key is saved as the repo secret SYNTHE_ANTHROPIC_KEY, and Synthe's files are committed on this computer. Get that commit into ${branch} the way your team usually adds changes, then run \`gh workflow run synthe.yml\` to start the first round. Don't run init again: that would write new test cases.`);
       return false;
     }
     io2.say(`
@@ -29375,14 +29376,13 @@ ${branch} only takes changes through pull requests, so Synthe opened one with it
     }
   }
   const actionsOff = !started && !setupPr && await io2.run("gh", ["api", `repos/${slug}/actions/permissions`, "--jq", ".enabled"]).then((o) => o.trim() === "false", () => false);
-  const limits = `then it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.`;
-  const last = new Date(now().getTime() + goal.merge_rule.max_rounds * 36e5).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+  const limits = `Completed rounds start back to back, up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} of your key's credit. A 12-round session usually takes about half an hour; the hourly schedule is a backup.`;
   io2.say(started ? `
-Synthe is running. The first round takes a few minutes, ${limits}` : setupPr ? `
-Set up, waiting for you to merge ${setupPr}. The first round starts within the hour after that (or right away with \`gh workflow run synthe.yml\`), ${limits}` : actionsOff ? `
-Set up, but GitHub Actions is turned off for this repo, so Synthe can't run yet. Turn it on at https://github.com/${slug}/settings/actions, then start the first round with \`gh workflow run synthe.yml\`. After that it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.` : `
-Set up. The first round starts within the hour, ${limits}`);
-  io2.say(`  The last possible change is around ${last}. To keep your agent unchanged before then, for example for a demo, run: npx synthe stop`);
+Synthe is running: GitHub accepted the first dispatch. The first round takes a few minutes. ${limits}` : setupPr ? `
+Set up, waiting for you to merge ${setupPr}. After merging, run \`gh workflow run synthe.yml\` to start the first round. ${limits}` : actionsOff ? `
+Set up, but GitHub Actions is turned off for this repo, so Synthe can't run yet. Turn it on at https://github.com/${slug}/settings/actions, then start the first round with \`gh workflow run synthe.yml\`. ${limits}` : `
+Set up, but GitHub did not accept the first dispatch. Run \`gh workflow run synthe.yml\` to start it; the hourly backup can also retry. ${limits}`);
+  io2.say(`  To keep your agent unchanged before it finishes, for example for a demo, run: npx synthe stop`);
   io2.say(`  After the first round, a "${ISSUE_TITLE}" issue appears in your repo. It says what changed and why.`);
   io2.say(auto ? `  You can keep editing your prompt: Synthe always starts from the latest version on ${branch}. After it changes the prompt, pull before you edit it, and if a push is rejected, run git pull and push again.` : "  When Synthe finds a better prompt, it opens a pull request for you to merge or close. It waits, spending nothing, until you decide.");
   io2.say(`  Watch it live: https://github.com/${slug}/actions/workflows/synthe.yml`);
@@ -29398,7 +29398,7 @@ function restartState(goal, state) {
   const failedOut = recent.length > 0 && recent.every((r) => r.outcome === "failed");
   const roundsRaised = /^reached \d+ rounds$/.test(stopped) && state.round < goal.merge_rule.max_rounds;
   if (isFinished(stopped) && !failedOut && !roundsRaised) {
-    if (/no winner$/.test(stopped)) return { why: `The last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better. To keep going, add test cases your agent still gets wrong to ${goal.scenarios} and push; Synthe starts again by itself at the next hourly check.` };
+    if (/no winner$/.test(stopped)) return { why: `The last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better. To keep going, add test cases your agent still gets wrong to ${goal.scenarios} and push; the hourly backup checks for changes. You can also run \`npx synthe restart\`.` };
     if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget, so this run is finished.` };
     return { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` };
   }
@@ -29431,6 +29431,22 @@ async function askSecret(question, input = process.stdin, output = process.stdou
   return answer;
 }
 
+// src/cli/upgrade.ts
+import { existsSync, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join3 } from "node:path";
+function upgrade(root, template2) {
+  const path4 = join3(root, WORKFLOW_FILE);
+  if (!existsSync(path4)) throw new Error(`No ${WORKFLOW_FILE} found. Run \`npx synthe init\` first.`);
+  const before = readFileSync2(path4, "utf8");
+  if (!before.includes("synthelabs/synthe@v1")) throw new Error(`${WORKFLOW_FILE} is not a Synthe workflow; left it unchanged.`);
+  const cron = before.match(/cron:\s*["']?(\d+)(?:-59\/10)? \* \* \* \*/);
+  const minute = cron ? Math.max(1, Number(cron[1])) : void 0;
+  const after = renderWorkflow(template2, Math.random, minute);
+  if (after === before) return `${WORKFLOW_FILE} is already up to date. No files changed.`;
+  writeFileSync2(path4, after);
+  return `Updated ${WORKFLOW_FILE}: rounds now chain immediately; added Actions write permission and same-repo proposal-close restart; kept backup minute ${minute ?? "random"}. No other files changed. Commit and push this workflow file to activate it.`;
+}
+
 // src/cli/main.ts
 var run = (cmd, args, stdin) => new Promise((resolve2, reject) => {
   const child = spawn2(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -29451,10 +29467,10 @@ async function ask(question) {
   rl.close();
   return answer;
 }
-var template = () => readFileSync2(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync3(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 function setUpHere() {
-  if (existsSync(GOAL_FILE)) return true;
+  if (existsSync2(GOAL_FILE)) return true;
   console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
   process.exitCode = 1;
   return false;
@@ -29478,12 +29494,12 @@ async function status() {
   try {
     raw = await run("gh", ["api", `repos/${slug}/contents/state.json?ref=${encodeURIComponent(STATE_BRANCH)}`, "-H", "Accept: application/vnd.github.raw+json"]);
   } catch {
-    console.log("Synthe is set up but hasn't finished a round yet. The first one starts within the hour.");
+    console.log("Synthe is set up but hasn't finished a round yet. Check its Actions run, or start it with `gh workflow run synthe.yml`.");
     console.log(`Watch it: https://github.com/${slug}/actions/workflows/synthe.yml`);
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync2(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync3(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -29506,7 +29522,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync2(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync3(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -29538,7 +29554,7 @@ async function restart() {
     process.exitCode = 1;
     return;
   }
-  console.log(`Started again.${note} The next round begins in a few minutes, then once an hour.`);
+  console.log(`Started again.${note} GitHub accepted the dispatch. Completed rounds start back to back.`);
   console.log(`Watch it: https://github.com/${slug}/actions/workflows/synthe.yml`);
 }
 function localRun(command) {
@@ -29550,14 +29566,14 @@ function localRun(command) {
     process.exitCode = 1;
     return null;
   }
-  const goal = parseGoal(readFileSync2(GOAL_FILE, "utf8"));
-  const prompt = readPrompt(readFileSync2(goal.prompt.path, "utf8"), goal, null);
+  const goal = parseGoal(readFileSync3(GOAL_FILE, "utf8"));
+  const prompt = readPrompt(readFileSync3(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync2(goal.scenarios, "utf8")), model: anthropicModel(key) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync3(goal.scenarios, "utf8")), model: anthropicModel(key) };
 }
 async function calibrateChecks() {
   const local = localRun("calibrate");
@@ -29565,8 +29581,8 @@ async function calibrateChecks() {
   const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model);
   if (!result) return;
   if (result.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync2(GOAL_FILE, "utf8"));
-    writeFileSync2(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}
+    const saved = JSON.parse(readFileSync3(GOAL_FILE, "utf8"));
+    writeFileSync3(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}
 `);
     console.log(`
 Saved your reworded checks in ${GOAL_FILE}. Push them so Synthe's next round uses them:`);
@@ -29601,6 +29617,7 @@ Start here, inside your project's folder:
 
 Then:
   npx synthe status   where it is and what it changed
+  npx synthe upgrade  update only the installed workflow for chained rounds
   npx synthe stop     stop it; nothing more runs or changes
   npx synthe restart  start it again, after stop or once you've fixed what stopped it
   npx synthe try      run one round on your computer, changing nothing (needs ANTHROPIC_API_KEY)
@@ -29611,6 +29628,7 @@ More: https://github.com/synthelabs/synthe#readme`;
 async function main() {
   const command = process.argv[2];
   if (command === "init") process.exitCode = await init(io, process.cwd()) ? 0 : 1;
+  else if (command === "upgrade") console.log(upgrade(process.cwd(), template()));
   else if (command === "stop") await stop();
   else if (command === "status") await status();
   else if (command === "restart") await restart();

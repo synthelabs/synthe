@@ -11,7 +11,7 @@ export const ACTION = "synthelabs/synthe@v1";
 export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 export const WORKFLOW_FILE = ".github/workflows/synthe.yml";
 const SETUP_BRANCH = "synthe/setup";
-const SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt overnight. Merging this starts it: it runs once an hour, at most 12 rounds and $3 of credit, and stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the hourly job). Stop it any time with `npx synthe stop`.";
+const SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. After the first run, completed rounds start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
 // Teams that agree to share progress are listed here, one issue each, so the Synthe team can follow how runs go.
 export const REGISTRY = "synthelabs/synthe-runs";
 
@@ -105,9 +105,9 @@ export function repoContext(files: { path: string; text: string }[], location: P
   return { names: picked.map((f) => f.path), text: picked.map((f) => `--- ${f.path}\n${redactSecrets(f.text)}`).join("\n\n") };
 }
 
-// A random offset for the 10-minute wake-ups, so many teams set up at once don't all call Anthropic at the same moment.
-export function renderWorkflow(template: string, random: () => number = Math.random): string {
-  const minute = Math.min(9, Math.floor(random() * 10));
+// Spread hourly backup runs across minutes 1 through 59. The chain has no wait.
+export function renderWorkflow(template: string, random: () => number = Math.random, chosenMinute?: number): string {
+  const minute = chosenMinute ?? Math.min(59, 1 + Math.floor(random() * 59));
   return template.replaceAll("__ACTION__", ACTION).replaceAll("__MINUTE__", String(minute));
 }
 
@@ -133,7 +133,7 @@ async function yesNo(io: Io, question: string): Promise<boolean | null> {
 
 // Always asked, even when ANTHROPIC_API_KEY is set: a team building an agent often has its own key there, and Synthe
 // should store and spend the capped Synthe key, not theirs. A paste that isn't a key (often the last command copied)
-// is caught here, instead of failing in Actions an hour later.
+// is caught here, instead of failing in the first Actions run.
 async function askKey(io: Io, envKey: string | undefined): Promise<string | null> {
   const question = envKey?.trim()
     ? "Paste your Synthe key (from the Synthe table), or press Enter to use the key already in ANTHROPIC_API_KEY: "
@@ -176,7 +176,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   let here = "";
   try { here = (await io.run("git", ["rev-parse", "--abbrev-ref", "HEAD"])).trim(); } catch { /* not knowing is fine; the push decides */ }
   if (here && branch !== "your default branch" && here !== branch) {
-    io.say(`You're on the branch ${here}. Synthe adds itself to ${branch}, because GitHub only runs hourly jobs from there. Run \`git checkout ${branch}\`, then \`npx synthe init\` again.`);
+    io.say(`You're on the branch ${here}. Synthe adds itself to ${branch}, because GitHub only runs scheduled backup jobs from there. Run \`git checkout ${branch}\`, then \`npx synthe init\` again.`);
     return false;
   }
   io.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.\n`);
@@ -291,7 +291,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
       await io.run("git", ["reset", "--keep", "HEAD~1"]).catch(() => undefined);
     } catch (e) {
       io.say(`\nGitHub refused the push to ${branch}, and Synthe couldn't open a pull request instead: ${(e as Error).message.trim().split("\n")[0]}`);
-      io.say(`Your key is saved as the repo secret SYNTHE_ANTHROPIC_KEY, and Synthe's files are committed on this computer. Get that commit into ${branch} the way your team usually adds changes; Synthe starts within the hour after that. Don't run init again: that would write new test cases.`);
+      io.say(`Your key is saved as the repo secret SYNTHE_ANTHROPIC_KEY, and Synthe's files are committed on this computer. Get that commit into ${branch} the way your team usually adds changes, then run \`gh workflow run synthe.yml\` to start the first round. Don't run init again: that would write new test cases.`);
       return false;
     }
     io.say(`\n${branch} only takes changes through pull requests, so Synthe opened one with its files: ${setupPr}`);
@@ -320,13 +320,12 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
 
   // Forks start with Actions turned off, and then nothing would ever run, however long the team waits.
   const actionsOff = !started && !setupPr && (await io.run("gh", ["api", `repos/${slug}/actions/permissions`, "--jq", ".enabled"]).then((o) => o.trim() === "false", () => false));
-  const limits = `then it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.`;
-  const last = new Date(now().getTime() + goal.merge_rule.max_rounds * 3_600_000).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZoneName: "short" });
-  io.say(started ? `\nSynthe is running. The first round takes a few minutes, ${limits}`
-    : setupPr ? `\nSet up, waiting for you to merge ${setupPr}. The first round starts within the hour after that (or right away with \`gh workflow run synthe.yml\`), ${limits}`
-    : actionsOff ? `\nSet up, but GitHub Actions is turned off for this repo, so Synthe can't run yet. Turn it on at https://github.com/${slug}/settings/actions, then start the first round with \`gh workflow run synthe.yml\`. After that it runs once an hour, at most ${goal.merge_rule.max_rounds} rounds, using at most $${goal.budget.max_usd} of your key's credit.`
-    : `\nSet up. The first round starts within the hour, ${limits}`);
-  io.say(`  The last possible change is around ${last}. To keep your agent unchanged before then, for example for a demo, run: npx synthe stop`);
+  const limits = `Completed rounds start back to back, up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} of your key's credit. A 12-round session usually takes about half an hour; the hourly schedule is a backup.`;
+  io.say(started ? `\nSynthe is running: GitHub accepted the first dispatch. The first round takes a few minutes. ${limits}`
+    : setupPr ? `\nSet up, waiting for you to merge ${setupPr}. After merging, run \`gh workflow run synthe.yml\` to start the first round. ${limits}`
+    : actionsOff ? `\nSet up, but GitHub Actions is turned off for this repo, so Synthe can't run yet. Turn it on at https://github.com/${slug}/settings/actions, then start the first round with \`gh workflow run synthe.yml\`. ${limits}`
+    : `\nSet up, but GitHub did not accept the first dispatch. Run \`gh workflow run synthe.yml\` to start it; the hourly backup can also retry. ${limits}`);
+  io.say(`  To keep your agent unchanged before it finishes, for example for a demo, run: npx synthe stop`);
   io.say(`  After the first round, a "${ISSUE_TITLE}" issue appears in your repo. It says what changed and why.`);
   io.say(auto
     ? `  You can keep editing your prompt: Synthe always starts from the latest version on ${branch}. After it changes the prompt, pull before you edit it, and if a push is rejected, run git pull and push again.`
