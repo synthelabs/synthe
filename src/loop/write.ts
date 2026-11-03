@@ -18,11 +18,12 @@ const MAX_EDIT_CHARS = 1500;
 
 export interface Edit { find: string; replace: string }
 
-// Words a prompt only needs if it is trying to influence how its replies are judged. An edit may not add them:
-// the agent is being tested, and a prompt that addresses the test instead of the customer is gaming it.
-const JUDGING = /\b(judg(e|es|ed|ing)|grad(er|ers|ing)|evaluat(or|ors|ion|ing)|rubric|scor(e|es|ed|ing)|test cases?|held[- ]back|benchmark)\b/gi;
-// A tutor's prompt talks about grading and a sports bot's about scores: a word family the prompt, goal or policy
-// already uses is the agent's own subject, so only judging words from other families count.
+// Words that name the test itself: a prompt only needs them to talk to whoever judges its replies. An edit may not
+// add them, since the agent is being tested and a prompt that addresses the test is gaming it. Everyday words such as
+// score, grading or evaluation aren't here: live, they blocked about one honest edit in three for a tutor bot.
+const JUDGING = /\b(judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?|held[- ]back)\b/gi;
+// A legal bot's prompt talks about judges: a word family the prompt, goal or policy already uses is the agent's own
+// subject, so only judging words from other families count.
 const FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark)\w*/gi;
 const family = (w: string) => w.toLowerCase().slice(0, 4);
 const ownFamilies = (known: string) => new Set((known.match(FAMILY) ?? []).map(family));

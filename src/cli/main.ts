@@ -10,6 +10,7 @@ import { anthropicModel, modelProblem } from "../model/client.ts";
 import { measureNoise, runScore } from "../loop/score.ts";
 import { runWrite } from "../loop/write.ts";
 import { init, type Io } from "./init.ts";
+import { restartState } from "./restart.ts";
 import { stoppedLine } from "./stopped.ts";
 import { askSecret } from "./secret.ts";
 
@@ -85,7 +86,46 @@ async function stop() {
     process.exitCode = 1;
     return;
   }
-  console.log("Stopped. Synthe won't run or change anything again. To start it again: gh workflow enable synthe.yml");
+  console.log("Stopped. Synthe won't run or change anything again. To start it again: npx synthe restart");
+}
+
+// Starts Synthe again after `npx synthe stop`, or once a person has fixed what stopped it.
+async function restart() {
+  if (!setUpHere()) return;
+  const slug = await repoSlug();
+  if (!slug) return;
+  const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
+  const path = `repos/${slug}/contents/state.json`;
+  let file: { sha: string; content: string } | null = null;
+  try {
+    file = JSON.parse(await run("gh", ["api", `${path}?ref=${encodeURIComponent(STATE_BRANCH)}`]));
+  } catch { /* no round has finished yet, so there's no state to clear */ }
+  let note = "";
+  if (file) {
+    const s: State = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
+    const next = restartState(goal, s);
+    if ("why" in next) {
+      console.log(`Synthe can't start again. ${next.why}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (next.state !== s) {
+      const content = Buffer.from(`${JSON.stringify(next.state, null, 2)}\n`).toString("base64");
+      await run("gh", ["api", "-X", "PUT", path, "-f", "message=Synthe: restarted by npx synthe restart", "-f", `branch=${STATE_BRANCH}`, "-f", `sha=${file.sha}`, "-f", `content=${content}`]);
+      note = ` ${next.note}`;
+    }
+  }
+  try {
+    await run("gh", ["workflow", "enable", "synthe.yml"]);
+    await run("gh", ["workflow", "run", "synthe.yml"]);
+  } catch (e) {
+    console.log(`Couldn't start Synthe's workflow: ${(e as Error).message.trim().split("\n")[0]}`);
+    console.log("Check you're signed in to the GitHub CLI (`gh auth status`), inside your project's folder.");
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`Started again.${note} The next round begins in a few minutes, then once an hour.`);
+  console.log(`Watch it: https://github.com/${slug}/actions/workflows/synthe.yml`);
 }
 
 // Runs one round on this computer and changes nothing, so a team can see what Synthe would do.
@@ -134,6 +174,7 @@ Start here, inside your project's folder:
 Then:
   npx synthe status   where it is and what it changed
   npx synthe stop     stop it; nothing more runs or changes
+  npx synthe restart  start it again, after stop or once you've fixed what stopped it
   npx synthe try      run one round on your computer, changing nothing (needs ANTHROPIC_API_KEY)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
 
@@ -144,6 +185,7 @@ async function main() {
   if (command === "init") process.exitCode = (await init(io, process.cwd())) ? 0 : 1;
   else if (command === "stop") await stop();
   else if (command === "status") await status();
+  else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
   else console.log(HELP);
 }

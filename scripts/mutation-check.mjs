@@ -72,6 +72,9 @@ const mutations = [
   ["an unclear merge answer is never read back", GITHUB, "if (back.ok && (await back.json()).merged === true) return { merged: true };", ""],
   ["a cut-off agent reply is unknown", "src/model/client.ts", "const cutOff = allowCutOff === true && res.stop_reason === \"max_tokens\" && text.length > 0;", "const cutOff = false;"],
   ["duplicate scenario ids allowed", "src/core/goal.ts", "if (lineOf.has(s.id)) throw", "if (false) throw"],
+  ["restart reopens a finished run", "src/cli/restart.ts", "if (isFinished(stopped) && !failedOut && !roundsRaised) {", "if (false) {"],
+  ["restart spends after unknown cost", "src/cli/restart.ts", "if (state.spendUnknown) return", "if (false) return"],
+  ["a merged proposal still waits an hour", "src/action.ts", "return !pr || pr.open;", "return true;"],
 ];
 
 let survived = 0;

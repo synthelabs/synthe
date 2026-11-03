@@ -28645,7 +28645,8 @@ function nextSteps(goal, state) {
   if (state.proposal) steps.push(`Review #${state.proposal.pr}: merge it to keep the change, or close it to decline.`);
   if (merged) steps.push("Pull the latest changes before you edit your prompt, so Synthe's changes aren't overwritten.");
   const last = state.rounds.at(-1);
-  if (state.stopped && badKey(last)) steps.push(`${last.plain} Do this before you start Synthe again.`);
+  if (state.stopped && badKey(last)) steps.push(`${last.plain} Then run \`npx synthe restart\` to start Synthe again.`);
+  else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
   if (state.stopped && /no winner$/.test(state.stopped)) {
     steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push. It starts again at the next hourly check${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. One line per case, for example:
   \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`
@@ -28663,6 +28664,23 @@ function nextSteps(goal, state) {
   }
   if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete the `SYNTHE_ANTHROPIC_KEY` secret in your repo's settings.");
   return steps;
+}
+function roundSummary(goal, state, record, repo) {
+  const { title, summary } = headline(goal, state);
+  const report = state.issue ? `Full report: https://github.com/${repo}/issues/${state.issue}` : "";
+  if (!record) return [`## Synthe: ${title}`, "", summary, "", report, ""].join("\n");
+  const cost = record.costUsd === null ? "unknown" : `$${record.costUsd.toFixed(2)}`;
+  const tried = record.tried?.length ? record.tried.map((t) => `- ${t.summary} *${t.outcome}*`) : [];
+  return [
+    `## Synthe round ${record.round}: ${OUTCOME[record.outcome].toLowerCase()}${record.pr ? ` (#${record.pr})` : ""}`,
+    "",
+    ...record.plain ? [record.plain, ""] : [],
+    ...tried.length ? ["What Synthe tried:", ...tried, ""] : [],
+    `Cost of this round: ${cost}. ${summary}`,
+    "",
+    report,
+    ""
+  ].join("\n");
 }
 var OUTCOME = { merged: "Merged", reverted: "Undone", proposed: "Waiting for review", declined: "Declined by you", skipped: "No change", failed: "Didn't finish" };
 function roundRow(r) {
@@ -28726,7 +28744,7 @@ var ANGLES = [
 ];
 var MAX_EDITS = 2;
 var MAX_EDIT_CHARS = 1500;
-var JUDGING = /\b(judg(e|es|ed|ing)|grad(er|ers|ing)|evaluat(or|ors|ion|ing)|rubric|scor(e|es|ed|ing)|test cases?|held[- ]back|benchmark)\b/gi;
+var JUDGING = /\b(judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?|held[- ]back)\b/gi;
 var FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark)\w*/gi;
 var family = (w) => w.toLowerCase().slice(0, 4);
 var ownFamilies = (known) => new Set((known.match(FAMILY) ?? []).map(family));
@@ -29410,6 +29428,14 @@ var save = (name, value) => {
   writeFileSync(`${OUT}/${name}`, JSON.stringify(value));
 };
 var load = (name) => existsSync(`${OUT}/${name}`) ? JSON.parse(readFileSync(`${OUT}/${name}`, "utf8")) : null;
+async function stillWaiting(repo, branch) {
+  try {
+    const pr = await repo.findPr(branch);
+    return !pr || pr.open;
+  } catch {
+    return true;
+  }
+}
 async function main() {
   const step = input("step");
   const repo = githubRepo(process.env.GITHUB_REPOSITORY, input("github-token"), process.env.GITHUB_API_URL);
@@ -29421,11 +29447,12 @@ async function main() {
     const costUsd2 = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
     const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load("error.json") });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
+    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(parseGoal(goalText), await repo.readState(), record, process.env.GITHUB_REPOSITORY));
     return;
   }
   const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
   const state = await repo.readState();
-  if (state.proposal && !state.pending) {
+  if (state.proposal && !state.pending && (step !== "write" || await stillWaiting(repo, state.proposal.branch))) {
     console.log(`Waiting for review of #${state.proposal.pr}`);
     setOutput("go", "check");
     return;
@@ -29467,7 +29494,9 @@ main().catch((e) => {
   const step = input("step");
   if (step === "write" || step === "score") {
     try {
-      save("error.json", failureOf(step, e));
+      const failure = failureOf(step, e);
+      save("error.json", failure);
+      console.log(`::error title=Synthe::${failure.message.replace(/\r?\n/g, " ")}`);
     } catch (saveError) {
       console.error(saveError);
     }

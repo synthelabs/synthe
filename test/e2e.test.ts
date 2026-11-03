@@ -41,6 +41,7 @@ const github = createServer((req, res) => {
       if (!files.has(key)) return send(404, {});
       return req.headers.accept?.includes("raw") ? send(200, files.get(key)) : send(200, { sha: "blob" });
     }
+    if (path === "/pulls" && req.method === "GET") return send(200, pulls);
     if (path === "/pulls") { files.set("pr:head", body.head); return send(201, { number: 1 }); }
     if (path === "/pulls/1/merge") {
       merges.push({ sha: body.sha });
@@ -98,7 +99,10 @@ const step = (name: string, outputs = join(dir, "out.txt")) => new Promise<{ cod
   child.on("close", (code) => done({ code: code ?? 1, log }));
 });
 
+// What GitHub says about Synthe's own pull requests when the write step checks on a proposal.
+let pulls: { number: number; state: string; merged_at: string | null }[] = [];
 const reset = () => {
+  pulls = [{ number: 1, state: "open", merged_at: null }];
   dir = mkdtempSync(join(tmpdir(), "synthe-e2e-"));
   cpSync("examples/support-bot", dir, { recursive: true });
   files.clear();
@@ -201,4 +205,15 @@ test("a key never appears in logs or state", async () => {
   for (const s of ["write", "score", "decide"]) all += (await step(s)).log;
   assert.ok(!all.includes("INPUT_"));
   assert.ok(!(files.get("synthe/state:state.json") ?? "").includes("key"));
+});
+
+test("a proposal the team already merged is settled in the same run, so no hour is lost waiting", async () => {
+  reset();
+  pulls = [{ number: 1, state: "closed", merged_at: "2026-11-06T23:30:00Z" }];
+  files.set("synthe/state:state.json", JSON.stringify({ round: 1, stalls: 0, spendUsd: 0.1, stopped: null, pending: null, rounds: [{ round: 1, at: "t", outcome: "proposed", pr: 1, reasons: [], costUsd: 0.1 }], proposal: { pr: 1, round: 1, branch: "synthe/round-1", kind: "merge", text: "New", priorPrompt: "Old", propose: true } }));
+  writeFileSync(join(dir, "out.txt"), "");
+  const before = bodies.length;
+  assert.equal((await step("write")).code, 0);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/);
+  assert.ok(bodies.length > before, "the round was written, not skipped");
 });

@@ -90,7 +90,7 @@ test("when the last rounds all failed, the headline names the cause instead of a
   for (let i = 0; i < 3; i++) await runDecide(goal(), key, failedRound(KEY));
   assert.ok(key.state.stopped);
   assert.match(key.issue, /## Stopped: your Synthe key stopped working/);
-  assert.match(key.issue, /gh secret set SYNTHE_ANTHROPIC_KEY.*Do this before you start Synthe again/);
+  assert.match(key.issue, /gh secret set SYNTHE_ANTHROPIC_KEY.*Then run `npx synthe restart`/);
 
   // Busy rounds don't stall, so a busy run only stops at its round limit, and nothing needs fixing.
   const busy = new MemoryRepo("Old prompt.");

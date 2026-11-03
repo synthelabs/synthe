@@ -14,7 +14,8 @@ jobs:
     runs-on: ubuntu-latest
     # Two writer calls take a minute or two; the cap stops a hung call holding the "synthe" group for hours.
     timeout-minutes: 15
-    permissions: { contents: read }
+    # pull-requests: read lets it see that a team merged or closed Synthe's proposal, so no hour is lost waiting.
+    permissions: { contents: read, pull-requests: read }
     outputs:
       go: ${{ steps.write.outputs.go }}
     steps:

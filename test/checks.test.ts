@@ -51,7 +51,7 @@ test("stopped line shows only when the workflow is disabled by hand", async () =
   };
   assert.equal(await stoppedLine(disabled, "team/repo"), STOPPED_LINE);
   assert.deepEqual(calls[0], ["api", "repos/team/repo/actions/workflows/synthe.yml", "--jq", ".state"]);
-  assert.equal(STOPPED_LINE, "Stopped with npx synthe stop. Nothing more will run or change. To start it again: gh workflow enable synthe.yml");
+  assert.equal(STOPPED_LINE, "Stopped with npx synthe stop. Nothing more will run or change. To start it again: npx synthe restart");
 
   assert.equal(await stoppedLine(async () => "active\n", "team/repo"), null);
   assert.equal(await stoppedLine(async () => { throw new Error("gh: not logged in"); }, "team/repo"), null);

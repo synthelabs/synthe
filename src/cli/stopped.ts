@@ -1,4 +1,4 @@
-export const STOPPED_LINE = "Stopped with npx synthe stop. Nothing more will run or change. To start it again: gh workflow enable synthe.yml";
+export const STOPPED_LINE = "Stopped with npx synthe stop. Nothing more will run or change. To start it again: npx synthe restart";
 
 // Stop disables the workflow, but the old run state stays readable, so status needs to say so first.
 // Only a manual stop gets this line. If the check fails, status prints as before.
