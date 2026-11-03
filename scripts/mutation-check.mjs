@@ -51,14 +51,14 @@ const mutations = [
   ["a merge blocked by review closes the pull request", DECIDE, 'if (merged.problem === "blocked") {', "if (false) {"],
   ["rounds run while a proposal waits", DECIDE, "    if (pr?.open) {\n      await writeReport", "    if (false) {\n      await writeReport"],
   ["a proposal merged by a person isn't tracked", DECIDE, "      state.lastMerge = { pr: p.pr, priorPrompt: p.priorPrompt, mergedHash: sha256(live), reverted: false };", ""],
-  ["judge always sees the challenger first", SCORE, "return duel(s, (set.indexOf(s) % 2 === 0) !== flip, current, mine);", "return duel(s, true, current, mine);"],
+  ["judge always sees the challenger first", SCORE, "await duel(s, (set.indexOf(s) % 2 === 0) !== flip, current, mine)", "await duel(s, true, current, mine)"],
   ["a break is excused without confirming the current prompt's", SCORE, "      if (cur?.violation === true) {\n", "      if (cur?.violation === true) { checks.excusedConfirmed++; return; }\n      if (false) {\n"],
   ["a POST or PUT is repeated after a server error", GITHUB, 'if (method === "POST" || method === "PUT") return res;', ""],
   ["a review-blocked proposal isn't saved before a crash", DECIDE, "      landing.propose = true;\n      await repo.writeState(state);\n", ""],
   ["settling trusts the proposed text over what merged", DECIDE, "const live = source === null ? null : readPrompt(source, goal, p.text);", "const live = p.text;"],
   ["scoring pays when there's nothing to compare", SCORE, "  if (safe.length === 0 && !hasPrior) {", "  if (false) {"],
   ["an edit may add talk of judging or scores", WRITE, "if (added.length > judgingWords(e.find, own).length) return", "if (false) return"],
-  ["the judge never sees the business policy", SCORE, "const policyText = (goal: Goal) => (goal.policy?.trim() ?", "const policyText = (goal: Goal) => (false ?"],
+  ["the judge never sees the business policy", SCORE, "goal.policy?.trim() ? `\\nBusiness policy", "false ? `\\nBusiness policy"],
   ["setup defaults an unclear merge answer to automatic", "src/cli/init.ts", "if (auto === null) { auto = false;", "if (auto === null) { auto = true;"],
   ["unknown cost merges", DECIDE, "input.costUsd === null", "false"],
   ["identical candidate scored", SCORE, " && c.text.trim() !== baseline.trim()", ""],
@@ -75,6 +75,9 @@ const mutations = [
   ["restart reopens a finished run", "src/cli/restart.ts", "if (isFinished(stopped) && !failedOut && !roundsRaised) {", "if (false) {"],
   ["restart spends after unknown cost", "src/cli/restart.ts", "if (state.spendUnknown) return", "if (false) return"],
   ["a merged proposal still waits an hour", "src/action.ts", "return !pr || pr.open;", "return true;"],
+  ["the judge outvotes the team's checks", "src/loop/score.ts", "if (theirs && mine.failed !== theirs.failed) judged.row.score = mine.failed < theirs.failed ? WIN : LOSS;", ""],
+  ["a half-answered check counts as checked", "src/loop/score.ts", "if (!Array.isArray(rows) || rows.length !== checks.length || checks.some((_, i) => rows.filter((r) => r.check === i + 1).length !== 1)) return null;", "if (!Array.isArray(rows)) return null;"],
+  ["repo secrets reach the model", "src/cli/init.ts", "${redactSecrets(f.text)}", "${f.text}"],
 ];
 
 let survived = 0;

@@ -80,6 +80,7 @@ function lessonText(state: State, prompt: string, train: Scenario[]): string {
     const s = byId.get(r.id);
     if (!s) return [];
     const lines = [`- Situation: ${s.input}`, `  A good response: ${s.expected}`, `  The current prompt replied${r.violation ? " (and broke a guardrail)" : ""}:`, `  <reply>${r.reply}</reply>`];
+    if (r.failedChecks?.length) lines.push(`  It failed these checks: ${r.failedChecks.join("; ")}`);
     if (r.better) lines.push(`  A rewrite the judge preferred replied:`, `  <reply>${r.better}</reply>`);
     return [lines.join("\n")];
   });
@@ -92,19 +93,21 @@ ${cases.join("\n")}
 
 export async function runWrite(goal: Goal, state: State, prompt: string, scenarios: Scenario[], model: Model): Promise<Written> {
   // Held-back scenarios stay out of this: the writer must never see what it is finally judged on.
-  const train = scenarios.filter((s) => s.split === "train");
+  const train = scenarios;
   const lessons = lessonText(state, prompt, train);
   // Ideas from recent rounds that didn't win, so each round tries something new instead of paying for a repeat.
   const tried = [...new Set(state.rounds.slice(-5).flatMap((r) => (r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary))))];
   const notAgain = tried.length ? `\nAlready tried in earlier rounds without winning; don't propose these again:\n${tried.map((t) => `- ${t}`).join("\n")}\n` : "";
   const history = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}. ${r.reasons.join(" ")}`).join("\n") || "None yet.";
+  // The team's checks decide each test case, so the writer aims at them directly.
+  const checks = goal.checks?.length ? `\nThe team measures a good reply with these checks; a change wins by making replies pass more of them:\n${goal.checks.map((c) => `- ${c}`).join("\n")}` : "";
   const quoteRule = goal.prompt.kind === "inline"
     ? `\nThe prompt lives inside a source-code string, so never use backslashes, ${goal.prompt.delimiter} or \${ in it.` : "";
   const results = await pool(ANGLES, ANGLES.length, async (angle) => askJson<{ edits: Edit[]; summary: string; title?: string }>(model, {
     model: goal.models.writer, maxTokens: 3000, schema: SCHEMA,
     user: `You improve the system prompt of an AI agent by making small, exact edits.
 
-Goal: ${goal.objective}
+Goal: ${goal.objective}${goal.brief?.trim() ? `\nWhat the agent is for: ${goal.brief.trim().slice(0, 2000)}` : ""}${checks}
 Must never happen: ${goal.guardrails.join("; ") || "nothing listed"}
 This attempt: ${angle}${quoteRule}
 

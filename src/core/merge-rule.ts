@@ -2,7 +2,16 @@ import type { Goal } from "./goal.ts";
 
 // One scenario's result. A null score means it could not be measured.
 // reply is kept only for the current prompt's training rows, so the next writer can study what went wrong.
-export interface ScoreRow { id: string; score: number | null; violation: boolean | null; reply?: string }
+// failed and applicable count the team's checks on this reply; failedChecks names them for the next writer.
+export interface ScoreRow { id: string; score: number | null; violation: boolean | null; reply?: string; failed?: number; applicable?: number; failedChecks?: string[] }
+
+// The share of the team's checks the replies passed, as a whole percentage, or null when no check applied or a reply
+// wasn't checked. The same rows must be compared on both sides.
+export function checkRate(rows: ScoreRow[]): number | null {
+  if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
+  const applicable = rows.reduce((n, r) => n + r.applicable!, 0);
+  return applicable === 0 ? null : Math.round((100 * (applicable - rows.reduce((n, r) => n + r.failed!, 0))) / applicable);
+}
 
 export interface CandidateScore { id: string; train: ScoreRow[]; holdout?: ScoreRow[] }
 
@@ -18,7 +27,7 @@ export interface RoundScores {
 // reasons are technical, for logs and receipts. plain and notes say the same for the team, in everyday words:
 // plain explains the decision, notes says what happened to each candidate.
 export type Verdict =
-  | { action: "merge"; candidateId: string; before: number; after: number; heldBefore: number; heldAfter: number; wins: number; losses: number; heldWins: number; heldLosses: number; reasons: string[]; plain: string; notes: Record<string, string> }
+  | { action: "merge"; candidateId: string; before: number; after: number; heldBefore: number; heldAfter: number; wins: number; losses: number; heldWins: number; heldLosses: number; checks?: { before: number; after: number }; reasons: string[]; plain: string; notes: Record<string, string> }
   | { action: "revert"; reasons: string[]; plain: string; notes: Record<string, string> }
   | { action: "skip"; reasons: string[]; notes: Record<string, string> };
 
@@ -146,13 +155,19 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
     const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout!.some((h) => h.id === r.id)));
     notes[c.id] = "Also looked better, but another change did better still.";
     if (best === null || after > best.after) {
+      // The team's own number first, when they set checks: it is what they asked Synthe to improve.
+      const currentHeld = scores.baselineHoldout.filter((r) => c.holdout!.some((h) => h.id === r.id));
+      const rateBefore = checkRate([...scores.baselineTrain, ...currentHeld]);
+      const rateAfter = checkRate([...c.train, ...c.holdout]);
+      const rates = rateBefore !== null && rateAfter !== null ? { before: rateBefore, after: rateAfter } : undefined;
+      const lead = rates ? `Your checks passed ${rates.after}% of the time, up from ${rates.before}%. ` : "";
       const rules = wasBroken > 0
         ? stillBroken > 0 ? ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in ${stillBroken}.` : ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in none.`
         : " It follows your rules in every test case.";
       best = {
         action: "merge", candidateId: c.id, before, after, heldBefore: beforeHoldout, heldAfter: held, wins: split.wins, losses: split.losses,
-        heldWins: heldSplit.w, heldLosses: heldSplit.l, notes,
-        plain: `Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}`,
+        heldWins: heldSplit.w, heldLosses: heldSplit.l, notes, ...(rates ? { checks: rates } : {}),
+        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}`,
         reasons: [`judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`],
       };
     }

@@ -6,7 +6,7 @@ Synthe makes your AI agent's system prompt better while you sleep. Each hour it 
 npx synthe init
 ```
 
-Setup asks what your agent should get better at, whether to merge changes automatically or have you review them, and for your Synthe key. In the morning, open the **Synthe: overnight prompt report** issue in your repo. It says what changed, why, and how to undo it.
+Setup reads your README and the code around your prompt, asks what your agent should get better at (and, optionally, a few real messages users send it), proposes checks that measure a good reply for you to confirm, asks whether to merge changes automatically or have you review them, and asks for your Synthe key. In the morning, open the **Synthe: overnight prompt report** issue in your repo. It says what changed, why, and how to undo it.
 
 ## Before you start
 
@@ -22,7 +22,7 @@ Setup commits three files: `synthe.json` (the goal, your rules and settings), `.
 ## What happens each hour
 
 1. Synthe proposes 2 small changes to your prompt, aimed at the test cases where it does worst.
-2. It runs your agent's current prompt and each change on the test cases, and an AI judge compares the replies side by side.
+2. It runs your agent's current prompt and each change on the test cases. On each one, the reply that passes more of your checks wins; when they pass the same number, an AI judge compares the replies side by side.
 3. A change is kept only if its replies are better in clearly more cases than they're worse (more than luck would explain), better again on test cases it never saw, and it breaks none of your rules where your old prompt followed them.
 4. If a kept change later turns out worse than the prompt it replaced, Synthe puts the old one back.
 
@@ -51,7 +51,7 @@ The test cases are simulated single messages, not real users or full conversatio
 
 ## Change what it aims for
 
-- `synthe.json`: `objective` (what to get better at), `guardrails` (rules it must never break), `policy` (your business rules, which setup copies from your prompt so the judge knows what's allowed), `budget`, and `"merge_rule": { "mode": "propose" }` to review every change.
+- `synthe.json`: `checks` (up to 5 plain sentences, each something a good reply does, such as "Asks for the order number before anything else"; these decide every test case), `brief` (what your agent is for), `objective` (what to get better at), `guardrails` (rules it must never break), `policy` (your business rules, which setup copies from your prompt so the judge knows what's allowed), `budget`, and `"merge_rule": { "mode": "propose" }` to review every change.
 - `.synthe/scenarios.jsonl`: the test cases, one per line, such as `{"id": "s31", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}`. `split` is `train` (Synthe learns from it) or `holdout` (kept hidden to check its changes). Adding cases to a finished run starts it again at the next hourly check.
 
 ## Removing it

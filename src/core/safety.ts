@@ -15,6 +15,9 @@ const SENSITIVE_PATHS = [
 
 const SECRET_SHAPES = [/sk-ant-[\w-]{8,}/, /sk-[A-Za-z0-9]{20,}/, /gh[pousr]_[A-Za-z0-9]{20,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN [A-Z ]*PRIVATE KEY/];
 
+// Text from a team's repo, with anything shaped like a secret removed before a model sees it.
+export const redactSecrets = (text: string) => SECRET_SHAPES.reduce((t, s) => t.replace(new RegExp(s.source, "g"), "[secret removed]"), text);
+
 export function promptPathProblem(path: string): string | null {
   if (path.startsWith("/") || path.split("/").includes("..")) return "prompt path must stay inside the repo";
   return SENSITIVE_PATHS.some((p) => p.test(path)) ? `refusing sensitive path ${path}` : null;
