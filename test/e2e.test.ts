@@ -19,6 +19,8 @@ let dispatchStatus = 204;
 let failStateWrite = false;
 
 const github = createServer((req, res) => {
+  // Synthe only calls /repos/...; other local tools sometimes probe new ports with a bare GET /.
+  if (!req.url?.startsWith("/repos/")) { res.statusCode = 404; return res.end(); }
   let raw = "";
   req.on("data", (d) => (raw += d));
   req.on("end", () => {

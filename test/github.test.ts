@@ -13,6 +13,8 @@ let failOnce: { path: string; status: number } | null = null; // the next reques
 let dispatchStatus = 204;
 
 const server = createServer((req, res) => {
+  // Synthe only calls /repos/...; other local tools sometimes probe new ports with a bare GET /.
+  if (!req.url?.startsWith("/repos/")) { res.statusCode = 404; return res.end(); }
   let raw = "";
   req.on("data", (d) => (raw += d));
   req.on("end", () => {
