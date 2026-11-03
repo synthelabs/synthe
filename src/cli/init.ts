@@ -77,8 +77,10 @@ export function buildGoal(prompt: PromptLocation, objective: string, guardrails:
   return { version: 1, prompt, objective, ...(policy ? { policy } : {}), guardrails, scenarios: SCENARIOS_FILE, ...DEFAULTS };
 }
 
-export function renderWorkflow(template: string): string {
-  return template.replaceAll("__ACTION__", ACTION);
+// A random minute for the hourly run, so many teams set up at once don't all call Anthropic at the same moment.
+export function renderWorkflow(template: string, random: () => number = Math.random): string {
+  const minute = Math.min(59, Math.floor(random() * 60));
+  return template.replaceAll("__ACTION__", ACTION).replaceAll("__MINUTE__", String(minute));
 }
 
 function repoTextFiles(listing: string, root: string) {

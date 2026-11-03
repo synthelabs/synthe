@@ -6,9 +6,10 @@ import { resumeIfScenariosChanged, stopReason, type Landing, type RoundRecord, t
 import type { MergeProblem, Repo } from "../github/repo.ts";
 import { ISSUE_TITLE, exampleText, notTested, renderReport } from "./report.ts";
 import type { Candidate } from "./write.ts";
+import type { Failure } from "./failure.ts";
 import { WIN } from "./score.ts";
 
-export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string }
+export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null }
 
 const LESSONS = 6;
 
@@ -245,8 +246,21 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     stall = false;
   } else if (!scores || !input.candidates) {
     record.outcome = "failed";
-    record.reasons.push("the round did not finish; check the Actions log and the API key");
-    record.plain = "This round didn't finish. If it keeps happening, check the Actions log and that your key still has credit.";
+    const error = input.error;
+    if (error) record.failure = error.kind;
+    if (error?.kind === "busy") {
+      // Overload or rate limits pass by themselves, so a busy hour mustn't use up the rounds allowed without a winner.
+      record.reasons.push(`Anthropic's API was busy during the ${error.step} step: ${error.message}`);
+      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe will try again next hour.";
+      stall = false;
+    } else if (error?.kind === "key") {
+      record.reasons.push(`the ${error.step} step's key was refused: ${error.message}`);
+      const cause = error.message.split(/(?<=\.) /)[0];
+      record.plain = `This round didn't finish. ${cause} Get a new key from the Synthe table, then run \`gh secret set SYNTHE_ANTHROPIC_KEY\` in your repo and paste the key when it asks.`;
+    } else {
+      record.reasons.push("the round did not finish; check the Actions log and the API key");
+      record.plain = "This round didn't finish. If it keeps happening, check the Actions log and that your key still has credit.";
+    }
   } else if (input.costUsd === null) {
     record.reasons.push("cost unknown, so nothing merges");
     state.spendUnknown = true;
