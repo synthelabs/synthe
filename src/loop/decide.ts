@@ -3,7 +3,7 @@ import { judgeRound, type RoundScores } from "../core/merge-rule.ts";
 import { readPrompt, writePrompt } from "../core/prompt.ts";
 import { candidateProblem, promptPathProblem, sha256 } from "../core/safety.ts";
 import { resumeIfScenariosChanged, stopReason, type Landing, type RoundRecord, type State } from "../core/state.ts";
-import type { MergeProblem, Repo } from "../github/repo.ts";
+import { Refusal, type MergeProblem, type Repo } from "../github/repo.ts";
 import { ISSUE_TITLE, exampleText, notTested, renderReport } from "./report.ts";
 import type { Candidate } from "./write.ts";
 import type { Failure } from "./failure.ts";
@@ -54,6 +54,22 @@ const NEEDS_A_PERSON: Partial<Record<MergeProblem, string>> = {
   permission: "GitHub Actions isn't allowed to merge here; turn on 'Allow GitHub Actions to create and approve pull requests' in the repo's Actions settings",
   token: "GitHub refused the workflow's token",
 };
+
+// The report is how a team sees what happened, but losing the round over it is worse. If GitHub refuses the issue
+// (Issues are off, as in a fresh fork, or the token can't write them) the run carries on and the state is saved
+// with a note on the latest round. It doesn't stop the run: merges and proposals still help, and each pull
+// request explains itself.
+async function writeReport(goal: Goal, repo: Repo, state: State) {
+  try {
+    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+  } catch (e) {
+    if (!(e instanceof Refusal)) throw e;
+    const note = `couldn't write the report issue: ${e.plain}`;
+    const last = state.rounds.at(-1);
+    if (last && !last.reasons.includes(note)) last.reasons.push(note);
+    console.log(`::warning::${note}`);
+  }
+}
 
 // A proposal was merged or closed by a person: keep a merge on record (so the revert check protects it) or note
 // that it was declined, and let rounds continue.
@@ -123,14 +139,14 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   if (state.proposal) {
     const pr = await repo.findPr(state.proposal.branch);
     if (pr?.open) {
-      state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+      await writeReport(goal, repo, state);
       await repo.writeState(state);
       return null;
     }
     await settle(goal, repo, state, Boolean(pr?.merged));
     if (!input.scores) {
       state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
-      state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+      await writeReport(goal, repo, state);
       await repo.writeState(state);
       return null;
     }
@@ -143,7 +159,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   if (stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd)) {
     if (recovered) {
       state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
-      state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+      await writeReport(goal, repo, state);
       await repo.writeState(state);
     }
     return null;
@@ -207,7 +223,18 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       `<details><summary>What this did not test</summary>\n\n${notTested(goal).slice(1).join("\n")}\n\n</details>`,
     ].join("\n\n");
     const body = bodyFor(Boolean(landing.propose));
-    const pr = await repo.openPr({ branch, base, title, body });
+    let pr: number;
+    try {
+      pr = await repo.openPr({ branch, base, title, body });
+    } catch (e) {
+      if (!(e instanceof Refusal)) throw e;
+      // Every round would find the same winner and be refused the same way, so stop with the fix.
+      await repo.deleteBranch(branch);
+      record.reasons.push(`couldn't open a pull request: ${e.message}`);
+      record.plain = "Synthe found a better prompt but GitHub wouldn't let it open a pull request, so nothing changed.";
+      state.stopped = e.plain;
+      return null;
+    }
     if (landing.propose) {
       state.proposal = { ...landing, pr, round };
       return { pr, proposed: true };
@@ -347,7 +374,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   state.pending = null;
   state.rounds.push(record);
   state.stopped = state.stopped ?? stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
-  state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+  await writeReport(goal, repo, state);
   await repo.writeState(state);
   return record;
 }
