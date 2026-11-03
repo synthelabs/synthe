@@ -67,7 +67,8 @@ jobs:
         with: { name: score-error, path: .synthe-out/error.json, include-hidden-files: true, if-no-files-found: ignore }
   decide:
     needs: [write, score]
-    if: !cancelled() && needs.write.result != 'skipped' && needs.write.outputs.go != 'false'
+    # Wrapped in ${{ }}: in YAML a bare leading ! is a tag, which would silently drop the !cancelled() check.
+    if: ${{ !cancelled() && needs.write.result != 'skipped' && needs.write.outputs.go != 'false' }}
     runs-on: ubuntu-latest
     # Only GitHub calls, each retried for at most a minute when rate-limited.
     timeout-minutes: 10

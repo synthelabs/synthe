@@ -98,6 +98,12 @@ test("the report names the share level and workflow skips cancellation", () => {
     assert.match(renderReport(goal({ share }), { ...state, rounds: [record] }), new RegExp(`Sharing with Synthe: ${label}\\. Change \`share\` in synthe.json`));
   }
   const workflow = readFileSync("templates/synthe.yml", "utf8");
-  assert.match(workflow, /if: !cancelled\(\) && needs.write.result != 'skipped' && needs.write.outputs.go != 'false'/);
+  assert.match(workflow, /if: \$\{\{ !cancelled\(\) && needs.write.result != 'skipped' && needs.write.outputs.go != 'false' \}\}/);
   assert.match(workflow, /permissions: \{ contents: write, pull-requests: write, issues: write, actions: write, id-token: write \}/);
+});
+
+test("no workflow condition starts with a bare !, which YAML would read as a tag and silently drop", () => {
+  const workflow = readFileSync("templates/synthe.yml", "utf8");
+  const bare = workflow.split("\n").filter((line) => /^\s*if:\s*!/.test(line));
+  assert.deepEqual(bare, []);
 });

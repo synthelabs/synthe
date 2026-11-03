@@ -78,7 +78,7 @@ test("upgrade changes only the workflow, keeps the backup minute, and is idempot
   assert.match(readFileSync(workflow, "utf8"), /cron: "6 \* \* \* \*"/);
   assert.match(readFileSync(workflow, "utf8"), /actions: write/);
   assert.match(readFileSync(workflow, "utf8"), /id-token: write/);
-  assert.match(readFileSync(workflow, "utf8"), /if: !cancelled\(\) && needs.write.result/);
+  assert.match(readFileSync(workflow, "utf8"), /if: \$\{\{ !cancelled\(\) && needs.write.result/);
   assert.match(upgrade(dir, template), /already up to date\. No files changed/);
   assert.deepEqual(["prompt.md", "synthe.json", ".synthe/scenarios.jsonl"].map((f) => readFileSync(join(dir, f), "utf8")), before);
 });
