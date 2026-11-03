@@ -80,6 +80,11 @@ const mutations = [
   ["repo secrets reach the model", "src/cli/init.ts", "${redactSecrets(f.text)}", "${f.text}"],
 ];
 
+// Every mutated file as it was before the run. Restoring each mutation from its own copy isn't enough on its own: a
+// second run at the same time could restore a copy the first had mutated, leaving a break in the source. This check
+// caught exactly that once, after it had been committed.
+const before = new Map([...new Set(mutations.map(([, file]) => file))].map((f) => [f, readFileSync(f, "utf8")]));
+
 let survived = 0;
 for (const [name, file, from, to] of mutations) {
   const original = readFileSync(file, "utf8");
@@ -96,5 +101,8 @@ for (const [name, file, from, to] of mutations) {
     process.removeListener("SIGINT", restore);
   }
 }
+const changed = [...before].filter(([f, text]) => readFileSync(f, "utf8") !== text).map(([f]) => f);
+for (const f of changed) writeFileSync(f, before.get(f));
+if (changed.length) console.log(`RESTORED  ${changed.join(", ")}: a file differed from before the run; check no other mutation run was going at the same time`);
 console.log(survived ? `FAILED: ${survived} of ${mutations.length} not killed` : `OK: ${mutations.length} of ${mutations.length} killed`);
-process.exitCode = survived ? 1 : 0;
+process.exitCode = survived || changed.length ? 1 : 0;

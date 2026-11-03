@@ -93,7 +93,7 @@ ${cases.join("\n")}
 
 export async function runWrite(goal: Goal, state: State, prompt: string, scenarios: Scenario[], model: Model): Promise<Written> {
   // Held-back scenarios stay out of this: the writer must never see what it is finally judged on.
-  const train = scenarios;
+  const train = scenarios.filter((s) => s.split === "train");
   const lessons = lessonText(state, prompt, train);
   // Ideas from recent rounds that didn't win, so each round tries something new instead of paying for a repeat.
   const tried = [...new Set(state.rounds.slice(-5).flatMap((r) => (r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary))))];

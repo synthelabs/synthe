@@ -28556,7 +28556,7 @@ ${cases2.join("\n")}
 `;
 }
 async function runWrite(goal, state, prompt, scenarios, model) {
-  const train = scenarios;
+  const train = scenarios.filter((s) => s.split === "train");
   const lessons = lessonText(state, prompt, train);
   const tried = [...new Set(state.rounds.slice(-5).flatMap((r) => r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary)))];
   const notAgain = tried.length ? `
