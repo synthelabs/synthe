@@ -107,12 +107,12 @@ test("when the last rounds all failed, the headline names the cause instead of a
   assert.match(unknown.issue, /## Stopped: the last rounds didn't finish\n\nLook at the latest run in the Actions tab for the error/);
 });
 
-test("each new workflow runs at a random minute of the hour, so teams don't all call Anthropic at once", () => {
+test("each new workflow wakes every 10 minutes at a random offset, so a dropped wake-up doesn't cost the night", () => {
   const template = readFileSync("templates/synthe.yml", "utf8");
-  assert.match(template, /cron: "__MINUTE__ \* \* \* \*"/);
-  assert.match(renderWorkflow(template, () => 0), /cron: "0 \* \* \* \*"/);
-  assert.match(renderWorkflow(template, () => 0.5), /cron: "30 \* \* \* \*"/);
-  assert.match(renderWorkflow(template, () => 0.9999999), /cron: "59 \* \* \* \*"/);
+  assert.match(template, /cron: "__MINUTE__-59\/10 \* \* \* \*"/);
+  assert.match(renderWorkflow(template, () => 0), /cron: "0-59\/10 \* \* \* \*"/);
+  assert.match(renderWorkflow(template, () => 0.5), /cron: "5-59\/10 \* \* \* \*"/);
+  assert.match(renderWorkflow(template, () => 0.9999999), /cron: "9-59\/10 \* \* \* \*"/);
   assert.doesNotMatch(renderWorkflow(template), /__MINUTE__|__ACTION__/);
 });
 

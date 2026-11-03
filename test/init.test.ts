@@ -356,3 +356,18 @@ test("without proposed checks, init doesn't ask about them and saves none", asyn
   assert.doesNotMatch(said.join("\n"), /measure your agent with these checks/);
   assert.equal("checks" in JSON.parse(readFileSync(join(dir, "synthe.json"), "utf8")), false);
 });
+
+test("a check the team rewords during setup's quick review is the one saved", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, said } = fakeIo(dir, [], { "Does this reply pass": "n", "Type y to use it": "y" });
+  io.model = () => ({ async ask(a) {
+    const schema = JSON.stringify(a.schema ?? {});
+    if (schema.includes('"scenarios"')) return { text: briefReply, costUsd: 0.01 };
+    if (schema.includes('"results"')) return { text: JSON.stringify({ results: [1, 2, 3].map((check) => ({ check, applies: true, passes: true })) }), costUsd: 0.001 };
+    if (schema.includes('"check":{"type":"string"}')) return { text: JSON.stringify({ check: "Asks for the order number before anything else" }), costUsd: 0.001 };
+    return { text: "a reply", costUsd: 0.001 };
+  } });
+  assert.equal(await init(io, dir), true);
+  assert.match(said.join("\n"), /Quick check that Synthe marks these the way you mean/);
+  assert.ok(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).checks!.includes("Asks for the order number before anything else"));
+});

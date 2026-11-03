@@ -75,3 +75,27 @@ test("decide settles a proposal the team merged and judges this round's scores i
   assert.equal(repo.state.proposal, null);
   assert.equal(repo.state.lastMerge?.pr, 1, "the undo check protects the team's merge");
 });
+
+test("after npx synthe stop, status reads as stopped, not still running", async () => {
+  const { headline } = await import("../src/loop/report.ts");
+  const s: State = { ...newState(), round: 3, spendUsd: 0.09, rounds: [{ ...round(1, "merged"), checks: { before: 47, after: 81 } }, round(2, "skipped"), round(3, "skipped")] };
+  const paused = headline(goal(), s, true);
+  assert.equal(paused.title, "Stopped by you after 1 merged change");
+  assert.match(paused.summary, /^Your checks now pass 81% of the time, up from 47%\. It ran 3 rounds before you stopped it\./);
+  assert.doesNotMatch(paused.summary, /still running/);
+  assert.match(headline(goal(), s).summary, /still running/);
+});
+
+test("checking an open proposal again writes nothing new", async () => {
+  const { MemoryRepo } = await import("./helpers.ts");
+  const { runDecide } = await import("../src/loop/decide.ts");
+  const repo = new MemoryRepo("Old prompt.");
+  repo.prs.push({ number: 1, title: "Synthe: x", body: "", closed: false, branch: "synthe/round-1", merged: false });
+  repo.state = { ...newState(), round: 1, issue: 4, rounds: [{ ...round(1, "proposed"), pr: 1 }],
+    proposal: { pr: 1, round: 1, branch: "synthe/round-1", kind: "merge", text: "New prompt.", priorPrompt: "Old prompt.", propose: true } };
+  let writes = 0;
+  const write = repo.writeState.bind(repo);
+  repo.writeState = async (s) => { writes++; return write(s); };
+  for (let i = 0; i < 3; i++) assert.equal(await runDecide(goal(), repo, { candidates: null, scores: null, costUsd: null }), null);
+  assert.equal(writes, 0);
+});
