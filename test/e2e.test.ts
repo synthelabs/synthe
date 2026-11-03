@@ -62,6 +62,8 @@ const anthropic = createServer((req, res) => {
   let raw = "";
   req.on("data", (d) => (raw += d));
   req.on("end", () => {
+    // Only the SDK's POSTs are Anthropic calls. Other local tools sometimes probe new ports with a bare GET.
+    if (req.method !== "POST") { res.statusCode = 404; return res.end(); }
     if (denyKey) { res.statusCode = 401; res.setHeader("content-type", "application/json"); return res.end('{"type":"error","error":{"type":"authentication_error","message":"bad key"}}'); }
     const b = JSON.parse(raw);
     bodies.push(b);
@@ -281,7 +283,7 @@ test("an older workflow's denied dispatch leaves a successful round for the sche
   for (const s of ["write", "score"]) assert.equal((await step(s)).code, 0);
   const decided = await step("decide");
   assert.equal(decided.code, 0, decided.log);
-  assert.match(decided.log, /Rounds will continue on the schedule.*npx synthe upgrade/);
+  assert.match(decided.log, /refused to start the next round \(403\).*npx synthe upgrade.*npx synthe restart/);
   assert.equal(JSON.parse(files.get("synthe/state:state.json")!).chainReady, false);
 });
 
@@ -337,4 +339,20 @@ test("a prefixed same-repo PR replacement cannot silently consume the queued cha
   writeFileSync(join(dir, "out.txt"), "");
   assert.equal((await step("write", join(dir, "out.txt"), "pull_request")).code, 0);
   assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/);
+});
+
+test("merging Synthe's setup pull request starts round 1; closing it, a fork's, or a later one doesn't", async () => {
+  const setup = (merged: boolean, owner = "o/r") => ({ action: "closed", pull_request: { number: 9, merged, head: { ref: "synthe/setup", repo: { full_name: owner } } } });
+  const go = async (payload: unknown) => {
+    writeFileSync(join(dir, "event.json"), JSON.stringify(payload));
+    writeFileSync(join(dir, "out.txt"), "");
+    assert.equal((await step("write", join(dir, "out.txt"), "pull_request")).code, 0);
+    return /go=true/.test(readFileSync(join(dir, "out.txt"), "utf8"));
+  };
+  reset();
+  assert.equal(await go(setup(false)), false, "closed without merging");
+  assert.equal(await go(setup(true, "fork/r")), false, "a fork's branch of the same name");
+  assert.equal(await go(setup(true)), true, "merged: the first round starts");
+  files.set("synthe/state:state.json", JSON.stringify({ round: 2, rounds: [{ round: 2, at: "2026-11-03T00:00:00Z", outcome: "skipped", reasons: [], costUsd: 0.1 }] }));
+  assert.equal(await go(setup(true)), false, "a setup branch merged again later doesn't start an extra round");
 });

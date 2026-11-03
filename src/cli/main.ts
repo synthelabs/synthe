@@ -5,6 +5,7 @@ import { GOAL_FILE, STATE_BRANCH, parseGoal, parseScenarios } from "../core/goal
 import { judgeRound } from "../core/merge-rule.ts";
 import { readPrompt } from "../core/prompt.ts";
 import { newState, type State } from "../core/state.ts";
+import { sha256 } from "../core/safety.ts";
 import { headline } from "../loop/report.ts";
 import { anthropicModel, modelProblem } from "../model/client.ts";
 import { measureNoise, runScore } from "../loop/score.ts";
@@ -105,7 +106,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s: State = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s);
+    const next = restartState(goal, s, existsSync(goal.scenarios) ? sha256(readFileSync(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;

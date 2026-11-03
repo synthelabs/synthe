@@ -8,13 +8,14 @@ on:
     # Hourly backup if a chained dispatch is missed. Init picks one minute away from the top of the hour.
     - cron: "__MINUTE__ * * * *"
 concurrency:
-  # Ignore unrelated PR closes without letting them replace a pending chained round.
-  group: ${{ (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.event.pull_request.head.ref, 'synthe/round-'))) && format('synthe-ignored-{0}', github.run_id) || 'synthe' }}
+  # Ignore unrelated PR closes without letting them replace a pending chained round. Synthe's own setup and round
+  # pull requests share the group: merging setup starts round 1, closing a proposal resumes review mode.
+  group: ${{ (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || !(startsWith(github.event.pull_request.head.ref, 'synthe/round-') || github.event.pull_request.head.ref == 'synthe/setup'))) && format('synthe-ignored-{0}', github.run_id) || 'synthe' }}
   cancel-in-progress: false
 permissions: {}
 jobs:
   write:
-    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.event.pull_request.head.ref, 'synthe/round-'))
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.event.pull_request.head.ref, 'synthe/round-') || github.event.pull_request.head.ref == 'synthe/setup'))
     runs-on: ubuntu-latest
     # Two writer calls take a minute or two; the cap stops a hung call holding the "synthe" group for hours.
     timeout-minutes: 15

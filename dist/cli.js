@@ -28313,6 +28313,64 @@ var newState = () => ({
 function isFinished(reason) {
   return /^(budget of .* is used|reached \d+ rounds|\d+ rounds in a row found no winner)$/.test(reason);
 }
+function resumeIfScenariosChanged(s, scenariosHash) {
+  if (!s.stopped || !/rounds in a row found no winner$/.test(s.stopped) || s.scenariosHash === null || s.scenariosHash === scenariosHash) return false;
+  s.stopped = null;
+  s.stalls = 0;
+  return true;
+}
+
+// src/core/safety.ts
+import { createHash } from "node:crypto";
+var sha256 = (text) => createHash("sha256").update(text).digest("hex");
+var MAX_PROMPT_CHARS = 2e4;
+var SENSITIVE_PATHS = [
+  /^\.github\//,
+  /^\.gitlab-ci\.yml$/,
+  /^\.circleci\//,
+  /^Jenkinsfile$/,
+  /\.pem$/,
+  /\.key$/,
+  /(^|\/)id_rsa/,
+  /(^|\/)id_ed25519/,
+  /(^|\/)\.env(\.|$)/,
+  /(^|\/)Dockerfile/,
+  /(^|\/)package(-lock)?\.json$/,
+  /(^|\/)pnpm-lock\.yaml$/,
+  /(^|\/)yarn\.lock$/,
+  /(^|\/)(poetry|uv|Cargo)\.lock$/,
+  /(^|\/)go\.sum$/,
+  /(^|\/)setup\.py$/,
+  /(^|\/)pyproject\.toml$/,
+  /(^|\/)Makefile$/,
+  /^scripts\/.*\.sh$/,
+  /^bin\//,
+  /(^|\/)CODEOWNERS$/,
+  /(^|\/)\.gitattributes$/
+];
+var SECRET_SHAPES = [/sk-ant-[\w-]{8,}/, /sk-[A-Za-z0-9]{20,}/, /gh[pousr]_[A-Za-z0-9]{20,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN [A-Z ]*PRIVATE KEY/];
+var redactSecrets = (text) => SECRET_SHAPES.reduce((t, s) => t.replace(new RegExp(s.source, "g"), "[secret removed]"), text);
+function promptPathProblem(path4) {
+  if (path4.startsWith("/") || path4.split("/").includes("..")) return "prompt path must stay inside the repo";
+  return SENSITIVE_PATHS.some((p) => p.test(path4)) ? `refusing sensitive path ${path4}` : null;
+}
+function candidateProblem(text, location) {
+  if (typeof text !== "string" || !text.trim()) return "candidate is empty";
+  if (text.length > MAX_PROMPT_CHARS) return "candidate is too long";
+  if (SECRET_SHAPES.some((s) => s.test(text))) return "candidate looks like it contains a secret";
+  if (location.kind === "inline") {
+    const problem = literalProblem(text, location.delimiter);
+    if (problem) return problem;
+  }
+  return null;
+}
+function literalProblem(text, delimiter2) {
+  if (text.includes("\\")) return "candidate contains a backslash";
+  if (text.includes(delimiter2)) return "candidate would end the source string";
+  if (delimiter2 === "`" && text.includes("${")) return "candidate would run code in a template string";
+  if ((delimiter2 === '"' || delimiter2 === "'") && /[\r\n]/.test(text)) return "candidate is multi-line in a one-line string";
+  return null;
+}
 
 // src/loop/report.ts
 var ISSUE_TITLE = "Synthe: overnight prompt report";
@@ -28338,7 +28396,7 @@ function headline(goal, state, stoppedByTeam = false) {
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe retries on the hourly backup run." : "";
+    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
     return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
@@ -28431,58 +28489,6 @@ function modelProblem(e) {
   if (status2 === 403) return "Your Synthe key isn't allowed to use this model. Ask the Synthe table for a new key.";
   if (status2 === 429 || status2 === 529 || status2 !== null && status2 >= 500) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
   if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
-  return null;
-}
-
-// src/core/safety.ts
-import { createHash } from "node:crypto";
-var sha256 = (text) => createHash("sha256").update(text).digest("hex");
-var MAX_PROMPT_CHARS = 2e4;
-var SENSITIVE_PATHS = [
-  /^\.github\//,
-  /^\.gitlab-ci\.yml$/,
-  /^\.circleci\//,
-  /^Jenkinsfile$/,
-  /\.pem$/,
-  /\.key$/,
-  /(^|\/)id_rsa/,
-  /(^|\/)id_ed25519/,
-  /(^|\/)\.env(\.|$)/,
-  /(^|\/)Dockerfile/,
-  /(^|\/)package(-lock)?\.json$/,
-  /(^|\/)pnpm-lock\.yaml$/,
-  /(^|\/)yarn\.lock$/,
-  /(^|\/)(poetry|uv|Cargo)\.lock$/,
-  /(^|\/)go\.sum$/,
-  /(^|\/)setup\.py$/,
-  /(^|\/)pyproject\.toml$/,
-  /(^|\/)Makefile$/,
-  /^scripts\/.*\.sh$/,
-  /^bin\//,
-  /(^|\/)CODEOWNERS$/,
-  /(^|\/)\.gitattributes$/
-];
-var SECRET_SHAPES = [/sk-ant-[\w-]{8,}/, /sk-[A-Za-z0-9]{20,}/, /gh[pousr]_[A-Za-z0-9]{20,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN [A-Z ]*PRIVATE KEY/];
-var redactSecrets = (text) => SECRET_SHAPES.reduce((t, s) => t.replace(new RegExp(s.source, "g"), "[secret removed]"), text);
-function promptPathProblem(path4) {
-  if (path4.startsWith("/") || path4.split("/").includes("..")) return "prompt path must stay inside the repo";
-  return SENSITIVE_PATHS.some((p) => p.test(path4)) ? `refusing sensitive path ${path4}` : null;
-}
-function candidateProblem(text, location) {
-  if (typeof text !== "string" || !text.trim()) return "candidate is empty";
-  if (text.length > MAX_PROMPT_CHARS) return "candidate is too long";
-  if (SECRET_SHAPES.some((s) => s.test(text))) return "candidate looks like it contains a secret";
-  if (location.kind === "inline") {
-    const problem = literalProblem(text, location.delimiter);
-    if (problem) return problem;
-  }
-  return null;
-}
-function literalProblem(text, delimiter2) {
-  if (text.includes("\\")) return "candidate contains a backslash";
-  if (text.includes(delimiter2)) return "candidate would end the source string";
-  if (delimiter2 === "`" && text.includes("${")) return "candidate would run code in a template string";
-  if ((delimiter2 === '"' || delimiter2 === "'") && /[\r\n]/.test(text)) return "candidate is multi-line in a one-line string";
   return null;
 }
 
@@ -29066,7 +29072,7 @@ var ACTION = "synthelabs/synthe@v1";
 var SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 var WORKFLOW_FILE = ".github/workflows/synthe.yml";
 var SETUP_BRANCH = "synthe/setup";
-var SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. After the first run, completed rounds start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
+var SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
 var REGISTRY = "synthelabs/synthe-runs";
 var SCENARIO_SCHEMA = {
   type: "object",
@@ -29376,12 +29382,12 @@ ${branch} only takes changes through pull requests, so Synthe opened one with it
     }
   }
   const actionsOff = !started && !setupPr && await io2.run("gh", ["api", `repos/${slug}/actions/permissions`, "--jq", ".enabled"]).then((o) => o.trim() === "false", () => false);
-  const limits = `Completed rounds start back to back, up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} of your key's credit. A 12-round session usually takes about half an hour; the hourly schedule is a backup.`;
+  const limits = `Completed rounds start back to back, up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} of your key's credit. A 12-round session usually takes about half an hour.`;
   io2.say(started ? `
 Synthe is running: GitHub accepted the first dispatch. The first round takes a few minutes. ${limits}` : setupPr ? `
-Set up, waiting for you to merge ${setupPr}. After merging, run \`gh workflow run synthe.yml\` to start the first round. ${limits}` : actionsOff ? `
+Set up, waiting for you to merge ${setupPr}. Merging it starts the first round. ${limits}` : actionsOff ? `
 Set up, but GitHub Actions is turned off for this repo, so Synthe can't run yet. Turn it on at https://github.com/${slug}/settings/actions, then start the first round with \`gh workflow run synthe.yml\`. ${limits}` : `
-Set up, but GitHub did not accept the first dispatch. Run \`gh workflow run synthe.yml\` to start it; the hourly backup can also retry. ${limits}`);
+Set up, but GitHub did not accept the first dispatch. Run \`gh workflow run synthe.yml\` to start it. ${limits}`);
   io2.say(`  To keep your agent unchanged before it finishes, for example for a demo, run: npx synthe stop`);
   io2.say(`  After the first round, a "${ISSUE_TITLE}" issue appears in your repo. It says what changed and why.`);
   io2.say(auto ? `  You can keep editing your prompt: Synthe always starts from the latest version on ${branch}. After it changes the prompt, pull before you edit it, and if a push is rejected, run git pull and push again.` : "  When Synthe finds a better prompt, it opens a pull request for you to merge or close. It waits, spending nothing, until you decide.");
@@ -29390,15 +29396,19 @@ Set up, but GitHub did not accept the first dispatch. Run \`gh workflow run synt
 }
 
 // src/cli/restart.ts
-function restartState(goal, state) {
+function restartState(goal, state, scenariosHash = null) {
   const stopped = state.stopped;
   if (!stopped) return { state, note: "" };
+  if (scenariosHash !== null) {
+    const next = { ...state };
+    if (resumeIfScenariosChanged(next, scenariosHash)) return { state: next, note: "Your test cases changed, so it continues." };
+  }
   if (state.spendUnknown) return { why: "Synthe couldn't measure what a round cost, so it won't spend any more on this run." };
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   const failedOut = recent.length > 0 && recent.every((r) => r.outcome === "failed");
   const roundsRaised = /^reached \d+ rounds$/.test(stopped) && state.round < goal.merge_rule.max_rounds;
   if (isFinished(stopped) && !failedOut && !roundsRaised) {
-    if (/no winner$/.test(stopped)) return { why: `The last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better. To keep going, add test cases your agent still gets wrong to ${goal.scenarios} and push; the hourly backup checks for changes. You can also run \`npx synthe restart\`.` };
+    if (/no winner$/.test(stopped)) return { why: `The last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better. To keep going, add test cases your agent still gets wrong to ${goal.scenarios}, push them, then run \`npx synthe restart\` again.` };
     if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget, so this run is finished.` };
     return { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` };
   }
@@ -29532,7 +29542,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s);
+    const next = restartState(goal, s, existsSync2(goal.scenarios) ? sha256(readFileSync3(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;

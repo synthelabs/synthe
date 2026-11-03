@@ -52,27 +52,32 @@ test("a round Anthropic was too busy for is recorded as failed but doesn't count
   assert.equal(record!.outcome, "failed");
   assert.equal(record!.failure, "busy");
   assert.equal(repo.state.stalls, 0);
-  assert.equal(repo.state.chainReady, false, "a transient model failure must wait for the backup");
+  // GitHub's schedule can't be relied on to retry, so a busy round queues another try right away.
+  assert.equal(repo.state.chainReady, true, "a busy round tries again right away");
   assert.match(record!.plain!, /Anthropic's API was busy/);
-  assert.match(record!.plain!, /retry on the hourly backup run/);
+  assert.match(record!.plain!, /tries again right away, up to twice/);
   assert.doesNotMatch(record!.plain!, /credit/);
 });
 
 test("three busy rounds in a row don't stop the run, and the report says it will try again", async () => {
   const repo = new MemoryRepo("Old prompt.");
-  for (let i = 0; i < 3; i++) await runDecide(goal(), repo, failedRound(BUSY));
+  const ready: boolean[] = [];
+  for (let i = 0; i < 3; i++) { await runDecide(goal(), repo, failedRound(BUSY)); ready.push(repo.state.chainReady === true); }
+  // Two immediate retries, then it stops queueing so a long outage can't burn every round in minutes.
+  assert.deepEqual(ready, [true, true, false]);
   assert.equal(repo.state.stopped, null);
   assert.equal(repo.state.round, 3);
   assert.equal(repo.state.stalls, 0);
   assert.match(repo.issue, /## Synthe is working on your prompt/);
-  assert.match(repo.issue, /Anthropic's API was busy; Synthe retries on the hourly backup run/);
+  assert.match(repo.issue, /Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`/);
   assert.match(repo.issue, /- Nothing to do\. Anthropic's API was busy during the last round/);
   assert.doesNotMatch(repo.issue, /credit|Stopped/);
   // A busy hour between stalls doesn't reset them either: only a merge does.
   await runDecide(goal(), repo, failedRound(null));
   await runDecide(goal(), repo, failedRound(BUSY));
   assert.equal(repo.state.stalls, 1);
-  assert.equal(repo.state.chainReady, false);
+  // A different failure in between resets the busy streak, so this busy round gets its retry.
+  assert.equal(repo.state.chainReady, true);
 });
 
 test("a key failure says what to do: get a new key and update the repo secret", async () => {

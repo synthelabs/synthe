@@ -99,3 +99,13 @@ test("checking an open proposal again writes nothing new", async () => {
   for (let i = 0; i < 3; i++) assert.equal(await runDecide(goal(), repo, { candidates: null, scores: null, costUsd: null }), null);
   assert.equal(writes, 0);
 });
+
+test("after a stall, new test cases let restart continue; the same ones don't", () => {
+  const stalled = stoppedWith("3 rounds in a row found no winner", { scenariosHash: "old" });
+  const same = restartState(goal(), stalled, "old");
+  assert.ok("why" in same, "nothing new to learn from, so it stays finished");
+  const changed = restartState(goal(), stalled, "new");
+  assert.ok("state" in changed && changed.state.stopped === null && changed.state.stalls === 0);
+  assert.match(changed.note, /test cases changed/);
+  assert.equal(stalled.stopped, "3 rounds in a row found no winner", "the state it was given is left alone");
+});

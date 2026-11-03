@@ -28653,7 +28653,7 @@ function headline(goal, state, stoppedByTeam = false) {
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe retries on the hourly backup run." : "";
+    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
     return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
@@ -28679,16 +28679,16 @@ function nextSteps(goal, state) {
   if (state.stopped && badKey(last)) steps.push(`${last.plain} Then run \`npx synthe restart\` to start Synthe again.`);
   else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
   if (state.stopped && /no winner$/.test(state.stopped)) {
-    steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push. The hourly backup checks for changes${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. You can also run \`npx synthe restart\`. One line per case, for example:
+    steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push, then run \`npx synthe restart\`${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. One line per case, for example:
   \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`
   \`expected\` describes a good answer in a sentence. \`split\` is \`train\` (Synthe learns from it) or \`holdout\` (kept hidden to check its changes).`);
   }
   if (!state.stopped && !state.proposal && missing(last)) {
-    steps.push(`${last.plain} The hourly backup retries without spending anything until it finds the prompt.`);
+    steps.push(`${last.plain} Once it's fixed, run \`npx synthe restart\`. Until then Synthe spends nothing.`);
   } else if (!state.stopped && !state.proposal && badKey(last)) {
     steps.push(`${last.plain} Run \`npx synthe restart\` after replacing the key.`);
   } else if (!state.stopped && !state.proposal) {
-    steps.push(busy(last) ? "Nothing to do. Anthropic's API was busy during the last round, so the hourly backup retries. Synthe stops by itself." : "Nothing to do. Completed rounds start back to back and Synthe stops by itself.");
+    steps.push(busy(last) ? "Nothing to do. Anthropic's API was busy during the last round, so Synthe tried again; if it has stopped, run `npx synthe restart`. Otherwise Synthe stops by itself." : "Nothing to do. Completed rounds start back to back and Synthe stops by itself.");
     steps.push("To keep your agent unchanged, for example before a demo, run `npx synthe stop`.");
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");
@@ -29195,6 +29195,7 @@ function explainScores(scores, scenarios, samples = 3) {
 }
 
 // src/loop/decide.ts
+var BUSY_RETRIES = 2;
 var LESSONS = 6;
 var clipText = (t, n = 280) => (t.length > n ? `${t.slice(0, n).trimEnd()}...` : t).replace(/\s+/g, " ").trim();
 function pickExample(scores, candidateId, scenarioText) {
@@ -29424,7 +29425,7 @@ ${notTested(goal).slice(1).join("\n")}
     if (error) record.failure = error.kind;
     if (error?.kind === "busy") {
       record.reasons.push(`Anthropic's API was busy during the ${error.step} step: ${error.message}`);
-      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe will retry on the hourly backup run.";
+      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
       stall = false;
     } else if (error?.kind === "key") {
       record.reasons.push(`the ${error.step} step's key was refused: ${error.message}`);
@@ -29521,7 +29522,11 @@ ${goal.policy ?? ""}`);
   state.pending = null;
   state.rounds.push(record);
   state.stopped = state.stopped ?? stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
-  state.chainReady = Boolean(input2.scores && input2.candidates && record.outcome !== "failed" && !state.stopped && !state.proposal && !state.pending && state.round < merge_rule.max_rounds && !record.reasons.some((reason) => reason.startsWith("merge failed:")));
+  const busyRun = state.rounds.slice().reverse().findIndex((r) => r.failure !== "busy");
+  const busyInARow = busyRun === -1 ? state.rounds.length : busyRun;
+  const finished = Boolean(input2.scores && input2.candidates && record.outcome !== "failed");
+  const retryBusy = record.failure === "busy" && busyInARow <= BUSY_RETRIES;
+  state.chainReady = (finished || retryBusy) && !state.stopped && !state.proposal && !state.pending && state.round < merge_rule.max_rounds && !record.reasons.some((reason) => reason.startsWith("merge failed:"));
   await writeReport(goal, repo, state);
   await repo.writeState(state);
   return record;
@@ -29580,7 +29585,7 @@ async function main() {
         } catch (saveError) {
           console.log(`Could not clear chain marker: ${saveError}`);
         }
-        console.log(e instanceof Error && /403/.test(e.message) ? "GitHub denied workflow dispatch (403). Rounds will continue on the schedule. Run `npx synthe upgrade` to add Actions write permission." : `Could not queue the next round; the hourly backup will retry. ${e instanceof Error ? e.message : String(e)}`);
+        console.log(e instanceof Error && /403/.test(e.message) ? "GitHub refused to start the next round (403): this repo's Synthe workflow predates 1.6.1. Run `npx synthe upgrade` in the repo so rounds start one after another; until then, run `npx synthe restart` to start each one." : `Could not queue the next round. Run \`npx synthe restart\` to continue (GitHub's hourly backup may also pick it up). ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(goal2, await repo.readState(), record, process.env.GITHUB_REPOSITORY));
@@ -29593,7 +29598,9 @@ async function main() {
     const pr = event.pull_request;
     const own = pr?.head?.repo?.full_name === process.env.GITHUB_REPOSITORY;
     const sameProposal = state.proposal && pr.number === state.proposal.pr && pr.head.ref === state.proposal.branch;
-    if (event.action !== "closed" || !own || !pr.head.ref.startsWith("synthe/round-") || !sameProposal && !(state.chainReady && !state.proposal)) {
+    const setupMerged = pr?.head?.ref === "synthe/setup" && pr.merged === true && state.round === 0;
+    const roundBranch = pr?.head?.ref?.startsWith("synthe/round-") && (sameProposal || state.chainReady && !state.proposal);
+    if (event.action !== "closed" || !own || !(setupMerged || roundBranch)) {
       console.log("Closed pull request is not the current Synthe proposal; skipping.");
       setOutput("go", "false");
       return;

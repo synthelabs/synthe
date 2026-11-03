@@ -11,7 +11,7 @@ export const ACTION = "synthelabs/synthe@v1";
 export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 export const WORKFLOW_FILE = ".github/workflows/synthe.yml";
 const SETUP_BRANCH = "synthe/setup";
-const SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. After the first run, completed rounds start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
+const SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
 // Teams that agree to share progress are listed here, one issue each, so the Synthe team can follow how runs go.
 export const REGISTRY = "synthelabs/synthe-runs";
 
@@ -320,11 +320,11 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
 
   // Forks start with Actions turned off, and then nothing would ever run, however long the team waits.
   const actionsOff = !started && !setupPr && (await io.run("gh", ["api", `repos/${slug}/actions/permissions`, "--jq", ".enabled"]).then((o) => o.trim() === "false", () => false));
-  const limits = `Completed rounds start back to back, up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} of your key's credit. A 12-round session usually takes about half an hour; the hourly schedule is a backup.`;
+  const limits = `Completed rounds start back to back, up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} of your key's credit. A 12-round session usually takes about half an hour.`;
   io.say(started ? `\nSynthe is running: GitHub accepted the first dispatch. The first round takes a few minutes. ${limits}`
-    : setupPr ? `\nSet up, waiting for you to merge ${setupPr}. After merging, run \`gh workflow run synthe.yml\` to start the first round. ${limits}`
+    : setupPr ? `\nSet up, waiting for you to merge ${setupPr}. Merging it starts the first round. ${limits}`
     : actionsOff ? `\nSet up, but GitHub Actions is turned off for this repo, so Synthe can't run yet. Turn it on at https://github.com/${slug}/settings/actions, then start the first round with \`gh workflow run synthe.yml\`. ${limits}`
-    : `\nSet up, but GitHub did not accept the first dispatch. Run \`gh workflow run synthe.yml\` to start it; the hourly backup can also retry. ${limits}`);
+    : `\nSet up, but GitHub did not accept the first dispatch. Run \`gh workflow run synthe.yml\` to start it. ${limits}`);
   io.say(`  To keep your agent unchanged before it finishes, for example for a demo, run: npx synthe stop`);
   io.say(`  After the first round, a "${ISSUE_TITLE}" issue appears in your repo. It says what changed and why.`);
   io.say(auto

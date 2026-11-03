@@ -53,8 +53,8 @@ async function main() {
         state.chainReady = false;
         try { await repo.writeState(state); } catch (saveError) { console.log(`Could not clear chain marker: ${saveError}`); }
         console.log(e instanceof Error && /403/.test(e.message)
-          ? "GitHub denied workflow dispatch (403). Rounds will continue on the schedule. Run `npx synthe upgrade` to add Actions write permission."
-          : `Could not queue the next round; the hourly backup will retry. ${e instanceof Error ? e.message : String(e)}`);
+          ? "GitHub refused to start the next round (403): this repo's Synthe workflow predates 1.6.1. Run `npx synthe upgrade` in the repo so rounds start one after another; until then, run `npx synthe restart` to start each one."
+          : `Could not queue the next round. Run \`npx synthe restart\` to continue (GitHub's hourly backup may also pick it up). ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     // The run's own page then says what happened, for whoever opens it from the Actions tab.
@@ -69,8 +69,11 @@ async function main() {
     const pr = event.pull_request;
     const own = pr?.head?.repo?.full_name === process.env.GITHUB_REPOSITORY;
     const sameProposal = state.proposal && pr.number === state.proposal.pr && pr.head.ref === state.proposal.branch;
+    // Merging the setup pull request starts the first round, so a team that reviews setup needs no extra command.
+    const setupMerged = pr?.head?.ref === "synthe/setup" && pr.merged === true && state.round === 0;
     // A stale same-repo proposal close can replace a pending chain run. If a chain is ready, it is a valid starter.
-    if (event.action !== "closed" || !own || !pr.head.ref.startsWith("synthe/round-") || (!sameProposal && !(state.chainReady && !state.proposal))) {
+    const roundBranch = pr?.head?.ref?.startsWith("synthe/round-") && (sameProposal || (state.chainReady && !state.proposal));
+    if (event.action !== "closed" || !own || !(setupMerged || roundBranch)) {
       console.log("Closed pull request is not the current Synthe proposal; skipping.");
       setOutput("go", "false");
       return;
