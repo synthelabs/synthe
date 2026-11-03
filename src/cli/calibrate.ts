@@ -1,6 +1,6 @@
 import type { Goal, Scenario } from "../core/goal.ts";
 import { sumCosts } from "../core/cost.ts";
-import { pool, type Model } from "../model/client.ts";
+import { askJson, pool, type Model } from "../model/client.ts";
 import { AGENT_MAX_TOKENS, askChecks } from "../loop/score.ts";
 
 const CASES = 20; // test cases answered and marked twice: all the training ones, so every check comes up enough
@@ -8,15 +8,112 @@ const MIN_APPLIED = 4; // fewer replies than this where a check applies is too l
 const QUESTIONS = 8; // replies the team is asked about
 const STEADY = 0.85; // below this, the AI marks the same reply differently too often
 const AGREE = 0.75; // below this, the AI doesn't mark the way the team means
+const MIN_MISSES = 2; // one flip or one disagreement in a handful of cases is noise, not a verdict
+const SETUP_CASES = 6; // init's short review: replies made, then up to SETUP_QUESTIONS asked about
+const SETUP_QUESTIONS = 4;
 
 export interface CalibrateIo { say(text: string): void; ask(question: string): Promise<string> }
-export interface CheckCalibration { check: string; applied: number; steady: number; asked: number; agreed: number; verdict: "trustworthy" | "unsteady" | "mismatch" | "unused" | "thin" | "unasked" }
+export interface CheckCalibration {
+  check: string; applied: number; steady: number; asked: number; agreed: number;
+  verdict: "trustworthy" | "unsteady" | "mismatch" | "unused" | "thin" | "unasked" | "reworded";
+}
+// One reply to ask the team about: the message, the reply, which check, and how Synthe marked it.
+interface Item { input: string; reply: string; c: number; passes: boolean }
 
 const clip = (t: string, n: number) => (t.length > n ? `${t.slice(0, n).trimEnd()}...` : t).replace(/\s+/g, " ").trim();
 
+// Takes checks in turn and mixes replies Synthe passed and failed, so each check is compared with the team on both.
+function pick(open: Item[][], max: number): Item[] {
+  const items: Item[] = [];
+  for (let round = 0; items.length < max && open.some((o) => o.length); round++) {
+    for (const o of open) {
+      if (items.length >= max || !o.length) continue;
+      const at = Math.max(0, o.findIndex((p) => p.passes === (round % 2 === 0)));
+      items.push(o.splice(at, 1)[0]);
+    }
+  }
+  return items;
+}
+
+// A rewording of the check that matches how the team judged this reply, keeping its intent and keeping it checkable
+// from one reply. Null when the model gives nothing usable; the team can always type their own.
+async function suggestWording(model: Model, writer: string, check: string, item: Item, teamPasses: boolean, costs: (number | null)[]): Promise<string | null> {
+  const { value, costUsd } = await askJson<{ check: string }>(model, {
+    model: writer, maxTokens: 400,
+    schema: { type: "object", properties: { check: { type: "string" } }, required: ["check"], additionalProperties: false },
+    user: `A team measures their AI agent with this check: "${check}"
+
+A user wrote: ${item.input}
+The agent replied: ${item.reply}
+
+An AI marked this reply as ${item.passes ? "passing" : "failing"} the check, but the team says it ${teamPasses ? "passes" : "fails"}. Rewrite the check as one plain sentence that keeps its intent, matches the team's judgement of this reply, and can still be decided by reading only the user's message and the reply.`,
+  });
+  costs.push(costUsd);
+  const text = typeof value?.check === "string" ? value.check.trim() : "";
+  return text && text.length <= 300 && text !== check ? text : null;
+}
+
+// Asks the team about each reply. Where they disagree with Synthe's marking, the check's wording may not say what
+// they mean, so it is fixed right there: Synthe suggests a rewording, and the team takes it, types their own or keeps
+// the check. "e" rewords a check at any question. A reworded check gets no more questions here: its markings were
+// for the old wording.
+export async function reviewReplies(io: CalibrateIo, model: Model, writer: string, checks: string[], items: Item[], costs: (number | null)[]) {
+  const asked = checks.map(() => 0), agreed = checks.map(() => 0);
+  const reworded = new Set<number>();
+  const reword = (c: number, text: string) => { checks[c] = text.slice(0, 300); reworded.add(c); io.say("   Check reworded."); };
+  for (const [n, it] of items.entries()) {
+    if (reworded.has(it.c)) continue;
+    io.say(`${n + 1} of ${items.length}. A user wrote: "${clip(it.input, 300)}"`);
+    io.say(`   Your agent replied: "${clip(it.reply, 600)}"`);
+    io.say(`   Check: ${checks[it.c]}`);
+    const answer = (await io.ask("   Does this reply pass the check? Type y, n, s to skip, or e to reword the check: ")).trim().toLowerCase();
+    if (answer === "e") {
+      const own = (await io.ask("   New wording for this check (Enter to keep it): ")).trim();
+      if (own) reword(it.c, own);
+      continue;
+    }
+    if (!/^[yn]/.test(answer)) continue;
+    const teamPasses = answer.startsWith("y");
+    asked[it.c]++;
+    if (teamPasses === it.passes) { agreed[it.c]++; continue; }
+    io.say(`   Synthe marked this as ${it.passes ? "passing" : "failing"}, so the check's wording may not say what you mean.`);
+    const suggested = await suggestWording(model, writer, checks[it.c], it, teamPasses, costs);
+    if (suggested) io.say(`   Suggested wording: "${suggested}"`);
+    const choice = (await io.ask(suggested
+      ? "   Type y to use it, type your own wording, or press Enter to keep the check: "
+      : "   Type new wording, or press Enter to keep the check: ")).trim();
+    if (suggested && /^y(es)?$/i.test(choice)) reword(it.c, suggested);
+    else if (choice && !/^n(o)?$/i.test(choice)) reword(it.c, choice);
+  }
+  return { asked, agreed, reworded };
+}
+
+// Setup's short version: a few replies with the team's current prompt, marked once, and up to 4 questions. Returns
+// the checks as the team left them, reworded where they disagreed.
+export async function reviewChecksAtSetup(io: CalibrateIo, goal: Goal, prompt: string, scenarios: Scenario[], model: Model) {
+  const checks = [...(goal.checks ?? [])];
+  const costs: (number | null)[] = [];
+  const cases = scenarios.filter((s) => s.split === "train").slice(0, SETUP_CASES);
+  const marked = await pool(cases, 6, async (s) => {
+    const r = await model.ask({ model: goal.models.runner, system: prompt, user: s.input, maxTokens: AGENT_MAX_TOKENS, allowCutOff: true });
+    costs.push(r.costUsd);
+    if (r.text === null) return null;
+    const m = await askChecks(goal, model, s, r.text);
+    costs.push(m.costUsd);
+    return m.verdicts ? { s, reply: r.text, verdicts: m.verdicts } : null;
+  });
+  const open = checks.map((_, c) => marked.flatMap((m) => (m && m.verdicts[c].applies ? [{ input: m.s.input, reply: m.reply, c, passes: m.verdicts[c].passes }] : [])));
+  const items = pick(open, SETUP_QUESTIONS);
+  if (items.length) {
+    io.say(`\nQuick check that Synthe marks these the way you mean: ${items.length} of your agent's replies. Say whether each passes, as you'd judge it. If you disagree with Synthe, you can fix the check's wording right there.\n`);
+    await reviewReplies(io, model, goal.models.writer, checks, items, costs);
+  }
+  return { checks, costUsd: sumCosts(costs) };
+}
+
 // Whether the number Synthe improves can be trusted: does the AI mark each check the same way twice, and the way the
 // team would? Uses the same check call as scoring, so it measures exactly what a round relies on.
-export async function calibrate(io: CalibrateIo, goal: Goal, prompt: string, scenarios: Scenario[], model: Model): Promise<{ results: CheckCalibration[]; costUsd: number | null } | null> {
+export async function calibrate(io: CalibrateIo, goal: Goal, prompt: string, scenarios: Scenario[], model: Model): Promise<{ results: CheckCalibration[]; checks: string[]; costUsd: number | null } | null> {
   const checks = goal.checks?.filter((c) => c.trim()) ?? [];
   if (checks.length === 0) {
     io.say("There are no checks in synthe.json, so there's nothing to calibrate. Synthe is using its AI judge's side-by-side preference instead.");
@@ -53,61 +150,52 @@ export async function calibrate(io: CalibrateIo, goal: Goal, prompt: string, sce
     return { check, applied, steady, asked: 0, agreed: 0, verdict: "unused" };
   });
 
-  // Questions: replies where a check applied and the AI was steady, taking checks in turn and mixing passes and
-  // fails, so each check is compared with the team on both kinds of reply.
-  const pairs: { i: number; c: number; passes: boolean }[] = [];
-  const open = checks.map((_, c) => marked.flatMap((m, i) => (m && m[0][c].applies && m[1][c].applies && m[0][c].passes === m[1][c].passes ? [{ i, c, passes: m[0][c].passes }] : [])));
-  for (let round = 0; pairs.length < QUESTIONS && open.some((o) => o.length); round++) {
-    for (const o of open) {
-      if (pairs.length >= QUESTIONS || !o.length) continue;
-      const want = round % 2 === 0;
-      const at = Math.max(0, o.findIndex((p) => p.passes === want));
-      pairs.push(o.splice(at, 1)[0]);
-    }
-  }
-  if (pairs.length) io.say(`Now ${pairs.length} quick questions. For each, say whether the reply passes the check, as you mean it.\n`);
-  for (const [n, p] of pairs.entries()) {
-    io.say(`${n + 1} of ${pairs.length}. A user wrote: "${clip(cases[p.i].input, 300)}"`);
-    io.say(`   Your agent replied: "${clip(replies[p.i]!, 600)}"`);
-    io.say(`   Check: ${checks[p.c]}`);
-    const answer = (await io.ask("   Does this reply pass the check? Type y, n, or s to skip: ")).trim().toLowerCase();
-    if (!/^[yn]/.test(answer)) continue;
-    results[p.c].asked++;
-    if ((answer.startsWith("y")) === p.passes) results[p.c].agreed++;
-  }
+  // Questions only about replies the AI marked the same way twice: an unsteady marking isn't worth comparing.
+  const open = checks.map((_, c) => marked.flatMap((m, i) => (m && m[0][c].applies && m[1][c].applies && m[0][c].passes === m[1][c].passes
+    ? [{ input: cases[i].input, reply: replies[i]!, c, passes: m[0][c].passes }] : [])));
+  const items = pick(open, QUESTIONS);
+  if (items.length) io.say(`Now ${items.length} quick questions. For each, say whether the reply passes the check, as you mean it. If you disagree with Synthe, you can fix the check's wording right there.\n`);
+  const review = await reviewReplies(io, model, goal.models.writer, checks, items, costs);
 
   io.say("\nResults:");
   for (const [c, r] of results.entries()) {
-    const steadyRate = r.applied ? r.steady / r.applied : 0;
+    r.asked = review.asked[c];
+    r.agreed = review.agreed[c];
+    const flips = r.applied - r.steady, misses = r.asked - r.agreed;
+    // Both numbers on every line: the team's answers are the clearer signal, so they're never hidden by another verdict.
+    const numbers = `Marked the same way ${r.steady} of ${r.applied} times${r.asked ? `; agreed with you ${r.agreed} of ${r.asked} times` : ""}.`;
     let line: string;
-    if (r.applied === 0) {
+    if (review.reworded.has(c)) {
+      r.verdict = "reworded";
+      line = `Reworded by you to: "${clip(checks[c], 160)}". Run npx synthe calibrate again to check the new wording.`;
+    } else if (r.applied === 0) {
       r.verdict = "unused";
       line = "Never came up in your test cases, so it can't move the number. Add test cases where it matters, or drop it.";
+    } else if (misses >= MIN_MISSES && r.agreed / r.asked < AGREE) {
+      r.verdict = "mismatch";
+      line = `Doesn't match what you mean. ${numbers} Reword it to say exactly what you'd look for.`;
+    } else if (flips >= MIN_MISSES && r.steady / r.applied < STEADY) {
+      r.verdict = "unsteady";
+      line = `Unsteady. ${numbers} Reword it to say exactly what a passing reply contains.`;
     } else if (r.applied < MIN_APPLIED) {
       // Live, checks came up in only 2 or 3 cases, and "steady 2 of 2" proves little.
       r.verdict = "thin";
-      line = `Only came up in ${r.applied} of your test cases, too few to tell. Add test cases where it matters to .synthe/scenarios.jsonl.`;
-    } else if (steadyRate < STEADY) {
-      r.verdict = "unsteady";
-      line = `Unsteady: the AI marked the same reply differently ${r.applied - r.steady} of ${r.applied} times. Reword it to say exactly what a passing reply contains.`;
-    } else if (r.asked > 0 && r.agreed / r.asked < AGREE) {
-      r.verdict = "mismatch";
-      line = `Doesn't match what you mean: you and the AI disagreed on ${r.asked - r.agreed} of ${r.asked} replies. Reword it to say exactly what you'd look for.`;
+      line = `Too few cases to tell. ${numbers} Add test cases where it matters to .synthe/scenarios.jsonl.`;
     } else if (r.asked === 0) {
       // Steady isn't the same as right: without the team's answers, only steadiness is known.
       r.verdict = "unasked";
-      line = `Steady (marked the same way ${r.steady} of ${r.applied} times), but not compared with what you mean: answer its questions next time.`;
+      line = `Steady, but not compared with what you mean. ${numbers} Answer its questions next time.`;
     } else {
       r.verdict = "trustworthy";
-      line = `Trustworthy: marked the same way ${r.steady} of ${r.applied} times, and agreed with you ${r.agreed} of ${r.asked} times.`;
+      line = `Trustworthy. ${numbers}`;
     }
     io.say(`  ${c + 1}. ${clip(r.check, 90)}\n     ${line}`);
   }
-  const fix = results.filter((r) => r.verdict !== "trustworthy").length;
+  const fix = results.filter((r) => r.verdict !== "trustworthy" && r.verdict !== "reworded").length;
   io.say(fix
     ? `\n${fix} of ${checks.length} checks need attention. Edit them in synthe.json, push, then run npx synthe calibrate again.`
-    : `\nAll ${checks.length} checks can be trusted, so the number in Synthe's report means what you think it does.`);
+    : review.reworded.size ? "" : `\nAll ${checks.length} checks can be trusted, so the number in Synthe's report means what you think it does.`);
   const costUsd = sumCosts(costs);
   io.say(`Cost: ${costUsd === null ? "unknown" : costUsd < 0.01 ? "under $0.01" : `$${costUsd.toFixed(2)}`}`);
-  return { results, costUsd };
+  return { results, checks, costUsd };
 }

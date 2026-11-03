@@ -78,9 +78,11 @@ const mutations = [
   ["the judge outvotes the team's checks", "src/loop/score.ts", "if (theirs && mine.failed !== theirs.failed) judged.row.score = mine.failed < theirs.failed ? WIN : LOSS;", ""],
   ["a half-answered check counts as checked", "src/loop/score.ts", "if (!Array.isArray(rows) || rows.length !== checks.length || checks.some((_, i) => rows.filter((r) => r.check === i + 1).length !== 1)) return { verdicts: null", "if (!Array.isArray(rows)) return { verdicts: null"],
   ["repo secrets reach the model", "src/cli/init.ts", "${redactSecrets(f.text)}", "${f.text}"],
-  ["calibrate ignores unsteady marking", "src/cli/calibrate.ts", "} else if (steadyRate < STEADY) {", "} else if (false) {"],
-  ["calibrate ignores the team's answers", "src/cli/calibrate.ts", "} else if (r.asked > 0 && r.agreed / r.asked < AGREE) {", "} else if (false) {"],
+  ["calibrate ignores unsteady marking", "src/cli/calibrate.ts", "} else if (flips >= MIN_MISSES && r.steady / r.applied < STEADY) {", "} else if (false) {"],
+  ["calibrate ignores the team's answers", "src/cli/calibrate.ts", "} else if (misses >= MIN_MISSES && r.agreed / r.asked < AGREE) {", "} else if (false) {"],
   ["calibrate shows held-back cases", "src/cli/calibrate.ts", "const cases = scenarios.filter((s) => s.split === \"train\").slice(0, CASES);", "const cases = scenarios.slice(0, CASES);"],
+  ["a reworded check keeps getting asked", "src/cli/calibrate.ts", "    if (reworded.has(it.c)) continue;", "    if (false) continue;"],
+  ["setup's review shows held-back cases", "src/cli/calibrate.ts", "const cases = scenarios.filter((s) => s.split === \"train\").slice(0, SETUP_CASES);", "const cases = scenarios.slice(0, SETUP_CASES);"],
   ["calibrate trusts too little evidence", "src/cli/calibrate.ts", "} else if (r.applied < MIN_APPLIED) {", "} else if (false) {"],
   ["calibrate trusts checks nobody answered", "src/cli/calibrate.ts", "} else if (r.asked === 0) {", "} else if (false) {"],
 ];

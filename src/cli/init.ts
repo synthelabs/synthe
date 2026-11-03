@@ -5,6 +5,7 @@ import { findPrompts } from "../core/prompt.ts";
 import { MAX_PROMPT_CHARS, promptPathProblem, redactSecrets } from "../core/safety.ts";
 import { ISSUE_TITLE } from "../loop/report.ts";
 import { askJson, type Model } from "../model/client.ts";
+import { reviewChecksAtSetup } from "./calibrate.ts";
 
 export const ACTION = "synthelabs/synthe@v1";
 export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
@@ -251,7 +252,10 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
       if (own.length) checks = own;
       else io.say("No checks typed, so Synthe keeps its suggestions.");
     }
-    io.say(`Checks saved in ${GOAL_FILE}. Change them there any time.`);
+    // A short look at real replies, so the checks mean what the team means before the first round measures them.
+    const review = await reviewChecksAtSetup(io, buildGoal(location, objective, guardrails, policy, brief, checks), promptText, rows, io.model(key));
+    checks = review.checks;
+    io.say(`Checks saved in ${GOAL_FILE}. Change them there any time, and run \`npx synthe calibrate\` for a fuller check.`);
   }
 
   const goal = buildGoal(location, objective, guardrails, policy, brief, checks);

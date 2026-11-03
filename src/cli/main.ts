@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { GOAL_FILE, STATE_BRANCH, parseGoal, parseScenarios } from "../core/goal.ts";
 import { judgeRound } from "../core/merge-rule.ts";
@@ -154,7 +154,15 @@ async function calibrateChecks() {
   const local = localRun("calibrate");
   if (!local) return;
   const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model);
-  if (result && result.results.some((r) => r.verdict !== "trustworthy")) process.exitCode = 1;
+  if (!result) return;
+  // Rewordings the team made during the questions are saved, so the next round measures what they mean.
+  if (result.checks.some((c, i) => c !== local.goal.checks?.[i])) {
+    const saved = JSON.parse(readFileSync(GOAL_FILE, "utf8"));
+    writeFileSync(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}\n`);
+    console.log(`\nSaved your reworded checks in ${GOAL_FILE}. Push them so Synthe's next round uses them:`);
+    console.log(`  git commit -m "Reword Synthe checks" ${GOAL_FILE} && git push`);
+  }
+  if (result.results.some((r) => r.verdict !== "trustworthy")) process.exitCode = 1;
 }
 
 // Runs one round on this computer and changes nothing, so a team can see what Synthe would do.

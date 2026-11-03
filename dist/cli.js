@@ -28049,7 +28049,7 @@ var init_sdk = __esm({
 
 // src/cli/main.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync, readFileSync as readFileSync2 } from "node:fs";
+import { existsSync, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { createInterface as createInterface3 } from "node:readline/promises";
 
 // src/core/goal.ts
@@ -28887,6 +28887,180 @@ async function measureNoise(goal, prompt, scenarios, model) {
 // src/cli/init.ts
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
+
+// src/cli/calibrate.ts
+var CASES = 20;
+var MIN_APPLIED = 4;
+var QUESTIONS = 8;
+var STEADY = 0.85;
+var AGREE = 0.75;
+var MIN_MISSES = 2;
+var SETUP_CASES = 6;
+var SETUP_QUESTIONS = 4;
+var clip2 = (t, n) => (t.length > n ? `${t.slice(0, n).trimEnd()}...` : t).replace(/\s+/g, " ").trim();
+function pick(open, max) {
+  const items = [];
+  for (let round = 0; items.length < max && open.some((o) => o.length); round++) {
+    for (const o of open) {
+      if (items.length >= max || !o.length) continue;
+      const at = Math.max(0, o.findIndex((p) => p.passes === (round % 2 === 0)));
+      items.push(o.splice(at, 1)[0]);
+    }
+  }
+  return items;
+}
+async function suggestWording(model, writer, check, item, teamPasses, costs) {
+  const { value, costUsd: costUsd2 } = await askJson(model, {
+    model: writer,
+    maxTokens: 400,
+    schema: { type: "object", properties: { check: { type: "string" } }, required: ["check"], additionalProperties: false },
+    user: `A team measures their AI agent with this check: "${check}"
+
+A user wrote: ${item.input}
+The agent replied: ${item.reply}
+
+An AI marked this reply as ${item.passes ? "passing" : "failing"} the check, but the team says it ${teamPasses ? "passes" : "fails"}. Rewrite the check as one plain sentence that keeps its intent, matches the team's judgement of this reply, and can still be decided by reading only the user's message and the reply.`
+  });
+  costs.push(costUsd2);
+  const text = typeof value?.check === "string" ? value.check.trim() : "";
+  return text && text.length <= 300 && text !== check ? text : null;
+}
+async function reviewReplies(io2, model, writer, checks, items, costs) {
+  const asked = checks.map(() => 0), agreed = checks.map(() => 0);
+  const reworded = /* @__PURE__ */ new Set();
+  const reword = (c, text) => {
+    checks[c] = text.slice(0, 300);
+    reworded.add(c);
+    io2.say("   Check reworded.");
+  };
+  for (const [n, it] of items.entries()) {
+    if (reworded.has(it.c)) continue;
+    io2.say(`${n + 1} of ${items.length}. A user wrote: "${clip2(it.input, 300)}"`);
+    io2.say(`   Your agent replied: "${clip2(it.reply, 600)}"`);
+    io2.say(`   Check: ${checks[it.c]}`);
+    const answer = (await io2.ask("   Does this reply pass the check? Type y, n, s to skip, or e to reword the check: ")).trim().toLowerCase();
+    if (answer === "e") {
+      const own = (await io2.ask("   New wording for this check (Enter to keep it): ")).trim();
+      if (own) reword(it.c, own);
+      continue;
+    }
+    if (!/^[yn]/.test(answer)) continue;
+    const teamPasses = answer.startsWith("y");
+    asked[it.c]++;
+    if (teamPasses === it.passes) {
+      agreed[it.c]++;
+      continue;
+    }
+    io2.say(`   Synthe marked this as ${it.passes ? "passing" : "failing"}, so the check's wording may not say what you mean.`);
+    const suggested = await suggestWording(model, writer, checks[it.c], it, teamPasses, costs);
+    if (suggested) io2.say(`   Suggested wording: "${suggested}"`);
+    const choice = (await io2.ask(suggested ? "   Type y to use it, type your own wording, or press Enter to keep the check: " : "   Type new wording, or press Enter to keep the check: ")).trim();
+    if (suggested && /^y(es)?$/i.test(choice)) reword(it.c, suggested);
+    else if (choice && !/^n(o)?$/i.test(choice)) reword(it.c, choice);
+  }
+  return { asked, agreed, reworded };
+}
+async function reviewChecksAtSetup(io2, goal, prompt, scenarios, model) {
+  const checks = [...goal.checks ?? []];
+  const costs = [];
+  const cases2 = scenarios.filter((s) => s.split === "train").slice(0, SETUP_CASES);
+  const marked = await pool(cases2, 6, async (s) => {
+    const r = await model.ask({ model: goal.models.runner, system: prompt, user: s.input, maxTokens: AGENT_MAX_TOKENS, allowCutOff: true });
+    costs.push(r.costUsd);
+    if (r.text === null) return null;
+    const m = await askChecks(goal, model, s, r.text);
+    costs.push(m.costUsd);
+    return m.verdicts ? { s, reply: r.text, verdicts: m.verdicts } : null;
+  });
+  const open = checks.map((_, c) => marked.flatMap((m) => m && m.verdicts[c].applies ? [{ input: m.s.input, reply: m.reply, c, passes: m.verdicts[c].passes }] : []));
+  const items = pick(open, SETUP_QUESTIONS);
+  if (items.length) {
+    io2.say(`
+Quick check that Synthe marks these the way you mean: ${items.length} of your agent's replies. Say whether each passes, as you'd judge it. If you disagree with Synthe, you can fix the check's wording right there.
+`);
+    await reviewReplies(io2, model, goal.models.writer, checks, items, costs);
+  }
+  return { checks, costUsd: sumCosts(costs) };
+}
+async function calibrate(io2, goal, prompt, scenarios, model) {
+  const checks = goal.checks?.filter((c) => c.trim()) ?? [];
+  if (checks.length === 0) {
+    io2.say("There are no checks in synthe.json, so there's nothing to calibrate. Synthe is using its AI judge's side-by-side preference instead.");
+    return null;
+  }
+  const cases2 = scenarios.filter((s) => s.split === "train").slice(0, CASES);
+  io2.say(`Calibrate checks whether Synthe's marking of your ${checks.length} checks can be trusted. It answers ${cases2.length} of your test cases with your current prompt, marks each reply twice, then asks you about up to ${QUESTIONS} of them. A few minutes, and about a cent.
+`);
+  const costs = [];
+  const replies = await pool(cases2, 6, async (s) => {
+    const r = await model.ask({ model: goal.models.runner, system: prompt, user: s.input, maxTokens: AGENT_MAX_TOKENS, allowCutOff: true });
+    costs.push(r.costUsd);
+    return r.text;
+  });
+  const marked = await pool(cases2.map((s, i) => ({ s, text: replies[i] })), 6, async ({ s, text }) => {
+    if (text === null) return null;
+    const twice = await Promise.all([askChecks(goal, model, s, text), askChecks(goal, model, s, text)]);
+    costs.push(twice[0].costUsd, twice[1].costUsd);
+    return twice[0].verdicts && twice[1].verdicts ? [twice[0].verdicts, twice[1].verdicts] : null;
+  });
+  const results = checks.map((check, c) => {
+    let applied = 0, steady = 0;
+    for (const m of marked) {
+      if (!m) continue;
+      const [a, b] = [m[0][c], m[1][c]];
+      if (!a.applies && !b.applies) continue;
+      applied++;
+      if (a.applies === b.applies && (!a.applies || a.passes === b.passes)) steady++;
+    }
+    return { check, applied, steady, asked: 0, agreed: 0, verdict: "unused" };
+  });
+  const open = checks.map((_, c) => marked.flatMap((m, i) => m && m[0][c].applies && m[1][c].applies && m[0][c].passes === m[1][c].passes ? [{ input: cases2[i].input, reply: replies[i], c, passes: m[0][c].passes }] : []));
+  const items = pick(open, QUESTIONS);
+  if (items.length) io2.say(`Now ${items.length} quick questions. For each, say whether the reply passes the check, as you mean it. If you disagree with Synthe, you can fix the check's wording right there.
+`);
+  const review = await reviewReplies(io2, model, goal.models.writer, checks, items, costs);
+  io2.say("\nResults:");
+  for (const [c, r] of results.entries()) {
+    r.asked = review.asked[c];
+    r.agreed = review.agreed[c];
+    const flips = r.applied - r.steady, misses = r.asked - r.agreed;
+    const numbers = `Marked the same way ${r.steady} of ${r.applied} times${r.asked ? `; agreed with you ${r.agreed} of ${r.asked} times` : ""}.`;
+    let line;
+    if (review.reworded.has(c)) {
+      r.verdict = "reworded";
+      line = `Reworded by you to: "${clip2(checks[c], 160)}". Run npx synthe calibrate again to check the new wording.`;
+    } else if (r.applied === 0) {
+      r.verdict = "unused";
+      line = "Never came up in your test cases, so it can't move the number. Add test cases where it matters, or drop it.";
+    } else if (misses >= MIN_MISSES && r.agreed / r.asked < AGREE) {
+      r.verdict = "mismatch";
+      line = `Doesn't match what you mean. ${numbers} Reword it to say exactly what you'd look for.`;
+    } else if (flips >= MIN_MISSES && r.steady / r.applied < STEADY) {
+      r.verdict = "unsteady";
+      line = `Unsteady. ${numbers} Reword it to say exactly what a passing reply contains.`;
+    } else if (r.applied < MIN_APPLIED) {
+      r.verdict = "thin";
+      line = `Too few cases to tell. ${numbers} Add test cases where it matters to .synthe/scenarios.jsonl.`;
+    } else if (r.asked === 0) {
+      r.verdict = "unasked";
+      line = `Steady, but not compared with what you mean. ${numbers} Answer its questions next time.`;
+    } else {
+      r.verdict = "trustworthy";
+      line = `Trustworthy. ${numbers}`;
+    }
+    io2.say(`  ${c + 1}. ${clip2(r.check, 90)}
+     ${line}`);
+  }
+  const fix = results.filter((r) => r.verdict !== "trustworthy" && r.verdict !== "reworded").length;
+  io2.say(fix ? `
+${fix} of ${checks.length} checks need attention. Edit them in synthe.json, push, then run npx synthe calibrate again.` : review.reworded.size ? "" : `
+All ${checks.length} checks can be trusted, so the number in Synthe's report means what you think it does.`);
+  const costUsd2 = sumCosts(costs);
+  io2.say(`Cost: ${costUsd2 === null ? "unknown" : costUsd2 < 0.01 ? "under $0.01" : `$${costUsd2.toFixed(2)}`}`);
+  return { results, checks, costUsd: costUsd2 };
+}
+
+// src/cli/init.ts
 var ACTION = "synthelabs/synthe@v1";
 var SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 var WORKFLOW_FILE = ".github/workflows/synthe.yml";
@@ -29058,12 +29232,12 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
       io2.say("Found these prompts:");
       prompts.forEach((p, i) => io2.say(`  ${i + 1}. ${p.location.path}: ${p.preview.replaceAll("\n", " ")}...`));
     }
-    const pick = prompts.length === 1 ? 1 : Number(await io2.ask("Which is your agent's system prompt? "));
-    if (!prompts[pick - 1]) {
+    const pick2 = prompts.length === 1 ? 1 : Number(await io2.ask("Which is your agent's system prompt? "));
+    if (!prompts[pick2 - 1]) {
       io2.say("That isn't one of the options.");
       return false;
     }
-    location = prompts[pick - 1].location;
+    location = prompts[pick2 - 1].location;
   }
   const refused = promptPathProblem(location.path);
   if (refused) {
@@ -29130,7 +29304,9 @@ Reading your prompt${context2.names.length ? ` and ${context2.names.join(" and "
       if (own.length) checks = own;
       else io2.say("No checks typed, so Synthe keeps its suggestions.");
     }
-    io2.say(`Checks saved in ${GOAL_FILE}. Change them there any time.`);
+    const review = await reviewChecksAtSetup(io2, buildGoal(location, objective, guardrails, policy, brief, checks), promptText, rows, io2.model(key));
+    checks = review.checks;
+    io2.say(`Checks saved in ${GOAL_FILE}. Change them there any time, and run \`npx synthe calibrate\` for a fuller check.`);
   }
   const goal = buildGoal(location, objective, guardrails, policy, brief, checks);
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
@@ -29211,101 +29387,6 @@ Set up. The first round starts within the hour, ${limits}`);
   io2.say(auto ? `  You can keep editing your prompt: Synthe always starts from the latest version on ${branch}. After it changes the prompt, pull before you edit it, and if a push is rejected, run git pull and push again.` : "  When Synthe finds a better prompt, it opens a pull request for you to merge or close. It waits, spending nothing, until you decide.");
   io2.say(`  Watch it live: https://github.com/${slug}/actions/workflows/synthe.yml`);
   return true;
-}
-
-// src/cli/calibrate.ts
-var CASES = 20;
-var MIN_APPLIED = 4;
-var QUESTIONS = 8;
-var STEADY = 0.85;
-var AGREE = 0.75;
-var clip2 = (t, n) => (t.length > n ? `${t.slice(0, n).trimEnd()}...` : t).replace(/\s+/g, " ").trim();
-async function calibrate(io2, goal, prompt, scenarios, model) {
-  const checks = goal.checks?.filter((c) => c.trim()) ?? [];
-  if (checks.length === 0) {
-    io2.say("There are no checks in synthe.json, so there's nothing to calibrate. Synthe is using its AI judge's side-by-side preference instead.");
-    return null;
-  }
-  const cases2 = scenarios.filter((s) => s.split === "train").slice(0, CASES);
-  io2.say(`Calibrate checks whether Synthe's marking of your ${checks.length} checks can be trusted. It answers ${cases2.length} of your test cases with your current prompt, marks each reply twice, then asks you about up to ${QUESTIONS} of them. A few minutes, and about a cent.
-`);
-  const costs = [];
-  const replies = await pool(cases2, 6, async (s) => {
-    const r = await model.ask({ model: goal.models.runner, system: prompt, user: s.input, maxTokens: AGENT_MAX_TOKENS, allowCutOff: true });
-    costs.push(r.costUsd);
-    return r.text;
-  });
-  const marked = await pool(cases2.map((s, i) => ({ s, text: replies[i] })), 6, async ({ s, text }) => {
-    if (text === null) return null;
-    const twice = await Promise.all([askChecks(goal, model, s, text), askChecks(goal, model, s, text)]);
-    costs.push(twice[0].costUsd, twice[1].costUsd);
-    return twice[0].verdicts && twice[1].verdicts ? [twice[0].verdicts, twice[1].verdicts] : null;
-  });
-  const results = checks.map((check, c) => {
-    let applied = 0, steady = 0;
-    for (const m of marked) {
-      if (!m) continue;
-      const [a, b] = [m[0][c], m[1][c]];
-      if (!a.applies && !b.applies) continue;
-      applied++;
-      if (a.applies === b.applies && (!a.applies || a.passes === b.passes)) steady++;
-    }
-    return { check, applied, steady, asked: 0, agreed: 0, verdict: "unused" };
-  });
-  const pairs = [];
-  const open = checks.map((_, c) => marked.flatMap((m, i) => m && m[0][c].applies && m[1][c].applies && m[0][c].passes === m[1][c].passes ? [{ i, c, passes: m[0][c].passes }] : []));
-  for (let round = 0; pairs.length < QUESTIONS && open.some((o) => o.length); round++) {
-    for (const o of open) {
-      if (pairs.length >= QUESTIONS || !o.length) continue;
-      const want = round % 2 === 0;
-      const at = Math.max(0, o.findIndex((p) => p.passes === want));
-      pairs.push(o.splice(at, 1)[0]);
-    }
-  }
-  if (pairs.length) io2.say(`Now ${pairs.length} quick questions. For each, say whether the reply passes the check, as you mean it.
-`);
-  for (const [n, p] of pairs.entries()) {
-    io2.say(`${n + 1} of ${pairs.length}. A user wrote: "${clip2(cases2[p.i].input, 300)}"`);
-    io2.say(`   Your agent replied: "${clip2(replies[p.i], 600)}"`);
-    io2.say(`   Check: ${checks[p.c]}`);
-    const answer = (await io2.ask("   Does this reply pass the check? Type y, n, or s to skip: ")).trim().toLowerCase();
-    if (!/^[yn]/.test(answer)) continue;
-    results[p.c].asked++;
-    if (answer.startsWith("y") === p.passes) results[p.c].agreed++;
-  }
-  io2.say("\nResults:");
-  for (const [c, r] of results.entries()) {
-    const steadyRate = r.applied ? r.steady / r.applied : 0;
-    let line;
-    if (r.applied === 0) {
-      r.verdict = "unused";
-      line = "Never came up in your test cases, so it can't move the number. Add test cases where it matters, or drop it.";
-    } else if (r.applied < MIN_APPLIED) {
-      r.verdict = "thin";
-      line = `Only came up in ${r.applied} of your test cases, too few to tell. Add test cases where it matters to .synthe/scenarios.jsonl.`;
-    } else if (steadyRate < STEADY) {
-      r.verdict = "unsteady";
-      line = `Unsteady: the AI marked the same reply differently ${r.applied - r.steady} of ${r.applied} times. Reword it to say exactly what a passing reply contains.`;
-    } else if (r.asked > 0 && r.agreed / r.asked < AGREE) {
-      r.verdict = "mismatch";
-      line = `Doesn't match what you mean: you and the AI disagreed on ${r.asked - r.agreed} of ${r.asked} replies. Reword it to say exactly what you'd look for.`;
-    } else if (r.asked === 0) {
-      r.verdict = "unasked";
-      line = `Steady (marked the same way ${r.steady} of ${r.applied} times), but not compared with what you mean: answer its questions next time.`;
-    } else {
-      r.verdict = "trustworthy";
-      line = `Trustworthy: marked the same way ${r.steady} of ${r.applied} times, and agreed with you ${r.agreed} of ${r.asked} times.`;
-    }
-    io2.say(`  ${c + 1}. ${clip2(r.check, 90)}
-     ${line}`);
-  }
-  const fix = results.filter((r) => r.verdict !== "trustworthy").length;
-  io2.say(fix ? `
-${fix} of ${checks.length} checks need attention. Edit them in synthe.json, push, then run npx synthe calibrate again.` : `
-All ${checks.length} checks can be trusted, so the number in Synthe's report means what you think it does.`);
-  const costUsd2 = sumCosts(costs);
-  io2.say(`Cost: ${costUsd2 === null ? "unknown" : costUsd2 < 0.01 ? "under $0.01" : `$${costUsd2.toFixed(2)}`}`);
-  return { results, costUsd: costUsd2 };
 }
 
 // src/cli/restart.ts
@@ -29482,7 +29563,16 @@ async function calibrateChecks() {
   const local = localRun("calibrate");
   if (!local) return;
   const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model);
-  if (result && result.results.some((r) => r.verdict !== "trustworthy")) process.exitCode = 1;
+  if (!result) return;
+  if (result.checks.some((c, i) => c !== local.goal.checks?.[i])) {
+    const saved = JSON.parse(readFileSync2(GOAL_FILE, "utf8"));
+    writeFileSync2(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}
+`);
+    console.log(`
+Saved your reworded checks in ${GOAL_FILE}. Push them so Synthe's next round uses them:`);
+    console.log(`  git commit -m "Reword Synthe checks" ${GOAL_FILE} && git push`);
+  }
+  if (result.results.some((r) => r.verdict !== "trustworthy")) process.exitCode = 1;
 }
 async function tryRound() {
   const local = localRun("try");
