@@ -4,9 +4,10 @@ import { readPrompt } from "./core/prompt.ts";
 import { sumCosts } from "./core/cost.ts";
 import { resumeIfScenariosChanged, stopReason } from "./core/state.ts";
 import { sha256 } from "./core/safety.ts";
-import { githubRepo } from "./github/repo.ts";
+import { githubRepo, type Repo } from "./github/repo.ts";
 import { anthropicModel } from "./model/client.ts";
 import { runDecide } from "./loop/decide.ts";
+import { roundSummary } from "./loop/report.ts";
 import { failureOf, type Failure } from "./loop/failure.ts";
 import { explainScores, runScore } from "./loop/score.ts";
 import { explainWrite, runWrite } from "./loop/write.ts";
@@ -16,6 +17,17 @@ const input = (name: string) => process.env[`INPUT_${name.toUpperCase()}`] ?? ""
 const setOutput = (k: string, v: string) => { if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `${k}=${v}\n`); };
 const save = (name: string, value: unknown) => { mkdirSync(OUT, { recursive: true }); writeFileSync(`${OUT}/${name}`, JSON.stringify(value)); };
 const load = <T>(name: string): T | null => (existsSync(`${OUT}/${name}`) ? JSON.parse(readFileSync(`${OUT}/${name}`, "utf8")) as T : null);
+
+// A proposal the team already merged or closed doesn't need a round of its own to notice: decide settles it and then
+// judges this round as usual. When GitHub won't say (a token that can't read pull requests), keep waiting.
+async function stillWaiting(repo: Repo, branch: string): Promise<boolean> {
+  try {
+    const pr = await repo.findPr(branch);
+    return !pr || pr.open;
+  } catch {
+    return true;
+  }
+}
 
 async function main() {
   const step = input("step");
@@ -29,13 +41,16 @@ async function main() {
     const costUsd = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
     const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json") });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
+    // The run's own page then says what happened, for whoever opens it from the Actions tab.
+    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(parseGoal(goalText), await repo.readState(), record, process.env.GITHUB_REPOSITORY!));
     return;
   }
 
   const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
   const state = await repo.readState();
   // Checked before the stop reasons: a proposal opened in a run's last round still needs settling.
-  if (state.proposal && !state.pending) {
+  // Only write decides this: score runs only when write said go, and its token can't read pull requests.
+  if (state.proposal && !state.pending && (step !== "write" || await stillWaiting(repo, state.proposal.branch))) {
     // Waiting for a person to merge or close a proposal: no model calls. "check" skips scoring but lets decide
     // look at the pull request.
     console.log(`Waiting for review of #${state.proposal.pr}`);
@@ -84,7 +99,12 @@ main().catch((e) => {
   // The decide step reads this to tell a busy API (try again next hour) from a key a person has to replace.
   const step = input("step");
   if (step === "write" || step === "score") {
-    try { save("error.json", failureOf(step, e)); } catch (saveError) { console.error(saveError); }
+    try {
+      const failure = failureOf(step, e);
+      save("error.json", failure);
+      // Shown at the top of the run's page, in words, instead of only a stack trace in the log.
+      console.log(`::error title=Synthe::${failure.message.replace(/\r?\n/g, " ")}`);
+    } catch (saveError) { console.error(saveError); }
   }
   process.exit(1);
 });

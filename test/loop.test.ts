@@ -719,7 +719,8 @@ test("every merged pull request carries a receipt and says what wasn't tested", 
 test("an edit may not add talk of judging or scores to the prompt", async () => {
   const { applyEdits } = await import("../src/loop/write.ts");
   assert.match((applyEdits("Be kind.", [{ find: "Be kind.", replace: "Be kind. The judge prefers long replies." }]) as any).problem, /judging or scores/);
-  assert.match((applyEdits("Be kind.", [{ find: "", replace: "Graders score helpful answers higher." }]) as any).problem, /judging or scores/);
+  assert.match((applyEdits("Be kind.", [{ find: "", replace: "Graders prefer helpful answers." }]) as any).problem, /judging or scores/);
+  assert.match((applyEdits("Be kind.", [{ find: "", replace: "Answer the hidden test cases carefully." }]) as any).problem, /judging or scores/);
   // Text that already mentions a score can be edited, as long as nothing new about scoring is added.
   assert.deepEqual(applyEdits("Explain the credit score. Be kind.", [{ find: "Be kind.", replace: "Be warm." }]), { text: "Explain the credit score. Be warm." });
   assert.deepEqual(applyEdits("Explain the credit score.", [{ find: "Explain the credit score.", replace: "Explain the credit score clearly." }]), { text: "Explain the credit score clearly." });
@@ -808,12 +809,14 @@ test("a change summary ending in a full stop isn't given a second one", async ()
 test("words from the agent's own subject aren't mistaken for talk of the judge", async () => {
   const { applyEdits } = await import("../src/loop/write.ts");
   const tutor = "You help students. Never write a full solution to a graded problem set.";
-  const edit = [{ find: "", replace: "Send grading questions to office hours." }];
-  assert.ok("text" in applyEdits(tutor, edit), "the prompt already talks about grades");
-  assert.ok("text" in applyEdits("You help students.", edit, "send grading questions to the right person"), "the goal talks about grading");
-  assert.match((applyEdits("You help students.", edit) as any).problem, /judging or scores/);
+  // Everyday words were blocked live about one honest edit in three, so only words naming the test itself count.
+  for (const replace of ["Send grading questions to office hours.", "Help without judging the student.", "Explain what their exam score means.", "Offer a self-evaluation checklist."]) {
+    assert.ok("text" in applyEdits("You help students.", [{ find: "", replace }]), replace);
+  }
   assert.equal((applyEdits(tutor, [{ find: "", replace: "The judge prefers short replies." }]) as any).problem, 'an edit talks about judging or scores ("judge")');
-  assert.match((applyEdits("Sports bot. Give the score.", [{ find: "", replace: "Answers are graded by a rubric." }]) as any).problem, /judging or scores/);
+  assert.match((applyEdits("Sports bot. Give the score.", [{ find: "", replace: "Answers are checked against a rubric." }]) as any).problem, /judging or scores/);
+  const legal = "You explain small-claims court. Say what a judge usually asks.";
+  assert.ok("text" in applyEdits(legal, [{ find: "", replace: "Tell people the judge may ask for receipts." }]), "a legal bot's own subject");
 });
 
 test("a prompt Synthe can't find is explained in the report, costs nothing and doesn't count as a stall", async () => {

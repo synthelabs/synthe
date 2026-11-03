@@ -71,7 +71,8 @@ function nextSteps(goal: Goal, state: State): string[] {
   if (merged) steps.push("Pull the latest changes before you edit your prompt, so Synthe's changes aren't overwritten.");
   const last = state.rounds.at(-1);
   // Before the steps for starting again, which would only fail on the same key.
-  if (state.stopped && badKey(last)) steps.push(`${last!.plain} Do this before you start Synthe again.`);
+  if (state.stopped && badKey(last)) steps.push(`${last!.plain} Then run \`npx synthe restart\` to start Synthe again.`);
+  else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
   if (state.stopped && /no winner$/.test(state.stopped)) {
     steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push. It starts again at the next hourly check${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. One line per case, for example:\n  \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`\n  \`expected\` describes a good answer in a sentence. \`split\` is \`train\` (Synthe learns from it) or \`holdout\` (kept hidden to check its changes).`);
   }
@@ -89,6 +90,21 @@ function nextSteps(goal: Goal, state: State): string[] {
   }
   if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete the `SYNTHE_ANTHROPIC_KEY` secret in your repo's settings.");
   return steps;
+}
+
+// The round on its Actions run page: the outcome, what was tried, the cost and where the full report is.
+export function roundSummary(goal: Goal, state: State, record: RoundRecord | null, repo: string): string {
+  const { title, summary } = headline(goal, state);
+  const report = state.issue ? `Full report: https://github.com/${repo}/issues/${state.issue}` : "";
+  if (!record) return [`## Synthe: ${title}`, "", summary, "", report, ""].join("\n");
+  const cost = record.costUsd === null ? "unknown" : `$${record.costUsd.toFixed(2)}`;
+  const tried = record.tried?.length ? record.tried.map((t) => `- ${t.summary} *${t.outcome}*`) : [];
+  return [
+    `## Synthe round ${record.round}: ${OUTCOME[record.outcome].toLowerCase()}${record.pr ? ` (#${record.pr})` : ""}`, "",
+    ...(record.plain ? [record.plain, ""] : []),
+    ...(tried.length ? ["What Synthe tried:", ...tried, ""] : []),
+    `Cost of this round: ${cost}. ${summary}`, "", report, "",
+  ].join("\n");
 }
 
 const OUTCOME: Record<RoundRecord["outcome"], string> = { merged: "Merged", reverted: "Undone", proposed: "Waiting for review", declined: "Declined by you", skipped: "No change", failed: "Didn't finish" };

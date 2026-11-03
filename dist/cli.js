@@ -11250,7 +11250,7 @@ function betaBashTool(ctx) {
         timeout_ms: { type: "integer", description: "Per-call timeout in milliseconds" }
       }
     },
-    run: async ({ command, restart, timeout_ms }, context2) => {
+    run: async ({ command, restart: restart2, timeout_ms }, context2) => {
       const prev = tail;
       const gate = promiseWithResolvers();
       tail = gate.promise;
@@ -11259,12 +11259,12 @@ function betaBashTool(ctx) {
       } catch {
       }
       try {
-        if (restart) {
+        if (restart2) {
           session?.close();
           session = void 0;
         }
         if (!command) {
-          if (restart)
+          if (restart2)
             return "bash session restarted";
           throw new ToolError("bash: command is required");
         }
@@ -28470,7 +28470,7 @@ var ANGLES = [
 ];
 var MAX_EDITS = 2;
 var MAX_EDIT_CHARS = 1500;
-var JUDGING = /\b(judg(e|es|ed|ing)|grad(er|ers|ing)|evaluat(or|ors|ion|ing)|rubric|scor(e|es|ed|ing)|test cases?|held[- ]back|benchmark)\b/gi;
+var JUDGING = /\b(judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?|held[- ]back)\b/gi;
 var FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark)\w*/gi;
 var family = (w) => w.toLowerCase().slice(0, 4);
 var ownFamilies = (known) => new Set((known.match(FAMILY) ?? []).map(family));
@@ -29060,8 +29060,24 @@ Set up. The first round starts within the hour, ${limits}`);
   return true;
 }
 
+// src/cli/restart.ts
+function restartState(goal, state) {
+  const stopped = state.stopped;
+  if (!stopped) return { state, note: "" };
+  if (state.spendUnknown) return { why: "Synthe couldn't measure what a round cost, so it won't spend any more on this run." };
+  const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
+  const failedOut = recent.length > 0 && recent.every((r) => r.outcome === "failed");
+  const roundsRaised = /^reached \d+ rounds$/.test(stopped) && state.round < goal.merge_rule.max_rounds;
+  if (isFinished(stopped) && !failedOut && !roundsRaised) {
+    if (/no winner$/.test(stopped)) return { why: `The last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better. To keep going, add test cases your agent still gets wrong to ${goal.scenarios} and push; Synthe starts again by itself at the next hourly check.` };
+    if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget, so this run is finished.` };
+    return { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` };
+  }
+  return { state: { ...state, stopped: null, stalls: 0 }, note: `It had stopped because: ${stopped}.` };
+}
+
 // src/cli/stopped.ts
-var STOPPED_LINE = "Stopped with npx synthe stop. Nothing more will run or change. To start it again: gh workflow enable synthe.yml";
+var STOPPED_LINE = "Stopped with npx synthe stop. Nothing more will run or change. To start it again: npx synthe restart";
 async function stoppedLine(run2, slug) {
   try {
     const state = (await run2("gh", ["api", `repos/${slug}/actions/workflows/synthe.yml`, "--jq", ".state"])).trim();
@@ -29155,7 +29171,46 @@ async function stop() {
     process.exitCode = 1;
     return;
   }
-  console.log("Stopped. Synthe won't run or change anything again. To start it again: gh workflow enable synthe.yml");
+  console.log("Stopped. Synthe won't run or change anything again. To start it again: npx synthe restart");
+}
+async function restart() {
+  if (!setUpHere()) return;
+  const slug = await repoSlug();
+  if (!slug) return;
+  const goal = parseGoal(readFileSync2(GOAL_FILE, "utf8"));
+  const path4 = `repos/${slug}/contents/state.json`;
+  let file = null;
+  try {
+    file = JSON.parse(await run("gh", ["api", `${path4}?ref=${encodeURIComponent(STATE_BRANCH)}`]));
+  } catch {
+  }
+  let note = "";
+  if (file) {
+    const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
+    const next = restartState(goal, s);
+    if ("why" in next) {
+      console.log(`Synthe can't start again. ${next.why}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (next.state !== s) {
+      const content = Buffer.from(`${JSON.stringify(next.state, null, 2)}
+`).toString("base64");
+      await run("gh", ["api", "-X", "PUT", path4, "-f", "message=Synthe: restarted by npx synthe restart", "-f", `branch=${STATE_BRANCH}`, "-f", `sha=${file.sha}`, "-f", `content=${content}`]);
+      note = ` ${next.note}`;
+    }
+  }
+  try {
+    await run("gh", ["workflow", "enable", "synthe.yml"]);
+    await run("gh", ["workflow", "run", "synthe.yml"]);
+  } catch (e) {
+    console.log(`Couldn't start Synthe's workflow: ${e.message.trim().split("\n")[0]}`);
+    console.log("Check you're signed in to the GitHub CLI (`gh auth status`), inside your project's folder.");
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`Started again.${note} The next round begins in a few minutes, then once an hour.`);
+  console.log(`Watch it: https://github.com/${slug}/actions/workflows/synthe.yml`);
 }
 async function tryRound() {
   if (!setUpHere()) return;
@@ -29199,6 +29254,7 @@ Start here, inside your project's folder:
 Then:
   npx synthe status   where it is and what it changed
   npx synthe stop     stop it; nothing more runs or changes
+  npx synthe restart  start it again, after stop or once you've fixed what stopped it
   npx synthe try      run one round on your computer, changing nothing (needs ANTHROPIC_API_KEY)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
 
@@ -29208,6 +29264,7 @@ async function main() {
   if (command === "init") process.exitCode = await init(io, process.cwd()) ? 0 : 1;
   else if (command === "stop") await stop();
   else if (command === "status") await status();
+  else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
   else console.log(HELP);
 }

@@ -45,6 +45,7 @@ The test cases are simulated single messages, not real users or full conversatio
 | `npx synthe init` | Set up this repo and start |
 | `npx synthe status` | Show where it is |
 | `npx synthe stop` | Stop it. Nothing more runs or changes |
+| `npx synthe restart` | Start it again, after `stop` or once you've fixed what stopped it |
 | `npx synthe try` | Run one round on your machine, changing nothing (needs `ANTHROPIC_API_KEY`) |
 | `npx synthe try --noise` | Compare your prompt with itself to see how much the judge varies |
 
