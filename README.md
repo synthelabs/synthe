@@ -1,6 +1,6 @@
 # Synthe
 
-Synthe makes your AI agent's system prompt better while you sleep. Each hour it tries small changes to the prompt, tests them against the current one on simulated customer messages, and keeps a change only when it's clearly better. It either merges the change into your main branch for you, or opens a pull request for you to review. You choose at setup.
+Synthe makes your AI agent's system prompt better while you sleep. Each hour it tries small changes to the prompt, tests them against the current one on simulated user messages, and keeps a change only when it's clearly better. It either merges the change into your main branch for you, or opens a pull request for you to review. You choose at setup.
 
 ```bash
 npx synthe init
@@ -36,7 +36,7 @@ It runs at most 12 rounds and stops by itself sooner when 3 rounds in a row find
 
 ## What it doesn't test
 
-The test cases are simulated single messages, not real customers or full conversations, and your agent's tools aren't run. A better result here is a strong hint, not proof of how real customers will react.
+The test cases are simulated single messages, not real users or full conversations, and your agent's tools aren't run. A better result here is a strong hint, not proof of how real users will react.
 
 ## Commands
 

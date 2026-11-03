@@ -1,6 +1,6 @@
 {
   "name": "synthe",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Your AI agent's system prompt gets better while you sleep: Synthe tests small changes overnight and merges only the clear wins.",
   "keywords": [
     "ai",

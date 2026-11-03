@@ -1,14 +1,16 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { costUsd } from "../core/cost.ts";
 
-export interface Ask { model: string; system?: string; user: string; maxTokens: number; schema?: Record<string, unknown> }
-export interface Reply { text: string | null; costUsd: number | null }
+// allowCutOff: a reply that ran into maxTokens is returned as it is (truncated: true) instead of as null. Only for plain
+// text the caller can judge as it stands; a cut-off JSON reply is broken, so JSON callers never set it.
+export interface Ask { model: string; system?: string; user: string; maxTokens: number; schema?: Record<string, unknown>; allowCutOff?: boolean }
+export interface Reply { text: string | null; costUsd: number | null; truncated?: boolean }
 export interface Model { ask(a: Ask): Promise<Reply> }
 
 export function anthropicModel(apiKey: string): Model {
   const client = new Anthropic({ apiKey, maxRetries: 4 });
   return {
-    async ask({ model, system, user, maxTokens, schema }) {
+    async ask({ model, system, user, maxTokens, schema, allowCutOff }) {
       const res = await client.messages.create({
         model, max_tokens: maxTokens, system,
         messages: [{ role: "user", content: user }],
@@ -18,7 +20,8 @@ export function anthropicModel(apiKey: string): Model {
       });
       const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
       const finished = res.stop_reason === "end_turn" && text.length > 0;
-      return { text: finished ? text : null, costUsd: costUsd(model, res.usage) };
+      const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text.length > 0;
+      return { text: finished || cutOff ? text : null, costUsd: costUsd(model, res.usage), ...(cutOff ? { truncated: true } : {}) };
     },
   };
 }

@@ -7,6 +7,7 @@ import { sha256 } from "./core/safety.ts";
 import { githubRepo } from "./github/repo.ts";
 import { anthropicModel } from "./model/client.ts";
 import { runDecide } from "./loop/decide.ts";
+import { failureOf, type Failure } from "./loop/failure.ts";
 import { explainScores, runScore } from "./loop/score.ts";
 import { explainWrite, runWrite } from "./loop/write.ts";
 
@@ -26,7 +27,7 @@ async function main() {
     const written = load<any>("candidates.json");
     const scored = load<any>("scores.json");
     const costUsd = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
-    const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText) });
+    const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json") });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     return;
   }
@@ -78,4 +79,12 @@ async function main() {
   }
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+main().catch((e) => {
+  console.error(e);
+  // The decide step reads this to tell a busy API (try again next hour) from a key a person has to replace.
+  const step = input("step");
+  if (step === "write" || step === "score") {
+    try { save("error.json", failureOf(step, e)); } catch (saveError) { console.error(saveError); }
+  }
+  process.exit(1);
+});

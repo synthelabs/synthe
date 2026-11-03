@@ -28079,12 +28079,25 @@ function parseGoal(text) {
   };
 }
 function parseScenarios(text) {
-  const rows = text.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
-  for (const s of rows) {
-    if (!s.id || !s.input || !s.expected || s.split !== "train" && s.split !== "holdout") {
-      throw new Error(`scenario ${s.id ?? "?"} needs id, input, expected and split`);
+  const file = ".synthe/scenarios.jsonl";
+  const rows = [];
+  const lineOf = /* @__PURE__ */ new Map();
+  text.split("\n").forEach((l, i) => {
+    if (!l.trim()) return;
+    const line = i + 1;
+    let s;
+    try {
+      s = JSON.parse(l);
+    } catch (e) {
+      throw new Error(`${file} line ${line} isn't valid JSON: ${e.message}`);
     }
-  }
+    const problems = ["id", "input", "expected"].filter((k) => !s?.[k]).map((k) => `"${k}" is missing`);
+    if (s?.split !== "train" && s?.split !== "holdout") problems.push(`"split" must be "train" or "holdout"`);
+    if (problems.length) throw new Error(`${file} line ${line} has a problem: ${problems.join("; ")}.`);
+    if (lineOf.has(s.id)) throw new Error(`${file}: lines ${lineOf.get(s.id)} and ${line} both use the id "${s.id}"; give each test case its own id`);
+    lineOf.set(s.id, line);
+    rows.push(s);
+  });
   if (!rows.some((s) => s.split === "train") || !rows.some((s) => s.split === "holdout")) {
     throw new Error("scenarios need both train and holdout rows");
   }
@@ -28234,7 +28247,17 @@ function literalProblem(text, delimiter2) {
 }
 
 // src/github/repo.ts
+var Refusal = class extends Error {
+  problem;
+  plain;
+  constructor(problem, plain, detail) {
+    super(detail);
+    this.problem = problem;
+    this.plain = plain;
+  }
+};
 var isRateLimited = (status, headers, text) => status === 429 || status === 403 && (headers.get("x-ratelimit-remaining") === "0" || /rate limit/i.test(text));
+var classify = (res, text) => isRateLimited(res.status, res.headers, text) ? "rate_limited" : res.status === 405 ? "blocked" : res.status === 401 ? "token" : res.status === 403 ? "permission" : res.status === 409 ? "moved" : "other";
 var STATE_PATH = "state.json";
 var RETRIES = 2;
 var sleepFor = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -28284,6 +28307,14 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
     if (res.status === 422) return void await json("PATCH", `/git/refs/heads/${encodeURIComponent(branch)}`, { sha, force: true });
     throw new Error(`GitHub POST /git/refs: ${res.status} ${(await res.text()).slice(0, 300)}`);
   };
+  const refuseIssue = async (res) => {
+    const text = await res.text();
+    const detail = `GitHub issue write: ${res.status} ${text.slice(0, 300)}`;
+    const problem = res.status === 410 ? "issues_off" : classify(res, text);
+    if (problem === "issues_off") throw new Refusal(problem, `Issues are turned off in this repo, so Synthe can't write its report; turn on Issues at https://github.com/${slug}/settings`, detail);
+    if (problem === "permission" || problem === "token") throw new Refusal(problem, `GitHub won't let the workflow write the report issue; give the workflow the 'issues: write' permission`, detail);
+    throw new Error(detail);
+  };
   const repo = {
     async defaultBranch() {
       return (await json("GET", "")).default_branch;
@@ -28302,15 +28333,25 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
       return putFile(branch, path4, content, message);
     },
     async openPr({ branch, base, title, body }) {
-      return (await json("POST", "/pulls", { head: branch, base, title, body })).number;
+      const res = await call("POST", "/pulls", { head: branch, base, title, body });
+      if (res.ok) return (await res.json()).number;
+      const text = await res.text();
+      const detail = `GitHub POST /pulls: ${res.status} ${text.slice(0, 300)}`;
+      const problem = classify(res, text);
+      if (problem === "permission") throw new Refusal(problem, `GitHub Actions isn't allowed to open pull requests here; turn on 'Allow GitHub Actions to create and approve pull requests' at https://github.com/${slug}/settings/actions`, detail);
+      if (problem === "token") throw new Refusal(problem, "GitHub refused the workflow's token", detail);
+      throw new Error(detail);
     },
     async mergePr(number, sha) {
       const res = await call("PUT", `/pulls/${number}/merge`, { sha, merge_method: "squash" });
       if (res.ok) return { merged: true };
       const text = await res.text();
-      const why = `${res.status} ${text.slice(0, 200)}`;
-      const problem = isRateLimited(res.status, res.headers, text) ? "rate_limited" : res.status === 405 ? "blocked" : res.status === 401 ? "token" : res.status === 403 ? "permission" : res.status === 409 ? "moved" : "other";
-      return { merged: false, why, problem };
+      if (res.status >= 500) {
+        const back = await call("GET", `/pulls/${number}`);
+        if (back.status >= 500) throw new Error(`GitHub PUT /pulls/${number}/merge: ${res.status}, and couldn't tell whether it merged (${back.status})`);
+        if (back.ok && (await back.json()).merged === true) return { merged: true };
+      }
+      return { merged: false, why: `${res.status} ${text.slice(0, 200)}`, problem: classify(res, text) };
     },
     async deleteBranch(branch) {
       await call("DELETE", `/git/refs/heads/${encodeURIComponent(branch)}`);
@@ -28328,11 +28369,14 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
       return pr ? { number: pr.number, open: pr.state === "open", merged: Boolean(pr.merged_at) } : null;
     },
     async upsertIssue(number, title, body) {
+      let res;
       if (number !== null) {
-        await json("PATCH", `/issues/${number}`, { title, body });
-        return number;
+        res = await call("PATCH", `/issues/${number}`, { title, body });
+        if (res.ok) return number;
+        if (res.status !== 404 && res.status !== 410) return refuseIssue(res);
       }
-      return (await json("POST", "/issues", { title, body })).number;
+      res = await call("POST", "/issues", { title, body });
+      return res.ok ? (await res.json()).number : refuseIssue(res);
     },
     async readState() {
       const text = await repo.readFile(STATE_PATH, STATE_BRANCH);
@@ -28356,7 +28400,7 @@ init_sdk();
 function anthropicModel(apiKey) {
   const client = new Anthropic({ apiKey, maxRetries: 4 });
   return {
-    async ask({ model, system, user, maxTokens, schema }) {
+    async ask({ model, system, user, maxTokens, schema, allowCutOff }) {
       const res = await client.messages.create({
         model,
         max_tokens: maxTokens,
@@ -28368,7 +28412,8 @@ function anthropicModel(apiKey) {
       });
       const text = res.content.flatMap((b) => b.type === "text" ? [b.text] : []).join("");
       const finished = res.stop_reason === "end_turn" && text.length > 0;
-      return { text: finished ? text : null, costUsd: costUsd(model, res.usage) };
+      const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text.length > 0;
+      return { text: finished || cutOff ? text : null, costUsd: costUsd(model, res.usage), ...cutOff ? { truncated: true } : {} };
     }
   };
 }
@@ -28391,6 +28436,18 @@ async function pool(items, limit2, fn) {
     }
   }));
   return results;
+}
+function modelProblem(e) {
+  const err = e;
+  const status = typeof err?.status === "number" ? err.status : null;
+  const text = typeof err?.message === "string" ? err.message : "";
+  if (status === 401) return "Your Synthe key was rejected. Check you copied all of it (it starts with sk-ant-), or ask the Synthe table for a new one.";
+  if (/credit balance is too low/i.test(text)) return "Your Synthe key has no credit left. Ask the Synthe table for a new key.";
+  if (/usage limit|spend limit/i.test(text)) return "Your Synthe key has reached its spending limit. Ask the Synthe table for a new key.";
+  if (status === 403) return "Your Synthe key isn't allowed to use this model. Ask the Synthe table for a new key.";
+  if (status === 429 || status === 529 || status !== null && status >= 500) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
+  if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
+  return null;
 }
 
 // src/core/merge-rule.ts
@@ -28538,13 +28595,13 @@ function notTested(goal) {
   return [
     "**What this did not test**",
     "- Tools or actions your agent takes: only the system prompt was run, with no tools.",
-    "- Conversations: each test case is one customer message, not a back-and-forth.",
-    "- Real customers: the test cases are simulated, and the generated ones aren't reviewed by a person.",
+    "- Conversations: each test case is one message, not a back-and-forth.",
+    "- Real users: the test cases are simulated, and the generated ones aren't reviewed by a person.",
     "- People's judgment: replies were compared by an AI judge.",
     ...goal.policy?.trim() ? [] : ["- Your business rules: synthe.json has no `policy`, so the judge only saw what a good answer looks like for each test case."]
   ];
 }
-var exampleText = (e) => `**For example,** a customer wrote: "${e.input}"
+var exampleText = (e) => `**For example,** someone wrote: "${e.input}"
 > **Before:** ${e.before}
 >
 > **After:** ${e.after}`;
@@ -28552,24 +28609,34 @@ var money = (state) => state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}`
 var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")}, one an hour`;
 var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
+var badKey = (r) => r?.outcome === "failed" && r.failure === "key";
+var busy = (r) => r?.outcome === "failed" && r.failure === "busy";
 function headline(goal, state) {
   const merged = state.rounds.filter((r) => r.outcome === "merged").length;
   const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;
   if (state.proposal) {
     return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
   }
-  if (!state.stopped && missing(state.rounds.at(-1))) {
-    return { title: "Synthe needs you to fix something", summary: `${state.rounds.at(-1).plain} ${spent}` };
+  const last = state.rounds.at(-1);
+  if (!state.stopped && (missing(last) || badKey(last))) {
+    return { title: "Synthe needs you to fix something", summary: `${last.plain} ${spent}` };
   }
   if (!state.stopped) {
-    return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `Synthe is still running: ${left(goal, state)}. This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}. This page updates after each round. ${spent}` };
+    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tries again next hour." : "";
+    return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
+  const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
-    return { title: "Stopped: the last rounds didn't finish", summary: missing(recent.at(-1)) ? recent.at(-1).plain : "Check that your Synthe key still has credit, and look at the latest run in the Actions tab for the error." };
+    const end = recent.at(-1);
+    if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain };
+    if (badKey(end)) return { title: "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
+    if (busy(end) && isFinished(state.stopped)) {
+      return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
+    }
+    if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, get a new key from the Synthe table." };
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
-  const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
   return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
 }
 function nextSteps(goal, state) {
@@ -28577,15 +28644,19 @@ function nextSteps(goal, state) {
   const steps = [];
   if (state.proposal) steps.push(`Review #${state.proposal.pr}: merge it to keep the change, or close it to decline.`);
   if (merged) steps.push("Pull the latest changes before you edit your prompt, so Synthe's changes aren't overwritten.");
+  const last = state.rounds.at(-1);
+  if (state.stopped && badKey(last)) steps.push(`${last.plain} Do this before you start Synthe again.`);
   if (state.stopped && /no winner$/.test(state.stopped)) {
     steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push. It starts again at the next hourly check${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. One line per case, for example:
   \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`
   \`expected\` describes a good answer in a sentence. \`split\` is \`train\` (Synthe learns from it) or \`holdout\` (kept hidden to check its changes).`);
   }
-  if (!state.stopped && !state.proposal && missing(state.rounds.at(-1))) {
-    steps.push(`${state.rounds.at(-1).plain} Synthe tries again every hour, without spending anything until it finds the prompt.`);
+  if (!state.stopped && !state.proposal && missing(last)) {
+    steps.push(`${last.plain} Synthe tries again every hour, without spending anything until it finds the prompt.`);
+  } else if (!state.stopped && !state.proposal && badKey(last)) {
+    steps.push(`${last.plain} Synthe tries again at the next hourly run.`);
   } else if (!state.stopped && !state.proposal) {
-    steps.push("Nothing to do. Synthe runs every hour and stops by itself.");
+    steps.push(busy(last) ? "Nothing to do. Anthropic's API was busy during the last round, so Synthe tries again next hour, and stops by itself." : "Nothing to do. Synthe runs every hour and stops by itself.");
     steps.push("To keep your agent unchanged, for example before a demo, run `npx synthe stop`.");
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");
@@ -28783,6 +28854,7 @@ function explainWrite(w) {
 
 // src/loop/score.ts
 var CONCURRENCY = 6;
+var AGENT_MAX_TOKENS = 2e3;
 var REPLY_KEPT = 800;
 var WIN = 100;
 var TIE = 50;
@@ -28810,13 +28882,22 @@ ${goal.policy.trim().slice(0, 4e3)}` : "";
 var squash = (t) => t.replace(/\s+/g, " ").trim().toLowerCase();
 function scorer(goal, model, random = Math.random) {
   const costs = [];
+  const cut = /* @__PURE__ */ new Set();
+  let cutOff = 0;
   const reply = async (prompt, s) => {
-    const r = await model.ask({ model: goal.models.runner, system: prompt, user: s.input, maxTokens: 1e3 });
+    const r = await model.ask({ model: goal.models.runner, system: prompt, user: s.input, maxTokens: AGENT_MAX_TOKENS, allowCutOff: true });
     costs.push(r.costUsd);
+    if (r.truncated && r.text !== null) {
+      cut.add(r.text);
+      cutOff++;
+    }
     return r.text;
   };
   const duel = async (s, first, current, challenger) => {
     const [a, b] = first ? [challenger, current] : [current, challenger];
+    const cutNote = cut.has(a) || cut.has(b) ? `
+A reply may stop mid-sentence because it hit the agent's length limit. Judge what it says up to that point, and don't mark it down just for being cut off.
+` : "";
     const judged = await askJson(model, {
       model: goal.models.judge,
       maxTokens: 500,
@@ -28827,7 +28908,7 @@ Goal: ${goal.objective}
 Guardrails: ${goal.guardrails.join("; ") || "none"}${policyText(goal)}
 Situation: ${s.input}
 A good response: ${s.expected}
-
+${cutNote}
 <reply_a>
 ${a}
 </reply_a>
@@ -28881,7 +28962,7 @@ Does this reply clearly break one of the guardrails? The business policy and the
     if (!v || typeof v.breaks !== "boolean") return null;
     return v.breaks && typeof v.quote === "string" && squash(v.quote).length >= 8 && squash(text).includes(squash(v.quote));
   };
-  return { costs, challenge, repliesFor, confirmBreak };
+  return { costs, challenge, repliesFor, confirmBreak, cutOffCount: () => cutOff };
 }
 function currentRows(set, replies, duels) {
   return set.map((s, i) => {
@@ -28892,7 +28973,7 @@ function currentRows(set, replies, duels) {
   });
 }
 async function runScore(goal, baseline, candidates, scenarios, model, prior = null, random = Math.random) {
-  const { costs, challenge, repliesFor, confirmBreak } = scorer(goal, model, random);
+  const { costs, challenge, repliesFor, confirmBreak, cutOffCount } = scorer(goal, model, random);
   const train = scenarios.filter((s) => s.split === "train");
   const holdout = scenarios.filter((s) => s.split === "holdout");
   const safe = candidates.filter((c) => candidateProblem(c.text, goal.prompt) === null && c.text.trim() !== baseline.trim());
@@ -28955,6 +29036,7 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
     });
   }
   for (const c of scores.candidates) if (c.holdout) c.holdout = c.holdout.map((r) => ({ ...r, reply: void 0 }));
+  if (cutOffCount() > 0) scores.cutOff = cutOffCount();
   return { scores, costUsd: sumCosts(costs), calls: costs.length, checks };
 }
 function explainScores(scores, scenarios, samples = 3) {
@@ -28973,6 +29055,7 @@ function explainScores(scores, scenarios, samples = 3) {
       lines.push(`  lost ${r.id}: ${clip(input2.get(r.id), 120)}`, `    current:   ${clip(current.get(r.id)?.reply)}`, `    candidate: ${clip(r.reply)}`);
     }
   }
+  if (scores.cutOff) lines.push(`${scores.cutOff} agent ${scores.cutOff === 1 ? "reply" : "replies"} hit the ${AGENT_MAX_TOKENS}-token limit and ${scores.cutOff === 1 ? "was" : "were"} judged as cut off; if this is common, the agent's prompt makes answers long`);
   if (scores.prior) lines.push(`replaced prompt vs current: ${tally2(scores.prior)}`);
   return lines;
 }
@@ -28988,7 +29071,8 @@ function pickExample(scores, candidateId, scenarioText) {
   } catch {
     return void 0;
   }
-  const won = scores.candidates.find((c) => c.id === candidateId)?.train.find((r) => r.score === WIN && typeof r.reply === "string");
+  const wins = scores.candidates.find((c) => c.id === candidateId)?.train.filter((r) => r.score === WIN && typeof r.reply === "string") ?? [];
+  const won = wins.find((r) => scores.baselineTrain.find((b) => b.id === r.id)?.violation === true) ?? wins[0];
   const before = won && scores.baselineTrain.find((r) => r.id === won.id)?.reply;
   const scenario = won && rows.find((r) => r.id === won.id && r.split === "train");
   return won && before && scenario ? { input: clipText(scenario.input, 200), before: clipText(before), after: clipText(won.reply) } : void 0;
@@ -29010,6 +29094,17 @@ var NEEDS_A_PERSON = {
   permission: "GitHub Actions isn't allowed to merge here; turn on 'Allow GitHub Actions to create and approve pull requests' in the repo's Actions settings",
   token: "GitHub refused the workflow's token"
 };
+async function writeReport(goal, repo, state) {
+  try {
+    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+  } catch (e) {
+    if (!(e instanceof Refusal)) throw e;
+    const note = `couldn't write the report issue: ${e.plain}`;
+    const last = state.rounds.at(-1);
+    if (last && !last.reasons.includes(note)) last.reasons.push(note);
+    console.log(`::warning::${note}`);
+  }
+}
 async function settle(goal, repo, state, merged) {
   const p = state.proposal;
   const record = state.rounds.find((r) => r.pr === p.pr && r.outcome === "proposed");
@@ -29069,14 +29164,14 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
   if (state.proposal) {
     const pr = await repo.findPr(state.proposal.branch);
     if (pr?.open) {
-      state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+      await writeReport(goal, repo, state);
       await repo.writeState(state);
       return null;
     }
     await settle(goal, repo, state, Boolean(pr?.merged));
     if (!input2.scores) {
       state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
-      state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+      await writeReport(goal, repo, state);
       await repo.writeState(state);
       return null;
     }
@@ -29089,7 +29184,7 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
   if (stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd)) {
     if (recovered) {
       state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
-      state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+      await writeReport(goal, repo, state);
       await repo.writeState(state);
     }
     return null;
@@ -29132,7 +29227,7 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
       `**Why:** ${why.plain}`,
       ...why.example ? [exampleText(why.example)] : [],
       proposed ? "After merging, pull before you edit the prompt yourself." : "**Before you edit the prompt yourself, pull the latest changes,** so this change isn't overwritten. To undo it, click **Revert** on this pull request.",
-      "Tested on simulated customers only. It can't tell you how real customers will react.",
+      "Tested on simulated messages only. It can't tell you how real users will react.",
       `<details><summary>Fingerprints of what was tested</summary>
 
 ${receipt}
@@ -29147,7 +29242,17 @@ ${notTested(goal).slice(1).join("\n")}
 </details>`
     ].join("\n\n");
     const body = bodyFor(Boolean(landing.propose));
-    const pr = await repo.openPr({ branch, base, title, body });
+    let pr;
+    try {
+      pr = await repo.openPr({ branch, base, title, body });
+    } catch (e) {
+      if (!(e instanceof Refusal)) throw e;
+      await repo.deleteBranch(branch);
+      record.reasons.push(`couldn't open a pull request: ${e.message}`);
+      record.plain = "Synthe found a better prompt but GitHub wouldn't let it open a pull request, so nothing changed.";
+      state.stopped = e.plain;
+      return null;
+    }
     if (landing.propose) {
       state.proposal = { ...landing, pr, round };
       return { pr, proposed: true };
@@ -29179,8 +29284,20 @@ ${notTested(goal).slice(1).join("\n")}
     stall = false;
   } else if (!scores || !input2.candidates) {
     record.outcome = "failed";
-    record.reasons.push("the round did not finish; check the Actions log and the API key");
-    record.plain = "This round didn't finish. If it keeps happening, check the Actions log and that your key still has credit.";
+    const error = input2.error;
+    if (error) record.failure = error.kind;
+    if (error?.kind === "busy") {
+      record.reasons.push(`Anthropic's API was busy during the ${error.step} step: ${error.message}`);
+      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe will try again next hour.";
+      stall = false;
+    } else if (error?.kind === "key") {
+      record.reasons.push(`the ${error.step} step's key was refused: ${error.message}`);
+      const cause = error.message.split(/(?<=\.) /)[0];
+      record.plain = `This round didn't finish. ${cause} Get a new key from the Synthe table, then run \`gh secret set SYNTHE_ANTHROPIC_KEY\` in your repo and paste the key when it asks.`;
+    } else {
+      record.reasons.push("the round did not finish; check the Actions log and the API key");
+      record.plain = "This round didn't finish. If it keeps happening, check the Actions log and that your key still has credit.";
+    }
   } else if (input2.costUsd === null) {
     record.reasons.push("cost unknown, so nothing merges");
     state.spendUnknown = true;
@@ -29268,9 +29385,17 @@ ${goal.policy ?? ""}`);
   state.pending = null;
   state.rounds.push(record);
   state.stopped = state.stopped ?? stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
-  state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+  await writeReport(goal, repo, state);
   await repo.writeState(state);
   return record;
+}
+
+// src/loop/failure.ts
+function failureOf(step, e) {
+  const plain = modelProblem(e);
+  if (plain !== null) return { step, kind: /\bkey\b/i.test(plain) ? "key" : "busy", message: plain };
+  const raw = e instanceof Error ? e.message : String(e);
+  return { step, kind: "other", message: raw.trim().split("\n")[0].slice(0, 300) };
 }
 
 // src/action.ts
@@ -29294,7 +29419,7 @@ async function main() {
     const written = load("candidates.json");
     const scored = load("scores.json");
     const costUsd2 = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
-    const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText) });
+    const record = await runDecide(parseGoal(goalText), repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load("error.json") });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     return;
   }
@@ -29339,5 +29464,13 @@ async function main() {
 }
 main().catch((e) => {
   console.error(e);
+  const step = input("step");
+  if (step === "write" || step === "score") {
+    try {
+      save("error.json", failureOf(step, e));
+    } catch (saveError) {
+      console.error(saveError);
+    }
+  }
   process.exit(1);
 });

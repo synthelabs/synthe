@@ -1,6 +1,6 @@
 // Breaks each safety rule on purpose and checks that a test fails. Restores every file, even if stopped.
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 
 const RULE = "src/core/merge-rule.ts";
 const DECIDE = "src/loop/decide.ts";
@@ -8,6 +8,9 @@ const SCORE = "src/loop/score.ts";
 const WRITE = "src/loop/write.ts";
 const STATE = "src/core/state.ts";
 const GITHUB = "src/github/repo.ts";
+
+// Every test file, so a new one is never left out of the check.
+const TESTS = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
 
 const mutations = [
   ["no scenario wins needed", RULE, "if (split.p > max_p) return", "if (false) return"],
@@ -41,12 +44,12 @@ const mutations = [
   ["spend saved only at the end", DECIDE, "  state.pending = { round, at: record.at, costUsd: input.costUsd };\n  await repo.writeState(state);", "  state.pending = { round, at: record.at, costUsd: input.costUsd };"],
   ["a merge recovered after a crash is forgotten", DECIDE, "state.lastMerge = { pr: pr.number, priorPrompt: p.land.priorPrompt, mergedHash: sha256(p.land.text), reverted: false };", ""],
   ["a rate limit stops the run", DECIDE, 'token: "GitHub refused the workflow\'s token",', 'token: "GitHub refused the workflow\'s token", rate_limited: "rate limited",'],
-  ["every 403 means no permission", GITHUB, 'const problem: MergeProblem = isRateLimited(res.status, res.headers, text) ? "rate_limited"', 'const problem: MergeProblem = false ? "rate_limited"'],
+  ["every 403 means no permission", GITHUB, "isRateLimited(res.status, res.headers, text) ? \"rate_limited\"", "false ? \"rate_limited\""],
   ["a quote not in the reply confirms a break", SCORE, " && squash(text).includes(squash(v.quote))", ""],
   ["a failed re-check lets the merge through", SCORE, "if (verdict === false) {", "if (verdict !== true) {"],
   ["propose mode merges anyway", DECIDE, "    if (landing.propose) {", "    if (false) {"],
   ["a merge blocked by review closes the pull request", DECIDE, 'if (merged.problem === "blocked") {', "if (false) {"],
-  ["rounds run while a proposal waits", DECIDE, "    if (pr?.open) {\n      state.issue", "    if (false) {\n      state.issue"],
+  ["rounds run while a proposal waits", DECIDE, "    if (pr?.open) {\n      await writeReport", "    if (false) {\n      await writeReport"],
   ["a proposal merged by a person isn't tracked", DECIDE, "      state.lastMerge = { pr: p.pr, priorPrompt: p.priorPrompt, mergedHash: sha256(live), reverted: false };", ""],
   ["judge always sees the challenger first", SCORE, "return duel(s, (set.indexOf(s) % 2 === 0) !== flip, current, mine);", "return duel(s, true, current, mine);"],
   ["a break is excused without confirming the current prompt's", SCORE, "      if (cur?.violation === true) {\n", "      if (cur?.violation === true) { checks.excusedConfirmed++; return; }\n      if (false) {\n"],
@@ -61,6 +64,14 @@ const mutations = [
   ["identical candidate scored", SCORE, " && c.text.trim() !== baseline.trim()", ""],
   ["candidates trained on held-back scenarios", SCORE, "const duels = await challenge(c.id, c.text, train, trainReplies);", "const duels = await challenge(c.id, c.text, scenarios, new Map([...trainReplies, ...(await holdReplies())]));"],
   ["writer sees held-back scenarios", WRITE, 'const train = scenarios.filter((s) => s.split === "train");', "const train = scenarios;"],
+  ["a busy API round counts as a stall", DECIDE, "Synthe will try again next hour.\";\n      stall = false;", "Synthe will try again next hour.\";"],
+  ["a key failure is read as a busy API", "src/loop/failure.ts", "kind: /\\bkey\\b/i.test(plain) ? \"key\" : \"busy\"", "kind: \"busy\""],
+  ["every team runs at the same minute", "src/cli/init.ts", ".replaceAll(\"__MINUTE__\", String(minute))", ".replaceAll(\"__MINUTE__\", \"23\")"],
+  ["a refused pull request keeps the run going", DECIDE, "state.stopped = e.plain;", ""],
+  ["issues being off crashes decide", DECIDE, "if (!(e instanceof Refusal)) throw e;\n    const note", "throw e;\n    const note"],
+  ["an unclear merge answer is never read back", GITHUB, "if (back.ok && (await back.json()).merged === true) return { merged: true };", ""],
+  ["a cut-off agent reply is unknown", "src/model/client.ts", "const cutOff = allowCutOff === true && res.stop_reason === \"max_tokens\" && text.length > 0;", "const cutOff = false;"],
+  ["duplicate scenario ids allowed", "src/core/goal.ts", "if (lineOf.has(s.id)) throw", "if (false) throw"],
 ];
 
 let survived = 0;
@@ -71,7 +82,7 @@ for (const [name, file, from, to] of mutations) {
   process.once("SIGINT", restore);
   try {
     writeFileSync(file, original.replace(from, to));
-    const { status } = spawnSync("node", ["--test", "test/core.test.ts", "test/loop.test.ts", "test/github.test.ts", "test/init.test.ts"], { stdio: "ignore", timeout: 60000 });
+    const { status } = spawnSync("node", ["--test", ...TESTS], { stdio: "ignore", timeout: 60000 });
     if (status === 0) survived++;
     console.log(`${status === 0 ? "SURVIVED " : "killed   "} ${name}`);
   } finally {

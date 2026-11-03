@@ -2,7 +2,7 @@ import type { Goal, Scenario } from "../src/core/goal.ts";
 import { DEFAULTS } from "../src/core/goal.ts";
 import type { ScoreRow, RoundScores } from "../src/core/merge-rule.ts";
 import { newState, type State } from "../src/core/state.ts";
-import type { MergeResult, Repo } from "../src/github/repo.ts";
+import type { MergeResult, Refusal, Repo } from "../src/github/repo.ts";
 import { sha256 } from "../src/core/safety.ts";
 
 export const goal = (over: Partial<Goal> = {}): Goal => ({
@@ -31,6 +31,7 @@ export class MemoryRepo implements Repo {
   state: State = newState();
   prs: { number: number; title: string; body: string; closed: boolean; branch: string; merged: boolean }[] = [];
   crashOn: "openPr" | "mergePr" | "upsertIssue" | null = null; // throws once at that step, like a job dying
+  refuse: { openPr?: Refusal; upsertIssue?: Refusal } = {}; // refused on every call, like a repo setting that stays off
   merges: { pr: number; sha: string }[] = [];
   commits: { path: string; content: string }[] = [];
   issue = "";
@@ -48,6 +49,7 @@ export class MemoryRepo implements Repo {
   private crash(step: string) { if (this.crashOn === step) { this.crashOn = null; throw new Error(`crashed at ${step}`); } }
   async openPr(a: { branch: string; title: string; body: string }) {
     this.crash("openPr");
+    if (this.refuse.openPr) throw this.refuse.openPr;
     this.prs.push({ number: this.prs.length + 1, title: a.title, body: a.body, closed: false, branch: a.branch, merged: false });
     return this.prs.length;
   }
@@ -63,7 +65,7 @@ export class MemoryRepo implements Repo {
   async deleteBranch(b: string) { this.branches.delete(b); }
   async closePr(n: number) { this.prs[n - 1].closed = true; }
   async updatePrBody(n: number, body: string) { this.prs[n - 1].body = body; }
-  async upsertIssue(n: number | null, _t: string, body: string) { this.crash("upsertIssue"); this.issue = body; return n ?? 99; }
+  async upsertIssue(n: number | null, _t: string, body: string) { this.crash("upsertIssue"); if (this.refuse.upsertIssue) throw this.refuse.upsertIssue; this.issue = body; return n ?? 99; }
   async findPr(branch: string) {
     const pr = [...this.prs].reverse().find((p) => p.branch === branch);
     return pr ? { number: pr.number, open: !pr.closed && !pr.merged, merged: pr.merged } : null;
