@@ -6,6 +6,8 @@ export interface RoundRecord {
   // For the team, in plain words: what the round did, what changed if anything, and what happened to each idea.
   plain?: string; changed?: string; tried?: { summary: string; outcome: string }[];
   example?: { input: string; before: string; after: string }; title?: string; unverified?: string[];
+  // Why a failed round's write or score step failed, when it said; the report's advice depends on it.
+  failure?: "busy" | "key" | "other";
 }
 
 export interface Landing { branch: string; kind: "merge" | "revert"; text: string; priorPrompt: string; propose?: boolean }
