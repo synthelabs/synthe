@@ -3,13 +3,14 @@ import { sumCosts } from "../core/cost.ts";
 import { pool, type Model } from "../model/client.ts";
 import { AGENT_MAX_TOKENS, askChecks } from "../loop/score.ts";
 
-const CASES = 12; // test cases answered and marked twice
+const CASES = 20; // test cases answered and marked twice: all the training ones, so every check comes up enough
+const MIN_APPLIED = 4; // fewer replies than this where a check applies is too little to judge it
 const QUESTIONS = 8; // replies the team is asked about
 const STEADY = 0.85; // below this, the AI marks the same reply differently too often
 const AGREE = 0.75; // below this, the AI doesn't mark the way the team means
 
 export interface CalibrateIo { say(text: string): void; ask(question: string): Promise<string> }
-export interface CheckCalibration { check: string; applied: number; steady: number; asked: number; agreed: number; verdict: "trustworthy" | "unsteady" | "mismatch" | "unused" }
+export interface CheckCalibration { check: string; applied: number; steady: number; asked: number; agreed: number; verdict: "trustworthy" | "unsteady" | "mismatch" | "unused" | "thin" | "unasked" }
 
 const clip = (t: string, n: number) => (t.length > n ? `${t.slice(0, n).trimEnd()}...` : t).replace(/\s+/g, " ").trim();
 
@@ -23,7 +24,7 @@ export async function calibrate(io: CalibrateIo, goal: Goal, prompt: string, sce
   }
   // Training cases only: the held-back ones stay unseen, even by this.
   const cases = scenarios.filter((s) => s.split === "train").slice(0, CASES);
-  io.say(`Calibrate checks whether Synthe's marking of your ${checks.length} checks can be trusted. It answers ${cases.length} of your test cases with your current prompt, marks each reply twice, then asks you about up to ${QUESTIONS} of them. About 5 minutes, and a few cents.\n`);
+  io.say(`Calibrate checks whether Synthe's marking of your ${checks.length} checks can be trusted. It answers ${cases.length} of your test cases with your current prompt, marks each reply twice, then asks you about up to ${QUESTIONS} of them. A few minutes, and about a cent.\n`);
 
   const costs: (number | null)[] = [];
   const replies = await pool(cases, 6, async (s) => {
@@ -82,15 +83,23 @@ export async function calibrate(io: CalibrateIo, goal: Goal, prompt: string, sce
     if (r.applied === 0) {
       r.verdict = "unused";
       line = "Never came up in your test cases, so it can't move the number. Add test cases where it matters, or drop it.";
+    } else if (r.applied < MIN_APPLIED) {
+      // Live, checks came up in only 2 or 3 cases, and "steady 2 of 2" proves little.
+      r.verdict = "thin";
+      line = `Only came up in ${r.applied} of your test cases, too few to tell. Add test cases where it matters to .synthe/scenarios.jsonl.`;
     } else if (steadyRate < STEADY) {
       r.verdict = "unsteady";
       line = `Unsteady: the AI marked the same reply differently ${r.applied - r.steady} of ${r.applied} times. Reword it to say exactly what a passing reply contains.`;
     } else if (r.asked > 0 && r.agreed / r.asked < AGREE) {
       r.verdict = "mismatch";
       line = `Doesn't match what you mean: you and the AI disagreed on ${r.asked - r.agreed} of ${r.asked} replies. Reword it to say exactly what you'd look for.`;
+    } else if (r.asked === 0) {
+      // Steady isn't the same as right: without the team's answers, only steadiness is known.
+      r.verdict = "unasked";
+      line = `Steady (marked the same way ${r.steady} of ${r.applied} times), but not compared with what you mean: answer its questions next time.`;
     } else {
       r.verdict = "trustworthy";
-      line = `Trustworthy: marked the same way ${r.steady} of ${r.applied} times${r.asked ? `, and agreed with you ${r.agreed} of ${r.asked} times` : ", though you weren't asked about it"}.`;
+      line = `Trustworthy: marked the same way ${r.steady} of ${r.applied} times, and agreed with you ${r.agreed} of ${r.asked} times.`;
     }
     io.say(`  ${c + 1}. ${clip(r.check, 90)}\n     ${line}`);
   }
@@ -99,6 +108,6 @@ export async function calibrate(io: CalibrateIo, goal: Goal, prompt: string, sce
     ? `\n${fix} of ${checks.length} checks need attention. Edit them in synthe.json, push, then run npx synthe calibrate again.`
     : `\nAll ${checks.length} checks can be trusted, so the number in Synthe's report means what you think it does.`);
   const costUsd = sumCosts(costs);
-  io.say(`Cost: ${costUsd === null ? "unknown" : `$${costUsd.toFixed(2)}`}`);
+  io.say(`Cost: ${costUsd === null ? "unknown" : costUsd < 0.01 ? "under $0.01" : `$${costUsd.toFixed(2)}`}`);
   return { results, costUsd };
 }

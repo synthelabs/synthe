@@ -81,6 +81,8 @@ const mutations = [
   ["calibrate ignores unsteady marking", "src/cli/calibrate.ts", "} else if (steadyRate < STEADY) {", "} else if (false) {"],
   ["calibrate ignores the team's answers", "src/cli/calibrate.ts", "} else if (r.asked > 0 && r.agreed / r.asked < AGREE) {", "} else if (false) {"],
   ["calibrate shows held-back cases", "src/cli/calibrate.ts", "const cases = scenarios.filter((s) => s.split === \"train\").slice(0, CASES);", "const cases = scenarios.slice(0, CASES);"],
+  ["calibrate trusts too little evidence", "src/cli/calibrate.ts", "} else if (r.applied < MIN_APPLIED) {", "} else if (false) {"],
+  ["calibrate trusts checks nobody answered", "src/cli/calibrate.ts", "} else if (r.asked === 0) {", "} else if (false) {"],
 ];
 
 // Every mutated file as it was before the run. Restoring each mutation from its own copy isn't enough on its own: a
