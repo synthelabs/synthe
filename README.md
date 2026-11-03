@@ -6,7 +6,7 @@ Synthe makes your AI agent's system prompt better while you sleep. It tries smal
 npx synthe init
 ```
 
-Setup reads your README and the code around your prompt, asks what your agent should get better at (and, optionally, a few real messages users send it), proposes checks that measure a good reply for you to confirm, shows you a few of your agent's real replies so you can fix any check that doesn't mean what you mean, asks whether to merge changes automatically or have you review them, and asks for your Synthe key. In the morning, open the **Synthe: overnight prompt report** issue in your repo. It says what changed, why, and how to undo it.
+Setup reads your README and the code around your prompt, asks what your agent should get better at (and, optionally, a few real messages users send it), proposes checks that measure a good reply for you to confirm, shows you a few of your agent's real replies so you can fix any check that doesn't mean what you mean, asks whether to merge changes automatically or have you review them, and asks for your Synthe key. When the run finishes, open the **Synthe: prompt report** issue in your repo. It says what changed, why, and how to undo it.
 
 ## Before you start
 

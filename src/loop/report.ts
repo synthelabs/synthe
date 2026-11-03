@@ -1,7 +1,7 @@
 import type { Goal } from "../core/goal.ts";
 import { isFinished, type RoundRecord, type State } from "../core/state.ts";
 
-export const ISSUE_TITLE = "Synthe: overnight prompt report";
+export const ISSUE_TITLE = "Synthe: prompt report";
 
 // What a round can't tell you, said every time, so an offline win is never mistaken for proof of business results.
 export function notTested(goal: Goal): string[] {
