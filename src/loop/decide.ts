@@ -20,7 +20,9 @@ function pickExample(scores: RoundScores, candidateId: string, scenarioText: str
   if (!scenarioText) return undefined;
   let rows: { id: string; input: string; split: string }[] = [];
   try { rows = parseScenarios(scenarioText); } catch { return undefined; }
-  const won = scores.candidates.find((c) => c.id === candidateId)?.train.find((r) => r.score === WIN && typeof r.reply === "string");
+  const wins = scores.candidates.find((c) => c.id === candidateId)?.train.filter((r) => r.score === WIN && typeof r.reply === "string") ?? [];
+  // A case where the old reply broke a rule shows most clearly what the change fixes.
+  const won = wins.find((r) => scores.baselineTrain.find((b) => b.id === r.id)?.violation === true) ?? wins[0];
   const before = won && scores.baselineTrain.find((r) => r.id === won.id)?.reply;
   const scenario = won && rows.find((r) => r.id === won.id && r.split === "train");
   return won && before && scenario ? { input: clipText(scenario.input, 200), before: clipText(before), after: clipText(won.reply!) } : undefined;
@@ -199,7 +201,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       proposed
         ? "After merging, pull before you edit the prompt yourself."
         : "**Before you edit the prompt yourself, pull the latest changes,** so this change isn't overwritten. To undo it, click **Revert** on this pull request.",
-      "Tested on simulated customers only. It can't tell you how real customers will react.",
+      "Tested on simulated messages only. It can't tell you how real users will react.",
       `<details><summary>Fingerprints of what was tested</summary>\n\n${receipt}\n\nThe judge's numbers: ${why.technical}\n\n</details>`,
       `<details><summary>What this did not test</summary>\n\n${notTested(goal).slice(1).join("\n")}\n\n</details>`,
     ].join("\n\n");

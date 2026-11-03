@@ -28538,13 +28538,13 @@ function notTested(goal) {
   return [
     "**What this did not test**",
     "- Tools or actions your agent takes: only the system prompt was run, with no tools.",
-    "- Conversations: each test case is one customer message, not a back-and-forth.",
-    "- Real customers: the test cases are simulated, and the generated ones aren't reviewed by a person.",
+    "- Conversations: each test case is one message, not a back-and-forth.",
+    "- Real users: the test cases are simulated, and the generated ones aren't reviewed by a person.",
     "- People's judgment: replies were compared by an AI judge.",
     ...goal.policy?.trim() ? [] : ["- Your business rules: synthe.json has no `policy`, so the judge only saw what a good answer looks like for each test case."]
   ];
 }
-var exampleText = (e) => `**For example,** a customer wrote: "${e.input}"
+var exampleText = (e) => `**For example,** someone wrote: "${e.input}"
 > **Before:** ${e.before}
 >
 > **After:** ${e.after}`;
@@ -28988,7 +28988,8 @@ function pickExample(scores, candidateId, scenarioText) {
   } catch {
     return void 0;
   }
-  const won = scores.candidates.find((c) => c.id === candidateId)?.train.find((r) => r.score === WIN && typeof r.reply === "string");
+  const wins = scores.candidates.find((c) => c.id === candidateId)?.train.filter((r) => r.score === WIN && typeof r.reply === "string") ?? [];
+  const won = wins.find((r) => scores.baselineTrain.find((b) => b.id === r.id)?.violation === true) ?? wins[0];
   const before = won && scores.baselineTrain.find((r) => r.id === won.id)?.reply;
   const scenario = won && rows.find((r) => r.id === won.id && r.split === "train");
   return won && before && scenario ? { input: clipText(scenario.input, 200), before: clipText(before), after: clipText(won.reply) } : void 0;
@@ -29132,7 +29133,7 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
       `**Why:** ${why.plain}`,
       ...why.example ? [exampleText(why.example)] : [],
       proposed ? "After merging, pull before you edit the prompt yourself." : "**Before you edit the prompt yourself, pull the latest changes,** so this change isn't overwritten. To undo it, click **Revert** on this pull request.",
-      "Tested on simulated customers only. It can't tell you how real customers will react.",
+      "Tested on simulated messages only. It can't tell you how real users will react.",
       `<details><summary>Fingerprints of what was tested</summary>
 
 ${receipt}

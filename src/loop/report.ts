@@ -8,15 +8,15 @@ export function notTested(goal: Goal): string[] {
   return [
     "**What this did not test**",
     "- Tools or actions your agent takes: only the system prompt was run, with no tools.",
-    "- Conversations: each test case is one customer message, not a back-and-forth.",
-    "- Real customers: the test cases are simulated, and the generated ones aren't reviewed by a person.",
+    "- Conversations: each test case is one message, not a back-and-forth.",
+    "- Real users: the test cases are simulated, and the generated ones aren't reviewed by a person.",
     "- People's judgment: replies were compared by an AI judge.",
     ...(goal.policy?.trim() ? [] : ["- Your business rules: synthe.json has no `policy`, so the judge only saw what a good answer looks like for each test case."]),
   ];
 }
 
 export const exampleText = (e: { input: string; before: string; after: string }) =>
-  `**For example,** a customer wrote: "${e.input}"\n> **Before:** ${e.before}\n>\n> **After:** ${e.after}`;
+  `**For example,** someone wrote: "${e.input}"\n> **Before:** ${e.before}\n>\n> **After:** ${e.after}`;
 
 const money = (state: State) => (state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}` : `$${state.spendUsd.toFixed(2)}`);
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;

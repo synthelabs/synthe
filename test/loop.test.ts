@@ -766,8 +766,8 @@ test("the pull request shows the exact lines changed and one real example the ch
   await runDecide(goal(), repo, { candidates: cands, scores, costUsd: 0.1 });
   const body = repo.prs[0].body;
   assert.match(body, /```diff\n- Base\n\+ Steady\n```/);
-  assert.match(body, /\*\*For example,\*\* a customer wrote: "q-\w"\n> \*\*Before:\*\* Base answers q-\w\n>\n> \*\*After:\*\* Steady answers q-\w/);
-  assert.match(repo.issue, /a customer wrote: "q-\w"/);
+  assert.match(body, /\*\*For example,\*\* someone wrote: "q-\w"\n> \*\*Before:\*\* Base answers q-\w\n>\n> \*\*After:\*\* Steady answers q-\w/);
+  assert.match(repo.issue, /someone wrote: "q-\w"/);
   assert.ok(!/q-h/.test(body)); // never a hidden test case
 });
 
@@ -826,4 +826,16 @@ test("a prompt Synthe can't find is explained in the report, costs nothing and d
   assert.match(repo.issue, /## Synthe needs you to fix something/);
   assert.match(repo.issue, /can't tell which string in src\/agent\.ts is your prompt\. Set prompt\.initial in synthe\.json/);
   assert.doesNotMatch(repo.issue, /credit|Nothing to do/);
+});
+
+test("the example in the pull request is a case where the old prompt broke a rule, when there is one", async () => {
+  const s = scored("Old prompt.", 50, 50, 100, 100);
+  s.baselineTrain = s.baselineTrain.map((r) => ({ ...r, reply: `old reply ${r.id}`, violation: r.id === "s7" }));
+  s.candidates[0].train = s.candidates[0].train.map((r) => ({ ...r, reply: `new reply ${r.id}` }));
+  const repo = new MemoryRepo("Old prompt.");
+  const cases = [...Array(20)].map((_, i) => ({ id: `s${i}`, input: `question ${i}`, expected: "good", split: "train" }))
+    .concat([...Array(10)].map((_, i) => ({ id: `h${i}`, input: `hidden ${i}`, expected: "good", split: "holdout" })));
+  repo.files.set("s.jsonl", cases.map((x) => JSON.stringify(x)).join("\n"));
+  await runDecide(goal(), repo, { candidates: [{ id: "c1", text: "New prompt.", summary: "Fixes it" }], scores: s, costUsd: 0.1 });
+  assert.match(repo.prs[0].body, /someone wrote: "question 7"\n> \*\*Before:\*\* old reply s7/);
 });
