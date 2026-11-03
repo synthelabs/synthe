@@ -29454,7 +29454,7 @@ function upgrade(root, template2) {
   const after = renderWorkflow(template2, Math.random, minute);
   if (after === before) return `${WORKFLOW_FILE} is already up to date. No files changed.`;
   writeFileSync2(path4, after);
-  return `Updated ${WORKFLOW_FILE}: rounds now chain immediately; added Actions write permission and same-repo proposal-close restart; kept backup minute ${minute ?? "random"}. No other files changed. Commit and push this workflow file to activate it.`;
+  return `Updated ${WORKFLOW_FILE}: rounds now chain immediately, a cancelled run no longer counts as a round, and sharing (if you turned it on) can prove which repo sent it; kept backup minute ${minute ?? "random"}. No other files changed. Commit and push this workflow file to activate it.`;
 }
 
 // src/cli/main.ts
