@@ -8,6 +8,8 @@ export interface RoundRecord {
   example?: { input: string; before: string; after: string }; title?: string; unverified?: string[];
   // Why a failed round's write or score step failed, when it said; the report's advice depends on it.
   failure?: "busy" | "key" | "other";
+  // The share of the team's checks passed before and after a merged or proposed change, as whole percentages.
+  checks?: { before: number; after: number };
 }
 
 export interface Landing { branch: string; kind: "merge" | "revert"; text: string; priorPrompt: string; propose?: boolean }
@@ -23,7 +25,7 @@ export interface State {
   issue: number | null;
   scenariosHash: string | null; // scenarios the last round was scored on
   // Training cases from the last round where the current prompt lost or broke a guardrail, for the next writer.
-  lessons: { promptHash: string; rows: { id: string; reply: string; better?: string; violation: boolean }[] } | null;
+  lessons: { promptHash: string; rows: { id: string; reply: string; better?: string; violation: boolean; failedChecks?: string[] }[] } | null;
   // Set while a decide step is acting, so the next one can tell it died partway and clean up after it.
   pending: { round: number; at: string; costUsd: number | null; land?: Landing } | null;
   // A pull request Synthe opened and left for a person to merge (propose mode, or a repo that requires review).

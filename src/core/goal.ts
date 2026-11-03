@@ -1,5 +1,6 @@
 export const STATE_BRANCH = "synthe/state";
 export const GOAL_FILE = "synthe.json";
+export const MAX_CHECKS = 5;
 
 export type Delimiter = "`" | '"' | "'" | '"""';
 
@@ -12,6 +13,11 @@ export interface Goal {
   prompt: PromptLocation;
   objective: string;
   policy?: string; // the business rules the agent must follow, so the judge can tell what is and isn't allowed
+  // What the agent is for, from the team's repo and confirmed by them, so test cases and judging fit the real app.
+  brief?: string;
+  // The team's own measure of a good reply: plain sentences, each checkable from one reply. On every test case, the
+  // reply that fails fewer of them wins; the AI judge only breaks ties.
+  checks?: string[];
   guardrails: string[];
   scenarios: string;
   models: { writer: string; runner: string; judge: string; checker: string };
@@ -41,6 +47,10 @@ export function parseGoal(text: string): Goal {
   if (g.prompt.kind === "inline" && (!g.prompt.initial || !g.prompt.delimiter)) bad("inline prompts need initial and delimiter");
   if (!g.objective || typeof g.objective !== "string") bad("objective is required");
   if (g.policy !== undefined && typeof g.policy !== "string") bad("policy must be text");
+  if (g.brief !== undefined && typeof g.brief !== "string") bad("brief must be text");
+  if (g.checks !== undefined && (!Array.isArray(g.checks) || g.checks.length > MAX_CHECKS || g.checks.some((c: unknown) => typeof c !== "string" || !c.trim() || c.length > 300))) {
+    bad(`checks must be a list of up to ${MAX_CHECKS} sentences`);
+  }
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== undefined && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");

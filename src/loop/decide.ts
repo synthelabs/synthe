@@ -332,7 +332,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
           if (unverified.length) record.unverified = unverified;
         }
         if (landed) {
-          Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses });
+          Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...(verdict.checks ? { checks: verdict.checks } : {}) });
           record.changed = chosen?.summary ?? "A change to the prompt";
           record.plain = verdict.plain;
           if (!landed.proposed) {
@@ -359,14 +359,15 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
 
   if (scores) {
     // Training rows only: held-back scenarios are never in scores.baselineTrain, so the writer can't learn them.
-    // A lesson is a scenario where the current prompt broke a guardrail or a rewrite beat it, with both replies.
+    // A lesson is a scenario where the current prompt broke a guardrail, failed one of the team's checks, or a rewrite
+    // beat it, with both replies.
     const lessons = scores.baselineTrain.flatMap((r) => {
       if (typeof r.reply !== "string") return [];
       const winner = scores.candidates.map((c) => c.train.find((x) => x.id === r.id)).find((x) => x?.score === WIN && typeof x.reply === "string");
-      if (!winner && r.violation !== true) return [];
-      return [{ id: r.id, reply: r.reply, better: winner?.reply, violation: r.violation === true }];
+      if (!winner && r.violation !== true && !r.failedChecks?.length) return [];
+      return [{ id: r.id, reply: r.reply, better: winner?.reply, violation: r.violation === true, ...(r.failedChecks?.length ? { failedChecks: r.failedChecks } : {}) }];
     });
-    lessons.sort((a, b) => Number(b.violation) - Number(a.violation));
+    lessons.sort((a, b) => Number(b.violation) - Number(a.violation) || (b.failedChecks?.length ?? 0) - (a.failedChecks?.length ?? 0));
     state.lessons = { promptHash: scores.baselineHash, rows: lessons.slice(0, LESSONS) };
   }
   state.stalls = record.outcome === "merged" ? 0 : stall ? priorStalls + 1 : priorStalls;

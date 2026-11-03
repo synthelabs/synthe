@@ -23,7 +23,7 @@ Your AI agent's prompt gets better while you sleep.
 
 1. Grab a key from the Synthe table ($3 of credit, on us).
 2. In your repo, run `npx synthe init`.
-3. Say what your agent should get better at, and choose: merge improvements into main automatically, or review each one.
+3. Say what your agent should get better at, confirm the checks Synthe proposes to measure it, and choose: merge improvements into main automatically, or review each one.
 4. In the morning, open the report issue in your repo.
 
 Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop any time: `npx synthe stop`

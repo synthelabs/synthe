@@ -26,7 +26,7 @@ const fakeIo = (dir: string, failing: string[] = [], answers: Record<string, str
   const said: string[] = [];
   const io: Io = {
     say: (t) => said.push(t),
-    ask: async (q) => Object.entries({ "automatically?": "y", "Share this run": "y", ...answers }).find(([k]) => q.includes(k))?.[1] ?? "Answer returns correctly",
+    ask: async (q) => Object.entries({ "automatically?": "y", "Share this run": "y", "Real message": "", "Use these checks": "y", ...answers }).find(([k]) => q.includes(k))?.[1] ?? "Answer returns correctly",
     askSecret: async () => "sk-ant-test-team-key",
     template: () => readFileSync("templates/synthe.yml", "utf8"),
     sleep: async () => {},
@@ -291,4 +291,68 @@ test("when Actions is turned off, init says so instead of promising a first roun
   assert.equal(await init(io, dir), true);
   assert.match(said.join("\n"), /GitHub Actions is turned off for this repo, so Synthe can't run yet\. Turn it on at https:\/\/github\.com\/o\/r\/settings\/actions/);
   assert.doesNotMatch(said.join("\n"), /starts within the hour/);
+});
+
+const briefReply = JSON.stringify({
+  guardrails: ["Never lie"], policy: "", brief: "Order-help bot for a pizza shop.",
+  checks: ["Asks for the order number first", "Stays under three sentences", "Offers a remake before a refund"],
+  scenarios: Array.from({ length: 30 }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })),
+});
+
+test("init reads the README and the code that uses the prompt, says so, and never sends a key in them", async () => {
+  const dir = repoDir(PROMPT);
+  writeFileSync(join(dir, "README.md"), "# Pizza bot\nAnswers order questions for Pip's Pizza.");
+  writeFileSync(join(dir, "agent.py"), 'SYSTEM = open("prompt.md").read()\nKEY = "sk-ant-api03-abcdefghijklmnop"\n');
+  execFileSync("git", ["add", "README.md", "agent.py"], { cwd: dir });
+  const { io, said } = fakeIo(dir);
+  const asked: string[] = [];
+  io.model = () => ({ async ask(a) { asked.push(a.user); return { text: briefReply, costUsd: 0.01 }; } });
+  assert.equal(await init(io, dir), true);
+  assert.match(said.join("\n"), /Reading your prompt and README\.md and agent\.py/);
+  assert.match(asked[0], /<repo>[\s\S]*Answers order questions for Pip's Pizza[\s\S]*SYSTEM = open/);
+  assert.ok(!asked[0].includes("abcdefghijklmnop") && asked[0].includes("[secret removed]"));
+});
+
+test("init shows the brief and proposed checks, and saves them when the team says yes", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, said } = fakeIo(dir);
+  io.model = () => ({ async ask() { return { text: briefReply, costUsd: 0.01 }; } });
+  assert.equal(await init(io, dir), true);
+  const text = said.join("\n");
+  assert.match(text, /What Synthe understands your agent is for: Order-help bot for a pizza shop\./);
+  assert.match(text, /the reply that passes more of them wins:\n  1\. Asks for the order number first\n  2\. Stays under three sentences\n  3\. Offers a remake before a refund/);
+  const goal = parseGoal(readFileSync(join(dir, "synthe.json"), "utf8"));
+  assert.equal(goal.brief, "Order-help bot for a pizza shop.");
+  assert.deepEqual(goal.checks, ["Asks for the order number first", "Stays under three sentences", "Offers a remake before a refund"]);
+});
+
+test("a team can replace the proposed checks with its own", async () => {
+  const dir = repoDir(PROMPT);
+  const typed = ["Mentions the trail's difficulty", ""];
+  const { io } = fakeIo(dir, [], { "Use these checks": "n" });
+  const ask = io.ask;
+  io.ask = async (q) => (q.startsWith("Check ") ? typed.shift() ?? "" : ask(q));
+  io.model = () => ({ async ask() { return { text: briefReply, costUsd: 0.01 }; } });
+  assert.equal(await init(io, dir), true);
+  assert.deepEqual(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).checks, ["Mentions the trail's difficulty"]);
+});
+
+test("real messages the team pastes go into the test-case request word for word", async () => {
+  const dir = repoDir(PROMPT);
+  const pasted = ["is the ridge trail open after rain?", "which hike is ok for a 6 year old", ""];
+  const { io } = fakeIo(dir);
+  const ask = io.ask;
+  io.ask = async (q) => (q.startsWith("Real message") ? pasted.shift() ?? "" : ask(q));
+  const asked: string[] = [];
+  io.model = () => ({ async ask(a) { asked.push(a.user); return { text: briefReply, costUsd: 0.01 }; } });
+  assert.equal(await init(io, dir), true);
+  assert.match(asked[0], /real user messages word for word[^\n]*\n- is the ridge trail open after rain\?\n- which hike is ok for a 6 year old/);
+});
+
+test("without proposed checks, init doesn't ask about them and saves none", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, said } = fakeIo(dir);
+  assert.equal(await init(io, dir), true);
+  assert.doesNotMatch(said.join("\n"), /measure your agent with these checks/);
+  assert.equal("checks" in JSON.parse(readFileSync(join(dir, "synthe.json"), "utf8")), false);
 });
