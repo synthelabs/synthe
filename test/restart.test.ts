@@ -75,3 +75,13 @@ test("decide settles a proposal the team merged and judges this round's scores i
   assert.equal(repo.state.proposal, null);
   assert.equal(repo.state.lastMerge?.pr, 1, "the undo check protects the team's merge");
 });
+
+test("after npx synthe stop, status reads as stopped, not still running", async () => {
+  const { headline } = await import("../src/loop/report.ts");
+  const s: State = { ...newState(), round: 3, spendUsd: 0.09, rounds: [{ ...round(1, "merged"), checks: { before: 47, after: 81 } }, round(2, "skipped"), round(3, "skipped")] };
+  const paused = headline(goal(), s, true);
+  assert.equal(paused.title, "Stopped by you after 1 merged change");
+  assert.match(paused.summary, /^Your checks now pass 81% of the time, up from 47%\. It ran 3 rounds before you stopped it\./);
+  assert.doesNotMatch(paused.summary, /still running/);
+  assert.match(headline(goal(), s).summary, /still running/);
+});

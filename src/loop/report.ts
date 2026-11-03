@@ -29,7 +29,8 @@ const badKey = (r: RoundRecord | undefined) => r?.outcome === "failed" && r.fail
 const busy = (r: RoundRecord | undefined) => r?.outcome === "failed" && r.failure === "busy";
 
 // The first thing a team reads in the morning: the outcome in one line, then what it means.
-export function headline(goal: Goal, state: State): { title: string; summary: string } {
+// stoppedByTeam: the team ran `npx synthe stop`, which the run state can't know, so a running run reads as paused.
+export function headline(goal: Goal, state: State, stoppedByTeam = false): { title: string; summary: string } {
   const merged = state.rounds.filter((r) => r.outcome === "merged").length;
   // The team's own number, from before the first merge to after the latest one, when they set checks.
   const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
@@ -41,6 +42,9 @@ export function headline(goal: Goal, state: State): { title: string; summary: st
   const last = state.rounds.at(-1);
   if (!state.stopped && (missing(last) || badKey(last))) {
     return { title: "Synthe needs you to fix something", summary: `${last!.plain} ${spent}` };
+  }
+  if (!state.stopped && stoppedByTeam) {
+    return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
     const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tries again next hour." : "";

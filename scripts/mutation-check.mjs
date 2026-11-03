@@ -76,8 +76,11 @@ const mutations = [
   ["restart spends after unknown cost", "src/cli/restart.ts", "if (state.spendUnknown) return", "if (false) return"],
   ["a merged proposal still waits an hour", "src/action.ts", "return !pr || pr.open;", "return true;"],
   ["the judge outvotes the team's checks", "src/loop/score.ts", "if (theirs && mine.failed !== theirs.failed) judged.row.score = mine.failed < theirs.failed ? WIN : LOSS;", ""],
-  ["a half-answered check counts as checked", "src/loop/score.ts", "if (!Array.isArray(rows) || rows.length !== checks.length || checks.some((_, i) => rows.filter((r) => r.check === i + 1).length !== 1)) return null;", "if (!Array.isArray(rows)) return null;"],
+  ["a half-answered check counts as checked", "src/loop/score.ts", "if (!Array.isArray(rows) || rows.length !== checks.length || checks.some((_, i) => rows.filter((r) => r.check === i + 1).length !== 1)) return { verdicts: null", "if (!Array.isArray(rows)) return { verdicts: null"],
   ["repo secrets reach the model", "src/cli/init.ts", "${redactSecrets(f.text)}", "${f.text}"],
+  ["calibrate ignores unsteady marking", "src/cli/calibrate.ts", "} else if (steadyRate < STEADY) {", "} else if (false) {"],
+  ["calibrate ignores the team's answers", "src/cli/calibrate.ts", "} else if (r.asked > 0 && r.agreed / r.asked < AGREE) {", "} else if (false) {"],
+  ["calibrate shows held-back cases", "src/cli/calibrate.ts", "const cases = scenarios.filter((s) => s.split === \"train\").slice(0, CASES);", "const cases = scenarios.slice(0, CASES);"],
 ];
 
 // Every mutated file as it was before the run. Restoring each mutation from its own copy isn't enough on its own: a

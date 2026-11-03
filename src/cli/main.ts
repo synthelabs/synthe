@@ -10,6 +10,7 @@ import { anthropicModel, modelProblem } from "../model/client.ts";
 import { measureNoise, runScore } from "../loop/score.ts";
 import { runWrite } from "../loop/write.ts";
 import { init, type Io } from "./init.ts";
+import { calibrate } from "./calibrate.ts";
 import { restartState } from "./restart.ts";
 import { stoppedLine } from "./stopped.ts";
 import { askSecret } from "./secret.ts";
@@ -68,7 +69,7 @@ async function status() {
   }
   const s: State = { ...newState(), ...JSON.parse(raw) };
   const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
-  const { title, summary } = headline(goal, s);
+  const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   // The summary is written for the report issue; in a terminal, "this page" is the issue, which is linked below.
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -128,25 +129,39 @@ async function restart() {
   console.log(`Watch it: https://github.com/${slug}/actions/workflows/synthe.yml`);
 }
 
-// Runs one round on this computer and changes nothing, so a team can see what Synthe would do.
-async function tryRound() {
-  if (!setUpHere()) return;
+// Loads what a round on this computer needs, or says what's missing. Used by try and calibrate.
+function localRun(command: string) {
+  if (!setUpHere()) return null;
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {
-    console.log("`npx synthe try` runs one round on your computer, changing nothing, and needs your Synthe key:");
-    console.log("  ANTHROPIC_API_KEY=your-key npx synthe try");
+    console.log(`\`npx synthe ${command}\` runs on your computer, changing nothing, and needs your Synthe key:`);
+    console.log(`  ANTHROPIC_API_KEY=your-key npx synthe ${command}`);
     process.exitCode = 1;
-    return;
+    return null;
   }
   const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
-    return;
+    return null;
   }
-  const scenarios = parseScenarios(readFileSync(goal.scenarios, "utf8"));
-  const model = anthropicModel(key);
+  return { goal, prompt, scenarios: parseScenarios(readFileSync(goal.scenarios, "utf8")), model: anthropicModel(key) };
+}
+
+// Checks whether the team's checks are marked steadily, and the way the team means them.
+async function calibrateChecks() {
+  const local = localRun("calibrate");
+  if (!local) return;
+  const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model);
+  if (result && result.results.some((r) => r.verdict !== "trustworthy")) process.exitCode = 1;
+}
+
+// Runs one round on this computer and changes nothing, so a team can see what Synthe would do.
+async function tryRound() {
+  const local = localRun("try");
+  if (!local) return;
+  const { goal, prompt, scenarios, model } = local;
   if (process.argv.includes("--noise")) {
     console.log("Comparing your prompt with itself on every test case...");
     const n = await measureNoise(goal, prompt, scenarios, model);
@@ -177,6 +192,7 @@ Then:
   npx synthe restart  start it again, after stop or once you've fixed what stopped it
   npx synthe try      run one round on your computer, changing nothing (needs ANTHROPIC_API_KEY)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
+  npx synthe calibrate     check that your checks are marked steadily and the way you mean them (needs ANTHROPIC_API_KEY)
 
 More: https://github.com/synthelabs/synthe#readme`;
 
@@ -187,6 +203,7 @@ async function main() {
   else if (command === "status") await status();
   else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
+  else if (command === "calibrate") await calibrateChecks();
   else console.log(HELP);
 }
 

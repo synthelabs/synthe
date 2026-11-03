@@ -48,6 +48,7 @@ The test cases are simulated single messages, not real users or full conversatio
 | `npx synthe restart` | Start it again, after `stop` or once you've fixed what stopped it |
 | `npx synthe try` | Run one round on your machine, changing nothing (needs `ANTHROPIC_API_KEY`) |
 | `npx synthe try --noise` | Compare your prompt with itself to see how much the judge varies |
+| `npx synthe calibrate` | Check that your checks are marked the same way each time, and the way you mean them (needs `ANTHROPIC_API_KEY`) |
 
 ## Change what it aims for
 
