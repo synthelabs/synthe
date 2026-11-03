@@ -4,10 +4,25 @@ import { newState, type State } from "../core/state.ts";
 // Why a merge didn't happen. blocked, permission and token need a person; the rest are worth another round.
 export type MergeProblem = "blocked" | "permission" | "token" | "rate_limited" | "moved" | "other";
 export type MergeResult = { merged: true } | { merged: false; why: string; problem: MergeProblem };
+// GitHub said no to something a person has to change: the plain sentence says what, and where to fix it.
+// Thrown by openPr (Actions may not open pull requests) and upsertIssue (Issues are off, or no permission).
+export class Refusal extends Error {
+  problem: MergeProblem | "issues_off";
+  plain: string;
+  constructor(problem: MergeProblem | "issues_off", plain: string, detail: string) { super(detail); this.problem = problem; this.plain = plain; }
+}
 export interface PrInfo { number: number; open: boolean; merged: boolean }
 
 const isRateLimited = (status: number, headers: Headers, text: string) =>
   status === 429 || (status === 403 && (headers.get("x-ratelimit-remaining") === "0" || /rate limit/i.test(text)));
+
+const classify = (res: Response, text: string): MergeProblem =>
+  isRateLimited(res.status, res.headers, text) ? "rate_limited"
+    : res.status === 405 ? "blocked" // a branch rule or required review
+    : res.status === 401 ? "token"
+    : res.status === 403 ? "permission"
+    : res.status === 409 ? "moved"
+    : "other";
 
 export interface Repo {
   defaultBranch(): Promise<string>;
@@ -80,6 +95,16 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
     throw new Error(`GitHub POST /git/refs: ${res.status} ${(await res.text()).slice(0, 300)}`);
   };
 
+  // Issues off answers 410 (forks start that way); a token without issues: write answers 403.
+  const refuseIssue = async (res: Response): Promise<never> => {
+    const text = await res.text();
+    const detail = `GitHub issue write: ${res.status} ${text.slice(0, 300)}`;
+    const problem = res.status === 410 ? "issues_off" : classify(res, text);
+    if (problem === "issues_off") throw new Refusal(problem, `Issues are turned off in this repo, so Synthe can't write its report; turn on Issues at https://github.com/${slug}/settings`, detail);
+    if (problem === "permission" || problem === "token") throw new Refusal(problem, `GitHub won't let the workflow write the report issue; give the workflow the 'issues: write' permission`, detail);
+    throw new Error(detail);
+  };
+
   const repo: Repo = {
     async defaultBranch() { return (await json("GET", "")).default_branch; },
     async headSha(branch) { return (await json("GET", `/git/ref/heads/${encodeURIComponent(branch)}`)).object.sha; },
@@ -94,20 +119,28 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
       return putFile(branch, path, content, message);
     },
     async openPr({ branch, base, title, body }) {
-      return (await json("POST", "/pulls", { head: branch, base, title, body })).number;
+      const res = await call("POST", "/pulls", { head: branch, base, title, body });
+      if (res.ok) return (await res.json()).number;
+      const text = await res.text();
+      const detail = `GitHub POST /pulls: ${res.status} ${text.slice(0, 300)}`;
+      // Org repos often turn this setting off; every round would fail the same way until someone changes it.
+      const problem = classify(res, text);
+      if (problem === "permission") throw new Refusal(problem, `GitHub Actions isn't allowed to open pull requests here; turn on 'Allow GitHub Actions to create and approve pull requests' at https://github.com/${slug}/settings/actions`, detail);
+      if (problem === "token") throw new Refusal(problem, "GitHub refused the workflow's token", detail);
+      throw new Error(detail);
     },
     async mergePr(number, sha) {
       const res = await call("PUT", `/pulls/${number}/merge`, { sha, merge_method: "squash" });
       if (res.ok) return { merged: true };
       const text = await res.text();
-      const why = `${res.status} ${text.slice(0, 200)}`;
-      const problem: MergeProblem = isRateLimited(res.status, res.headers, text) ? "rate_limited"
-        : res.status === 405 ? "blocked" // a branch rule or required review
-        : res.status === 401 ? "token"
-        : res.status === 403 ? "permission"
-        : res.status === 409 ? "moved"
-        : "other";
-      return { merged: false, why, problem };
+      // A server error doesn't say whether the merge happened, and closing a pull request that did merge would
+      // delete the branch behind it. Ask GitHub. If it can't answer either, throw so recover() checks next round.
+      if (res.status >= 500) {
+        const back = await call("GET", `/pulls/${number}`);
+        if (back.status >= 500) throw new Error(`GitHub PUT /pulls/${number}/merge: ${res.status}, and couldn't tell whether it merged (${back.status})`);
+        if (back.ok && (await back.json()).merged === true) return { merged: true };
+      }
+      return { merged: false, why: `${res.status} ${text.slice(0, 200)}`, problem: classify(res, text) };
     },
     async deleteBranch(branch) { await call("DELETE", `/git/refs/heads/${encodeURIComponent(branch)}`); },
     async closePr(number) { await call("PATCH", `/pulls/${number}`, { state: "closed" }); },
@@ -119,8 +152,15 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
       return pr ? { number: pr.number, open: pr.state === "open", merged: Boolean(pr.merged_at) } : null;
     },
     async upsertIssue(number, title, body) {
-      if (number !== null) { await json("PATCH", `/issues/${number}`, { title, body }); return number; }
-      return (await json("POST", "/issues", { title, body })).number;
+      let res: Response;
+      if (number !== null) {
+        res = await call("PATCH", `/issues/${number}`, { title, body });
+        if (res.ok) return number;
+        // 404 or 410: the issue was deleted, or Issues are off. Creating a new one tells the two apart.
+        if (res.status !== 404 && res.status !== 410) return refuseIssue(res);
+      }
+      res = await call("POST", "/issues", { title, body });
+      return res.ok ? (await res.json()).number : refuseIssue(res);
     },
     async readState() {
       const text = await repo.readFile(STATE_PATH, STATE_BRANCH);
