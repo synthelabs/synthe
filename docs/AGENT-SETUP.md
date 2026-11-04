@@ -33,6 +33,8 @@ SYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent ...
 
 3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.
 
+Synthe uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE`, then `ANTHROPIC_API_KEY`. Show the printed credential and budget to the person so they know whose credit will be used.
+
 ## 3. Find the system prompt
 
 1. Search the code for the agent's system prompt. It is a `.md` or `.txt` file, or a string in code.
@@ -62,7 +64,7 @@ Use `--mode auto` or `--mode review` as the person chose. Leave out `--message` 
 
 Show the full output as written, not a summary. It has three parts:
 
-1. The sharing notice. The person must see it. During Crimson Hacks, Synthe shares the prompt and test cases with the Synthe team until Nov 8. Never code. Secrets are removed. Setting `"share": "none"` in `synthe.json` turns sharing off.
+1. The credential and budget, and the sharing notice. The person must see them. During Crimson Hacks, Synthe shares the prompt and test cases with the Synthe team until Nov 8. Never code. Secrets are removed. The person can choose `--share none` at confirmation, or set `"share": "none"` in `synthe.json` any time.
 2. The numbered proposed checks.
 3. Example replies, each with Synthe's pass or fail mark.
 
@@ -87,6 +89,8 @@ If the person accepted every proposed check as it is, run this instead:
 SYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --confirm --keep-checks
 ```
 
+Add `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft's sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup adds `.synthe/setup-draft.json` to the team's `.gitignore` and deletes the draft after success. Don't confirm twice.
+
 ## 8. After setup
 
 Tell the person:
@@ -103,4 +107,4 @@ npx synthe key
 
   - `status` shows how things are going.
   - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.
-  - `key` switches to their own Anthropic key. Use it when the event credit runs out. Each GitHub account gets $4 of event credit.
+  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the switch. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. Each GitHub account gets $4 of event credit, shared by all its repos.

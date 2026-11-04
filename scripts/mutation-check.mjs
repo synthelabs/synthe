@@ -90,7 +90,7 @@ const mutations = [
   ["an unclear merge answer is never read back", GITHUB, "if (back.ok && (await back.json()).merged === true) return { merged: true };", ""],
   ["a cut-off agent reply is unknown", "src/model/client.ts", "const cutOff = allowCutOff === true && res.stop_reason === \"max_tokens\" && text.length > 0;", "const cutOff = false;"],
   ["duplicate scenario ids allowed", "src/core/goal.ts", "if (lineOf.has(s.id)) throw", "if (false) throw"],
-  ["restart reopens a finished run", "src/cli/restart.ts", "if (isFinished(stopped) && !failedOut && !roundsRaised) {", "if (false) {"],
+  ["restart reopens a finished run", "src/cli/restart.ts", "if (isFinished(stopped) && (!failedOut || /^budget/.test(stopped)) && !roundsRaised && !budgetAvailable) {", "if (false) {"],
   ["restart spends after unknown cost", "src/cli/restart.ts", "if (state.spendUnknown) return", "if (false) return"],
   ["a busy outage retries without limit", DECIDE, "record.failure === \"busy\" && busyInARow <= BUSY_RETRIES", "record.failure === \"busy\""],
   ["a failed round still queues the next", DECIDE, "const finished = Boolean(input.scores && input.candidates && record.outcome !== \"failed\");", "const finished = true;"],

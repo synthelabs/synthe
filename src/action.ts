@@ -7,7 +7,7 @@ import { sha256 } from "./core/safety.ts";
 import { githubRepo, type Repo } from "./github/repo.ts";
 import { configuredModel, eventModels } from "./model/client.ts";
 import { runDecide } from "./loop/decide.ts";
-import { fullShareActive, sharePayload, shareRound, shouldShare } from "./core/share.ts";
+import { fullShareActive, requireOidc, sharePayload, shareRound, shouldShare } from "./core/share.ts";
 import packageJson from "../package.json" with { type: "json" };
 import { roundSummary } from "./loop/report.ts";
 import { failureOf, type Failure } from "./loop/failure.ts";
@@ -35,6 +35,7 @@ async function stillWaiting(repo: Repo, branch: string): Promise<boolean> {
 
 async function main() {
   const step = input("step");
+  if (step !== "decide" && !(input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() && (input("event-code") || process.env.SYNTHE_EVENT_CODE)?.trim()) requireOidc();
   const repo = githubRepo(process.env.GITHUB_REPOSITORY!, input("github-token"), process.env.GITHUB_API_URL);
 
   if (step === "decide") {

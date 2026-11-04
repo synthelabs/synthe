@@ -137,7 +137,7 @@ async function restart() {
 // Loads what a round on this computer needs, or says what's missing. Used by try and calibrate.
 function localRun(command: string) {
   if (!setUpHere()) return null;
-  const key = process.env.SYNTHE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY;
+  const key = process.env.SYNTHE_ANTHROPIC_KEY?.trim() || (process.env.SYNTHE_EVENT_CODE?.trim() ? undefined : process.env.ANTHROPIC_API_KEY?.trim());
   const eventCode = process.env.SYNTHE_EVENT_CODE;
   if (!key && !eventCode) {
     console.log(`\`npx synthe ${command}\` runs on your computer, changing nothing, and needs an event code or your own Anthropic key.`);

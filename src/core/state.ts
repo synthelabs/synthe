@@ -21,6 +21,7 @@ export interface State {
   lastMerge: { pr: number; priorPrompt: string; mergedHash: string; reverted: boolean } | null;
   stalls: number;
   spendUsd: number;
+  ownKeyFromUsd?: number;
   spendUnknown: boolean;
   stopped: string | null;
   issue: number | null;
@@ -44,10 +45,14 @@ export const newState = (): State => ({
 export function stopReason(s: State, maxRounds: number, stallRounds: number, maxUsd: number): string | null {
   if (s.stopped) return s.stopped;
   if (s.spendUnknown) return "spend could not be measured";
-  if (s.spendUsd >= maxUsd) return `budget of $${maxUsd} is used`;
+  if (budgetSpend(s) >= maxUsd) return `budget of $${maxUsd} is used`;
   if (s.round >= maxRounds) return `reached ${maxRounds} rounds`;
   if (s.stalls >= stallRounds) return `${stallRounds} rounds in a row found no winner`;
   return null;
+}
+
+export function budgetSpend(state: State): number {
+  return state.spendUsd - (state.ownKeyFromUsd ?? 0);
 }
 
 // Running out of rounds, budget or ideas is a finished run. Anything else needs someone to act.

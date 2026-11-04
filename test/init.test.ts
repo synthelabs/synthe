@@ -129,7 +129,7 @@ test("init shows what it inferred and what happens next, in plain words", async 
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).merge_rule.mode, "auto");
 });
 
-test("the merge question comes before the key, and no clear answer means review mode", async () => {
+test("the credential comes first, and no clear merge answer means review mode", async () => {
   const dir = repoDir(PROMPT);
   const { io, said } = fakeIo(dir, [], { "automatically?": "maybe" });
   const order: string[] = [];
@@ -137,7 +137,7 @@ test("the merge question comes before the key, and no clear answer means review 
   io.ask = async (q) => { order.push(q.includes("automatically") ? "merge" : "goal"); return ask(q); };
   io.askSecret = async (q) => { order.push("key"); return secret(q); };
   await init(io, dir);
-  assert.deepEqual(order.filter((x, i) => order.indexOf(x) === i), ["goal", "merge", "key"]);
+  assert.deepEqual(order.filter((x, i) => order.indexOf(x) === i), ["key", "goal", "merge"]);
   assert.equal(order.filter((x) => x === "merge").length, 3);
   assert.match(said.join("\n"), /Please type y or n\.[\s\S]*No clear answer, so Synthe will open pull requests for you to review[\s\S]*Review mode: on\./);
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).merge_rule.mode, "propose");
@@ -179,7 +179,7 @@ test("init announces full sharing before writing synthe.json during Crimson Hack
     assert.equal(await init(io, dir, () => new Date("2026-11-08T23:58:59Z")), true);
     assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share, "full");
     assert.ok(!questions.some((q) => /share how this run goes|type 1, 2 or 3/i.test(q)));
-    assert.ok(said.includes('During Crimson Hacks (until November 8), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 8 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'));
+    assert.match(said.join("\n"), /During Crimson Hacks[\s\S]*set DO_NOT_TRACK=1 on setup \(including --confirm\), or choose --share none in agent mode/);
     assert.ok(!ran.some((r) => r.args[0] === "issue" && r.args[1] === "create"));
 });
 
@@ -188,7 +188,7 @@ test("init defaults to detail at and after the cutoff", async () => {
   const { io, said } = fakeIo(dir);
   assert.equal(await init(io, dir, () => new Date("2026-11-08T23:59:00Z")), true);
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share, "detail");
-  assert.ok(said.includes('Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'));
+  assert.match(said.join("\n"), /Never your whole prompt, your test-case file or your code[\s\S]*including --confirm/);
 });
 
 test("init respects DO_NOT_TRACK and SYNTHE_TELEMETRY opt-outs", async () => {
@@ -197,7 +197,7 @@ test("init respects DO_NOT_TRACK and SYNTHE_TELEMETRY opt-outs", async () => {
     const { io, said } = fakeIo(dir);
     assert.equal(await init(io, dir, () => new Date(), undefined, env), true);
     assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share, "none");
-    assert.ok(said.includes("Sharing with Synthe: off (DO_NOT_TRACK is set)."));
+    assert.ok(said.includes("Sharing with Synthe: off (DO_NOT_TRACK, SYNTHE_TELEMETRY or --share none)."));
     assert.ok(!said.some((line) => line.startsWith("Synthe shares how this run goes")));
   }
 });
@@ -263,19 +263,19 @@ test("an empty credential is asked again, and three misses set nothing up", asyn
   io.askSecret = async () => "";
   assert.equal(await init(io, dir, undefined, ""), false);
   assert.equal(said.filter((t) => /Paste your event code or key/.test(t)).length, 3);
-  assert.match(said.join("\n"), /No event code or key, so nothing was set up/);
+  assert.match(said.join("\n"), /Nothing in your repo was changed/);
   assert.ok(!ran.some((r) => r.args[0] === "secret" || r.args[0] === "push"));
   assert.equal(existsSync(join(dir, "synthe.json")), false);
 });
 
-test("a prompt too long for Synthe to change stops setup before any spend", async () => {
+test("a prompt too long stops setup after only the cheap credential test", async () => {
   const dir = repoDir("You help hikers. ".repeat(1300));
   const { io, ran, said } = fakeIo(dir);
   let calls = 0;
   io.model = () => ({ async ask() { calls++; return { text: scenarioReply, costUsd: 0.01 }; } });
   assert.equal(await init(io, dir), false);
   assert.match(said.join("\n"), /Your prompt is 22,100 characters, and Synthe works on prompts up to 20,000/);
-  assert.equal(calls, 0);
+  assert.equal(calls, 1);
   assert.ok(!ran.some((r) => r.args[0] === "secret"));
 });
 
@@ -339,8 +339,8 @@ test("init reads the README and the code that uses the prompt, says so, and neve
   io.model = () => ({ async ask(a) { asked.push(a.user); return { text: briefReply, costUsd: 0.01 }; } });
   assert.equal(await init(io, dir), true);
   assert.match(said.join("\n"), /Reading your prompt and README\.md and agent\.py/);
-  assert.match(asked[0], /<repo>[\s\S]*Answers order questions for Pip's Pizza[\s\S]*SYSTEM = open/);
-  assert.ok(!asked[0].includes("abcdefghijklmnop") && asked[0].includes("[secret removed]"));
+  assert.match(asked[1], /<repo>[\s\S]*Answers order questions for Pip's Pizza[\s\S]*SYSTEM = open/);
+  assert.ok(!asked[1].includes("abcdefghijklmnop") && asked[1].includes("[secret removed]"));
 });
 
 test("init shows the brief and proposed checks, and saves them when the team says yes", async () => {
@@ -376,7 +376,7 @@ test("real messages the team pastes go into the test-case request word for word"
   const asked: string[] = [];
   io.model = () => ({ async ask(a) { asked.push(a.user); return { text: briefReply, costUsd: 0.01 }; } });
   assert.equal(await init(io, dir), true);
-  assert.match(asked[0], /real user messages word for word[^\n]*\n- is the ridge trail open after rain\?\n- which hike is ok for a 6 year old/);
+  assert.match(asked[1], /real user messages word for word[^\n]*\n- is the ridge trail open after rain\?\n- which hike is ok for a 6 year old/);
 });
 
 test("without proposed checks, init doesn't ask about them and saves none", async () => {
@@ -454,8 +454,9 @@ test("a refused code changes nothing, including no draft, secret, or commit", as
   const message = "This event code is wrong. Check the QR card.";
   let calls = 0;
   io.proxy = () => ({ async ask(ask) { calls++; assert.equal(ask.maxTokens, 5); throw new CreditError(message); } });
-  await assert.rejects(init(io, dir, undefined, "", { SYNTHE_EVENT_CODE: "wrong" }), { message });
-  assert.equal(calls, 1);
+  io.askSecret = async () => "wrong";
+  assert.equal(await init(io, dir, undefined, "", { SYNTHE_EVENT_CODE: "wrong" }), false);
+  assert.equal(calls, 3);
   for (const file of ["synthe.json", DRAFT_FILE, ".synthe/scenarios.jsonl", ".github/workflows/synthe.yml"]) assert.equal(existsSync(join(dir, file)), false);
   assert.ok(!ran.some((call) => ["secret", "add", "commit", "push"].includes(call.args[0])));
 });
@@ -496,7 +497,7 @@ test("agent preparation never prompts or commits, shows notice and complete cali
     assert.equal(saved.merge_rule.mode, keep ? "auto" : "propose");
     assert.equal(saved.budget.max_usd, 4);
     const staged = ran.find((call) => call.cmd === "git" && call.args[0] === "add")!;
-    assert.deepEqual(staged.args, ["add", "synthe.json", ".synthe/scenarios.jsonl", ".github/workflows/synthe.yml"]);
+    assert.deepEqual(staged.args, ["add", "synthe.json", ".synthe/scenarios.jsonl", ".github/workflows/synthe.yml", ".gitignore"]);
     assert.ok(!ran.filter((call) => call.args[0] === "commit" || call.args[0] === "add").some((call) => call.args.includes(DRAFT_FILE)));
     assert.match(said.join("\n"), /Synthe: prompt report/);
     assert.match(said.join("\n"), /Watch it live: https:\/\/github.com\/o\/r\/actions\/workflows\/synthe.yml/);
@@ -541,12 +542,12 @@ test("key accepts env or hidden input, stores only the key secret, and explains 
     const { io, ran, said } = fakeIo(dir);
     io.askSecret = async () => "sk-ant-own";
     const run = io.run;
-    io.run = async (command, args, stdin) => args.includes("Accept: application/vnd.github.raw+json") ? '{"stopped":"credit"}' : run(command, args, stdin);
-    assert.equal(await setKey(io, env), true);
+    io.run = async (command, args, stdin) => args.some((arg) => arg.includes("contents/synthe.json")) ? JSON.stringify({ version: 1, prompt: { kind: "file", path: "prompt.md" }, objective: "Improve", guardrails: ["Be right"], scenarios: "s.jsonl", budget: { max_usd: 3 } }) : args.some((arg) => arg.includes("state.json?ref=")) ? JSON.stringify({ sha: "state-sha", content: Buffer.from('{"stopped":"credit","spendUsd":3.95}').toString("base64") }) : run(command, args, stdin);
+    assert.equal(await setKey(io, env, true), true);
     const stored = ran.find((call) => call.args[0] === "secret")!;
     assert.deepEqual(stored.args, ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", "o/r"]);
     assert.equal(stored.stdin, "sk-ant-own");
-    assert.deepEqual(said, ["Rounds now use your own Anthropic key. The event credit is no longer used.", "The run stopped on event credit. Run `npx synthe restart` to continue."]);
+    assert.equal(said.at(-1), "Rounds now use your own Anthropic key, with a fresh $3 budget (budget.max_usd in synthe.json). Run `npx synthe restart` to continue.");
   }
 });
 

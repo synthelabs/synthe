@@ -33,7 +33,7 @@ Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop a
 ## Table script
 
 - **What it changes:** only the system prompt, on your default branch.
-- **What it costs you:** nothing with the event code. Each run has a $4 budget; the proxy caps event spend.
+- **What it costs you:** nothing with the event code. $4 of event credit per GitHub account (shared by all your repos); the proxy caps event spend.
 - **What it won't do:** run your code or touch anything else.
 - **How good is it?** It tests against simulated scenarios, so check the results yourself.
 - **Prompt in code?** It handles most inline strings. If not, move the prompt into a file.

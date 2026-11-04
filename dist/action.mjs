@@ -28187,10 +28187,13 @@ var newState = () => ({
 function stopReason(s, maxRounds, stallRounds, maxUsd) {
   if (s.stopped) return s.stopped;
   if (s.spendUnknown) return "spend could not be measured";
-  if (s.spendUsd >= maxUsd) return `budget of $${maxUsd} is used`;
+  if (budgetSpend(s) >= maxUsd) return `budget of $${maxUsd} is used`;
   if (s.round >= maxRounds) return `reached ${maxRounds} rounds`;
   if (s.stalls >= stallRounds) return `${stallRounds} rounds in a row found no winner`;
   return null;
+}
+function budgetSpend(state) {
+  return state.spendUsd - (state.ownKeyFromUsd ?? 0);
 }
 function isFinished(reason) {
   return /^(budget of .* is used|reached \d+ rounds|\d+ rounds in a row found no winner)$/.test(reason);
@@ -28483,14 +28486,27 @@ function sharePayload(goal, state, record, version, full, now = /* @__PURE__ */ 
   }
   return result;
 }
+var PROXY_AUTH_MESSAGE = "The Synthe proxy couldn't verify this GitHub run. Run `npx synthe upgrade`, commit the workflow, and try again.";
+var oidcCache = /* @__PURE__ */ new Map();
+function requireOidc(env = process.env) {
+  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) throw new Error(PROXY_AUTH_MESSAGE);
+}
 async function oidcToken(audience, env = process.env, fetcher = fetch, signal) {
-  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) throw new Error("GitHub OIDC permission is missing. Run `npx synthe upgrade`.");
+  requireOidc(env);
+  const cacheKey = JSON.stringify([audience, env.ACTIONS_ID_TOKEN_REQUEST_URL, env.ACTIONS_ID_TOKEN_REQUEST_TOKEN]);
+  const cached = oidcCache.get(cacheKey);
+  if (cached && cached.fetcher === fetcher && cached.expires - 6e4 > Date.now()) return cached.token;
   const url = new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
   url.searchParams.set("audience", audience);
   const response = await fetcher(url, { headers: { Authorization: `bearer ${env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` }, signal: signal ?? AbortSignal.timeout(1e4) });
   if (!response.ok) throw new Error(`GitHub OIDC returned ${response.status}.`);
   const token = (await response.json()).value;
   if (typeof token !== "string" || !token) throw new Error("GitHub OIDC returned no token.");
+  try {
+    const { exp } = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+    if (typeof exp === "number" && Number.isFinite(exp)) oidcCache.set(cacheKey, { token, expires: exp * 1e3, fetcher });
+  } catch {
+  }
   return token;
 }
 async function shareRound(payload, env, fetcher = fetch) {
@@ -28527,6 +28543,13 @@ var PROXY_URL = "https://synthe-share.vercel.app/api/claude";
 var install = randomUUID2();
 var CreditError = class extends Error {
 };
+var ProxyError = class extends Error {
+  status;
+  constructor(status, message) {
+    super(message);
+    this.status = status;
+  }
+};
 function eventModels(models) {
   for (const model of Object.values(models)) {
     if (!["claude-haiku-5-5", "claude-sonnet-5-5"].includes(model)) throw new CreditError(`Event credit only supports claude-haiku-5-5 and claude-sonnet-5-5; your goal names ${model}. Use an allowed model or run \`npx synthe key\` to use your own Anthropic key.`);
@@ -28536,7 +28559,8 @@ function proxyModel(eventCode, action = false) {
   const client = new Anthropic({
     apiKey: "synthe-proxy",
     baseURL: process.env.SYNTHE_PROXY_URL || PROXY_URL,
-    maxRetries: 4,
+    maxRetries: 2,
+    logLevel: "off",
     fetch: async (url, init) => {
       const headers = new Headers(init?.headers);
       headers.set("x-synthe-event", eventCode);
@@ -28567,6 +28591,9 @@ function proxyModel(eventCode, action = false) {
     } catch (error) {
       const refused = error;
       if ((refused.status === 402 || refused.status === 403) && refused.error?.error?.type === "synthe_credit" && typeof refused.error.error.message === "string") throw new CreditError(refused.error.error.message);
+      if (refused.status === 401) throw new ProxyError(401, PROXY_AUTH_MESSAGE);
+      if (refused.status === 429) throw new ProxyError(429, "Synthe's proxy is busy. Wait a few minutes and try again.");
+      if (refused.status === 503 && typeof refused.error?.error?.message === "string") throw new ProxyError(503, refused.error.error.message);
       throw error;
     }
   } };
@@ -28621,13 +28648,14 @@ async function pool(items, limit2, fn) {
 }
 function modelProblem(e) {
   if (e instanceof CreditError) return e.message;
+  if (e instanceof ProxyError) return e.message;
   const err = e;
   const status = typeof err?.status === "number" ? err.status : null;
   const text = typeof err?.message === "string" ? err.message : "";
-  if (status === 401) return "Your Synthe key was rejected. Check you copied all of it (it starts with sk-ant-), or ask the Synthe table for a new one.";
-  if (/credit balance is too low/i.test(text)) return "Your Synthe key has no credit left. Ask the Synthe table for a new key.";
-  if (/usage limit|spend limit/i.test(text)) return "Your Synthe key has reached its spending limit. Ask the Synthe table for a new key.";
-  if (status === 403) return "Your Synthe key isn't allowed to use this model. Ask the Synthe table for a new key.";
+  if (status === 401) return "Your Anthropic key was rejected. Run `npx synthe key` to replace it.";
+  if (/credit balance is too low/i.test(text)) return "Your Anthropic key has no credit left. Run `npx synthe key` to replace it.";
+  if (/usage limit|spend limit/i.test(text)) return "Your Anthropic key has reached its spending limit. Run `npx synthe key` to replace it.";
+  if (status === 403) return "Your Anthropic key isn't allowed to use this model. Run `npx synthe key` to replace it.";
   if (status === 429 || status === 529 || status !== null && status >= 500) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
   if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
   return null;
@@ -28799,7 +28827,7 @@ var exampleText = (e) => `**For example,** someone wrote: "${e.input}"
 > **Before:** ${e.before}
 >
 > **After:** ${e.after}`;
-var money = (state) => state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}` : `$${state.spendUsd.toFixed(2)}`;
+var money = (state) => state.spendUnknown ? `over $${budgetSpend(state).toFixed(2)}` : `$${budgetSpend(state).toFixed(2)}`;
 var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")} back to back`;
 var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
@@ -28822,19 +28850,20 @@ function headline(goal, state, stoppedByTeam = false) {
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
+    const wait = busy(last) ? /Synthe's proxy|Credit is unavailable/.test(last?.plain ?? "") ? ` ${last.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
     return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
     const end = recent.at(-1);
+    if (busy(end) && /Synthe's proxy|Credit is unavailable/.test(end.plain ?? "")) return { title: "Stopped: Synthe's proxy needs attention", summary: end.plain };
     if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain };
     if (badKey(end)) return { title: "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
     if (busy(end) && isFinished(state.stopped)) {
       return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
     }
-    if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, get a new key from the Synthe table." };
+    if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, run `npx synthe key`." };
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
   return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
@@ -28846,6 +28875,7 @@ function nextSteps(goal, state) {
   if (merged) steps.push("Pull the latest changes before you edit your prompt, so Synthe's changes aren't overwritten.");
   const last = state.rounds.at(-1);
   if (state.stopped === "credit") steps.push("To use your own Anthropic key, run `npx synthe key`, then `npx synthe restart`.");
+  else if (state.stopped && /^budget/.test(state.stopped)) steps.push("Run `npx synthe key` for a fresh own-key budget, or raise budget.max_usd in synthe.json and push it, then run `npx synthe restart`.");
   else if (state.stopped && badKey(last)) steps.push(`${last.plain} Then run \`npx synthe restart\` to start Synthe again.`);
   else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
   if (state.stopped && /no winner$/.test(state.stopped)) {
@@ -28858,7 +28888,7 @@ function nextSteps(goal, state) {
   } else if (!state.stopped && !state.proposal && badKey(last)) {
     steps.push(`${last.plain} Run \`npx synthe restart\` after replacing the key.`);
   } else if (!state.stopped && !state.proposal) {
-    steps.push(busy(last) ? "Nothing to do. Anthropic's API was busy during the last round, so Synthe tried again; if it has stopped, run `npx synthe restart`. Otherwise Synthe stops by itself." : "Nothing to do. Completed rounds start back to back and Synthe stops by itself.");
+    steps.push(busy(last) ? /Synthe's proxy|Credit is unavailable/.test(last?.plain ?? "") ? `${last.plain} Synthe tried again; if it has stopped, run \`npx synthe restart\`.` : "Nothing to do. Anthropic's API was busy during the last round, so Synthe tried again; if it has stopped, run `npx synthe restart`. Otherwise Synthe stops by itself." : "Nothing to do. Completed rounds start back to back and Synthe stops by itself.");
     steps.push("To keep your agent unchanged, for example before a demo, run `npx synthe stop`.");
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");
@@ -29600,13 +29630,12 @@ ${notTested(goal).slice(1).join("\n")}
       state.stopped = "credit";
       stall = false;
     } else if (error?.kind === "busy") {
-      record.reasons.push(`Anthropic's API was busy during the ${error.step} step: ${error.message}`);
-      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
+      record.reasons.push(/Synthe's proxy|Credit is unavailable/.test(error.message) ? error.message : `Anthropic's API was busy during the ${error.step} step: ${error.message}`);
+      record.plain = /Synthe's proxy|Credit is unavailable/.test(error.message) ? error.message : "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
       stall = false;
     } else if (error?.kind === "key") {
       record.reasons.push(`the ${error.step} step's key was refused: ${error.message}`);
-      const cause = error.message.split(/(?<=\.) /)[0];
-      record.plain = `This round didn't finish. ${cause} Get a new key from the Synthe table, then run \`gh secret set SYNTHE_ANTHROPIC_KEY\` in your repo and paste the key when it asks.`;
+      record.plain = error.message.startsWith("The Synthe proxy") ? error.message : `This round didn't finish. ${error.message.split(/(?<=\.) /)[0]} Run \`npx synthe key\` to replace your Anthropic key.`;
     } else {
       record.reasons.push("the round did not finish; check the Actions log and the API key");
       record.plain = "This round didn't finish. If it keeps happening, check the Actions log and that your key still has credit.";
@@ -29763,7 +29792,9 @@ var package_default = {
 
 // src/loop/failure.ts
 function failureOf(step, e) {
+  if (e instanceof Error && e.message === PROXY_AUTH_MESSAGE) return { step, kind: "key", message: e.message };
   if (e instanceof CreditError) return { step, kind: "credit", message: e.message };
+  if (e instanceof ProxyError) return { step, kind: e.status === 401 ? "key" : "busy", message: e.message };
   const plain = modelProblem(e);
   if (plain !== null) return { step, kind: /\bkey\b/i.test(plain) ? "key" : "busy", message: plain };
   const raw = e instanceof Error ? e.message : String(e);
@@ -29793,6 +29824,7 @@ async function stillWaiting(repo, branch) {
 }
 async function main() {
   const step = input("step");
+  if (step !== "decide" && !(input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() && (input("event-code") || process.env.SYNTHE_EVENT_CODE)?.trim()) requireOidc();
   const repo = githubRepo(process.env.GITHUB_REPOSITORY, input("github-token"), process.env.GITHUB_API_URL);
   if (step === "decide") {
     const branch = await repo.defaultBranch();

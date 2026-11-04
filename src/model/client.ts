@@ -1,11 +1,15 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { randomUUID } from "node:crypto";
 import { costUsd } from "../core/cost.ts";
-import { oidcToken } from "../core/share.ts";
+import { oidcToken, PROXY_AUTH_MESSAGE } from "../core/share.ts";
 
 export const PROXY_URL = "https://synthe-share.vercel.app/api/claude";
 const install = randomUUID();
 export class CreditError extends Error {}
+export class ProxyError extends Error {
+  status: number;
+  constructor(status: number, message: string) { super(message); this.status = status; }
+}
 
 export function eventModels(models: Record<string, string>): void {
   for (const model of Object.values(models)) {
@@ -14,7 +18,7 @@ export function eventModels(models: Record<string, string>): void {
 }
 
 export function proxyModel(eventCode: string, action = false): Model {
-  const client = new Anthropic({ apiKey: "synthe-proxy", baseURL: process.env.SYNTHE_PROXY_URL || PROXY_URL, maxRetries: 4,
+  const client = new Anthropic({ apiKey: "synthe-proxy", baseURL: process.env.SYNTHE_PROXY_URL || PROXY_URL, maxRetries: 2, logLevel: "off",
     fetch: async (url, init) => {
       const headers = new Headers(init?.headers);
       headers.set("x-synthe-event", eventCode);
@@ -40,6 +44,9 @@ export function proxyModel(eventCode: string, action = false): Model {
     try { return await model.ask(ask); } catch (error) {
       const refused = error as { status?: number; error?: { error?: { type?: string; message?: string } } };
       if ((refused.status === 402 || refused.status === 403) && refused.error?.error?.type === "synthe_credit" && typeof refused.error.error.message === "string") throw new CreditError(refused.error.error.message);
+      if (refused.status === 401) throw new ProxyError(401, PROXY_AUTH_MESSAGE);
+      if (refused.status === 429) throw new ProxyError(429, "Synthe's proxy is busy. Wait a few minutes and try again.");
+      if (refused.status === 503 && typeof refused.error?.error?.message === "string") throw new ProxyError(503, refused.error.error.message);
       throw error;
     }
   } };
@@ -106,13 +113,14 @@ export async function pool<T, R>(items: T[], limit: number, fn: (item: T) => Pro
 // the API, so the caller shows the raw error.
 export function modelProblem(e: unknown): string | null {
   if (e instanceof CreditError) return e.message;
+  if (e instanceof ProxyError) return e.message;
   const err = e as { status?: unknown; message?: unknown } | null;
   const status = typeof err?.status === "number" ? err.status : null;
   const text = typeof err?.message === "string" ? err.message : "";
-  if (status === 401) return "Your Synthe key was rejected. Check you copied all of it (it starts with sk-ant-), or ask the Synthe table for a new one.";
-  if (/credit balance is too low/i.test(text)) return "Your Synthe key has no credit left. Ask the Synthe table for a new key.";
-  if (/usage limit|spend limit/i.test(text)) return "Your Synthe key has reached its spending limit. Ask the Synthe table for a new key.";
-  if (status === 403) return "Your Synthe key isn't allowed to use this model. Ask the Synthe table for a new key.";
+  if (status === 401) return "Your Anthropic key was rejected. Run `npx synthe key` to replace it.";
+  if (/credit balance is too low/i.test(text)) return "Your Anthropic key has no credit left. Run `npx synthe key` to replace it.";
+  if (/usage limit|spend limit/i.test(text)) return "Your Anthropic key has reached its spending limit. Run `npx synthe key` to replace it.";
+  if (status === 403) return "Your Anthropic key isn't allowed to use this model. Run `npx synthe key` to replace it.";
   if (status === 429 || status === 529 || (status !== null && status >= 500)) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
   if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
   return null;

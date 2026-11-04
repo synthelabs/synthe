@@ -28,11 +28,11 @@ test("restart clears rounds that all failed on a key, once the team has a new on
 test("a finished run isn't restarted, and says what would let it continue", () => {
   const noWinner = restartState(goal(), stoppedWith("3 rounds in a row found no winner"));
   assert.ok("why" in noWinner && /add test cases your agent still gets wrong to s\.jsonl/.test(noWinner.why));
-  const budget = restartState(goal(), stoppedWith("budget of $3 is used"));
+  const budget = restartState(goal(), stoppedWith("budget of $3 is used", { spendUsd: 3 }));
   assert.ok("why" in budget && /whole \$3 budget/.test(budget.why));
   const rounds = restartState(goal(), stoppedWith("reached 12 rounds", { round: 12 }));
   assert.ok("why" in rounds && /raise merge_rule\.max_rounds/.test(rounds.why));
-  assert.equal(renderReport(goal(), stoppedWith("budget of $3 is used")).includes("npx synthe restart"), false);
+  assert.match(renderReport(goal(), stoppedWith("budget of $3 is used")), /npx synthe key.*raise budget.max_usd[\s\S]*npx synthe restart/);
 });
 
 test("raising max_rounds lets a run that reached its rounds restart; unknown spend never restarts", () => {

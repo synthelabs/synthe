@@ -1,10 +1,10 @@
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULTS, GOAL_FILE, parseGoal, parseScenarios, type Goal, type PromptLocation, type Scenario } from "../core/goal.ts";
 import { findPrompts } from "../core/prompt.ts";
 import { MAX_PROMPT_CHARS, promptPathProblem, redactSecrets, sha256 } from "../core/safety.ts";
 import { ISSUE_TITLE } from "../loop/report.ts";
-import { askJson, eventModels, proxyModel, type Model } from "../model/client.ts";
+import { askJson, eventModels, modelProblem, proxyModel, type Model } from "../model/client.ts";
 import { askPerson, type AgentOptions } from "./agent.ts";
 import { reviewChecksAtSetup } from "./calibrate.ts";
 import { FULL_SHARE_UNTIL } from "../core/share.ts";
@@ -13,7 +13,7 @@ export const ACTION = "synthelabs/synthe@v1";
 export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 export const WORKFLOW_FILE = ".github/workflows/synthe.yml";
 export const DRAFT_FILE = ".synthe/setup-draft.json";
-export const AGENT_NEXT = "NEXT: Show all of this to the person, including the sharing notice, proposed checks and calibration examples. Ask which checks to keep or reword and whether the marks look right. Then run `npx synthe init --agent --confirm --check \"final sentence\"`, repeating `--check` for each final check, or use `--keep-checks` if they keep the proposed checks.";
+export const AGENT_NEXT = "NEXT: Tell the person which credential and budget will be used. Show all of this to the person, including the sharing notice, proposed checks and calibration examples. Ask which checks to keep or reword and whether the marks look right. The person can choose `--share none`. Then run `npx synthe init --agent --confirm --check \"final sentence\"`, repeating `--check` for each final check, or use `--keep-checks` if they keep the proposed checks.";
 const SETUP_BRANCH = "synthe/setup";
 const SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
 
@@ -135,19 +135,34 @@ async function yesNo(io: Io, question: string): Promise<boolean | null> {
 }
 
 // ANTHROPIC_API_KEY still needs an explicit Enter, so a pasted event code doesn't spend the app's own key.
-async function askKey(io: Io, envKey: string | undefined): Promise<string | null> {
+async function askKey(io: Io, envKey: string | undefined, preferred?: string): Promise<string | null> {
   const question = "Paste your Crimson Hacks event code (on the QR card), or your own Anthropic key: ";
-  if (envKey?.trim()) io.say("Or press Enter to use the key already in ANTHROPIC_API_KEY.");
+  if (envKey?.trim() && !preferred) io.say("Or press Enter to use the key already in ANTHROPIC_API_KEY.");
   for (let i = 0; i < 3; i++) {
-    const typed = (await io.askSecret(question)).trim();
-    const key = typed || envKey?.trim() || "";
+    const typed = i === 0 && preferred ? preferred : (await io.askSecret(question)).trim();
+    const key = typed || preferred || envKey?.trim() || "";
     if (key) {
-      if (!typed) io.say("Using the key in ANTHROPIC_API_KEY.");
-      return key;
+      if (!typed && !preferred) io.say("Using the key in ANTHROPIC_API_KEY.");
+      try {
+        await credentialModel(io, key).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
+        return key;
+      } catch (error) { io.say(modelProblem(error) ?? (error as Error).message); continue; }
     }
     io.say("Paste your event code or key, then press Enter.");
   }
   return null;
+}
+
+function credentialModel(io: Io, key: string): Model {
+  return key.startsWith("sk-ant-") ? io.model(key) : (io.proxy ?? proxyModel)(key);
+}
+
+function sharingDisabled(env: NodeJS.ProcessEnv): boolean {
+  return ["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "") || ["0", "false"].includes(env.SYNTHE_TELEMETRY?.toLowerCase() ?? "");
+}
+
+export function setupCredential(env: NodeJS.ProcessEnv, appKey?: string): string | undefined {
+  return env.SYNTHE_ANTHROPIC_KEY?.trim() || env.SYNTHE_EVENT_CODE?.trim() || appKey?.trim();
 }
 
 // Says exactly what's missing, so a team can fix it in one step.
@@ -184,6 +199,11 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     io.say(`You're on the branch ${here}. Synthe adds itself to ${branch}, because GitHub only runs scheduled backup jobs from there. Run \`git checkout ${branch}\`, then \`npx synthe init\` again.`);
     return false;
   }
+  if (agent) {
+    const installed = await Promise.all([GOAL_FILE, WORKFLOW_FILE].map(async (path) =>
+      existsSync(join(root, path)) || (await io.run("gh", ["api", `repos/${slug}/contents/${path}?ref=${encodeURIComponent(branch)}`, "--jq", ".path"]).catch(() => "")).trim() === path));
+    if (installed.every(Boolean)) { io.say("Synthe is already set up on the default branch. Use `npx synthe restart` to continue; don't run init again."); return false; }
+  }
   if (agent?.confirm) {
     let draft: SetupDraft;
     try {
@@ -194,15 +214,29 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
       const source = readFileSync(join(root, draft.goal.prompt.path), "utf8");
       if (draft.version !== 1 || draft.slug !== slug || draft.branch !== branch || draft.sourceHash !== sha256(source) || !draft.rows.length || typeof draft.event !== "boolean") askPerson("--confirm");
     } catch { askPerson("--confirm (run step 1 again)"); }
-    const credential = env.SYNTHE_ANTHROPIC_KEY?.trim() || envKey?.trim() || env.SYNTHE_EVENT_CODE?.trim();
+    const credential = setupCredential(env, envKey);
     if (!credential) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY/ANTHROPIC_API_KEY");
     if (draft.event !== !credential.startsWith("sk-ant-")) askPerson("--confirm (use the same credential type as step 1)");
     if (agent.checks.length) draft.goal.checks = agent.checks;
+    if (agent.share) draft.goal.share = agent.share;
+    if (sharingDisabled(env)) draft.goal.share = "none";
     if (draft.event) eventModels(draft.goal.models);
     if (draft.event) await (io.proxy ?? proxyModel)(credential).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
-    return finishSetup(io, root, slug, branch, draft.goal, draft.rows, credential, draft.event);
+    const finished = await finishSetup(io, root, slug, branch, draft.goal, draft.rows, credential, draft.event);
+    if (finished) rmSync(join(root, DRAFT_FILE), { force: true });
+    return finished;
   }
   if (!agent) io.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.\n`);
+
+  const preferred = setupCredential(env, envKey);
+  const key = agent ? preferred : await askKey(io, envKey, env.SYNTHE_ANTHROPIC_KEY?.trim() || env.SYNTHE_EVENT_CODE?.trim());
+  if (!key) {
+    if (agent) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY/ANTHROPIC_API_KEY");
+    io.say("Nothing in your repo was changed. Run `npx synthe init` again when you have a working event code or key."); return false;
+  }
+  const event = !key.startsWith("sk-ant-");
+  const credentialName = event ? "Crimson Hacks event code" : key === env.SYNTHE_ANTHROPIC_KEY?.trim() ? "your own key from SYNTHE_ANTHROPIC_KEY" : key === envKey?.trim() ? "your own key from ANTHROPIC_API_KEY" : "your own Anthropic key";
+  io.say(`Credential: ${credentialName}, $${event ? 4 : 3} budget${event ? "." : " on your Anthropic account."}`);
 
   const tracked = repoTextFiles(await io.run("git", ["ls-files"]), root);
   const prompts = findPrompts(tracked);
@@ -234,10 +268,13 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     return false;
   }
   if (agent && !promptText.trim()) askPerson("--prompt");
+  const model = credentialModel(io, key);
+  if (event) eventModels(DEFAULTS.models);
+  if (agent) await model.ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
   const objective = agent ? agent.objective! : (await io.ask("\nWhat should your agent get better at? One sentence, for example \"answer returns questions correctly and offer an exchange first\":\n> ")).trim();
   if (!objective) { io.say("Synthe needs a goal to work toward. Run `npx synthe init` again and describe one."); return false; }
   // Real messages make the test cases look like the app's real traffic, which matters more than anything else here.
-  io.say("\nOptional: paste up to 5 messages real users have sent your agent (or would send), one per line. Press Enter on an empty line when you're done, or right away to skip.");
+  if (!agent) io.say("\nOptional: paste up to 5 messages real users have sent your agent (or would send), one per line. Press Enter on an empty line when you're done, or right away to skip.");
   const seeds: string[] = agent ? agent.messages : [];
   while (!agent && seeds.length < 5) {
     const line = (await io.ask(`Real message ${seeds.length + 1} (Enter when done): `)).trim();
@@ -248,25 +285,15 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   let auto = agent ? agent.mode === "auto" : await yesNo(io, `Merge improvements into ${branch} automatically? Type y for automatic, or n to review each one: `);
   if (auto === null) { auto = false; io.say("No clear answer, so Synthe will open pull requests for you to review."); }
   io.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
-  const sharingOff = ["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "") || ["0", "false"].includes(env.SYNTHE_TELEMETRY?.toLowerCase() ?? "");
-  const share: Goal["share"] = sharingOff ? "none" : now().getTime() < Date.parse(FULL_SHARE_UNTIL) ? "full" : "detail";
+  const sharingOff = sharingDisabled(env) || agent?.share === "none";
+  const share: Goal["share"] = sharingOff ? "none" : agent?.share ?? (now().getTime() < Date.parse(FULL_SHARE_UNTIL) ? "full" : "detail");
   if (agent) io.say("The person must see this sharing notice before confirming setup:");
   io.say(sharingOff
-    ? "Sharing with Synthe: off (DO_NOT_TRACK is set)."
+    ? "Sharing with Synthe: off (DO_NOT_TRACK, SYNTHE_TELEMETRY or --share none)."
     : share === "full"
-      ? 'During Crimson Hacks (until November 8), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 8 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'
-      : 'Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.');
-  const key = env.SYNTHE_ANTHROPIC_KEY?.trim() || (agent ? envKey?.trim() : "") || env.SYNTHE_EVENT_CODE?.trim() || (agent ? "" : await askKey(io, envKey));
-  if (!key) {
-    if (agent) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY/ANTHROPIC_API_KEY");
-    io.say("No event code or key, so nothing was set up. Run `npx synthe init` again when you have one."); return false;
-  }
-  const event = !key.startsWith("sk-ant-");
-  const model = event ? (io.proxy ?? proxyModel)(key) : io.model(key);
-  if (event) {
-    eventModels(DEFAULTS.models);
-    await model.ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
-  }
+      ? 'During Crimson Hacks (until November 8), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 8 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), set DO_NOT_TRACK=1 on setup (including --confirm), or choose --share none in agent mode.'
+      : share === "numbers" ? 'Sharing with Synthe: numbers only (rounds, checks and spend). To turn sharing off, set "share": "none" in synthe.json, set DO_NOT_TRACK=1 on setup (including --confirm), or choose --share none in agent mode.'
+      : 'Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), set DO_NOT_TRACK=1 on setup (including --confirm), or choose --share none in agent mode.');
 
   const context = repoContext(tracked, location);
   io.say(`\nReading your prompt${context.names.length ? ` and ${context.names.join(" and ")}` : ""}, and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
@@ -334,6 +361,9 @@ async function finishSetup(io: Io, root: string, slug: string, branch: string, g
   writeFileSync(join(root, GOAL_FILE), `${JSON.stringify(goal, null, 2)}\n`);
   writeFileSync(join(root, SCENARIOS_FILE), `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`);
   writeFileSync(join(root, WORKFLOW_FILE), renderWorkflow(io.template()));
+  const ignorePath = join(root, ".gitignore");
+  const ignore = existsSync(ignorePath) ? readFileSync(ignorePath, "utf8") : "";
+  if (!ignore.split(/\r?\n/).includes(`/${DRAFT_FILE}`)) writeFileSync(ignorePath, `${ignore}${ignore && !ignore.endsWith("\n") ? "\n" : ""}/${DRAFT_FILE}\n`);
 
   await io.run("gh", ["secret", "set", secret, "--repo", slug], key);
   try {
@@ -343,8 +373,8 @@ async function finishSetup(io: Io, root: string, slug: string, branch: string, g
     io.say(`Turn on "Allow GitHub Actions to create and approve pull requests" at https://github.com/${slug}/settings/actions`);
   }
 
-  await io.run("git", ["add", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE]);
-  await io.run("git", ["commit", "-m", "Add Synthe", "--", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE]);
+  await io.run("git", ["add", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE, ".gitignore"]);
+  await io.run("git", ["commit", "-m", "Add Synthe", "--", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE, ".gitignore"]);
   // A protected branch, or one that moved on since the last pull, refuses the push. A pull request works either way.
   let setupPr: string | null = null;
   try {

@@ -1,5 +1,5 @@
 import type { Goal } from "../core/goal.ts";
-import { isFinished, resumeIfScenariosChanged, type State } from "../core/state.ts";
+import { budgetSpend, isFinished, resumeIfScenariosChanged, type State } from "../core/state.ts";
 
 // What `npx synthe restart` may change. A stop that needed a person (a GitHub setting, a key, a prompt Synthe
 // couldn't find) is cleared, so the run continues once they've fixed it. A finished run isn't: its rounds, budget
@@ -17,9 +17,10 @@ export function restartState(goal: Goal, state: State, scenariosHash: string | n
   // Rounds that all failed (a key that stopped working) also count as stalls, so they read as a finished run.
   const failedOut = recent.length > 0 && recent.every((r) => r.outcome === "failed");
   const roundsRaised = /^reached \d+ rounds$/.test(stopped) && state.round < goal.merge_rule.max_rounds;
-  if (isFinished(stopped) && !failedOut && !roundsRaised) {
+  const budgetAvailable = /^budget/.test(stopped) && budgetSpend(state) < goal.budget.max_usd;
+  if (isFinished(stopped) && (!failedOut || /^budget/.test(stopped)) && !roundsRaised && !budgetAvailable) {
     if (/no winner$/.test(stopped)) return { why: `The last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better. To keep going, add test cases your agent still gets wrong to ${goal.scenarios}, push them, then run \`npx synthe restart\` again.` };
-    if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget, so this run is finished.` };
+    if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget. Run \`npx synthe key\` for a fresh own-key budget, or raise budget.max_usd in synthe.json and push it, then run \`npx synthe restart\`.` };
     return { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` };
   }
   return { state: { ...state, stopped: null, stalls: 0 }, note: stopped === "credit" ? "It had stopped on event credit." : `It had stopped because: ${stopped}.` };

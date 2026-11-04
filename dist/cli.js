@@ -28049,7 +28049,7 @@ var init_sdk = __esm({
 
 // src/cli/main.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "node:fs";
 import { createInterface as createInterface3 } from "node:readline/promises";
 
 // src/core/goal.ts
@@ -28311,6 +28311,9 @@ var newState = () => ({
   chainReady: false,
   rounds: []
 });
+function budgetSpend(state) {
+  return state.spendUsd - (state.ownKeyFromUsd ?? 0);
+}
 function isFinished(reason) {
   return /^(budget of .* is used|reached \d+ rounds|\d+ rounds in a row found no winner)$/.test(reason);
 }
@@ -28375,20 +28378,33 @@ function literalProblem(text, delimiter2) {
 
 // src/core/share.ts
 var FULL_SHARE_UNTIL = "2026-11-08T23:59:00Z";
+var PROXY_AUTH_MESSAGE = "The Synthe proxy couldn't verify this GitHub run. Run `npx synthe upgrade`, commit the workflow, and try again.";
+var oidcCache = /* @__PURE__ */ new Map();
+function requireOidc(env = process.env) {
+  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) throw new Error(PROXY_AUTH_MESSAGE);
+}
 async function oidcToken(audience, env = process.env, fetcher = fetch, signal) {
-  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) throw new Error("GitHub OIDC permission is missing. Run `npx synthe upgrade`.");
+  requireOidc(env);
+  const cacheKey = JSON.stringify([audience, env.ACTIONS_ID_TOKEN_REQUEST_URL, env.ACTIONS_ID_TOKEN_REQUEST_TOKEN]);
+  const cached = oidcCache.get(cacheKey);
+  if (cached && cached.fetcher === fetcher && cached.expires - 6e4 > Date.now()) return cached.token;
   const url = new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
   url.searchParams.set("audience", audience);
   const response = await fetcher(url, { headers: { Authorization: `bearer ${env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` }, signal: signal ?? AbortSignal.timeout(1e4) });
   if (!response.ok) throw new Error(`GitHub OIDC returned ${response.status}.`);
   const token = (await response.json()).value;
   if (typeof token !== "string" || !token) throw new Error("GitHub OIDC returned no token.");
+  try {
+    const { exp } = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+    if (typeof exp === "number" && Number.isFinite(exp)) oidcCache.set(cacheKey, { token, expires: exp * 1e3, fetcher });
+  } catch {
+  }
   return token;
 }
 
 // src/loop/report.ts
 var ISSUE_TITLE = "Synthe: prompt report";
-var money = (state) => state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}` : `$${state.spendUsd.toFixed(2)}`;
+var money = (state) => state.spendUnknown ? `over $${budgetSpend(state).toFixed(2)}` : `$${budgetSpend(state).toFixed(2)}`;
 var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")} back to back`;
 var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
@@ -28411,19 +28427,20 @@ function headline(goal, state, stoppedByTeam = false) {
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
+    const wait = busy(last) ? /Synthe's proxy|Credit is unavailable/.test(last?.plain ?? "") ? ` ${last.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
     return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
     const end = recent.at(-1);
+    if (busy(end) && /Synthe's proxy|Credit is unavailable/.test(end.plain ?? "")) return { title: "Stopped: Synthe's proxy needs attention", summary: end.plain };
     if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain };
     if (badKey(end)) return { title: "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
     if (busy(end) && isFinished(state.stopped)) {
       return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
     }
-    if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, get a new key from the Synthe table." };
+    if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, run `npx synthe key`." };
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
   return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
@@ -28459,6 +28476,13 @@ var PROXY_URL = "https://synthe-share.vercel.app/api/claude";
 var install = randomUUID2();
 var CreditError = class extends Error {
 };
+var ProxyError = class extends Error {
+  status;
+  constructor(status2, message) {
+    super(message);
+    this.status = status2;
+  }
+};
 function eventModels(models) {
   for (const model of Object.values(models)) {
     if (!["claude-haiku-5-5", "claude-sonnet-5-5"].includes(model)) throw new CreditError(`Event credit only supports claude-haiku-5-5 and claude-sonnet-5-5; your goal names ${model}. Use an allowed model or run \`npx synthe key\` to use your own Anthropic key.`);
@@ -28468,7 +28492,8 @@ function proxyModel(eventCode, action = false) {
   const client = new Anthropic({
     apiKey: "synthe-proxy",
     baseURL: process.env.SYNTHE_PROXY_URL || PROXY_URL,
-    maxRetries: 4,
+    maxRetries: 2,
+    logLevel: "off",
     fetch: async (url, init2) => {
       const headers = new Headers(init2?.headers);
       headers.set("x-synthe-event", eventCode);
@@ -28499,6 +28524,9 @@ function proxyModel(eventCode, action = false) {
     } catch (error) {
       const refused = error;
       if ((refused.status === 402 || refused.status === 403) && refused.error?.error?.type === "synthe_credit" && typeof refused.error.error.message === "string") throw new CreditError(refused.error.error.message);
+      if (refused.status === 401) throw new ProxyError(401, PROXY_AUTH_MESSAGE);
+      if (refused.status === 429) throw new ProxyError(429, "Synthe's proxy is busy. Wait a few minutes and try again.");
+      if (refused.status === 503 && typeof refused.error?.error?.message === "string") throw new ProxyError(503, refused.error.error.message);
       throw error;
     }
   } };
@@ -28553,13 +28581,14 @@ async function pool(items, limit2, fn) {
 }
 function modelProblem(e) {
   if (e instanceof CreditError) return e.message;
+  if (e instanceof ProxyError) return e.message;
   const err = e;
   const status2 = typeof err?.status === "number" ? err.status : null;
   const text = typeof err?.message === "string" ? err.message : "";
-  if (status2 === 401) return "Your Synthe key was rejected. Check you copied all of it (it starts with sk-ant-), or ask the Synthe table for a new one.";
-  if (/credit balance is too low/i.test(text)) return "Your Synthe key has no credit left. Ask the Synthe table for a new key.";
-  if (/usage limit|spend limit/i.test(text)) return "Your Synthe key has reached its spending limit. Ask the Synthe table for a new key.";
-  if (status2 === 403) return "Your Synthe key isn't allowed to use this model. Ask the Synthe table for a new key.";
+  if (status2 === 401) return "Your Anthropic key was rejected. Run `npx synthe key` to replace it.";
+  if (/credit balance is too low/i.test(text)) return "Your Anthropic key has no credit left. Run `npx synthe key` to replace it.";
+  if (/usage limit|spend limit/i.test(text)) return "Your Anthropic key has reached its spending limit. Run `npx synthe key` to replace it.";
+  if (status2 === 403) return "Your Anthropic key isn't allowed to use this model. Run `npx synthe key` to replace it.";
   if (status2 === 429 || status2 === 529 || status2 !== null && status2 >= 500) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
   if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
   return null;
@@ -28965,7 +28994,7 @@ async function measureNoise(goal, prompt, scenarios, model) {
 }
 
 // src/cli/init.ts
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
 
 // src/cli/agent.ts
@@ -28991,11 +29020,15 @@ function agentOptions(args) {
       result.keepChecks = true;
       continue;
     }
-    if (!["--prompt", "--objective", "--mode", "--message", "--check"].includes(flag)) askPerson(flag);
+    if (!["--prompt", "--objective", "--mode", "--message", "--check", "--share"].includes(flag)) askPerson(flag);
     const value = args[++index]?.trim();
     if (!value || value.startsWith("--")) askPerson(flag);
     if (flag === "--prompt") result.prompt = value;
     if (flag === "--objective") result.objective = value;
+    if (flag === "--share") {
+      if (value !== "none" && value !== "numbers" && value !== "detail") askPerson(flag);
+      result.share = value;
+    }
     if (flag === "--mode") {
       if (value !== "auto" && value !== "review") askPerson(flag);
       result.mode = value;
@@ -29201,7 +29234,7 @@ var ACTION = "synthelabs/synthe@v1";
 var SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 var WORKFLOW_FILE = ".github/workflows/synthe.yml";
 var DRAFT_FILE = ".synthe/setup-draft.json";
-var AGENT_NEXT = 'NEXT: Show all of this to the person, including the sharing notice, proposed checks and calibration examples. Ask which checks to keep or reword and whether the marks look right. Then run `npx synthe init --agent --confirm --check "final sentence"`, repeating `--check` for each final check, or use `--keep-checks` if they keep the proposed checks.';
+var AGENT_NEXT = 'NEXT: Tell the person which credential and budget will be used. Show all of this to the person, including the sharing notice, proposed checks and calibration examples. Ask which checks to keep or reword and whether the marks look right. The person can choose `--share none`. Then run `npx synthe init --agent --confirm --check "final sentence"`, repeating `--check` for each final check, or use `--keep-checks` if they keep the proposed checks.';
 var SETUP_BRANCH = "synthe/setup";
 var SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
 var SCENARIO_SCHEMA = {
@@ -29305,19 +29338,34 @@ async function yesNo(io2, question) {
   }
   return null;
 }
-async function askKey(io2, envKey) {
+async function askKey(io2, envKey, preferred) {
   const question = "Paste your Crimson Hacks event code (on the QR card), or your own Anthropic key: ";
-  if (envKey?.trim()) io2.say("Or press Enter to use the key already in ANTHROPIC_API_KEY.");
+  if (envKey?.trim() && !preferred) io2.say("Or press Enter to use the key already in ANTHROPIC_API_KEY.");
   for (let i = 0; i < 3; i++) {
-    const typed = (await io2.askSecret(question)).trim();
-    const key = typed || envKey?.trim() || "";
+    const typed = i === 0 && preferred ? preferred : (await io2.askSecret(question)).trim();
+    const key = typed || preferred || envKey?.trim() || "";
     if (key) {
-      if (!typed) io2.say("Using the key in ANTHROPIC_API_KEY.");
-      return key;
+      if (!typed && !preferred) io2.say("Using the key in ANTHROPIC_API_KEY.");
+      try {
+        await credentialModel(io2, key).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
+        return key;
+      } catch (error) {
+        io2.say(modelProblem(error) ?? error.message);
+        continue;
+      }
     }
     io2.say("Paste your event code or key, then press Enter.");
   }
   return null;
+}
+function credentialModel(io2, key) {
+  return key.startsWith("sk-ant-") ? io2.model(key) : (io2.proxy ?? proxyModel)(key);
+}
+function sharingDisabled(env) {
+  return ["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "") || ["0", "false"].includes(env.SYNTHE_TELEMETRY?.toLowerCase() ?? "");
+}
+function setupCredential(env, appKey) {
+  return env.SYNTHE_ANTHROPIC_KEY?.trim() || env.SYNTHE_EVENT_CODE?.trim() || appKey?.trim();
 }
 async function whyGitHubFails(io2) {
   try {
@@ -29363,6 +29411,13 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
     io2.say(`You're on the branch ${here}. Synthe adds itself to ${branch}, because GitHub only runs scheduled backup jobs from there. Run \`git checkout ${branch}\`, then \`npx synthe init\` again.`);
     return false;
   }
+  if (agent) {
+    const installed = await Promise.all([GOAL_FILE, WORKFLOW_FILE].map(async (path4) => existsSync(join2(root, path4)) || (await io2.run("gh", ["api", `repos/${slug}/contents/${path4}?ref=${encodeURIComponent(branch)}`, "--jq", ".path"]).catch(() => "")).trim() === path4));
+    if (installed.every(Boolean)) {
+      io2.say("Synthe is already set up on the default branch. Use `npx synthe restart` to continue; don't run init again.");
+      return false;
+    }
+  }
   if (agent?.confirm) {
     let draft;
     try {
@@ -29375,16 +29430,30 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
     } catch {
       askPerson("--confirm (run step 1 again)");
     }
-    const credential = env.SYNTHE_ANTHROPIC_KEY?.trim() || envKey?.trim() || env.SYNTHE_EVENT_CODE?.trim();
+    const credential = setupCredential(env, envKey);
     if (!credential) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY/ANTHROPIC_API_KEY");
     if (draft.event !== !credential.startsWith("sk-ant-")) askPerson("--confirm (use the same credential type as step 1)");
     if (agent.checks.length) draft.goal.checks = agent.checks;
+    if (agent.share) draft.goal.share = agent.share;
+    if (sharingDisabled(env)) draft.goal.share = "none";
     if (draft.event) eventModels(draft.goal.models);
     if (draft.event) await (io2.proxy ?? proxyModel)(credential).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
-    return finishSetup(io2, root, slug, branch, draft.goal, draft.rows, credential, draft.event);
+    const finished = await finishSetup(io2, root, slug, branch, draft.goal, draft.rows, credential, draft.event);
+    if (finished) rmSync(join2(root, DRAFT_FILE), { force: true });
+    return finished;
   }
   if (!agent) io2.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.
 `);
+  const preferred = setupCredential(env, envKey);
+  const key = agent ? preferred : await askKey(io2, envKey, env.SYNTHE_ANTHROPIC_KEY?.trim() || env.SYNTHE_EVENT_CODE?.trim());
+  if (!key) {
+    if (agent) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY/ANTHROPIC_API_KEY");
+    io2.say("Nothing in your repo was changed. Run `npx synthe init` again when you have a working event code or key.");
+    return false;
+  }
+  const event = !key.startsWith("sk-ant-");
+  const credentialName = event ? "Crimson Hacks event code" : key === env.SYNTHE_ANTHROPIC_KEY?.trim() ? "your own key from SYNTHE_ANTHROPIC_KEY" : key === envKey?.trim() ? "your own key from ANTHROPIC_API_KEY" : "your own Anthropic key";
+  io2.say(`Credential: ${credentialName}, $${event ? 4 : 3} budget${event ? "." : " on your Anthropic account."}`);
   const tracked = repoTextFiles(await io2.run("git", ["ls-files"]), root);
   const prompts = findPrompts(tracked);
   let location;
@@ -29422,12 +29491,15 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
     return false;
   }
   if (agent && !promptText.trim()) askPerson("--prompt");
+  const model = credentialModel(io2, key);
+  if (event) eventModels(DEFAULTS.models);
+  if (agent) await model.ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
   const objective = agent ? agent.objective : (await io2.ask('\nWhat should your agent get better at? One sentence, for example "answer returns questions correctly and offer an exchange first":\n> ')).trim();
   if (!objective) {
     io2.say("Synthe needs a goal to work toward. Run `npx synthe init` again and describe one.");
     return false;
   }
-  io2.say("\nOptional: paste up to 5 messages real users have sent your agent (or would send), one per line. Press Enter on an empty line when you're done, or right away to skip.");
+  if (!agent) io2.say("\nOptional: paste up to 5 messages real users have sent your agent (or would send), one per line. Press Enter on an empty line when you're done, or right away to skip.");
   const seeds = agent ? agent.messages : [];
   while (!agent && seeds.length < 5) {
     const line = (await io2.ask(`Real message ${seeds.length + 1} (Enter when done): `)).trim();
@@ -29442,22 +29514,10 @@ When Synthe finds a clearly better prompt, it can merge it into ${branch} by its
     io2.say("No clear answer, so Synthe will open pull requests for you to review.");
   }
   io2.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
-  const sharingOff = ["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "") || ["0", "false"].includes(env.SYNTHE_TELEMETRY?.toLowerCase() ?? "");
-  const share = sharingOff ? "none" : now().getTime() < Date.parse(FULL_SHARE_UNTIL) ? "full" : "detail";
+  const sharingOff = sharingDisabled(env) || agent?.share === "none";
+  const share = sharingOff ? "none" : agent?.share ?? (now().getTime() < Date.parse(FULL_SHARE_UNTIL) ? "full" : "detail");
   if (agent) io2.say("The person must see this sharing notice before confirming setup:");
-  io2.say(sharingOff ? "Sharing with Synthe: off (DO_NOT_TRACK is set)." : share === "full" ? `During Crimson Hacks (until November 8), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe's prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 8 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.` : `Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.`);
-  const key = env.SYNTHE_ANTHROPIC_KEY?.trim() || (agent ? envKey?.trim() : "") || env.SYNTHE_EVENT_CODE?.trim() || (agent ? "" : await askKey(io2, envKey));
-  if (!key) {
-    if (agent) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY/ANTHROPIC_API_KEY");
-    io2.say("No event code or key, so nothing was set up. Run `npx synthe init` again when you have one.");
-    return false;
-  }
-  const event = !key.startsWith("sk-ant-");
-  const model = event ? (io2.proxy ?? proxyModel)(key) : io2.model(key);
-  if (event) {
-    eventModels(DEFAULTS.models);
-    await model.ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
-  }
+  io2.say(sharingOff ? "Sharing with Synthe: off (DO_NOT_TRACK, SYNTHE_TELEMETRY or --share none)." : share === "full" ? `During Crimson Hacks (until November 8), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe's prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 8 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), set DO_NOT_TRACK=1 on setup (including --confirm), or choose --share none in agent mode.` : share === "numbers" ? 'Sharing with Synthe: numbers only (rounds, checks and spend). To turn sharing off, set "share": "none" in synthe.json, set DO_NOT_TRACK=1 on setup (including --confirm), or choose --share none in agent mode.' : `Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), set DO_NOT_TRACK=1 on setup (including --confirm), or choose --share none in agent mode.`);
   const context2 = repoContext(tracked, location);
   io2.say(`
 Reading your prompt${context2.names.length ? ` and ${context2.names.join(" and ")}` : ""}, and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
@@ -29519,6 +29579,10 @@ async function finishSetup(io2, root, slug, branch, goal, rows, key, event) {
   writeFileSync(join2(root, SCENARIOS_FILE), `${rows.map((r) => JSON.stringify(r)).join("\n")}
 `);
   writeFileSync(join2(root, WORKFLOW_FILE), renderWorkflow(io2.template()));
+  const ignorePath = join2(root, ".gitignore");
+  const ignore = existsSync(ignorePath) ? readFileSync(ignorePath, "utf8") : "";
+  if (!ignore.split(/\r?\n/).includes(`/${DRAFT_FILE}`)) writeFileSync(ignorePath, `${ignore}${ignore && !ignore.endsWith("\n") ? "\n" : ""}/${DRAFT_FILE}
+`);
   await io2.run("gh", ["secret", "set", secret, "--repo", slug], key);
   try {
     await io2.run("gh", [
@@ -29534,8 +29598,8 @@ async function finishSetup(io2, root, slug, branch, goal, rows, key, event) {
   } catch {
     io2.say(`Turn on "Allow GitHub Actions to create and approve pull requests" at https://github.com/${slug}/settings/actions`);
   }
-  await io2.run("git", ["add", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE]);
-  await io2.run("git", ["commit", "-m", "Add Synthe", "--", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE]);
+  await io2.run("git", ["add", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE, ".gitignore"]);
+  await io2.run("git", ["commit", "-m", "Add Synthe", "--", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE, ".gitignore"]);
   let setupPr = null;
   try {
     await io2.run("git", ["push"]);
@@ -29591,9 +29655,10 @@ function restartState(goal, state, scenariosHash = null) {
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   const failedOut = recent.length > 0 && recent.every((r) => r.outcome === "failed");
   const roundsRaised = /^reached \d+ rounds$/.test(stopped) && state.round < goal.merge_rule.max_rounds;
-  if (isFinished(stopped) && !failedOut && !roundsRaised) {
+  const budgetAvailable = /^budget/.test(stopped) && budgetSpend(state) < goal.budget.max_usd;
+  if (isFinished(stopped) && (!failedOut || /^budget/.test(stopped)) && !roundsRaised && !budgetAvailable) {
     if (/no winner$/.test(stopped)) return { why: `The last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better. To keep going, add test cases your agent still gets wrong to ${goal.scenarios}, push them, then run \`npx synthe restart\` again.` };
-    if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget, so this run is finished.` };
+    if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget. Run \`npx synthe key\` for a fresh own-key budget, or raise budget.max_usd in synthe.json and push it, then run \`npx synthe restart\`.` };
     return { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` };
   }
   return { state: { ...state, stopped: null, stalls: 0 }, note: stopped === "credit" ? "It had stopped on event credit." : `It had stopped because: ${stopped}.` };
@@ -29626,11 +29691,11 @@ async function askSecret(question, input = process.stdin, output = process.stdou
 }
 
 // src/cli/upgrade.ts
-import { existsSync, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join3 } from "node:path";
 function upgrade(root, template2) {
   const path4 = join3(root, WORKFLOW_FILE);
-  if (!existsSync(path4)) throw new Error(`No ${WORKFLOW_FILE} found. Run \`npx synthe init\` first.`);
+  if (!existsSync2(path4)) throw new Error(`No ${WORKFLOW_FILE} found. Run \`npx synthe init\` first.`);
   const before = readFileSync2(path4, "utf8");
   if (!before.includes("synthelabs/synthe@v1")) throw new Error(`${WORKFLOW_FILE} is not a Synthe workflow; left it unchanged.`);
   const cron = before.match(/cron:\s*["']?(\d+)(?:-59\/10)? \* \* \* \*/);
@@ -29642,26 +29707,53 @@ function upgrade(root, template2) {
 }
 
 // src/cli/key.ts
-async function setKey(io2, env = process.env) {
-  const key = (env.SYNTHE_ANTHROPIC_KEY || env.ANTHROPIC_API_KEY || await io2.askSecret("Paste your own Anthropic key: ")).trim();
+async function setKey(io2, env = process.env, terminal = Boolean(process.stdin.isTTY)) {
+  if (!env.SYNTHE_ANTHROPIC_KEY?.trim() && !env.ANTHROPIC_API_KEY?.trim() && !terminal) {
+    io2.say("Ask the person to run `npx synthe key` in their own terminal.");
+    return false;
+  }
+  const key = env.SYNTHE_ANTHROPIC_KEY?.trim() || env.ANTHROPIC_API_KEY?.trim() || (await io2.askSecret("Paste your own Anthropic key: ")).trim();
   if (!/^sk-ant-\S+$/.test(key)) {
     io2.say("That doesn't look like an Anthropic key: it must start with sk-ant-. Nothing changed.");
     return false;
   }
-  const slug = (await io2.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
-  await io2.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
-  io2.say("Rounds now use your own Anthropic key. The event credit is no longer used.");
+  if (!env.SYNTHE_ANTHROPIC_KEY?.trim() && env.ANTHROPIC_API_KEY?.trim()) io2.say("Using the key in ANTHROPIC_API_KEY.");
   try {
-    const state = JSON.parse(await io2.run("gh", ["api", `repos/${slug}/contents/state.json?ref=${encodeURIComponent(STATE_BRANCH)}`, "-H", "Accept: application/vnd.github.raw+json"]));
-    if (state.stopped === "credit") io2.say("The run stopped on event credit. Run `npx synthe restart` to continue.");
-  } catch {
-    io2.say("If the run stopped on event credit, run `npx synthe restart` to continue.");
+    await (io2.model ?? anthropicModel)(key).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
+  } catch (error) {
+    io2.say(`${modelProblem(error) ?? error.message} Nothing changed.`);
+    return false;
   }
+  const slug = (await io2.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
+  const goal = parseGoal(await io2.run("gh", ["api", `repos/${slug}/contents/synthe.json`, "-H", "Accept: application/vnd.github.raw+json"]));
+  const path4 = `repos/${slug}/contents/state.json`;
+  let file = null;
+  try {
+    file = JSON.parse(await io2.run("gh", ["api", `${path4}?ref=${encodeURIComponent(STATE_BRANCH)}`]));
+  } catch (error) {
+    if (!/404|Not Found/i.test(error.message)) throw error;
+  }
+  const state = { ...newState(), ...file ? JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) : {} };
+  if (!file) {
+    try {
+      await io2.run("gh", ["api", `repos/${slug}/git/ref/heads/${encodeURIComponent(STATE_BRANCH)}`]);
+    } catch (error) {
+      if (!/404|Not Found/i.test(error.message)) throw error;
+      const head = (await io2.run("gh", ["api", `repos/${slug}/commits/HEAD`, "--jq", ".sha"])).trim();
+      await io2.run("gh", ["api", "-X", "POST", `repos/${slug}/git/refs`, "-f", `ref=refs/heads/${STATE_BRANCH}`, "-f", `sha=${head}`]);
+    }
+  }
+  await io2.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
+  state.ownKeyFromUsd = state.spendUsd;
+  const content = Buffer.from(`${JSON.stringify(state, null, 2)}
+`).toString("base64");
+  await io2.run("gh", ["api", "-X", "PUT", path4, "-f", "message=Synthe: switched to own key", "-f", `branch=${STATE_BRANCH}`, ...file ? ["-f", `sha=${file.sha}`] : [], "-f", `content=${content}`]);
+  io2.say(`Rounds now use your own Anthropic key, with a fresh $${goal.budget.max_usd} budget (budget.max_usd in synthe.json).${state.stopped ? " Run `npx synthe restart` to continue." : ""}`);
   return true;
 }
 
 // docs/AGENT-SETUP.md
-var AGENT_SETUP_default = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand.\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n\n## 1. Prerequisites\n\n1. Check the repo is on GitHub and pushed: `git remote -v` and `git status`. If not, help the person push it first.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card. Or they can use their own Anthropic key (it starts with `sk-ant-`).\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It changes nothing in the repo except a draft file.\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nWith an own key, use `SYNTHE_ANTHROPIC_KEY=<key>` in place of `SYNTHE_EVENT_CODE=<code>`, here and in step 7.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The sharing notice. The person must see it. During Crimson Hacks, Synthe shares the prompt and test cases with the Synthe team until Nov 8. Never code. Secrets are removed. Setting `"share": "none"` in `synthe.json` turns sharing off.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person:\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n\nFollow the `NEXT:` line that step 1 printed.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --confirm --keep-checks\n```\n\n## 8. After setup\n\nTell the person:\n\n- Rounds start by themselves. They do not need to do anything.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` switches to their own Anthropic key. Use it when the event credit runs out. Each GitHub account gets $4 of event credit.\n';
+var AGENT_SETUP_default = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand.\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n\n## 1. Prerequisites\n\n1. Check the repo is on GitHub and pushed: `git remote -v` and `git status`. If not, help the person push it first.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card. Or they can use their own Anthropic key (it starts with `sk-ant-`).\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nSynthe uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE`, then `ANTHROPIC_API_KEY`. Show the printed credential and budget to the person so they know whose credit will be used.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It changes nothing in the repo except a draft file.\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nWith an own key, use `SYNTHE_ANTHROPIC_KEY=<key>` in place of `SYNTHE_EVENT_CODE=<code>`, here and in step 7.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, and the sharing notice. The person must see them. During Crimson Hacks, Synthe shares the prompt and test cases with the Synthe team until Nov 8. Never code. Secrets are removed. The person can choose `--share none` at confirmation, or set `"share": "none"` in `synthe.json` any time.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person:\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n\nFollow the `NEXT:` line that step 1 printed.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --confirm --keep-checks\n```\n\nAdd `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft\'s sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup adds `.synthe/setup-draft.json` to the team\'s `.gitignore` and deletes the draft after success. Don\'t confirm twice.\n\n## 8. After setup\n\nTell the person:\n\n- Rounds start by themselves. They do not need to do anything.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the switch. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. Each GitHub account gets $4 of event credit, shared by all its repos.\n';
 
 // src/cli/main.ts
 var run = (cmd, args, stdin) => new Promise((resolve2, reject) => {
@@ -29686,7 +29778,7 @@ async function ask(question) {
 var template = () => readFileSync3(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 function setUpHere() {
-  if (existsSync2(GOAL_FILE)) return true;
+  if (existsSync3(GOAL_FILE)) return true;
   console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
   process.exitCode = 1;
   return false;
@@ -29748,7 +29840,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync2(goal.scenarios) ? sha256(readFileSync3(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync3(goal.scenarios) ? sha256(readFileSync3(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -29775,7 +29867,7 @@ async function restart() {
 }
 function localRun(command) {
   if (!setUpHere()) return null;
-  const key = process.env.SYNTHE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY;
+  const key = process.env.SYNTHE_ANTHROPIC_KEY?.trim() || (process.env.SYNTHE_EVENT_CODE?.trim() ? void 0 : process.env.ANTHROPIC_API_KEY?.trim());
   const eventCode = process.env.SYNTHE_EVENT_CODE;
   if (!key && !eventCode) {
     console.log(`\`npx synthe ${command}\` runs on your computer, changing nothing, and needs an event code or your own Anthropic key.`);

@@ -85,7 +85,7 @@ test("a key failure says what to do: get a new key and update the repo secret", 
   const record = await runDecide(goal(), repo, failedRound(KEY));
   assert.equal(record!.failure, "key");
   assert.equal(repo.state.stalls, 1);
-  assert.match(record!.plain!, /Your Synthe key has no credit left\. Get a new key from the Synthe table, then run `gh secret set SYNTHE_ANTHROPIC_KEY` in your repo/);
+  assert.match(record!.plain!, /Your Synthe key has no credit left\. Run `npx synthe key`/);
   assert.doesNotMatch(record!.plain!, /Ask the Synthe table/);
   assert.match(repo.issue, /## Synthe needs you to fix something/);
   assert.match(repo.issue, /Run `npx synthe restart` after replacing the key/);
@@ -97,7 +97,7 @@ test("when the last rounds all failed, the headline names the cause instead of a
   for (let i = 0; i < 3; i++) await runDecide(goal(), key, failedRound(KEY));
   assert.ok(key.state.stopped);
   assert.match(key.issue, /## Stopped: your Synthe key stopped working/);
-  assert.match(key.issue, /gh secret set SYNTHE_ANTHROPIC_KEY.*Then run `npx synthe restart`/);
+  assert.match(key.issue, /npx synthe key.*Then run `npx synthe restart`/);
 
   // Busy rounds don't stall, so a busy run only stops at its round limit, and nothing needs fixing.
   const busy = new MemoryRepo("Old prompt.");
