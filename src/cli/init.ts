@@ -6,6 +6,7 @@ import { MAX_PROMPT_CHARS, promptPathProblem, redactSecrets } from "../core/safe
 import { ISSUE_TITLE } from "../loop/report.ts";
 import { askJson, type Model } from "../model/client.ts";
 import { reviewChecksAtSetup } from "./calibrate.ts";
+import { FULL_SHARE_UNTIL } from "../core/share.ts";
 
 export const ACTION = "synthelabs/synthe@v1";
 export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
@@ -216,10 +217,12 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   if (auto === null) { auto = false; io.say("No clear answer, so Synthe will open pull requests for you to review."); }
   io.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
   const sharingOff = ["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "") || ["0", "false"].includes(env.SYNTHE_TELEMETRY?.toLowerCase() ?? "");
-  const share: Goal["share"] = sharingOff ? "none" : "detail";
+  const share: Goal["share"] = sharingOff ? "none" : now().getTime() < Date.parse(FULL_SHARE_UNTIL) ? "full" : "detail";
   io.say(sharingOff
     ? "Sharing with Synthe: off (DO_NOT_TRACK is set)."
-    : 'Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example reply. Never your whole prompt, test cases or code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.');
+    : share === "full"
+      ? 'During Crimson Hacks (until November 8), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 8 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'
+      : 'Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.');
   const key = await askKey(io, envKey);
   if (!key) { io.say("No key, so nothing was set up. Get a key from the Synthe table, then run `npx synthe init` again."); return false; }
 

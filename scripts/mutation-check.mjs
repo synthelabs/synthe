@@ -15,9 +15,12 @@ const WORKFLOW = "templates/synthe.yml";
 const TESTS = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
 
 const mutations = [
-  ["an absent share setting sends data", SHARE, 'goal.share === "numbers" || goal.share === "detail"', 'goal.share !== "none"'],
+  ["an absent share setting sends data", SHARE, 'goal.share === "numbers" || goal.share === "detail" || goal.share === "full"', 'goal.share !== "none"'],
   ["DO_NOT_TRACK is ignored", "src/cli/init.ts", '["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "")', 'false'],
-  ["numbers-only sends text", SHARE, 'if (goal.share !== "detail") return payload;', 'if (goal.share === "none") return payload;'],
+  ["numbers-only sends text", SHARE, 'if (goal.share !== "detail" && goal.share !== "full") return payload;', 'if (goal.share === "none") return payload;'],
+  ["full sends prompt after the cutoff", SHARE, 'now.getTime() < Date.parse(FULL_SHARE_UNTIL)', 'true'],
+  ["detail sends the prompt", SHARE, 'goal.share === "full" && now.getTime()', 'true && now.getTime()'],
+  ["example input dropped", SHARE, '        input: limited(record.example.input, 2000),\n', ''],
   ["a share failure fails the round", SHARE, 'return `Sharing skipped: ${error instanceof Error && error.message === "timed out" ? "request timed out" : "request failed"}.`;', "throw error;"],
   ["a cancelled run still decides", WORKFLOW, "if: ${{ !cancelled() && needs.write.result", "if: ${{ always() && needs.write.result"],
   ["the decide condition loses its ${{ }} and YAML drops !cancelled()", WORKFLOW, "if: ${{ !cancelled() && needs.write.result != 'skipped' && needs.write.outputs.go != 'false' }}", "if: !cancelled() && needs.write.result != 'skipped' && needs.write.outputs.go != 'false'"],

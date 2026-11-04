@@ -9,8 +9,15 @@ const SECRETS: [RegExp, string][] = [
   [/(?<![\w.])\+?\d[\d ().-]{8,}\d(?![\w.])/g, "[phone removed]"],
 ];
 export const scrub = (text: string): string => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
-export const shouldShare = (goal: Goal): boolean => goal.share === "numbers" || goal.share === "detail";
+export const FULL_SHARE_UNTIL = "2026-11-08T23:59:00Z";
+export const fullShareActive = (goal: Goal, now: Date = new Date()): boolean => goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL);
+export const shouldShare = (goal: Goal): boolean => goal.share === "numbers" || goal.share === "detail" || goal.share === "full";
 const limited = (text: string, max: number) => scrub(text).slice(0, max);
+const fullText = (text: string): string => {
+  const clean = scrub(text);
+  const bytes = Buffer.from(clean);
+  return bytes.length <= 100 * 1024 ? clean : bytes.subarray(0, 100 * 1024).toString("utf8").replace(/\uFFFD$/, "");
+};
 const measure = (value: number | null | undefined, max: number): number | null =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : null;
 
@@ -24,7 +31,19 @@ export function stopCode(stopped: string | null): string | null {
   return "other";
 }
 
-export function sharePayload(goal: Goal, state: State, record: RoundRecord, version: string) {
+interface SharePayload {
+  round: number; outcome: RoundRecord["outcome"]; mode: Goal["merge_rule"]["mode"];
+  checksBefore: number | null; checksAfter: number | null; costUsd: number | null; spentUsd: number | null;
+  stop: string | null; version: string;
+  detail?: {
+    objective: string; checks: string[];
+    change: { title: string; summary: string; edits: { find: string; replace: string }[] } | null;
+    example: { input: string; before: string; after: string } | null;
+  };
+  full?: Record<string, string>;
+}
+
+export function sharePayload(goal: Goal, state: State, record: RoundRecord, version: string, full?: { prompt?: string; scenarios?: string; finalPrompt?: string }, now: Date = new Date()): SharePayload {
   const payload = {
     round: record.round,
     outcome: record.outcome,
@@ -36,9 +55,9 @@ export function sharePayload(goal: Goal, state: State, record: RoundRecord, vers
     stop: stopCode(state.stopped),
     version,
   };
-  if (goal.share !== "detail") return payload;
+  if (goal.share !== "detail" && goal.share !== "full") return payload;
   const edits = record.edits?.slice(0, 2).map((edit) => ({ find: limited(edit.find, 1500), replace: limited(edit.replace, 1500) }));
-  return {
+  const detailPayload = {
     ...payload,
     detail: {
       objective: limited(goal.objective, 2000),
@@ -49,11 +68,21 @@ export function sharePayload(goal: Goal, state: State, record: RoundRecord, vers
         edits,
       } : null,
       example: record.example ? {
+        input: limited(record.example.input, 2000),
         before: limited(record.example.before, 2000),
         after: limited(record.example.after, 2000),
       } : null,
     },
   };
+  if (!fullShareActive(goal, now) || !full) return detailPayload;
+  const fullValue: Record<string, string> = Object.fromEntries(Object.entries(full).filter(([, value]) => value !== undefined).map(([key, value]) => [key, fullText(value!)]));
+  const result = { ...detailPayload, full: fullValue };
+  // A first round can also be the stopping round. Keep the whole request under the endpoint's 256 KB limit.
+  while (Buffer.byteLength(JSON.stringify(result)) > 256 * 1024) {
+    const [key, value] = Object.entries(fullValue).sort((a, b) => b[1].length - a[1].length)[0];
+    fullValue[key] = value.slice(0, Math.max(0, value.length - 1024));
+  }
+  return result;
 }
 
 type OidcEnv = Partial<Pick<NodeJS.ProcessEnv, "ACTIONS_ID_TOKEN_REQUEST_URL" | "ACTIONS_ID_TOKEN_REQUEST_TOKEN">>;

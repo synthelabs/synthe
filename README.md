@@ -10,7 +10,9 @@ Setup reads your README and the code around your prompt, asks what your agent sh
 
 ## Data
 
-New installs share how each run goes with the Synthe team: rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example reply. The numbers go to the private `synthelabs/synthe-runs` repository; the rest goes to the private `synthelabs/synthe-feedback` repository. The Synthe team reads both. Synthe never sends your whole prompt, test cases or code, and removes keys, emails and phone numbers before sending.
+During Crimson Hacks, new installs use `"share": "full"` until November 8, 2026 at 23:59 UTC. This shares the prompt at the start of round 1, the full test-case file (train and holdout), the final prompt when the run stops, and how the run goes. After the cutoff, a full install automatically behaves like detail and stops sending the prompt and test-case file. New installs after the cutoff default to `"share": "detail"`.
+
+Detail shares rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example message with its replies. Numbers go to the public `synthelabs/synthe-runs` repository; all text goes only to the private `synthelabs/synthe-feedback` repository. The Synthe team reads both. Synthe never sends your code, and removes keys, emails and phone numbers before sending. Detail never sends your whole prompt or test-case file.
 
 To turn sharing off any time, set `"share": "none"` in `synthe.json`. Set `"share": "numbers"` to send numbers only, or run init with `DO_NOT_TRACK=1` to start with sharing off. Existing installs without a `share` setting stay off. To ask us to delete your team's data, open an issue on `synthelabs/synthe`.
 

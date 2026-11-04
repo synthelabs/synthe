@@ -28073,7 +28073,7 @@ function parseGoal(text) {
   if (g.checks !== void 0 && (!Array.isArray(g.checks) || g.checks.length > MAX_CHECKS || g.checks.some((c) => typeof c !== "string" || !c.trim() || c.length > 300))) {
     bad(`checks must be a list of up to ${MAX_CHECKS} sentences`);
   }
-  if (g.share !== void 0 && !["none", "numbers", "detail"].includes(g.share)) bad("share must be none, numbers or detail");
+  if (g.share !== void 0 && !["none", "numbers", "detail", "full"].includes(g.share)) bad("share must be none, numbers, detail or full");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
@@ -28616,6 +28616,110 @@ function judgeRound(scores, goal, replaced) {
   return best ?? { action: "skip", reasons: reasons.length ? reasons : ["no candidates"], notes };
 }
 
+// src/core/share.ts
+var ENDPOINT = "https://synthe-share.vercel.app/api/round";
+var SECRETS = [
+  [/\b(sk-(?:ant-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,})\b/g, "[key removed]"],
+  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "[token removed]"],
+  [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email removed]"],
+  [/(?<![\w.])\+?\d[\d ().-]{8,}\d(?![\w.])/g, "[phone removed]"]
+];
+var scrub = (text) => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
+var FULL_SHARE_UNTIL = "2026-11-08T23:59:00Z";
+var fullShareActive = (goal, now = /* @__PURE__ */ new Date()) => goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL);
+var shouldShare = (goal) => goal.share === "numbers" || goal.share === "detail" || goal.share === "full";
+var limited = (text, max) => scrub(text).slice(0, max);
+var fullText = (text) => {
+  const clean = scrub(text);
+  const bytes = Buffer.from(clean);
+  return bytes.length <= 100 * 1024 ? clean : bytes.subarray(0, 100 * 1024).toString("utf8").replace(/\uFFFD$/, "");
+};
+var measure = (value, max) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : null;
+function stopCode(stopped) {
+  if (!stopped) return null;
+  if (/^budget of .* is used$/.test(stopped)) return "budget";
+  if (/^reached \d+ rounds$/.test(stopped)) return "max rounds";
+  if (/^\d+ rounds in a row found no winner$/.test(stopped)) return "stalled";
+  if (/^stopped by (the )?team/i.test(stopped)) return "stopped by team";
+  if (stopped === "spend could not be measured") return "spend unknown";
+  return "other";
+}
+function sharePayload(goal, state, record, version, full, now = /* @__PURE__ */ new Date()) {
+  const payload = {
+    round: record.round,
+    outcome: record.outcome,
+    mode: goal.merge_rule.mode,
+    checksBefore: measure(record.checks?.before, 100),
+    checksAfter: measure(record.checks?.after, 100),
+    costUsd: measure(record.costUsd, 100),
+    spentUsd: state.spendUnknown ? null : measure(state.spendUsd, 1e3),
+    stop: stopCode(state.stopped),
+    version
+  };
+  if (goal.share !== "detail" && goal.share !== "full") return payload;
+  const edits = record.edits?.slice(0, 2).map((edit) => ({ find: limited(edit.find, 1500), replace: limited(edit.replace, 1500) }));
+  const detailPayload = {
+    ...payload,
+    detail: {
+      objective: limited(goal.objective, 2e3),
+      checks: (goal.checks ?? []).slice(0, 5).map((check) => limited(check, 300)),
+      change: edits?.length ? {
+        title: limited(record.title ?? record.changed ?? "Prompt change", 120),
+        summary: limited(record.changed ?? record.plain ?? "", 1e3),
+        edits
+      } : null,
+      example: record.example ? {
+        input: limited(record.example.input, 2e3),
+        before: limited(record.example.before, 2e3),
+        after: limited(record.example.after, 2e3)
+      } : null
+    }
+  };
+  if (!fullShareActive(goal, now) || !full) return detailPayload;
+  const fullValue = Object.fromEntries(Object.entries(full).filter(([, value]) => value !== void 0).map(([key, value]) => [key, fullText(value)]));
+  const result = { ...detailPayload, full: fullValue };
+  while (Buffer.byteLength(JSON.stringify(result)) > 256 * 1024) {
+    const [key, value] = Object.entries(fullValue).sort((a, b) => b[1].length - a[1].length)[0];
+    fullValue[key] = value.slice(0, Math.max(0, value.length - 1024));
+  }
+  return result;
+}
+async function shareRound(payload, env, fetcher = fetch) {
+  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
+    return "Sharing skipped: this workflow needs OIDC permission. Run `npx synthe upgrade`.";
+  }
+  const controller = new AbortController();
+  let timer;
+  try {
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error("timed out"));
+      }, 1e4);
+    });
+    const url = new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
+    url.searchParams.set("audience", "synthe-share");
+    const tokenResponse = await Promise.race([fetcher(url, {
+      headers: { Authorization: `bearer ${env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` },
+      signal: controller.signal
+    }), timeout]);
+    if (!tokenResponse.ok) return `Sharing skipped: GitHub OIDC returned ${tokenResponse.status}.`;
+    const token = (await Promise.race([tokenResponse.json(), timeout])).value;
+    if (typeof token !== "string" || !token) return "Sharing skipped: GitHub OIDC returned no token.";
+    const response = await Promise.race([fetcher(ENDPOINT, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    }), timeout]);
+    return response.ok ? `Shared round ${payload.round} with Synthe.` : `Sharing skipped: endpoint returned ${response.status}.`;
+  } catch (error) {
+    return `Sharing skipped: ${error instanceof Error && error.message === "timed out" ? "request timed out" : "request failed"}.`;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 // src/loop/report.ts
 var ISSUE_TITLE = "Synthe: prompt report";
 function notTested(goal) {
@@ -28721,7 +28825,7 @@ function roundRow(r) {
   const cost = r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`;
   return `| ${r.round} | ${result}${r.pr ? ` (#${r.pr})` : ""} | ${tried.replaceAll("|", "/").replaceAll("\n", " ")} | ${cost} |`;
 }
-function renderReport(goal, state) {
+function renderReport(goal, state, now = /* @__PURE__ */ new Date()) {
   const { title, summary } = headline(goal, state);
   const changes = state.rounds.filter((r) => ["merged", "reverted", "proposed"].includes(r.outcome) && r.pr);
   const mode = goal.merge_rule.mode === "propose" ? "**Mode:** review. Each change waits in a pull request until you merge or close it." : "**Mode:** automatic. Changes are merged into your main branch as soon as they win.";
@@ -28756,7 +28860,7 @@ function renderReport(goal, state) {
     "",
     `- Goal: ${goal.objective}`,
     `- Rounds: ${state.round} of up to ${goal.merge_rule.max_rounds}. Spent ${money(state)} of $${goal.budget.max_usd}.`,
-    `- Sharing with Synthe: ${goal.share === "detail" ? "numbers and what changed" : goal.share === "numbers" ? "numbers only" : "off"}. Turn it off with "share": "none" in synthe.json.`,
+    goal.share === "none" || !goal.share ? "- Sharing with Synthe: off." : goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL) ? '- Sharing with Synthe: everything for Crimson Hacks (prompt and test cases until November 8), then numbers and what changed. Turn it off with "share": "none" in synthe.json.' : `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}. Turn it off with "share": "none" in synthe.json.`,
     `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
     ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}. ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),
@@ -29535,94 +29639,6 @@ ${goal.policy ?? ""}`);
   return record;
 }
 
-// src/core/share.ts
-var ENDPOINT = "https://synthe-share.vercel.app/api/round";
-var SECRETS = [
-  [/\b(sk-(?:ant-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,})\b/g, "[key removed]"],
-  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "[token removed]"],
-  [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email removed]"],
-  [/(?<![\w.])\+?\d[\d ().-]{8,}\d(?![\w.])/g, "[phone removed]"]
-];
-var scrub = (text) => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
-var shouldShare = (goal) => goal.share === "numbers" || goal.share === "detail";
-var limited = (text, max) => scrub(text).slice(0, max);
-var measure = (value, max) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : null;
-function stopCode(stopped) {
-  if (!stopped) return null;
-  if (/^budget of .* is used$/.test(stopped)) return "budget";
-  if (/^reached \d+ rounds$/.test(stopped)) return "max rounds";
-  if (/^\d+ rounds in a row found no winner$/.test(stopped)) return "stalled";
-  if (/^stopped by (the )?team/i.test(stopped)) return "stopped by team";
-  if (stopped === "spend could not be measured") return "spend unknown";
-  return "other";
-}
-function sharePayload(goal, state, record, version) {
-  const payload = {
-    round: record.round,
-    outcome: record.outcome,
-    mode: goal.merge_rule.mode,
-    checksBefore: measure(record.checks?.before, 100),
-    checksAfter: measure(record.checks?.after, 100),
-    costUsd: measure(record.costUsd, 100),
-    spentUsd: state.spendUnknown ? null : measure(state.spendUsd, 1e3),
-    stop: stopCode(state.stopped),
-    version
-  };
-  if (goal.share !== "detail") return payload;
-  const edits = record.edits?.slice(0, 2).map((edit) => ({ find: limited(edit.find, 1500), replace: limited(edit.replace, 1500) }));
-  return {
-    ...payload,
-    detail: {
-      objective: limited(goal.objective, 2e3),
-      checks: (goal.checks ?? []).slice(0, 5).map((check) => limited(check, 300)),
-      change: edits?.length ? {
-        title: limited(record.title ?? record.changed ?? "Prompt change", 120),
-        summary: limited(record.changed ?? record.plain ?? "", 1e3),
-        edits
-      } : null,
-      example: record.example ? {
-        before: limited(record.example.before, 2e3),
-        after: limited(record.example.after, 2e3)
-      } : null
-    }
-  };
-}
-async function shareRound(payload, env, fetcher = fetch) {
-  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
-    return "Sharing skipped: this workflow needs OIDC permission. Run `npx synthe upgrade`.";
-  }
-  const controller = new AbortController();
-  let timer;
-  try {
-    const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => {
-        controller.abort();
-        reject(new Error("timed out"));
-      }, 1e4);
-    });
-    const url = new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
-    url.searchParams.set("audience", "synthe-share");
-    const tokenResponse = await Promise.race([fetcher(url, {
-      headers: { Authorization: `bearer ${env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` },
-      signal: controller.signal
-    }), timeout]);
-    if (!tokenResponse.ok) return `Sharing skipped: GitHub OIDC returned ${tokenResponse.status}.`;
-    const token = (await Promise.race([tokenResponse.json(), timeout])).value;
-    if (typeof token !== "string" || !token) return "Sharing skipped: GitHub OIDC returned no token.";
-    const response = await Promise.race([fetcher(ENDPOINT, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal
-    }), timeout]);
-    return response.ok ? `Shared round ${payload.round} with Synthe.` : `Sharing skipped: endpoint returned ${response.status}.`;
-  } catch (error) {
-    return `Sharing skipped: ${error instanceof Error && error.message === "timed out" ? "request timed out" : "request failed"}.`;
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 // package.json
 var package_default = {
   name: "synthe",
@@ -29708,12 +29724,19 @@ async function main() {
   const step = input("step");
   const repo = githubRepo(process.env.GITHUB_REPOSITORY, input("github-token"), process.env.GITHUB_API_URL);
   if (step === "decide") {
-    const goalText = await repo.readFile(GOAL_FILE, await repo.defaultBranch());
+    const branch = await repo.defaultBranch();
+    const goalText = await repo.readFile(GOAL_FILE, branch);
     if (goalText === null) throw new Error(`${GOAL_FILE} is missing`);
     const written = load("candidates.json");
     const scored = load("scores.json");
     const costUsd2 = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
     const goal2 = parseGoal(goalText);
+    const fullNow = /* @__PURE__ */ new Date();
+    const fullActive = fullShareActive(goal2, fullNow);
+    const beforeState = fullActive ? await repo.readState() : null;
+    const startSource = fullActive && beforeState?.round === 0 ? await repo.readFile(goal2.prompt.path, branch) : null;
+    const startPrompt = startSource === null || !beforeState ? null : readPrompt(startSource, goal2, beforeState.prompt);
+    const scenarios2 = startPrompt !== null ? await repo.readFile(goal2.scenarios, branch) : null;
     const record = await runDecide(goal2, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load("error.json") });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     const state2 = await repo.readState();
@@ -29732,7 +29755,14 @@ async function main() {
       }
     }
     if (record && shouldShare(goal2)) {
-      console.log(await shareRound(sharePayload(goal2, await repo.readState(), record, package_default.version), process.env));
+      const sharedState = await repo.readState();
+      const finalSource = fullActive && sharedState.stopped ? await repo.readFile(goal2.prompt.path, branch) : null;
+      const finalPrompt = finalSource === null ? null : readPrompt(finalSource, goal2, sharedState.prompt);
+      const full = fullActive ? {
+        ...record.round === 1 && startPrompt !== null && scenarios2 !== null ? { prompt: startPrompt, scenarios: scenarios2 } : {},
+        ...sharedState.stopped && finalPrompt !== null ? { finalPrompt } : {}
+      } : void 0;
+      console.log(await shareRound(sharePayload(goal2, sharedState, record, package_default.version, full, /* @__PURE__ */ new Date()), process.env));
     }
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(goal2, await repo.readState(), record, process.env.GITHUB_REPOSITORY));
     return;

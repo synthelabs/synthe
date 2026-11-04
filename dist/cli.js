@@ -28076,7 +28076,7 @@ function parseGoal(text) {
   if (g.checks !== void 0 && (!Array.isArray(g.checks) || g.checks.length > MAX_CHECKS || g.checks.some((c) => typeof c !== "string" || !c.trim() || c.length > 300))) {
     bad(`checks must be a list of up to ${MAX_CHECKS} sentences`);
   }
-  if (g.share !== void 0 && !["none", "numbers", "detail"].includes(g.share)) bad("share must be none, numbers or detail");
+  if (g.share !== void 0 && !["none", "numbers", "detail", "full"].includes(g.share)) bad("share must be none, numbers, detail or full");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
@@ -28372,6 +28372,9 @@ function literalProblem(text, delimiter2) {
   if ((delimiter2 === '"' || delimiter2 === "'") && /[\r\n]/.test(text)) return "candidate is multi-line in a one-line string";
   return null;
 }
+
+// src/core/share.ts
+var FULL_SHARE_UNTIL = "2026-11-08T23:59:00Z";
 
 // src/loop/report.ts
 var ISSUE_TITLE = "Synthe: prompt report";
@@ -29276,8 +29279,8 @@ When Synthe finds a clearly better prompt, it can merge it into ${branch} by its
   }
   io2.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
   const sharingOff = ["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "") || ["0", "false"].includes(env.SYNTHE_TELEMETRY?.toLowerCase() ?? "");
-  const share = sharingOff ? "none" : "detail";
-  io2.say(sharingOff ? "Sharing with Synthe: off (DO_NOT_TRACK is set)." : `Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example reply. Never your whole prompt, test cases or code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.`);
+  const share = sharingOff ? "none" : now().getTime() < Date.parse(FULL_SHARE_UNTIL) ? "full" : "detail";
+  io2.say(sharingOff ? "Sharing with Synthe: off (DO_NOT_TRACK is set)." : share === "full" ? `During Crimson Hacks (until November 8), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe's prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 8 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.` : `Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.`);
   const key = await askKey(io2, envKey);
   if (!key) {
     io2.say("No key, so nothing was set up. Get a key from the Synthe table, then run `npx synthe init` again.");

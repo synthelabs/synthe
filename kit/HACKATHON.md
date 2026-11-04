@@ -23,7 +23,7 @@ Your AI agent's prompt gets better while you build everything else.
 
 1. Grab a key from the Synthe table ($3 of credit, on us).
 2. In your repo, run `npx synthe@latest init`.
-3. Say what your agent should get better at, confirm the checks Synthe proposes to measure it, and choose: merge improvements into main automatically, or review each one. Synthe shares how the run goes with us (no full prompts, test cases or code); turn it off with "share": "none" in synthe.json.
+3. Say what your agent should get better at, confirm the checks Synthe proposes to measure it, and choose: merge improvements into main automatically, or review each one. During Crimson Hacks, Synthe shares your prompt, test cases and how the run goes with us (never your code); turn it off with "share": "none" in synthe.json.
 4. After the run, open the report issue in your repo.
 
 Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop any time: `npx synthe stop`
@@ -86,9 +86,10 @@ Ask each team at the table. It should take 3 minutes. Write down their words.
 
 | Field | Where it comes from |
 |---|---|
-| Sharing choice (nothing, numbers, numbers and changes) | Whether lines appear in synthelabs/synthe-runs and synthelabs/synthe-feedback |
+| Sharing choice (nothing, numbers, detail, or Crimson Hacks full) | The `share` setting in synthe.json |
 | Rounds run, merges, checks passed (start and end) | Shared numbers in synthelabs/synthe-runs |
-| Goal, checks, edits, one example reply | Private synthelabs/synthe-feedback, only if they chose to share it |
+| Goal, checks, edits, one example message and its replies | Private synthelabs/synthe-feedback, for detail and full sharing |
+| Prompt at start, train and holdout test cases, final prompt | Private synthelabs/synthe-feedback, for full sharing before November 8 at 23:59 UTC |
 | Real cost | Key spend in the Console, plus shared numbers |
 | Time to first round, where they got stuck | Our table notes |
 | Merge mode chosen and whether they merged PRs | Check-in answer 1, plus our table notes |

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { parseGoal } from "../src/core/goal.ts";
-import { scrub, sharePayload, shareRound, stopCode } from "../src/core/share.ts";
+import { FULL_SHARE_UNTIL, scrub, sharePayload, shareRound, stopCode } from "../src/core/share.ts";
 import { newState, type RoundRecord } from "../src/core/state.ts";
 import { renderReport } from "../src/loop/report.ts";
 import { shouldShare } from "../src/core/share.ts";
@@ -24,10 +24,36 @@ test("share levels send only the chosen data", () => {
   assert.ok(!JSON.stringify(numbers).includes("PRIVATE"));
   const detail = sharePayload(goal({ share: "detail", objective: "PRIVATE GOAL", checks: ["PRIVATE CHECK"] }), state, record, "1.6.2");
   assert.ok("detail" in detail);
-  if (!("detail" in detail)) throw new Error("detail missing");
-  assert.deepEqual(detail.detail, { objective: "PRIVATE GOAL", checks: ["PRIVATE CHECK"], change: { title: "An edit", summary: "A better reply", edits: [{ find: "old", replace: "new" }] }, example: { before: "old reply", after: "new reply" } });
+  if (!detail.detail) throw new Error("detail missing");
+  assert.deepEqual(detail.detail, { objective: "PRIVATE GOAL", checks: ["PRIVATE CHECK"], change: { title: "An edit", summary: "A better reply", edits: [{ find: "old", replace: "new" }] }, example: { input: "hi", before: "old reply", after: "new reply" } });
   assert.equal(parseGoal(JSON.stringify(goal())).share, undefined);
-  assert.throws(() => parseGoal(JSON.stringify({ ...goal(), share: "all" })), /share must be none, numbers or detail/);
+  assert.throws(() => parseGoal(JSON.stringify({ ...goal(), share: "all" })), /share must be none, numbers, detail or full/);
+});
+
+test("detail example satisfies the endpoint's parseDetail contract", () => {
+  const payload = sharePayload(goal({ share: "detail" }), state, record, "1.6.2");
+  assert.ok(payload.detail);
+  const d = payload.detail!;
+  // Mirrors synthe-share/lib/share.ts parseDetail limits without importing across repositories.
+  assert.ok(typeof d.objective === "string" && d.objective.length <= 2000);
+  assert.ok(Array.isArray(d.checks) && d.checks.length <= 5 && d.checks.every((c) => typeof c === "string" && c.length <= 300));
+  assert.ok(d.change === null || (typeof d.change.title === "string" && d.change.title.length <= 120 && typeof d.change.summary === "string" && d.change.summary.length <= 1000 && d.change.edits.length >= 1 && d.change.edits.length <= 2 && d.change.edits.every((e) => typeof e.find === "string" && e.find.length <= 1500 && typeof e.replace === "string" && e.replace.length <= 1500)));
+  assert.ok(d.example === null || ([d.example.input, d.example.before, d.example.after].every((v) => typeof v === "string" && v.length <= 2000)));
+});
+
+test("full shares capped and scrubbed text only before the cutoff; detail never does", () => {
+  const before = new Date(Date.parse(FULL_SHARE_UNTIL) - 1);
+  const after = new Date(FULL_SHARE_UNTIL);
+  const text = "ana@example.com " + "x".repeat(120 * 1024);
+  const full = { prompt: text, scenarios: text, finalPrompt: text };
+  const active = sharePayload(goal({ share: "full" }), state, record, "1.6.2", full, before);
+  assert.ok("full" in active);
+  if (!("full" in active) || !active.full) throw new Error("full missing");
+  assert.deepEqual(Object.keys(active.full), ["prompt", "scenarios", "finalPrompt"]);
+  assert.ok(Object.values(active.full).every((v) => Buffer.byteLength(v) <= 100 * 1024 && !v.includes("ana@example.com")));
+  assert.ok(Buffer.byteLength(JSON.stringify(active)) <= 256 * 1024);
+  assert.equal("full" in sharePayload(goal({ share: "full" }), state, record, "1.6.2", full, after), false);
+  assert.equal("full" in sharePayload(goal({ share: "detail" }), state, record, "1.6.2", full, before), false);
 });
 
 test("an existing install without share sends nothing", () => {
@@ -45,7 +71,7 @@ test("detail scrubs every text field and stays inside endpoint limits", () => {
   const long = { ...record, title: sensitive, changed: sensitive, edits: [{ find: sensitive, replace: sensitive }, { find: sensitive, replace: sensitive }, { find: "third", replace: "third" }], example: { input: sensitive, before: sensitive, after: sensitive } };
   const payload = sharePayload(goal({ share: "detail", objective: sensitive, checks: Array(6).fill(sensitive) }), state, long, "1.6.2");
   assert.ok("detail" in payload);
-  if (!("detail" in payload)) throw new Error("detail missing");
+  if (!payload.detail) throw new Error("detail missing");
   assert.equal(payload.detail.objective.length, 2000);
   assert.equal(payload.detail.checks.length, 5);
   assert.ok(payload.detail.checks.every((c) => c.length <= 300));
@@ -101,9 +127,9 @@ test("shareRound times out without failing its caller", async () => {
 });
 
 test("the report names the share level and workflow skips cancellation", () => {
-  for (const [share, label] of [[undefined, "off"], ["none", "off"], ["numbers", "numbers only"], ["detail", "numbers and what changed"]] as const) {
-    assert.match(renderReport(goal({ share }), { ...state, rounds: [record] }), new RegExp(`Sharing with Synthe: ${label}\\. Turn it off with "share": "none" in synthe.json`));
-  }
+  for (const share of [undefined, "none"] as const) assert.match(renderReport(goal({ share }), { ...state, rounds: [record] }), /Sharing with Synthe: off\./);
+  for (const [share, label] of [["numbers", "numbers only"], ["detail", "numbers and what changed"], ["full", "numbers and what changed"]] as const) assert.match(renderReport(goal({ share }), { ...state, rounds: [record] }, new Date(FULL_SHARE_UNTIL)), new RegExp(`Sharing with Synthe: ${label}\\. Turn it off with "share": "none" in synthe.json`));
+  assert.match(renderReport(goal({ share: "full" }), { ...state, rounds: [record] }, new Date(Date.parse(FULL_SHARE_UNTIL) - 1)), /Sharing with Synthe: everything for Crimson Hacks \(prompt and test cases until November 8\), then numbers and what changed\./);
   const workflow = readFileSync("templates/synthe.yml", "utf8");
   assert.match(workflow, /if: \$\{\{ !cancelled\(\) && needs.write.result != 'skipped' && needs.write.outputs.go != 'false' \}\}/);
   assert.match(workflow, /permissions: \{ contents: write, pull-requests: write, issues: write, actions: write, id-token: write \}/);

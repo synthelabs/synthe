@@ -1,5 +1,6 @@
 import type { Goal } from "../core/goal.ts";
 import { isFinished, type RoundRecord, type State } from "../core/state.ts";
+import { FULL_SHARE_UNTIL } from "../core/share.ts";
 
 export const ISSUE_TITLE = "Synthe: prompt report";
 
@@ -125,7 +126,7 @@ function roundRow(r: RoundRecord): string {
   return `| ${r.round} | ${result}${r.pr ? ` (#${r.pr})` : ""} | ${tried.replaceAll("|", "/").replaceAll("\n", " ")} | ${cost} |`;
 }
 
-export function renderReport(goal: Goal, state: State): string {
+export function renderReport(goal: Goal, state: State, now: Date = new Date()): string {
   const { title, summary } = headline(goal, state);
   const changes = state.rounds.filter((r) => ["merged", "reverted", "proposed"].includes(r.outcome) && r.pr);
   const mode = goal.merge_rule.mode === "propose"
@@ -157,7 +158,10 @@ export function renderReport(goal: Goal, state: State): string {
     "<details><summary>Details for reviewers</summary>", "",
     `- Goal: ${goal.objective}`,
     `- Rounds: ${state.round} of up to ${goal.merge_rule.max_rounds}. Spent ${money(state)} of $${goal.budget.max_usd}.`,
-    `- Sharing with Synthe: ${goal.share === "detail" ? "numbers and what changed" : goal.share === "numbers" ? "numbers only" : "off"}. Turn it off with "share": "none" in synthe.json.`,
+    goal.share === "none" || !goal.share ? "- Sharing with Synthe: off." :
+      goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL)
+        ? '- Sharing with Synthe: everything for Crimson Hacks (prompt and test cases until November 8), then numbers and what changed. Turn it off with "share": "none" in synthe.json.'
+        : `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}. Turn it off with "share": "none" in synthe.json.`,
     `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
     ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}. ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),
