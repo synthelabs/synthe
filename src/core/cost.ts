@@ -3,7 +3,11 @@ const PRICES: Record<string, { input: number; output: number }> = {
   "claude-haiku-5-5": { input: 0.1, output: 0.5 },
   "claude-sonnet-5-5": { input: 2, output: 10 },
   "claude-opus-5-5": { input: 4, output: 20 },
+  // Teams still on Sonnet 4.5 need a price to see what moving off it (it retires 2026-11-30) would cost.
+  "claude-sonnet-4-5": { input: 3, output: 15 },
 };
+
+export const knownModels = () => Object.keys(PRICES);
 
 export interface Usage { input_tokens?: number | null; output_tokens?: number | null; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }
 

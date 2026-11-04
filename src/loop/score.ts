@@ -319,6 +319,17 @@ export async function measureNoise(goal: Goal, prompt: string, scenarios: Scenar
   return { wins: split?.wins ?? null, losses: split?.losses ?? null, ties, p: split?.p ?? null, costUsd: sumCosts(costs) };
 }
 
+// The same prompt answering every scenario on two models, the new model's reply judged head to head against the
+// old one's. Nothing here feeds the merge rule: it is one sample, for a person to read before switching models.
+// The judge and checker stay as configured, so only the model answering as the agent differs.
+export async function compareRunners(goal: Goal, prompt: string, scenarios: Scenario[], from: string, to: string, model: Model, random: () => number = Math.random) {
+  const on = (runner: string): Goal => ({ ...goal, models: { ...goal.models, runner } });
+  const old = scorer(on(from), model, random);
+  const next = scorer(on(to), model, random);
+  const replies = await old.repliesFor(prompt, scenarios);
+  const duels = await next.challenge("migrate", prompt, scenarios, replies);
+  return { before: currentRows(scenarios, replies, [duels]), after: duels.map((d) => d.row) };
+}
 
 // Plain lines for the Actions log: how each candidate did, where it broke a guardrail (new or already broken by
 // the current prompt), and a few losses with both replies, so anyone can see why nothing merged.
