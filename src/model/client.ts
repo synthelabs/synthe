@@ -44,7 +44,10 @@ export function proxyModel(eventCode: string, action = false): Model {
     try { return await model.ask(ask); } catch (error) {
       const refused = error as { status?: number; error?: { error?: { type?: string; message?: string } } };
       if ((refused.status === 402 || refused.status === 403) && refused.error?.error?.type === "synthe_credit" && typeof refused.error.error.message === "string") throw new CreditError(refused.error.error.message);
-      if (refused.status === 401) throw new ProxyError(401, PROXY_AUTH_MESSAGE);
+      if (refused.status === 401) {
+        if (refused.error?.error?.type === "synthe_proxy_auth") throw new ProxyError(401, PROXY_AUTH_MESSAGE);
+        throw new CreditError("Synthe's sponsored Anthropic key was rejected. Ask at the Synthe table; your workflow does not need upgrading. Once the organizer fixes it, run `npx synthe restart`.");
+      }
       if (refused.status === 429) throw new ProxyError(429, "Synthe's proxy is busy. Wait a few minutes and try again.");
       if (refused.status === 503 && typeof refused.error?.error?.message === "string") throw new ProxyError(503, refused.error.error.message);
       throw error;

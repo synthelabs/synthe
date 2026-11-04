@@ -31,7 +31,7 @@ The tests use injected models, command stubs and loopback HTTP servers. They exe
 
 - Confirm `test/review.test.ts` covers event credential precedence, agent draft/confirmation, sharing opt-outs, failed-confirm retry and refusal of duplicate installed setup.
 - Confirm `test/proxy.test.ts` covers local install identifiers, Action OIDC forwarding, credit refusals and persistent chain stops.
-- Confirm own-key tests reject noninteractive app-key fallback, preserve the first switch's budget offset and do not suggest switching keys to reset an exhausted own-key budget.
+- Confirm `key` and both `init --agent` steps reject noninteractive app-key fallback, preserve the first key-command budget offset and do not suggest switching keys to reset an exhausted own-key budget.
 - Confirm `test/e2e.test.ts` passes against local fake GitHub and model endpoints.
 - From the proxy checkout, run `npm run smoke:ledger` and `npm test`. These use fake upstream responses and in-memory production Lua, not real model calls.
 - Do not run `init`, `try`, `calibrate`, `key`, `go-live.sh` or dispatch an installed workflow against real credentials during this no-spend pass. Even key validation can call the model.
@@ -45,11 +45,19 @@ One possible later event allocation is below; **not applied**:
 ```
 EVENT_TOTAL_USD=30
 SETUP_TOTAL_USD=5
-PER_ACCOUNT_USD=2
+PER_ACCOUNT_USD=4
 SETUP_PER_INSTALL_USD=0.25
 ```
 
 The $5 setup pool is included in the $30 event pool, not added to it. Nominally this leaves $12 of the reported balance unallocated, before any pending/other charges. Recheck available credit, set a dedicated workspace limit, and choose limits explicitly before enabling credit. Reservation headroom can refuse a request even when some credit remains. The setup allowance may need tuning after a separately authorized live test. Match all participant-facing dollar amounts to the chosen caps before printing; the current kit promises $4 per account. No configuration or participant allowance changes were made in this pass.
+
+## Rishab review follow-up
+
+Review follow-up: PR #14 review started from `73a48c650e5d4d18616e8bdd1ef6bbd210ede496` and proxy PR #2 from `2aabfb1de03c86760a6a2ea9cf26655f28a061a9`. The release-audit table above is the initial snapshot, not the current branch heads. Client package metadata is now `1.6.3`; the existing `v1.6.2` tag is not moved. Deploy the reviewed proxy before publishing the client so local OIDC refusals carry `error.type=synthe_proxy_auth`; forwarded upstream Anthropic 401s instead pause sponsored credit and direct teams to the organizer, not a workflow upgrade.
+
+The install UUID is generated per CLI process, not per team. Starting another process obtains another allowance and can drain the shared setup pool. The per-install limit is only a process-level guardrail, not a durable participant allowance or abuse boundary. The client and draft allocation retain a $4 GitHub-account allowance shared across that account's repos; no live limits have changed. Proxy PR #2 now requires all four caps explicitly and refuses credit when any cap is missing or invalid; the draft values are not defaults. Its review follow-up is `c722bc24cf73a099bdb058724b89c1c2e811091f`.
+
+The first successful `npx synthe key` records a fresh budget offset for either an event-credit or an existing own-key install. Later replacements cannot reset it. Concurrent round-state writes preserve an already recorded offset and retry conflicting writes with fresh state metadata.
 
 ## Later checks that remain gated
 
@@ -59,7 +67,9 @@ The $5 setup pool is included in the $30 event pool, not added to it. Nominally 
 - Authorize a small API test budget separately; exercise one real response and a deliberately low cap, then the own-key switch if wanted.
 - Give a stranger only the final QR card, time setup and record where they ask for help. Do not call the mocked rehearsal a successful stranger test.
 
-## Recorded offline validation
+## Recorded initial offline validation
+
+The counts in this section describe the earlier readiness snapshot, not the review follow-up.
 
 - Synthe: typecheck and build passed; rebuilt `dist/cli.js` and `dist/action.mjs` include the local readiness fixes. All 264 tests passed.
 - Targeted review mutation checks: 23/23 deliberately broken variants were caught. Before committing the readiness follow-up, the full `npm run mutation` suite also caught all 101/101 deliberately broken variants. Sources were restored before the final build and full test suite.
@@ -68,6 +78,12 @@ The $5 setup pool is included in the $30 event pool, not added to it. Nominally 
 - The proxy concurrency test no longer assumes the last submitted JWT request finishes verification last; it checks the first completed refusal and always releases its upstream gate. This fixes an intermittent test deadlock without changing production behavior.
 - The proxy has no configured typecheck script or local Node type definitions. A diagnostic check using the adjacent Synthe compiler and explicit Node types still reports three existing test typing errors (`test/fake-store.ts:50`, `test/proxy.test.ts:436`, `test/proxy.test.ts:442`). Runtime test success is not a clean proxy typecheck. Those unrelated typing issues were not changed.
 - No Anthropic API requests, real workflow dispatches, commits, pushes, tag changes, releases or production configuration changes were made during the initial offline pass. The owner subsequently authorized committing and pushing these fixes to the existing PR branches for review; that does not authorize merging, releasing or deploying them.
+
+## Review follow-up validation
+
+- All 267 tests pass in the full-suite baseline. Targeted review mutation checks caught 28/28 variants, and the full mutation runner caught 103/103 variants, including lost-budget-offset and state-conflict regressions. The full runner used `node --default-to-experimental-regexp-engine scripts/mutation-check.mjs` to avoid quadratic regex slowdown in the large-text scrub fixture; it now propagates the invoking Node runtime flags to its child tests. Source restoration completed successfully. The final build and `npm test` use the default engine.
+- Typecheck and build pass. The `synthe@1.6.3` package dry run contains only the five expected distribution files; nothing was published.
+- Proxy follow-up: 66/66 full tests and 6/6 offline ledger scenarios passed, followed by 47/47 focused tests after its documentation-only cap clarification. No hosted Redis or real Anthropic calls were made.
 
 ## Independent review disposition
 
@@ -86,6 +102,7 @@ Practice the explanations without entering credentials or starting runs:
 - Wrong event code: check the card/table; do not ask for our upstream Anthropic key.
 - Exhausted event/account credit: explain the refusal; a team may choose `npx synthe key` in its own terminal, which uses its own paid account and validates the key.
 - Workflow authentication failure: update the Synthe workflow; do not blame or rotate a valid Anthropic key.
+- Sponsored upstream key rejected: ask the organizer to repair the sponsored key, then restart; do not upgrade the team's workflow to fix an organizer credential.
 - App deploys from the default branch: choose review mode; automatic merges can trigger that deployment.
 - Sharing: show the full notice and the opt-out before confirming. Never present event credit as requiring sharing.
 - Stop: explain `npx synthe stop`; do not execute it against a participant repo as a rehearsal.

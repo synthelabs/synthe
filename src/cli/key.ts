@@ -47,10 +47,9 @@ export async function setKey(io: Pick<Io, "askSecret" | "run" | "say"> & Partial
     }
   }
   await io.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
-  // The fresh budget comes once, on leaving event credit: replacing a key again must not reset it, or a run never stops.
   if (state.ownKeyFromUsd !== undefined) {
     const budgetStop = Boolean(state.stopped && /^budget/.test(state.stopped));
-    io.say(`Rounds now use this Anthropic key. The budget is unchanged: $${goal.budget.max_usd} from when you first switched to your own key (budget.max_usd in synthe.json).${budgetStop ? " To keep going, raise budget.max_usd in synthe.json and push it, then run `npx synthe restart`." : state.stopped ? " Run `npx synthe restart` to continue." : ""}`);
+    io.say(`Rounds now use this Anthropic key. The budget is unchanged: $${goal.budget.max_usd} from when you first ran \`npx synthe key\` (budget.max_usd in synthe.json).${budgetStop ? " To keep going, raise budget.max_usd in synthe.json and push it, then run `npx synthe restart`." : state.stopped ? " Run `npx synthe restart` to continue." : ""}`);
     return true;
   }
   state.ownKeyFromUsd = state.spendUsd;

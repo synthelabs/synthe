@@ -29,7 +29,7 @@ To turn sharing off any time, set `"share": "none"` in `synthe.json`. Set `"shar
 
 Setup commits three files: `synthe.json` (the goal, your rules and settings), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). It saves an event code as `SYNTHE_EVENT_CODE`, or your own key as `SYNTHE_ANTHROPIC_KEY`, in repo secrets. Your own key always wins over event credit. Event installs default to a $4 run budget; own-key installs default to $3. After that, the only file Synthe ever changes is your prompt. It never runs your agent's code.
 
-Set `SYNTHE_EVENT_CODE` in your environment to skip the code question. Local `try` and `calibrate` also accept it. To switch to your own key, run `npx synthe key` (or supply `SYNTHE_ANTHROPIC_KEY` / `ANTHROPIC_API_KEY` in its environment). Rounds then use your key instead of event credit. If credit stopped the run, run `npx synthe restart` afterward. Existing 1.6.x installs should run `npx synthe upgrade`, then commit and push the workflow to enable event credit.
+Set `SYNTHE_EVENT_CODE` in your environment to skip the code question. Local `try` and `calibrate` also accept it. To switch to your own key, run `npx synthe key` in your terminal, or explicitly supply `SYNTHE_ANTHROPIC_KEY` for noninteractive use. Using `ANTHROPIC_API_KEY` with `key` requires deliberately pressing Enter in your terminal; it is never a noninteractive fallback. Rounds then use your key instead of event credit. If credit stopped the run, run `npx synthe restart` afterward. Existing 1.6.x installs should run `npx synthe upgrade`, then commit and push the workflow to enable event credit.
 
 ## What happens each round
 

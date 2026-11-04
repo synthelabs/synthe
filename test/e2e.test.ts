@@ -53,7 +53,7 @@ const github = createServer((req, res) => {
       const key = `${req.method === "PUT" ? body.branch : url.searchParams.get("ref")!.replace(/-head$/, "")}:${name}`;
       if (req.method === "PUT") { if (failStateWrite && key === "synthe/state:state.json") return send(403, { message: "blocked" }); files.set(key, Buffer.from(body.content, "base64").toString()); return send(200, { commit: { sha: `sha-${files.size}` } }); }
       if (!files.has(key)) return send(404, {});
-      return req.headers.accept?.includes("raw") ? send(200, files.get(key)) : send(200, { sha: "blob" });
+      return req.headers.accept?.includes("raw") ? send(200, files.get(key)) : send(200, { sha: "blob", content: Buffer.from(files.get(key)!).toString("base64") });
     }
     if (path === "/pulls" && req.method === "GET") return send(200, pulls);
     if (path === "/pulls") { files.set("pr:head", body.head); return send(201, { number: 1 }); }

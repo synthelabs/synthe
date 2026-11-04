@@ -73,6 +73,13 @@ test("review: explicit Synthe own key wins everywhere; app fallback discloses it
     for (const explicit of [false, true]) {
       const { root, io, said, ran, calls } = setup(context);
       const env = explicit ? { SYNTHE_ANTHROPIC_KEY: "sk-ant-own", SYNTHE_EVENT_CODE: "crimson" } : {};
+      if (agent && !explicit) {
+        await assert.rejects(init(io, root, undefined, "sk-ant-app", env, prepare), /agent setup never uses ANTHROPIC_API_KEY/);
+        assert.equal(calls.length, 0);
+        assert.equal(existsSync(join(root, DRAFT_FILE)), false);
+        assert.equal(ran.some((call) => call.args[0] === "secret"), false);
+        continue;
+      }
       assert.equal(await init(io, root, undefined, "sk-ant-app", env, agent ? prepare : undefined), true);
       assert.equal(calls[0].key, explicit ? "sk-ant-own" : "sk-ant-app");
       assert.ok(calls.every((call) => !call.proxy));
@@ -90,13 +97,14 @@ test("review: confirmation shares respect opt-outs, explicit choice, and draft d
     [{}, "none", "none"], [{}, "numbers", "numbers"], [{}, "detail", "detail"], [{}, undefined, "full"],
   ] as const) {
     const { root, io, ran } = setup(context);
-    assert.equal(await init(io, root, () => new Date("2026-11-06"), "sk-ant-own", {}, prepare), true);
+    assert.equal(await init(io, root, () => new Date("2026-11-06"), "sk-ant-own", { SYNTHE_ANTHROPIC_KEY: "sk-ant-own" }, prepare), true);
     const options = agentOptions(["--agent", "--confirm", "--keep-checks", ...(share ? ["--share", share] : [])]);
-    assert.equal(await init(io, root, undefined, "sk-ant-own", env, options), true);
+    assert.equal(await init(io, root, undefined, "sk-ant-own", { ...env, SYNTHE_ANTHROPIC_KEY: "sk-ant-own" }, options), true);
     assert.equal(JSON.parse(readFileSync(join(root, "synthe.json"), "utf8")).share, expected);
     assert.equal(existsSync(join(root, DRAFT_FILE)), false);
     assert.match(readFileSync(join(root, ".gitignore"), "utf8"), /^\/\.synthe\/setup-draft.json\n$/);
-    assert.ok(ran.find((call) => call.args[0] === "add")!.args.includes(".gitignore"));
+    assert.ok(!ran.find((call) => call.args[0] === "add")!.args.includes(".gitignore"));
+    assert.ok(!ran.find((call) => call.args[0] === "commit")!.args.includes(".gitignore"));
     assert.ok(!ran.find((call) => call.args[0] === "add")!.args.includes(DRAFT_FILE));
   }
   assert.throws(() => agentOptions(["--agent", "--confirm", "--keep-checks", "--share", "full"]), /--share/);
@@ -106,15 +114,36 @@ test("review: confirmation refuses a changed credential type without changing th
   const { root, io, ran } = setup(context);
   await init(io, root, undefined, "", { SYNTHE_EVENT_CODE: "crimson" }, prepare);
   const before = readFileSync(join(root, DRAFT_FILE), "utf8");
-  await assert.rejects(init(io, root, undefined, "sk-ant-app", {}, confirmation), /same credential type as step 1/);
+  await assert.rejects(init(io, root, undefined, "sk-ant-app", { SYNTHE_ANTHROPIC_KEY: "sk-ant-app" }, confirmation), /same credential type as step 1/);
   assert.equal(readFileSync(join(root, DRAFT_FILE), "utf8"), before);
   assert.equal(ran.some((call) => call.args[0] === "secret"), false);
 });
 
+test("review: confirmation never falls back to the app key", async (context) => {
+  const { root, io, calls, ran } = setup(context);
+  await init(io, root, undefined, "sk-ant-app", { SYNTHE_EVENT_CODE: "crimson" }, prepare);
+  const before = readFileSync(join(root, DRAFT_FILE), "utf8");
+  const count = calls.length;
+  await assert.rejects(init(io, root, undefined, "sk-ant-app", {}, confirmation), /agent setup never uses ANTHROPIC_API_KEY/);
+  assert.equal(calls.length, count);
+  assert.equal(readFileSync(join(root, DRAFT_FILE), "utf8"), before);
+  assert.equal(ran.some((call) => call.args[0] === "secret"), false);
+});
+
+test("review: interactive setup never sends another provider's key", async (context) => {
+  const { root, io, calls, said } = setup(context);
+  const answers = ["sk-proj-private", "crimson"];
+  io.askSecret = async () => answers.shift()!;
+  assert.equal(await init(io, root, undefined, "", {}), true);
+  assert.ok(calls.length > 0);
+  assert.ok(calls.every((call) => call.key === "crimson" && call.proxy));
+  assert.match(said.join("\n"), /another provider's key.*Nothing was sent/);
+});
+
 test("review: confirming twice or drafting an installed default branch refuses in one line", async (context) => {
   const { root, io, said, ran } = setup(context);
-  await init(io, root, undefined, "sk-ant-own", {}, prepare);
-  await init(io, root, undefined, "sk-ant-own", {}, confirmation);
+  await init(io, root, undefined, "sk-ant-own", { SYNTHE_ANTHROPIC_KEY: "sk-ant-own" }, prepare);
+  await init(io, root, undefined, "sk-ant-own", { SYNTHE_ANTHROPIC_KEY: "sk-ant-own" }, confirmation);
   assert.equal(existsSync(join(root, DRAFT_FILE)), false);
   const pushed = io.run;
   io.run = async (command, args, stdin) => args.includes(".path") ? args.some((arg) => arg.includes("contents/synthe.json")) ? "synthe.json" : ".github/workflows/synthe.yml" : pushed(command, args, stdin);
@@ -180,13 +209,13 @@ function keyIo(state: State, maxUsd = 4) {
 
 test("review: a confirmation that failed after writing local files can run again", async (context) => {
   const { root, io, ran } = setup(context);
-  await init(io, root, undefined, "sk-ant-own", {}, prepare);
+  await init(io, root, undefined, "sk-ant-own", { SYNTHE_ANTHROPIC_KEY: "sk-ant-own" }, prepare);
   const run = io.run;
   io.run = async (command, args, stdin) => { if (args[0] === "secret") throw new Error("HTTP 403: Resource not accessible"); return run(command, args, stdin); };
-  await assert.rejects(init(io, root, undefined, "sk-ant-own", {}, confirmation), /403/);
+  await assert.rejects(init(io, root, undefined, "sk-ant-own", { SYNTHE_ANTHROPIC_KEY: "sk-ant-own" }, confirmation), /403/);
   assert.ok(existsSync(join(root, "synthe.json")));
   io.run = run;
-  assert.notEqual(await init(io, root, undefined, "sk-ant-own", {}, confirmation), false);
+  assert.notEqual(await init(io, root, undefined, "sk-ant-own", { SYNTHE_ANTHROPIC_KEY: "sk-ant-own" }, confirmation), false);
   assert.ok(ran.some((call) => call.args[0] === "secret"));
 });
 
@@ -226,7 +255,7 @@ test("review: a second key keeps the first switch's budget, so replacing keys ca
   assert.equal(await setKey(fake.io, { SYNTHE_ANTHROPIC_KEY: "sk-ant-new" }), true);
   assert.equal(fake.saved().ownKeyFromUsd, 4);
   assert.equal(fake.ran.some((args) => args.includes("PUT")), false);
-  assert.equal(fake.said.at(-1), "Rounds now use this Anthropic key. The budget is unchanged: $4 from when you first switched to your own key (budget.max_usd in synthe.json). To keep going, raise budget.max_usd in synthe.json and push it, then run `npx synthe restart`.");
+  assert.equal(fake.said.at(-1), "Rounds now use this Anthropic key. The budget is unchanged: $4 from when you first ran `npx synthe key` (budget.max_usd in synthe.json). To keep going, raise budget.max_usd in synthe.json and push it, then run `npx synthe restart`.");
   assert.ok("why" in restartState(goal({ budget: { max_usd: 4 } }), fake.saved()));
 });
 
@@ -311,12 +340,13 @@ test("review: OIDC JWT is cached until sixty seconds before expiry, scoped to au
 
 test("review: proxy 401/503/429 stay distinct, preserve advice, and proxy retries only twice", async (context) => {
   let status = 401;
+  let proxyAuth = true;
   let requests = 0;
   const server = createServer((request, response) => {
     requests++;
     request.resume();
     response.writeHead(status, { "content-type": "application/json", "retry-after-ms": "1", "x-should-retry": status === 500 ? "true" : "false" });
-    response.end(JSON.stringify({ type: "error", error: { type: status === 429 ? "rate_limit_error" : "api_error", message: status === 503 ? "Credit is unavailable. Ask at the Synthe table." : "refused" } }));
+    response.end(JSON.stringify({ type: "error", error: { type: status === 401 ? proxyAuth ? "synthe_proxy_auth" : "authentication_error" : status === 429 ? "rate_limit_error" : "api_error", message: status === 503 ? "Credit is unavailable. Ask at the Synthe table." : "refused" } }));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => server.close());
@@ -344,6 +374,17 @@ test("review: proxy 401/503/429 stay distinct, preserve advice, and proxy retrie
     assert.doesNotMatch(repo.issue, /Anthropic's API was busy|gh secret set/);
     if (kind === "busy") assert.equal(repo.state.chainReady, true);
   }
+  status = 401;
+  proxyAuth = false;
+  requests = 0;
+  await assert.rejects(proxyModel("private-event-code").ask(cheap), (error) => {
+    assert.ok(error instanceof CreditError);
+    assert.equal(failureOf("write", error).kind, "credit");
+    assert.match(error.message, /sponsored Anthropic key was rejected.*Synthe table/);
+    assert.doesNotMatch(error.message, /synthe upgrade|workflow-upgrade|rotate/);
+    return true;
+  });
+  assert.equal(requests, 1);
   status = 500;
   requests = 0;
   await assert.rejects(proxyModel("private-event-code").ask(cheap));

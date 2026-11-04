@@ -13,6 +13,7 @@ export const ACTION = "synthelabs/synthe@v1";
 export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 export const WORKFLOW_FILE = ".github/workflows/synthe.yml";
 export const DRAFT_FILE = ".synthe/setup-draft.json";
+export const EVENT_BUDGET_USD = 4;
 export const AGENT_NEXT = "NEXT: Tell the person which credential and budget will be used. Show all of this to the person, including the sharing notice, proposed checks and calibration examples. Ask which checks to keep or reword and whether the marks look right. The person can choose `--share none`. Then run `npx synthe init --agent --confirm --check \"final sentence\"`, repeating `--check` for each final check, or use `--keep-checks` if they keep the proposed checks.";
 const SETUP_BRANCH = "synthe/setup";
 const SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
@@ -142,6 +143,10 @@ async function askKey(io: Io, envKey: string | undefined, preferred?: string): P
     const typed = i === 0 && preferred ? preferred : (await io.askSecret(question)).trim();
     const key = typed || preferred || envKey?.trim() || "";
     if (key) {
+      if (key.startsWith("sk-") && !/^sk-ant-\S+$/.test(key)) {
+        io.say("That looks like another provider's key, not an Anthropic key or event code. Nothing was sent. Use an sk-ant- key or the event code from the Synthe table.");
+        continue;
+      }
       if (!typed && !preferred) io.say("Using the key in ANTHROPIC_API_KEY.");
       try {
         await credentialModel(io, key).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
@@ -161,8 +166,14 @@ function sharingDisabled(env: NodeJS.ProcessEnv): boolean {
   return ["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "") || ["0", "false"].includes(env.SYNTHE_TELEMETRY?.toLowerCase() ?? "");
 }
 
-export function setupCredential(env: NodeJS.ProcessEnv, appKey?: string): string | undefined {
-  return env.SYNTHE_ANTHROPIC_KEY?.trim() || env.SYNTHE_EVENT_CODE?.trim() || appKey?.trim();
+export function setupCredential(env: NodeJS.ProcessEnv, appKey?: string, agent = false): string | undefined {
+  return env.SYNTHE_ANTHROPIC_KEY?.trim() || env.SYNTHE_EVENT_CODE?.trim() || (agent ? undefined : appKey?.trim());
+}
+
+function ignoreDraft(root: string): void {
+  const path = join(root, ".gitignore");
+  const current = existsSync(path) ? readFileSync(path, "utf8") : "";
+  if (!current.split(/\r?\n/).includes(`/${DRAFT_FILE}`)) writeFileSync(path, `${current}${current && !current.endsWith("\n") ? "\n" : ""}/${DRAFT_FILE}\n`);
 }
 
 // Says exactly what's missing, so a team can fix it in one step.
@@ -218,8 +229,8 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
       io.say("Your prompt changed since step 1. Run `npx synthe init --agent` with the same prompt, objective and mode to draft again, then review the new checks before confirming. Nothing changed.");
       return false;
     }
-    const credential = setupCredential(env, envKey);
-    if (!credential) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY/ANTHROPIC_API_KEY");
+    const credential = setupCredential(env, envKey, true);
+    if (!credential) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY (agent setup never uses ANTHROPIC_API_KEY)");
     if (draft.event !== !credential.startsWith("sk-ant-")) askPerson("--confirm (use the same credential type as step 1)");
     if (agent.checks.length) draft.goal.checks = agent.checks;
     if (agent.share) draft.goal.share = agent.share;
@@ -232,15 +243,15 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   }
   if (!agent) io.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.\n`);
 
-  const preferred = setupCredential(env, envKey);
+  const preferred = setupCredential(env, envKey, Boolean(agent));
   const key = agent ? preferred : await askKey(io, envKey, env.SYNTHE_ANTHROPIC_KEY?.trim() || env.SYNTHE_EVENT_CODE?.trim());
   if (!key) {
-    if (agent) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY/ANTHROPIC_API_KEY");
+    if (agent) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY (agent setup never uses ANTHROPIC_API_KEY)");
     io.say("Nothing in your repo was changed. Run `npx synthe init` again when you have a working event code or key."); return false;
   }
   const event = !key.startsWith("sk-ant-");
   const credentialName = event ? "Crimson Hacks event code" : key === env.SYNTHE_ANTHROPIC_KEY?.trim() ? "your own key from SYNTHE_ANTHROPIC_KEY" : key === envKey?.trim() ? "your own key from ANTHROPIC_API_KEY" : "your own Anthropic key";
-  io.say(`Credential: ${credentialName}, $${event ? 4 : 3} budget${event ? "." : " on your Anthropic account."}`);
+  io.say(`Credential: ${credentialName}, $${event ? EVENT_BUDGET_USD : 3} budget${event ? "." : " on your Anthropic account."}`);
 
   const tracked = repoTextFiles(await io.run("git", ["ls-files"]), root);
   const prompts = findPrompts(tracked);
@@ -340,10 +351,11 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
 
   const goal = buildGoal(location, objective, guardrails, policy, brief, checks);
   goal.share = share;
-  if (event) goal.budget = { max_usd: 4 };
+  if (event) goal.budget = { max_usd: EVENT_BUDGET_USD };
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
 
   if (agent) {
+    ignoreDraft(root);
     mkdirSync(join(root, ".synthe"), { recursive: true });
     const draft: SetupDraft = { version: 1, slug, branch, goal, rows, event, sourceHash: sha256(readFileSync(join(root, location.path), "utf8")), examples };
     writeFileSync(join(root, DRAFT_FILE), `${JSON.stringify(draft, null, 2)}\n`, { mode: 0o600 });
@@ -365,9 +377,7 @@ async function finishSetup(io: Io, root: string, slug: string, branch: string, g
   writeFileSync(join(root, GOAL_FILE), `${JSON.stringify(goal, null, 2)}\n`);
   writeFileSync(join(root, SCENARIOS_FILE), `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`);
   writeFileSync(join(root, WORKFLOW_FILE), renderWorkflow(io.template()));
-  const ignorePath = join(root, ".gitignore");
-  const ignore = existsSync(ignorePath) ? readFileSync(ignorePath, "utf8") : "";
-  if (!ignore.split(/\r?\n/).includes(`/${DRAFT_FILE}`)) writeFileSync(ignorePath, `${ignore}${ignore && !ignore.endsWith("\n") ? "\n" : ""}/${DRAFT_FILE}\n`);
+  ignoreDraft(root);
 
   await io.run("gh", ["secret", "set", secret, "--repo", slug], key);
   try {
@@ -377,8 +387,8 @@ async function finishSetup(io: Io, root: string, slug: string, branch: string, g
     io.say(`Turn on "Allow GitHub Actions to create and approve pull requests" at https://github.com/${slug}/settings/actions`);
   }
 
-  await io.run("git", ["add", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE, ".gitignore"]);
-  await io.run("git", ["commit", "-m", "Add Synthe", "--", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE, ".gitignore"]);
+  await io.run("git", ["add", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE]);
+  await io.run("git", ["commit", "-m", "Add Synthe", "--", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE]);
   // A protected branch, or one that moved on since the last pull, refuses the push. A pull request works either way.
   let setupPr: string | null = null;
   try {

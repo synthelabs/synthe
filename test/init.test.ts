@@ -464,6 +464,9 @@ test("a refused code changes nothing, including no draft, secret, or commit", as
 test("agent preparation never prompts or commits, shows notice and complete calibration, and confirms final or kept checks", async () => {
   for (const keep of [false, true]) {
     const dir = repoDir(PROMPT);
+    writeFileSync(join(dir, ".gitignore"), "team-staged-rule\n");
+    execFileSync("git", ["add", ".gitignore"], { cwd: dir });
+    writeFileSync(join(dir, ".gitignore"), "team-staged-rule\nteam-unstaged-rule\n");
     const { io, ran, said } = fakeIo(dir);
     const calls: Ask[] = [];
     io.proxy = () => setupModel(calls);
@@ -473,6 +476,8 @@ test("agent preparation never prompts or commits, shows notice and complete cali
     const options = agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Be clear", "--mode", keep ? "auto" : "review", "--message", "Real customer message"]);
     assert.equal(await init(io, dir, () => new Date("2026-11-06"), "", env, options), true);
     assert.equal(execFileSync("git", ["diff", "--cached"], { cwd: dir, encoding: "utf8" }), before);
+    assert.equal(execFileSync("git", ["check-ignore", DRAFT_FILE], { cwd: dir, encoding: "utf8" }).trim(), DRAFT_FILE);
+    assert.equal(readFileSync(join(dir, ".gitignore"), "utf8"), `team-staged-rule\nteam-unstaged-rule\n/${DRAFT_FILE}\n`);
     assert.equal(existsSync(join(dir, "synthe.json")), false);
     assert.ok(!ran.some((call) => ["secret", "add", "commit", "push", "workflow"].includes(call.args[0])));
     const draftText = readFileSync(join(dir, DRAFT_FILE), "utf8");
@@ -492,12 +497,14 @@ test("agent preparation never prompts or commits, shows notice and complete cali
     assert.ok(!calls.filter((call) => call.system).some((call) => /q2[0-9]/.test(call.user)));
     const confirmation = agentOptions(["--agent", "--confirm", ...(keep ? ["--keep-checks"] : ["--check", "The person's final check"])]);
     assert.equal(await init(io, dir, undefined, "", env, confirmation), true);
+    assert.equal(execFileSync("git", ["diff", "--cached"], { cwd: dir, encoding: "utf8" }), before);
+    assert.equal(readFileSync(join(dir, ".gitignore"), "utf8"), `team-staged-rule\nteam-unstaged-rule\n/${DRAFT_FILE}\n`);
     const saved = parseGoal(readFileSync(join(dir, "synthe.json"), "utf8"));
     assert.deepEqual(saved.checks, keep ? draft.goal.checks : ["The person's final check"]);
     assert.equal(saved.merge_rule.mode, keep ? "auto" : "propose");
     assert.equal(saved.budget.max_usd, 4);
     const staged = ran.find((call) => call.cmd === "git" && call.args[0] === "add")!;
-    assert.deepEqual(staged.args, ["add", "synthe.json", ".synthe/scenarios.jsonl", ".github/workflows/synthe.yml", ".gitignore"]);
+    assert.deepEqual(staged.args, ["add", "synthe.json", ".synthe/scenarios.jsonl", ".github/workflows/synthe.yml"]);
     assert.ok(!ran.filter((call) => call.args[0] === "commit" || call.args[0] === "add").some((call) => call.args.includes(DRAFT_FILE)));
     assert.match(said.join("\n"), /Synthe: prompt report/);
     assert.match(said.join("\n"), /Watch it live: https:\/\/github.com\/o\/r\/actions\/workflows\/synthe.yml/);

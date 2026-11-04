@@ -28404,13 +28404,28 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
       return text === null ? newState() : { ...newState(), ...JSON.parse(text) };
     },
     async writeState(state) {
-      const exists = await blobSha(STATE_PATH, STATE_BRANCH) !== void 0;
-      if (!exists) {
-        const res = await call("GET", `/git/ref/heads/${encodeURIComponent(STATE_BRANCH)}`);
-        if (res.status === 404) await createBranch(STATE_BRANCH, await repo.headSha(await repo.defaultBranch()));
+      for (let attempt = 0; attempt <= RETRIES; attempt++) {
+        const current = await call("GET", `/contents/${STATE_PATH}?ref=${encodeURIComponent(STATE_BRANCH)}`);
+        if (!current.ok && current.status !== 404) throw new Error(`GitHub read state: ${current.status}`);
+        const file = current.ok ? await current.json() : null;
+        const saved = file ? JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) : newState();
+        const next = { ...state, ...saved.ownKeyFromUsd !== void 0 ? { ownKeyFromUsd: saved.ownKeyFromUsd } : {} };
+        if (!file) {
+          const branch = await call("GET", `/git/ref/heads/${encodeURIComponent(STATE_BRANCH)}`);
+          if (branch.status === 404) await createBranch(STATE_BRANCH, await repo.headSha(await repo.defaultBranch()));
+        }
+        const result = await call("PUT", `/contents/${STATE_PATH}`, {
+          message: `Synthe round ${state.round}`,
+          branch: STATE_BRANCH,
+          sha: file?.sha,
+          content: Buffer.from(`${JSON.stringify(next, null, 2)}
+`, "utf8").toString("base64")
+        });
+        if (result.status === 409 && attempt < RETRIES) continue;
+        if (!result.ok) throw new Error(`GitHub write state: ${result.status} ${(await result.text()).slice(0, 300)}`);
+        Object.assign(state, next);
+        return;
       }
-      await putFile(STATE_BRANCH, STATE_PATH, `${JSON.stringify(state, null, 2)}
-`, `Synthe round ${state.round}`);
     }
   };
   return repo;
@@ -28593,7 +28608,10 @@ function proxyModel(eventCode, action = false) {
     } catch (error) {
       const refused = error;
       if ((refused.status === 402 || refused.status === 403) && refused.error?.error?.type === "synthe_credit" && typeof refused.error.error.message === "string") throw new CreditError(refused.error.error.message);
-      if (refused.status === 401) throw new ProxyError(401, PROXY_AUTH_MESSAGE);
+      if (refused.status === 401) {
+        if (refused.error?.error?.type === "synthe_proxy_auth") throw new ProxyError(401, PROXY_AUTH_MESSAGE);
+        throw new CreditError("Synthe's sponsored Anthropic key was rejected. Ask at the Synthe table; your workflow does not need upgrading. Once the organizer fixes it, run `npx synthe restart`.");
+      }
       if (refused.status === 429) throw new ProxyError(429, "Synthe's proxy is busy. Wait a few minutes and try again.");
       if (refused.status === 503 && typeof refused.error?.error?.message === "string") throw new ProxyError(503, refused.error.error.message);
       throw error;
@@ -29743,7 +29761,7 @@ ${goal.policy ?? ""}`);
 // package.json
 var package_default = {
   name: "synthe",
-  version: "1.6.2",
+  version: "1.6.3",
   description: "Your AI agent's system prompt gets better while you sleep: Synthe tests small changes overnight and merges only the clear wins.",
   keywords: [
     "ai",

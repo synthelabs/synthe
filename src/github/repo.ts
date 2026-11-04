@@ -177,12 +177,25 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
       return text === null ? newState() : { ...newState(), ...JSON.parse(text) };
     },
     async writeState(state) {
-      const exists = await blobSha(STATE_PATH, STATE_BRANCH) !== undefined;
-      if (!exists) {
-        const res = await call("GET", `/git/ref/heads/${encodeURIComponent(STATE_BRANCH)}`);
-        if (res.status === 404) await createBranch(STATE_BRANCH, await repo.headSha(await repo.defaultBranch()));
+      for (let attempt = 0; attempt <= RETRIES; attempt++) {
+        const current = await call("GET", `/contents/${STATE_PATH}?ref=${encodeURIComponent(STATE_BRANCH)}`);
+        if (!current.ok && current.status !== 404) throw new Error(`GitHub read state: ${current.status}`);
+        const file = current.ok ? await current.json() : null;
+        const saved = file ? JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) : newState();
+        const next = { ...state, ...(saved.ownKeyFromUsd !== undefined ? { ownKeyFromUsd: saved.ownKeyFromUsd } : {}) };
+        if (!file) {
+          const branch = await call("GET", `/git/ref/heads/${encodeURIComponent(STATE_BRANCH)}`);
+          if (branch.status === 404) await createBranch(STATE_BRANCH, await repo.headSha(await repo.defaultBranch()));
+        }
+        const result = await call("PUT", `/contents/${STATE_PATH}`, {
+          message: `Synthe round ${state.round}`, branch: STATE_BRANCH, sha: file?.sha,
+          content: Buffer.from(`${JSON.stringify(next, null, 2)}\n`, "utf8").toString("base64"),
+        });
+        if (result.status === 409 && attempt < RETRIES) continue;
+        if (!result.ok) throw new Error(`GitHub write state: ${result.status} ${(await result.text()).slice(0, 300)}`);
+        Object.assign(state, next);
+        return;
       }
-      await putFile(STATE_BRANCH, STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, `Synthe round ${state.round}`);
     },
   };
   return repo;

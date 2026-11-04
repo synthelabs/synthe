@@ -33,7 +33,7 @@ SYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent ...
 
 3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.
 
-Synthe uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE`, then `ANTHROPIC_API_KEY`. Show the printed credential and budget to the person so they know whose credit will be used.
+Agent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app's key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.
 
 ## 3. Find the system prompt
 
@@ -50,7 +50,7 @@ Synthe uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE`, then `ANTHRO
 
 ## 5. Step 1: draft
 
-Run this. It changes nothing in the repo except a draft file.
+Run this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.
 
 ```
 SYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"
@@ -89,7 +89,7 @@ If the person accepted every proposed check as it is, run this instead:
 SYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --confirm --keep-checks
 ```
 
-Add `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft's sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup adds `.synthe/setup-draft.json` to the team's `.gitignore` and deletes the draft after success. Don't confirm twice.
+Add `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft's sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don't confirm twice.
 
 ## 8. After setup
 
