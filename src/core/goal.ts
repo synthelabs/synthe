@@ -18,6 +18,10 @@ export interface Goal {
   // The team's own measure of a good reply: plain sentences, each checkable from one reply. On every test case, the
   // reply that fails fewer of them wins; the AI judge only breaks ties.
   checks?: string[];
+  // Guards: one plain sentence per check about what a padded or gamed reply gets wrong (for example "Stays on the
+  // customer's question instead of adding filler"). They only measure: a change that passes more checks but fails
+  // guards more often by more than merge_rule.guard_margin isn't merged. They never pick a winner.
+  counter_checks?: string[];
   share?: "none" | "numbers" | "detail" | "full";
   guardrails: string[];
   scenarios: string;
@@ -29,13 +33,14 @@ export interface Goal {
     noise_margin: number; // points below the replaced prompt before a merge is reverted
     max_rounds: number;
     stall_rounds: number; // rounds in a row without a winner before stopping
+    guard_margin: number; // points the guard pass rate may fall before a change is refused, when counter_checks are set
   };
   budget: { max_usd: number };
 }
 
 export const DEFAULTS = {
   models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5", checker: "claude-sonnet-5-5" },
-  merge_rule: { mode: "auto" as "auto" | "propose", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3 },
+  merge_rule: { mode: "auto" as "auto" | "propose", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
   budget: { max_usd: 3 },
 };
 
@@ -52,10 +57,22 @@ export function parseGoal(text: string): Goal {
   if (g.checks !== undefined && (!Array.isArray(g.checks) || g.checks.length > MAX_CHECKS || g.checks.some((c: unknown) => typeof c !== "string" || !c.trim() || c.length > 300))) {
     bad(`checks must be a list of up to ${MAX_CHECKS} sentences`);
   }
+  if (g.counter_checks !== undefined) {
+    const list = g.counter_checks;
+    if (!Array.isArray(list) || list.length > MAX_CHECKS || list.some((c: unknown) => typeof c !== "string" || !c.trim() || c.length > 300)) {
+      bad(`counter_checks must be a list of up to ${MAX_CHECKS} sentences`);
+    }
+    // A guard that repeats a check measures nothing the check doesn't already.
+    const own = new Set((g.checks ?? []).map((c: string) => c.trim().toLowerCase()));
+    const same = list.find((c: string) => own.has(c.trim().toLowerCase()));
+    if (same !== undefined) bad(`counter_checks repeats a check ("${same.slice(0, 60)}"); a guard should catch a reply that games that check, not restate it`);
+  }
   if (g.share !== undefined && !["none", "numbers", "detail", "full"].includes(g.share)) bad("share must be none, numbers, detail or full");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== undefined && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
+  const margin = g.merge_rule?.guard_margin;
+  if (margin !== undefined && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad("merge_rule.guard_margin must be 0 or more");
   return {
     ...g,
     guardrails: g.guardrails ?? [],

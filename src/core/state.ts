@@ -11,6 +11,8 @@ export interface RoundRecord {
   failure?: "busy" | "key" | "other";
   // The share of the team's checks passed before and after a merged or proposed change, as whole percentages.
   checks?: { before: number; after: number };
+  // The same for the team's guards, when they set counter_checks.
+  guards?: { before: number; after: number };
 }
 
 export interface Landing { branch: string; kind: "merge" | "revert"; text: string; priorPrompt: string; propose?: boolean }

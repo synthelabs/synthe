@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULTS, GOAL_FILE, type Goal, type PromptLocation, type Scenario } from "../core/goal.ts";
+import { DEFAULTS, GOAL_FILE, MAX_CHECKS, type Goal, type PromptLocation, type Scenario } from "../core/goal.ts";
 import { findPrompts } from "../core/prompt.ts";
 import { MAX_PROMPT_CHARS, promptPathProblem, redactSecrets } from "../core/safety.ts";
 import { ISSUE_TITLE } from "../loop/report.ts";
@@ -83,8 +83,41 @@ Write ${ASK_FOR} varied, realistic user messages for testing it, each with a one
   throw new Error("Synthe couldn't write test cases for your prompt this time. Nothing in your repo was changed; run `npx synthe init` again.");
 }
 
-export function buildGoal(prompt: PromptLocation, objective: string, guardrails: string[], policy = "", brief = "", checks: string[] = []): Goal {
-  return { version: 1, prompt, objective, ...(brief ? { brief } : {}), ...(checks.length ? { checks } : {}), ...(policy ? { policy } : {}), guardrails, scenarios: SCENARIOS_FILE, ...DEFAULTS };
+const GUARDS_SCHEMA = {
+  type: "object",
+  properties: { guards: { type: "array", items: { type: "string" } } },
+  required: ["guards"], additionalProperties: false,
+};
+
+const sameText = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+// One guard per check: a sentence that catches a reply gaming that check. Null when the model's answer can't be used,
+// so setup carries on with checks alone instead of failing.
+export async function proposeGuards(model: Model, brief: string, checks: string[]): Promise<string[] | null> {
+  try {
+    const { value } = await askJson<{ guards: string[] }>(model, {
+      model: DEFAULTS.models.writer, maxTokens: 1000, schema: GUARDS_SCHEMA,
+      user: `An AI agent's team measures its replies with these checks. Each is one plain sentence about a single reply.
+${brief ? `\nWhat the agent is for: ${brief.slice(0, 1000)}\n` : ""}
+Checks:
+${checks.map((c, i) => `${i + 1}. ${c}`).join("\n")}
+
+For each check, in the same order, write one guard: a plain sentence about a single reply that catches a way to pass that check without really helping. For example, for "Offers an exchange before a refund" a guard is "Offers an exchange only when the customer's problem calls for one, not on every reply"; for "Stays under three sentences" a guard is "Still answers the customer's question completely". Each guard must be something anyone could check by reading only the user's message and that reply, and must not repeat its check.`,
+    });
+    if (!value || !Array.isArray(value.guards)) return null;
+    const guards = value.guards
+      .filter((g): g is string => typeof g === "string" && Boolean(g.trim()))
+      .map((g) => g.trim().slice(0, 300))
+      .filter((g, i, all) => !checks.some((c) => sameText(c, g)) && all.findIndex((o) => sameText(o, g)) === i)
+      .slice(0, Math.min(checks.length, MAX_CHECKS));
+    return guards.length ? guards : null;
+  } catch {
+    return null;
+  }
+}
+
+export function buildGoal(prompt: PromptLocation, objective: string, guardrails: string[], policy = "", brief = "", checks: string[] = [], counterChecks: string[] = []): Goal {
+  return { version: 1, prompt, objective, ...(brief ? { brief } : {}), ...(checks.length ? { checks } : {}), ...(counterChecks.length ? { counter_checks: counterChecks } : {}), ...(policy ? { policy } : {}), guardrails, scenarios: SCENARIOS_FILE, ...DEFAULTS };
 }
 
 const CODE = /\.(ts|tsx|js|jsx|mjs|py)$/;
@@ -263,7 +296,33 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     io.say(`Checks saved in ${GOAL_FILE}. Change them there any time, and run \`npx synthe calibrate\` for a fuller check.`);
   }
 
-  const goal = buildGoal(location, objective, guardrails, policy, brief, checks);
+  // Guards come after the checks are final, so each one answers the check the team actually kept.
+  let guards: string[] = [];
+  if (checks.length) {
+    const proposed = await proposeGuards(io.model(key), brief, checks);
+    if (!proposed) {
+      io.say(`\nSynthe couldn't propose guards this time, so it will run with your checks alone. You can add up to ${MAX_CHECKS} sentences as "counter_checks" in ${GOAL_FILE} any time.`);
+    } else {
+      io.say("\nChecks can be gamed, for example by padding a reply until it ticks every box. Synthe will also mark each reply against these guards, and won't merge a change that passes them clearly less often:");
+      proposed.forEach((g, i) => io.say(`  ${i + 1}. ${g}`));
+      guards = proposed;
+      if ((await yesNo(io, "Use these guards? Type y, or n to write your own: ")) === false) {
+        const own: string[] = [];
+        while (own.length < CHECKS_WANTED) {
+          const line = (await io.ask(`Guard ${own.length + 1}, one sentence about what a reply that games your checks gets wrong (Enter when done): `)).trim().slice(0, 300);
+          if (!line) break;
+          // A guard that repeats a check, or an earlier guard, would make synthe.json invalid.
+          if ([...checks, ...own].some((c) => sameText(c, line))) { io.say("That repeats a check or a guard you already have, so it was skipped."); continue; }
+          own.push(line);
+        }
+        if (own.length) guards = own;
+        else io.say("No guards typed, so Synthe keeps its suggestions.");
+      }
+      io.say(`Guards saved in ${GOAL_FILE} as "counter_checks". Change them there any time.`);
+    }
+  }
+
+  const goal = buildGoal(location, objective, guardrails, policy, brief, checks, guards);
   goal.share = share;
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
 

@@ -104,6 +104,14 @@ const mutations = [
   ["setup's review shows held-back cases", "src/cli/calibrate.ts", "const cases = scenarios.filter((s) => s.split === \"train\").slice(0, SETUP_CASES);", "const cases = scenarios.slice(0, SETUP_CASES);"],
   ["calibrate trusts too little evidence", "src/cli/calibrate.ts", "} else if (r.applied < MIN_APPLIED) {", "} else if (false) {"],
   ["calibrate trusts checks nobody answered", "src/cli/calibrate.ts", "} else if (r.asked === 0) {", "} else if (false) {"],
+  ["a guard drop of exactly the margin blocks the merge", RULE, "guardBefore - guardAfter > goal.merge_rule.guard_margin", "guardBefore - guardAfter >= goal.merge_rule.guard_margin"],
+  ["guards are ignored", RULE, "    if (goal.counter_checks?.length) {\n      if (guardBefore === null", "    if (false) {\n      if (guardBefore === null"],
+  ["a missing guard verdict is skipped past", RULE, "if (guardBefore === null || guardAfter === null) {", "if (false) {"],
+  ["an unknown guard is treated as a pass", RULE, "if (rows.length === 0 || rows.some((r) => typeof r.guardApplicable !== \"number\" || typeof r.guardFailed !== \"number\")) return null;", "if (rows.length === 0) return null;"],
+  ["guards decide the winner", SCORE, "if (mine) Object.assign(judged.row, { guardFailed: mine.failed, guardApplicable: mine.applicable });", "if (mine) Object.assign(judged.row, { guardFailed: mine.failed, guardApplicable: mine.applicable, ...(theirs && mine.failed !== theirs.failed ? { score: mine.failed < theirs.failed ? WIN : LOSS } : {}) });"],
+  ["a guard is marked again for every challenger", SCORE, "const key = `${s.id}\\u0000${text}${kind === \"guards\" ? \"\\u0000guards\" : \"\"}`;", "const key = `${s.id}\\u0000${text}${kind === \"guards\" ? \"\\u0000guards\" : \"\"}${Math.random()}`;"],
+  ["a guard that repeats a check is accepted", "src/core/goal.ts", "if (same !== undefined) bad(", "if (false) bad("],
+  ["a failed guard request stops setup", "src/cli/init.ts", "  } catch {\n    return null;\n  }\n}\n\nexport function buildGoal", "  } catch (e) {\n    throw e;\n  }\n}\n\nexport function buildGoal"],
 ];
 
 // Every mutated file as it was before the run. Restoring each mutation from its own copy isn't enough on its own: a
