@@ -39,6 +39,8 @@ export interface Repo {
   upsertIssue(number: number | null, title: string, body: string): Promise<number>;
   readState(): Promise<State>;
   writeState(state: State): Promise<void>;
+  // Any other file on the state branch, such as an evidence record.
+  writeStateFile(path: string, content: string, message: string): Promise<void>;
 }
 
 const STATE_PATH = "state.json";
@@ -177,12 +179,15 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
       return text === null ? newState() : { ...newState(), ...JSON.parse(text) };
     },
     async writeState(state) {
-      const exists = await blobSha(STATE_PATH, STATE_BRANCH) !== undefined;
+      await repo.writeStateFile(STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, `Synthe round ${state.round}`);
+    },
+    async writeStateFile(path, content, message) {
+      const exists = await blobSha(path, STATE_BRANCH) !== undefined;
       if (!exists) {
         const res = await call("GET", `/git/ref/heads/${encodeURIComponent(STATE_BRANCH)}`);
         if (res.status === 404) await createBranch(STATE_BRANCH, await repo.headSha(await repo.defaultBranch()));
       }
-      await putFile(STATE_BRANCH, STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, `Synthe round ${state.round}`);
+      await putFile(STATE_BRANCH, path, content, message);
     },
   };
   return repo;

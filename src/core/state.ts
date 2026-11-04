@@ -34,6 +34,8 @@ export interface State {
   proposal: (Landing & { pr: number; round: number }) | null;
   // A completed round has queued its successor. A backup run may replace that pending run.
   chainReady?: boolean;
+  // Hash of the last evidence record written, so the next one can chain to it.
+  evidenceHash?: string;
   rounds: RoundRecord[];
 }
 

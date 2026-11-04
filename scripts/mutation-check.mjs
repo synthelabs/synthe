@@ -10,6 +10,7 @@ const STATE = "src/core/state.ts";
 const GITHUB = "src/github/repo.ts";
 const SHARE = "src/core/share.ts";
 const WORKFLOW = "templates/synthe.yml";
+const EVIDENCE = "src/core/evidence.ts";
 
 // Every test file, so a new one is never left out of the check.
 const TESTS = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
@@ -104,6 +105,9 @@ const mutations = [
   ["setup's review shows held-back cases", "src/cli/calibrate.ts", "const cases = scenarios.filter((s) => s.split === \"train\").slice(0, SETUP_CASES);", "const cases = scenarios.slice(0, SETUP_CASES);"],
   ["calibrate trusts too little evidence", "src/cli/calibrate.ts", "} else if (r.applied < MIN_APPLIED) {", "} else if (false) {"],
   ["calibrate trusts checks nobody answered", "src/cli/calibrate.ts", "} else if (r.asked === 0) {", "} else if (false) {"],
+  ["verify skips the hash check", EVIDENCE, "if (hashEvidence(r) !== r.sha256) return", "if (false) return"],
+  ["verify skips the chain check", EVIDENCE, "if (hashEvidence(prev) !== r.prevEvidenceHash) return", "if (false) return"],
+  ["verify skips the verdict recompute", EVIDENCE, "const problem = recomputeProblem(r, goal, splits);", "const problem = null as string | null;"],
 ];
 
 // Every mutated file as it was before the run. Restoring each mutation from its own copy isn't enough on its own: a

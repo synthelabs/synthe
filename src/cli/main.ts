@@ -16,6 +16,9 @@ import { restartState } from "./restart.ts";
 import { stoppedLine } from "./stopped.ts";
 import { askSecret } from "./secret.ts";
 import { upgrade } from "./upgrade.ts";
+import { verify } from "./verify.ts";
+import { undo } from "./undo.ts";
+import { githubRepo } from "../github/repo.ts";
 
 const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
   const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -131,6 +134,22 @@ async function restart() {
   console.log(`Watch it: https://github.com/${slug}/actions/workflows/synthe.yml`);
 }
 
+// Opens a pull request that reverts one round's prompt change. Nothing is spent: it only talks to GitHub.
+async function undoRound() {
+  if (!setUpHere()) return;
+  const slug = await repoSlug();
+  if (!slug) return;
+  const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
+  // The token goes in a header and nowhere else: never in an argument or a URL.
+  const token = (await run("gh", ["auth", "token"])).trim();
+  // Every version of the prompt file, newest first. Git history is where the old text lives; records keep only hashes.
+  const history = async (path: string) => {
+    const shas = (await run("git", ["log", "--format=%H", "--", path])).split("\n").filter(Boolean);
+    return Promise.all(shas.map((sha) => run("git", ["show", `${sha}:${path}`])));
+  };
+  process.exitCode = await undo({ repo: githubRepo(slug, token), goal, root: process.cwd(), slug, history, say: console.log }, process.argv[3]);
+}
+
 // Loads what a round on this computer needs, or says what's missing. Used by try and calibrate.
 function localRun(command: string) {
   if (!setUpHere()) return null;
@@ -199,6 +218,8 @@ Start here, inside your project's folder:
 Then:
   npx synthe status   where it is and what it changed
   npx synthe upgrade  update only the installed workflow for chained rounds
+  npx synthe verify FILE   check a round's evidence record (.synthe/evidence/round-N.json)
+  npx synthe undo N   open a pull request that puts back the prompt from before round N
   npx synthe stop     stop it; nothing more runs or changes
   npx synthe restart  start it again, after stop or once you've fixed what stopped it
   npx synthe try      run one round on your computer, changing nothing (needs ANTHROPIC_API_KEY)
@@ -215,6 +236,8 @@ async function main() {
   else if (command === "status") await status();
   else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
+  else if (command === "verify") process.exitCode = verify(process.argv[3], process.cwd());
+  else if (command === "undo") await undoRound();
   else if (command === "calibrate") await calibrateChecks();
   else console.log(HELP);
 }
