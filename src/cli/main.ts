@@ -155,7 +155,7 @@ function localRun(command: string) {
 async function calibrateChecks() {
   const local = localRun("calibrate");
   if (!local) return;
-  const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model);
+  const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result) return;
   // Rewordings the team made during the questions are saved, so the next round measures what they mean.
   if (result.checks.some((c, i) => c !== local.goal.checks?.[i])) {
