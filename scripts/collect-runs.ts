@@ -4,7 +4,7 @@
 // that closes its issue has stopped sharing). Needs `gh` signed in.
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
-import { REGISTRY } from "../src/cli/init.ts";
+const REGISTRY = "synthelabs/synthe-runs";
 import { STATE_BRANCH } from "../src/core/goal.ts";
 import { scorecard, summarize, type Registration } from "../src/runs/summary.ts";
 

@@ -28076,6 +28076,7 @@ function parseGoal(text) {
   if (g.checks !== void 0 && (!Array.isArray(g.checks) || g.checks.length > MAX_CHECKS || g.checks.some((c) => typeof c !== "string" || !c.trim() || c.length > 300))) {
     bad(`checks must be a list of up to ${MAX_CHECKS} sentences`);
   }
+  if (g.share !== void 0 && !["none", "numbers", "detail", "full"].includes(g.share)) bad("share must be none, numbers, detail or full");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
@@ -28371,6 +28372,9 @@ function literalProblem(text, delimiter2) {
   if ((delimiter2 === '"' || delimiter2 === "'") && /[\r\n]/.test(text)) return "candidate is multi-line in a one-line string";
   return null;
 }
+
+// src/core/share.ts
+var FULL_SHARE_UNTIL = "2026-11-08T23:59:00Z";
 
 // src/loop/report.ts
 var ISSUE_TITLE = "Synthe: prompt report";
@@ -29073,7 +29077,6 @@ var SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 var WORKFLOW_FILE = ".github/workflows/synthe.yml";
 var SETUP_BRANCH = "synthe/setup";
 var SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
-var REGISTRY = "synthelabs/synthe-runs";
 var SCENARIO_SCHEMA = {
   type: "object",
   properties: {
@@ -29201,8 +29204,7 @@ async function whyGitHubFails(io2) {
   }
   return "Run this inside your project's folder, after pushing it to GitHub (you need admin access to the repo).";
 }
-async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = process.env.ANTHROPIC_API_KEY) {
-  const startedAt = now().toISOString();
+async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = process.env.ANTHROPIC_API_KEY, env = process.env) {
   let slug;
   try {
     slug = (await io2.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
@@ -29276,6 +29278,9 @@ When Synthe finds a clearly better prompt, it can merge it into ${branch} by its
     io2.say("No clear answer, so Synthe will open pull requests for you to review.");
   }
   io2.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
+  const sharingOff = ["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "") || ["0", "false"].includes(env.SYNTHE_TELEMETRY?.toLowerCase() ?? "");
+  const share = sharingOff ? "none" : now().getTime() < Date.parse(FULL_SHARE_UNTIL) ? "full" : "detail";
+  io2.say(sharingOff ? "Sharing with Synthe: off (DO_NOT_TRACK is set)." : share === "full" ? `During Crimson Hacks (until November 8), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe's prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 8 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.` : `Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.`);
   const key = await askKey(io2, envKey);
   if (!key) {
     io2.say("No key, so nothing was set up. Get a key from the Synthe table, then run `npx synthe init` again.");
@@ -29316,6 +29321,7 @@ Reading your prompt${context2.names.length ? ` and ${context2.names.join(" and "
     io2.say(`Checks saved in ${GOAL_FILE}. Change them there any time, and run \`npx synthe calibrate\` for a fuller check.`);
   }
   const goal = buildGoal(location, objective, guardrails, policy, brief, checks);
+  goal.share = share;
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
   mkdirSync(join2(root, ".synthe"), { recursive: true });
   mkdirSync(join2(root, ".github/workflows"), { recursive: true });
@@ -29368,17 +29374,6 @@ ${branch} only takes changes through pull requests, so Synthe opened one with it
       started = true;
     } catch {
       await io2.sleep(3e3);
-    }
-  }
-  io2.say("\nOne last question. Sharing helps us improve Synthe: we'd see your repo name, rounds, merges, spend and why runs stop, never your prompt, test cases or code.");
-  const share = await yesNo(io2, "Share this run's progress with the Synthe team? Type y or n: ") === true;
-  io2.say(share ? "Sharing progress with Synthe: on." : "Sharing progress with Synthe: off.");
-  if (share) {
-    const entry = { repo: slug, startedAt, finishedAt: now().toISOString(), mode: goal.merge_rule.mode, version: ACTION };
-    try {
-      await io2.run("gh", ["issue", "create", "--repo", REGISTRY, "--title", `run: ${slug}`, "--body-file", "-"], `${JSON.stringify(entry, null, 2)}
-`);
-    } catch {
     }
   }
   const actionsOff = !started && !setupPr && await io2.run("gh", ["api", `repos/${slug}/actions/permissions`, "--jq", ".enabled"]).then((o) => o.trim() === "false", () => false);
@@ -29454,7 +29449,7 @@ function upgrade(root, template2) {
   const after = renderWorkflow(template2, Math.random, minute);
   if (after === before) return `${WORKFLOW_FILE} is already up to date. No files changed.`;
   writeFileSync2(path4, after);
-  return `Updated ${WORKFLOW_FILE}: rounds now chain immediately; added Actions write permission and same-repo proposal-close restart; kept backup minute ${minute ?? "random"}. No other files changed. Commit and push this workflow file to activate it.`;
+  return `Updated ${WORKFLOW_FILE}: rounds now chain immediately, a cancelled run no longer counts as a round, and sharing (if you turned it on) can prove which repo sent it; kept backup minute ${minute ?? "random"}. No other files changed. Commit and push this workflow file to activate it.`;
 }
 
 // src/cli/main.ts

@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ACTION, REGISTRY, init, type Io } from "../src/cli/init.ts";
+import { ACTION, init, type Io } from "../src/cli/init.ts";
 import { upgrade } from "../src/cli/upgrade.ts";
 import { parseGoal, parseScenarios } from "../src/core/goal.ts";
 
@@ -27,7 +27,7 @@ const fakeIo = (dir: string, failing: string[] = [], answers: Record<string, str
   const said: string[] = [];
   const io: Io = {
     say: (t) => said.push(t),
-    ask: async (q) => Object.entries({ "automatically?": "y", "Share this run": "y", "Real message": "", "Use these checks": "y", ...answers }).find(([k]) => q.includes(k))?.[1] ?? "Answer returns correctly",
+    ask: async (q) => Object.entries({ "automatically?": "y", "Real message": "", "Use these checks": "y", ...answers }).find(([k]) => q.includes(k))?.[1] ?? "Answer returns correctly",
     askSecret: async () => "sk-ant-test-team-key",
     template: () => readFileSync("templates/synthe.yml", "utf8"),
     sleep: async () => {},
@@ -77,6 +77,8 @@ test("upgrade changes only the workflow, keeps the backup minute, and is idempot
   assert.match(upgrade(dir, template), /Updated .*kept backup minute 6/);
   assert.match(readFileSync(workflow, "utf8"), /cron: "6 \* \* \* \*"/);
   assert.match(readFileSync(workflow, "utf8"), /actions: write/);
+  assert.match(readFileSync(workflow, "utf8"), /id-token: write/);
+  assert.match(readFileSync(workflow, "utf8"), /if: \$\{\{ !cancelled\(\) && needs.write.result/);
   assert.match(upgrade(dir, template), /already up to date\. No files changed/);
   assert.deepEqual(["prompt.md", "synthe.json", ".synthe/scenarios.jsonl"].map((f) => readFileSync(join(dir, f), "utf8")), before);
 });
@@ -117,7 +119,7 @@ test("init shows what it inferred and what happens next, in plain words", async 
   assert.match(text, /up to 12 rounds and \$3 of your key's credit/);
   assert.match(text, /A 12-round session usually takes about half an hour/);
   assert.match(text, /Automatic merging: on\. Changes go into o\/r as soon as they win\./);
-  assert.match(text, /Sharing progress with Synthe: on\./);
+  assert.match(text, /During Crimson Hacks \(until November 8\), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases/);
   assert.match(text, /You can keep editing your prompt: Synthe always starts from the latest version on o\/r/);
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).merge_rule.mode, "auto");
 });
@@ -161,35 +163,38 @@ test("init copies the prompt's business rules into the goal file as its policy",
   assert.equal("policy" in buildGoal({ kind: "file", path: "p.md" }, "x", guardrails, ""), false);
 });
 
-test("sharing progress is asked, and on yes sends only the repo name, setup times and mode", async () => {
-  const dir = repoDir(PROMPT);
-  const { io, ran } = fakeIo(dir);
-  let t = 0;
-  await init(io, dir, () => new Date(Date.UTC(2026, 10, 6, 23, 0, t++ * 90)));
-  const sent = ran.find((r) => r.args.includes("issue") && r.args.includes("create"))!;
-  assert.deepEqual(sent.args.slice(0, 7), ["issue", "create", "--repo", REGISTRY, "--title", "run: o/r", "--body-file"]);
-  const entry = JSON.parse(sent.stdin!);
-  assert.deepEqual(Object.keys(entry).sort(), ["finishedAt", "mode", "repo", "startedAt", "version"]);
-  assert.equal(entry.startedAt, "2026-11-06T23:00:00.000Z");
-  assert.ok(!sent.stdin!.includes(PROMPT) && !sent.stdin!.includes("sk-test"));
+test("init announces full sharing before writing synthe.json during Crimson Hacks", async () => {
+    const dir = repoDir(PROMPT);
+    const { io, ran, said } = fakeIo(dir);
+    const questions: string[] = [];
+    const ask = io.ask;
+    io.ask = async (question) => { questions.push(question); return ask(question); };
+    const say = io.say;
+    io.say = (message) => { if (message.startsWith("During Crimson Hacks")) assert.equal(existsSync(join(dir, "synthe.json")), false); say(message); };
+    assert.equal(await init(io, dir, () => new Date("2026-11-08T23:58:59Z")), true);
+    assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share, "full");
+    assert.ok(!questions.some((q) => /share how this run goes|type 1, 2 or 3/i.test(q)));
+    assert.ok(said.includes('During Crimson Hacks (until November 8), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 8 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'));
+    assert.ok(!ran.some((r) => r.args[0] === "issue" && r.args[1] === "create"));
 });
 
-test("sharing needs a clear yes: no answer means off", async () => {
+test("init defaults to detail at and after the cutoff", async () => {
   const dir = repoDir(PROMPT);
-  const { io, ran, said } = fakeIo(dir, [], { "Share this run": "" });
-  await init(io, dir);
-  assert.ok(!ran.some((r) => r.args.includes("issue")));
-  assert.match(said.join("\n"), /Sharing progress with Synthe: off\./);
+  const { io, said } = fakeIo(dir);
+  assert.equal(await init(io, dir, () => new Date("2026-11-08T23:59:00Z")), true);
+  assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share, "detail");
+  assert.ok(said.includes('Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'));
 });
 
-test("saying no to sharing sends nothing, and a failed share never blocks setup", async () => {
-  const noDir = repoDir(PROMPT);
-  const no = fakeIo(noDir, [], { "Share this run": "n" });
-  assert.equal(await init(no.io, noDir), true);
-  assert.ok(!no.ran.some((r) => r.args.includes("issue")));
-  const brokenDir = repoDir(PROMPT);
-  const broken = fakeIo(brokenDir, ["issue create"]);
-  assert.equal(await init(broken.io, brokenDir), true);
+test("init respects DO_NOT_TRACK and SYNTHE_TELEMETRY opt-outs", async () => {
+  for (const env of [{ DO_NOT_TRACK: "1" }, { DO_NOT_TRACK: "true" }, { SYNTHE_TELEMETRY: "0" }, { SYNTHE_TELEMETRY: "false" }]) {
+    const dir = repoDir(PROMPT);
+    const { io, said } = fakeIo(dir);
+    assert.equal(await init(io, dir, () => new Date(), undefined, env), true);
+    assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share, "none");
+    assert.ok(said.includes("Sharing with Synthe: off (DO_NOT_TRACK is set)."));
+    assert.ok(!said.some((line) => line.startsWith("Synthe shares how this run goes")));
+  }
 });
 
 test("a pasted key is never drawn on screen", async () => {

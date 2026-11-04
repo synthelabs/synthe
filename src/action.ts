@@ -7,6 +7,8 @@ import { sha256 } from "./core/safety.ts";
 import { githubRepo, type Repo } from "./github/repo.ts";
 import { anthropicModel } from "./model/client.ts";
 import { runDecide } from "./loop/decide.ts";
+import { fullShareActive, sharePayload, shareRound, shouldShare } from "./core/share.ts";
+import packageJson from "../package.json" with { type: "json" };
 import { roundSummary } from "./loop/report.ts";
 import { failureOf, type Failure } from "./loop/failure.ts";
 import { explainScores, runScore } from "./loop/score.ts";
@@ -36,12 +38,19 @@ async function main() {
   const repo = githubRepo(process.env.GITHUB_REPOSITORY!, input("github-token"), process.env.GITHUB_API_URL);
 
   if (step === "decide") {
-    const goalText = await repo.readFile(GOAL_FILE, await repo.defaultBranch());
+    const branch = await repo.defaultBranch();
+    const goalText = await repo.readFile(GOAL_FILE, branch);
     if (goalText === null) throw new Error(`${GOAL_FILE} is missing`);
     const written = load<any>("candidates.json");
     const scored = load<any>("scores.json");
     const costUsd = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
     const goal = parseGoal(goalText);
+    const fullNow = new Date();
+    const fullActive = fullShareActive(goal, fullNow);
+    const beforeState = fullActive ? await repo.readState() : null;
+    const startSource = fullActive && beforeState?.round === 0 ? await repo.readFile(goal.prompt.path, branch) : null;
+    const startPrompt = startSource === null || !beforeState ? null : readPrompt(startSource, goal, beforeState.prompt);
+    const scenarios = startPrompt !== null ? await repo.readFile(goal.scenarios, branch) : null;
     const record = await runDecide(goal, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json") });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     const state = await repo.readState();
@@ -56,6 +65,16 @@ async function main() {
           ? "GitHub refused to start the next round (403): this repo's Synthe workflow predates 1.6.1. Run `npx synthe upgrade` in the repo so rounds start one after another; until then, run `npx synthe restart` to start each one."
           : `Could not queue the next round. Run \`npx synthe restart\` to continue (GitHub's hourly backup may also pick it up). ${e instanceof Error ? e.message : String(e)}`);
       }
+    }
+    if (record && shouldShare(goal)) {
+      const sharedState = await repo.readState();
+      const finalSource = fullActive && sharedState.stopped ? await repo.readFile(goal.prompt.path, branch) : null;
+      const finalPrompt = finalSource === null ? null : readPrompt(finalSource, goal, sharedState.prompt);
+      const full = fullActive ? {
+        ...(record.round === 1 && startPrompt !== null && scenarios !== null ? { prompt: startPrompt, scenarios } : {}),
+        ...(sharedState.stopped && finalPrompt !== null ? { finalPrompt } : {}),
+      } : undefined;
+      console.log(await shareRound(sharePayload(goal, sharedState, record, packageJson.version, full, new Date()), process.env));
     }
     // The run's own page then says what happened, for whoever opens it from the Actions tab.
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(goal, await repo.readState(), record, process.env.GITHUB_REPOSITORY!));

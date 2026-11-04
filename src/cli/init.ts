@@ -6,14 +6,13 @@ import { MAX_PROMPT_CHARS, promptPathProblem, redactSecrets } from "../core/safe
 import { ISSUE_TITLE } from "../loop/report.ts";
 import { askJson, type Model } from "../model/client.ts";
 import { reviewChecksAtSetup } from "./calibrate.ts";
+import { FULL_SHARE_UNTIL } from "../core/share.ts";
 
 export const ACTION = "synthelabs/synthe@v1";
 export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 export const WORKFLOW_FILE = ".github/workflows/synthe.yml";
 const SETUP_BRANCH = "synthe/setup";
 const SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
-// Teams that agree to share progress are listed here, one issue each, so the Synthe team can follow how runs go.
-export const REGISTRY = "synthelabs/synthe-runs";
 
 export interface Io {
   say(text: string): void;
@@ -161,8 +160,7 @@ async function whyGitHubFails(io: Io): Promise<string> {
   return "Run this inside your project's folder, after pushing it to GitHub (you need admin access to the repo).";
 }
 
-export async function init(io: Io, root: string, now = () => new Date(), envKey = process.env.ANTHROPIC_API_KEY) {
-  const startedAt = now().toISOString();
+export async function init(io: Io, root: string, now = () => new Date(), envKey = process.env.ANTHROPIC_API_KEY, env: Partial<Record<"DO_NOT_TRACK" | "SYNTHE_TELEMETRY", string>> = process.env) {
   let slug: string;
   try {
     slug = (await io.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
@@ -218,6 +216,13 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   let auto = await yesNo(io, `Merge improvements into ${branch} automatically? Type y for automatic, or n to review each one: `);
   if (auto === null) { auto = false; io.say("No clear answer, so Synthe will open pull requests for you to review."); }
   io.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
+  const sharingOff = ["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "") || ["0", "false"].includes(env.SYNTHE_TELEMETRY?.toLowerCase() ?? "");
+  const share: Goal["share"] = sharingOff ? "none" : now().getTime() < Date.parse(FULL_SHARE_UNTIL) ? "full" : "detail";
+  io.say(sharingOff
+    ? "Sharing with Synthe: off (DO_NOT_TRACK is set)."
+    : share === "full"
+      ? 'During Crimson Hacks (until November 8), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 8 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'
+      : 'Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.');
   const key = await askKey(io, envKey);
   if (!key) { io.say("No key, so nothing was set up. Get a key from the Synthe table, then run `npx synthe init` again."); return false; }
 
@@ -259,6 +264,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   }
 
   const goal = buildGoal(location, objective, guardrails, policy, brief, checks);
+  goal.share = share;
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
 
   mkdirSync(join(root, ".synthe"), { recursive: true });
@@ -307,17 +313,6 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
       await io.sleep(3000);
     }
   }
-  // Opt-in, and only numbers about the run: never the prompt, the scenarios or any code.
-  io.say("\nOne last question. Sharing helps us improve Synthe: we'd see your repo name, rounds, merges, spend and why runs stop, never your prompt, test cases or code.");
-  const share = (await yesNo(io, "Share this run's progress with the Synthe team? Type y or n: ")) === true;
-  io.say(share ? "Sharing progress with Synthe: on." : "Sharing progress with Synthe: off.");
-  if (share) {
-    const entry = { repo: slug, startedAt, finishedAt: now().toISOString(), mode: goal.merge_rule.mode, version: ACTION };
-    try {
-      await io.run("gh", ["issue", "create", "--repo", REGISTRY, "--title", `run: ${slug}`, "--body-file", "-"], `${JSON.stringify(entry, null, 2)}\n`);
-    } catch { /* sharing is a favour to us; never let it block a team's setup */ }
-  }
-
   // Forks start with Actions turned off, and then nothing would ever run, however long the team waits.
   const actionsOff = !started && !setupPr && (await io.run("gh", ["api", `repos/${slug}/actions/permissions`, "--jq", ".enabled"]).then((o) => o.trim() === "false", () => false));
   const limits = `Completed rounds start back to back, up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} of your key's credit. A 12-round session usually takes about half an hour.`;

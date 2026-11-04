@@ -133,10 +133,13 @@ after(() => { github.close(); anthropic.close(); });
 
 test("one full round merges the winner using the real bundle", async () => {
   reset();
+  let decidedLog = "";
   for (const s of ["write", "score", "decide"]) {
     const r = await step(s);
     assert.equal(r.code, 0, r.log);
+    if (s === "decide") decidedLog = r.log;
   }
+  assert.doesNotMatch(decidedLog, /Sharing skipped|Shared round/);
   assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/);
   assert.equal(merges.length, 1, files.get("synthe/state:state.json") ?? "no state");
   assert.equal(files.get("main:prompt.md"), "You are careful and use the store policy.");

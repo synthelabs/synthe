@@ -8,11 +8,22 @@ const SCORE = "src/loop/score.ts";
 const WRITE = "src/loop/write.ts";
 const STATE = "src/core/state.ts";
 const GITHUB = "src/github/repo.ts";
+const SHARE = "src/core/share.ts";
+const WORKFLOW = "templates/synthe.yml";
 
 // Every test file, so a new one is never left out of the check.
 const TESTS = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
 
 const mutations = [
+  ["an absent share setting sends data", SHARE, 'goal.share === "numbers" || goal.share === "detail" || goal.share === "full"', 'goal.share !== "none"'],
+  ["DO_NOT_TRACK is ignored", "src/cli/init.ts", '["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "")', 'false'],
+  ["numbers-only sends text", SHARE, 'if (goal.share !== "detail" && goal.share !== "full") return payload;', 'if (goal.share === "none") return payload;'],
+  ["full sends prompt after the cutoff", SHARE, 'now.getTime() < Date.parse(FULL_SHARE_UNTIL)', 'true'],
+  ["detail sends the prompt", SHARE, 'goal.share === "full" && now.getTime()', 'true && now.getTime()'],
+  ["example input dropped", SHARE, '        input: limited(record.example.input, 2000),\n', ''],
+  ["a share failure fails the round", SHARE, 'return `Sharing skipped: ${error instanceof Error && error.message === "timed out" ? "request timed out" : "request failed"}.`;', "throw error;"],
+  ["a cancelled run still decides", WORKFLOW, "if: ${{ !cancelled() && needs.write.result", "if: ${{ always() && needs.write.result"],
+  ["the decide condition loses its ${{ }} and YAML drops !cancelled()", WORKFLOW, "if: ${{ !cancelled() && needs.write.result != 'skipped' && needs.write.outputs.go != 'false' }}", "if: !cancelled() && needs.write.result != 'skipped' && needs.write.outputs.go != 'false'"],
   ["no scenario wins needed", RULE, "if (split.p > max_p) return", "if (false) return"],
   ["no held-back gain needed", RULE, "held < beforeHoldout + min_improvement", "held < beforeHoldout"],
   ["no training gain needed", RULE, "after < before + min_improvement", "after < before"],

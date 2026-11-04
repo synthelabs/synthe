@@ -6,6 +6,7 @@ export interface RoundRecord {
   // For the team, in plain words: what the round did, what changed if anything, and what happened to each idea.
   plain?: string; changed?: string; tried?: { summary: string; outcome: string }[];
   example?: { input: string; before: string; after: string }; title?: string; unverified?: string[];
+  edits?: { find: string; replace: string }[];
   // Why a failed round's write or score step failed, when it said; the report's advice depends on it.
   failure?: "busy" | "key" | "other";
   // The share of the team's checks passed before and after a merged or proposed change, as whole percentages.

@@ -19,11 +19,11 @@ Use this slide only after the overnight run works. Don't add results until we ha
 ## QR card
 
 **Synthe**
-Your AI agent's prompt gets better while you sleep.
+Your AI agent's prompt gets better while you build everything else.
 
 1. Grab a key from the Synthe table ($3 of credit, on us).
-2. In your repo, run `npx synthe init`.
-3. Say what your agent should get better at, confirm the checks Synthe proposes to measure it, and choose: merge improvements into main automatically, or review each one.
+2. In your repo, run `npx synthe@latest init`.
+3. Say what your agent should get better at, confirm the checks Synthe proposes to measure it, and choose: merge improvements into main automatically, or review each one. During Crimson Hacks, Synthe shares your prompt, test cases and how the run goes with us (never your code); turn it off with "share": "none" in synthe.json.
 4. After the run, open the report issue in your repo.
 
 Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop any time: `npx synthe stop`
@@ -62,9 +62,39 @@ Allow 30 to 45 minutes. It's manual, because the Spend Limits API isn't open to 
 
 ## Tester script, Wednesday November 4
 
-Give each tester the QR card and no other help. Record the time to the first run and where they got stuck.
+Give each tester the QR card only, with no other help. Record the time to the first round and where they got stuck.
 
-Ask afterward:
-1. What did you expect it to do?
-2. Would you trust it on your default branch?
-3. What almost made you give up?
+Ask afterward, one at a time:
+1. What did you expect `npx synthe init` to do?
+2. Which step made you stop or ask for help?
+3. Read the checks Synthe proposed. Which ones match how you would judge your agent?
+4. Which check is missing, or wrong?
+5. You chose merge or review. Why that one?
+6. Would you let it merge to your default branch while nobody is watching? What would change your answer?
+
+## Saturday morning check-in
+
+Ask each team at the table. It should take 3 minutes. Write down their words.
+
+1. Did Synthe merge anything, or did you merge any of its pull requests? If not, why?
+2. Open one change. Is the new prompt better, worse, or the same for your agent?
+3. Does "checks passed X%, up from Y%" match what you see when you use your agent?
+4. If Synthe could read one real number about your agent, which would you pick?
+5. Where did setup slow you down?
+
+## What we record per team
+
+| Field | Where it comes from |
+|---|---|
+| Sharing choice (nothing, numbers, detail, or Crimson Hacks full) | The `share` setting in synthe.json |
+| Rounds run, merges, checks passed (start and end) | Shared numbers in synthelabs/synthe-runs |
+| Goal, checks, edits, one example message and its replies | Private synthelabs/synthe-feedback, for detail and full sharing |
+| Prompt at start, train and holdout test cases, final prompt | Private synthelabs/synthe-feedback, for full sharing before November 8 at 23:59 UTC |
+| Real cost | Key spend in the Console, plus shared numbers |
+| Time to first round, where they got stuck | Our table notes |
+| Merge mode chosen and whether they merged PRs | Check-in answer 1, plus our table notes |
+| Checks that matched or missed their judgement | Tester script answers 3 and 4, check-in answer 3 |
+| Did the wins hold up | Check-in answer 2 |
+| The real number they'd want improved | Check-in answer 4 |
+
+Monday: we send Andrew a one-page readout with team counts, merges, check-in answers on trust and wins, and the numbers teams asked for.
