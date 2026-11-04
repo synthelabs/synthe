@@ -118,7 +118,7 @@ test("review: confirming twice or drafting an installed default branch refuses i
   assert.equal(existsSync(join(root, DRAFT_FILE)), false);
   const pushed = io.run;
   io.run = async (command, args, stdin) => args.includes(".path") ? args.some((arg) => arg.includes("contents/synthe.json")) ? "synthe.json" : ".github/workflows/synthe.yml" : pushed(command, args, stdin);
-  for (const options of [confirmation, prepare]) {
+  for (const options of [confirmation, prepare, undefined]) {
     const before = ran.filter((call) => call.args[0] === "secret").length;
     assert.equal(await init(io, root, undefined, "sk-ant-own", {}, options), false);
     assert.equal(said.at(-1), "Synthe is already set up on the default branch. Use `npx synthe restart` to continue; don't run init again.");
@@ -245,15 +245,30 @@ test("review: key validates with five-token Haiku before any mutation; failure c
   const fake = keyIo({ ...newState(), stopped: "credit", spendUsd: 3.95 });
   fake.io.model = () => ({ ask: async (request) => { assert.deepEqual(request, cheap); throw { status: 401, message: "invalid key" }; } });
   assert.equal(await setKey(fake.io, { SYNTHE_ANTHROPIC_KEY: "sk-ant-bad" }), false);
-  assert.equal(fake.ran.length, 0);
+  assert.equal(fake.ran.length, 2);
+  assert.ok(fake.ran.every((args) => args[0] === "repo" || args[0] === "api" && !args.includes("-X")));
   assert.equal(fake.saved().ownKeyFromUsd, undefined);
   assert.equal(fake.said.at(-1), "Your Anthropic key was rejected. Run `npx synthe key` to replace it. Nothing changed.");
+});
+
+test("review: key refuses missing default-branch setup before calling the model or changing secrets", async () => {
+  const fake = keyIo(newState());
+  const run = fake.io.run;
+  fake.io.run = async (command, args, stdin) => {
+    if (args.some((arg) => arg.includes("contents/synthe.json"))) throw new Error("HTTP 404: Not Found");
+    return run(command, args, stdin);
+  };
+  assert.equal(await setKey(fake.io, { SYNTHE_ANTHROPIC_KEY: "sk-ant-own" }), false);
+  assert.equal(fake.calls.length, 0);
+  assert.ok(fake.ran.every((args) => args[0] === "repo"));
+  assert.match(fake.said.at(-1)!, /Finish `npx synthe init` and merge its setup pull request/);
 });
 
 test("review: credit report always includes the own-key next step, even for a terse proxy message", async () => {
   const repo = new MemoryRepo("Old prompt.");
   await runDecide(goal(), repo, { candidates: null, scores: null, costUsd: null, error: failureOf("write", new CreditError("Credit exhausted.")) });
   assert.match(repo.issue, /To use your own Anthropic key, run `npx synthe key`, then `npx synthe restart`/);
+  assert.match(repo.issue, /delete the `SYNTHE_ANTHROPIC_KEY` and `SYNTHE_EVENT_CODE` secrets/);
 });
 
 test("review: Anthropic key failures direct people to synthe key", () => {

@@ -218,7 +218,10 @@ async function main() {
   const command = process.argv[2];
   if (command === "init") process.exitCode = (await init(io, process.cwd(), undefined, undefined, process.env, agentOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "guide") console.log(guide);
-  else if (command === "key") process.exitCode = (await setKey(io)) ? 0 : 1;
+  else if (command === "key") {
+    if (!setUpHere()) return;
+    process.exitCode = (await setKey(io)) ? 0 : 1;
+  }
   else if (command === "upgrade") console.log(upgrade(process.cwd(), template()));
   else if (command === "stop") await stop();
   else if (command === "status") await status();

@@ -28153,8 +28153,10 @@ var PRICES = {
   "claude-opus-5-5": { input: 4, output: 20 }
 };
 function costUsd(model, usage) {
-  const price = PRICES[model];
-  if (!price || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
+  const base = PRICES[model];
+  if (!base || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
+  const totalInput = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
+  const price = model === "claude-haiku-5-5" && totalInput > 1e5 ? { input: 0.5, output: 2.5 } : base;
   const input2 = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) * 1.25 + (usage.cache_read_input_tokens ?? 0) * 0.1;
   return (input2 * price.input + usage.output_tokens * price.output) / 1e6;
 }
@@ -28893,7 +28895,7 @@ function nextSteps(goal, state) {
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");
   }
-  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete the `SYNTHE_ANTHROPIC_KEY` secret in your repo's settings.");
+  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete the `SYNTHE_ANTHROPIC_KEY` and `SYNTHE_EVENT_CODE` secrets in your repo's settings.");
   return steps;
 }
 function roundSummary(goal, state, record, repo) {

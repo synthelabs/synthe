@@ -199,22 +199,25 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     io.say(`You're on the branch ${here}. Synthe adds itself to ${branch}, because GitHub only runs scheduled backup jobs from there. Run \`git checkout ${branch}\`, then \`npx synthe init\` again.`);
     return false;
   }
-  if (agent) {
-    const installed = await Promise.all([GOAL_FILE, WORKFLOW_FILE].map(async (path) =>
+  const installed = await Promise.all([GOAL_FILE, WORKFLOW_FILE].map(async (path) =>
       // Only what's on GitHub counts: a --confirm that failed after writing local files must be able to run again.
       (await io.run("gh", ["api", `repos/${slug}/contents/${path}?ref=${encodeURIComponent(branch)}`, "--jq", ".path"]).catch(() => "")).trim() === path));
-    if (installed.every(Boolean)) { io.say("Synthe is already set up on the default branch. Use `npx synthe restart` to continue; don't run init again."); return false; }
-  }
+  if (installed.every(Boolean)) { io.say("Synthe is already set up on the default branch. Use `npx synthe restart` to continue; don't run init again."); return false; }
   if (agent?.confirm) {
     let draft: SetupDraft;
+    let source: string;
     try {
       draft = JSON.parse(readFileSync(join(root, DRAFT_FILE), "utf8"));
       draft.goal = parseGoal(JSON.stringify(draft.goal));
       draft.rows = parseScenarios(draft.rows.map((row) => JSON.stringify(row)).join("\n"));
       if (promptPathProblem(draft.goal.prompt.path)) askPerson("--confirm");
-      const source = readFileSync(join(root, draft.goal.prompt.path), "utf8");
-      if (draft.version !== 1 || draft.slug !== slug || draft.branch !== branch || draft.sourceHash !== sha256(source) || !draft.rows.length || typeof draft.event !== "boolean") askPerson("--confirm");
+      source = readFileSync(join(root, draft.goal.prompt.path), "utf8");
+      if (draft.version !== 1 || draft.slug !== slug || draft.branch !== branch || !draft.rows.length || typeof draft.event !== "boolean") askPerson("--confirm");
     } catch { askPerson("--confirm (run step 1 again)"); }
+    if (draft.sourceHash !== sha256(source)) {
+      io.say("Your prompt changed since step 1. Run `npx synthe init --agent` with the same prompt, objective and mode to draft again, then review the new checks before confirming. Nothing changed.");
+      return false;
+    }
     const credential = setupCredential(env, envKey);
     if (!credential) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY/ANTHROPIC_API_KEY");
     if (draft.event !== !credential.startsWith("sk-ant-")) askPerson("--confirm (use the same credential type as step 1)");

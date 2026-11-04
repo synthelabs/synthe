@@ -2,6 +2,8 @@
 
 Friday, November 6. Nothing here has been used or sent yet.
 
+Operators: see [no-spend readiness](OFFLINE-READINESS.md) before publishing or printing. The event flow is not yet in the published package, and the existing `v1.6.2` tag does not contain the pending event changes. Match the dollar amounts below to the final configured caps before distributing this kit.
+
 ## Intro slide
 
 **Synthe: your agent gets better while you sleep.**

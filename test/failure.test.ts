@@ -27,6 +27,15 @@ test("a model failure is sorted into busy (retry on backup), key (needs a person
   assert.deepEqual(failureOf("score", new Error("candidates are missing\n    at main")), { step: "score", kind: "other", message: "candidates are missing" });
 });
 
+test("key outside a setup repo refuses before credential validation", () => {
+  const dir = mkdtempSync(join(tmpdir(), "synthe-key-unset-"));
+  const env = { ...process.env, SYNTHE_ANTHROPIC_KEY: "sk-ant-no-spend-test", ANTHROPIC_BASE_URL: "http://127.0.0.1:9" };
+  const run = spawnSync(process.execPath, [join(import.meta.dirname, "../dist/cli.js"), "key"], { cwd: dir, env, encoding: "utf8", timeout: 5000 });
+  assert.equal(run.status, 1);
+  assert.match(run.stdout, /Synthe isn't set up in this folder/);
+  assert.doesNotMatch(run.stdout + run.stderr, /Synthe hit an error|Paste your own Anthropic key/);
+});
+
 test("a failed write step saves why it failed for the decide step, and still exits 1", () => {
   const dir = mkdtempSync(join(tmpdir(), "synthe-failure-"));
   const env = { ...process.env, INPUT_STEP: "write", GITHUB_REPOSITORY: "team/agent", GITHUB_API_URL: "http://127.0.0.1:9" };

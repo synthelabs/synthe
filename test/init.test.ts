@@ -568,7 +568,7 @@ test("upgrade from the 1.6.2 workflow adds event credit and OIDC to write and sc
 
 test("agent confirmation rejects stale drafts before changing files or storing secrets", async () => {
   const dir = repoDir(PROMPT);
-  const { io, ran } = fakeIo(dir);
+  const { io, ran, said } = fakeIo(dir);
   io.ask = io.askSecret = async () => { throw new Error("agent mode prompted"); };
   const calls: Ask[] = [];
   io.model = () => setupModel(calls);
@@ -577,7 +577,10 @@ test("agent confirmation rejects stale drafts before changing files or storing s
   await init(io, dir, undefined, "", env, prepare);
   writeFileSync(join(dir, "prompt.md"), `${PROMPT} Changed after calibration.`);
   const confirm = agentOptions(["--agent", "--confirm", "--keep-checks"]);
-  await assert.rejects(init(io, dir, undefined, "", env, confirm), /--confirm.*Ask the person; don't guess\./);
+  const callsBefore = calls.length;
+  assert.equal(await init(io, dir, undefined, "", env, confirm), false);
+  assert.match(said.at(-1)!, /Your prompt changed since step 1.*draft again/);
+  assert.equal(calls.length, callsBefore);
   assert.equal(existsSync(join(dir, "synthe.json")), false);
   assert.ok(!ran.some((call) => ["secret", "commit", "push"].includes(call.args[0])));
 });

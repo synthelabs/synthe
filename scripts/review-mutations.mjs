@@ -3,6 +3,9 @@ import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 
 const mutations = [
+  ["interactive setup overwrites an installed repo", "src/cli/init.ts", "if (installed.every(Boolean))", "if (agent && installed.every(Boolean))"],
+  ["Haiku long-context tier is ignored", "src/core/cost.ts", 'model === "claude-haiku-5-5" && totalInput > 100_000', "false"],
+  ["confirmation accepts a changed prompt", "src/cli/init.ts", "if (draft.sourceHash !== sha256(source))", "if (false)"],
   ["app key beats event credit", "src/cli/init.ts", 'env.SYNTHE_EVENT_CODE?.trim() || appKey?.trim()', 'appKey?.trim() || env.SYNTHE_EVENT_CODE?.trim()'],
   ["confirmation ignores DO_NOT_TRACK", "src/cli/init.ts", 'if (sharingDisabled(env)) draft.goal.share = "none";', ''],
   ["confirmation ignores --share", "src/cli/init.ts", 'if (agent.share) draft.goal.share = agent.share;', ''],
@@ -26,7 +29,7 @@ const mutations = [
 ];
 
 const originals = new Map(mutations.map(([, path]) => [path, readFileSync(path, "utf8")]));
-const runTests = () => spawnSync(process.execPath, ["--test", "test/review.test.ts"], { encoding: "utf8", timeout: 60_000 });
+const runTests = () => spawnSync(process.execPath, ["--test", "test/review.test.ts", "test/core.test.ts", "test/init.test.ts"], { encoding: "utf8", timeout: 60_000 });
 const baseline = runTests();
 assert.equal(baseline.status, 0, `Regression baseline failed:\n${baseline.stdout}\n${baseline.stderr}`);
 let killed = 0;
