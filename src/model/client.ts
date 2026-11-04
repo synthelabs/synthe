@@ -1,5 +1,55 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { randomUUID } from "node:crypto";
 import { costUsd } from "../core/cost.ts";
+import { oidcToken } from "../core/share.ts";
+
+export const PROXY_URL = "https://synthe-share.vercel.app/api/claude";
+const install = randomUUID();
+export class CreditError extends Error {}
+
+export function eventModels(models: Record<string, string>): void {
+  for (const model of Object.values(models)) {
+    if (!["claude-haiku-5-5", "claude-sonnet-5-5"].includes(model)) throw new CreditError(`Event credit only supports claude-haiku-5-5 and claude-sonnet-5-5; your goal names ${model}. Use an allowed model or run \`npx synthe key\` to use your own Anthropic key.`);
+  }
+}
+
+export function proxyModel(eventCode: string, action = false): Model {
+  const client = new Anthropic({ apiKey: "synthe-proxy", baseURL: process.env.SYNTHE_PROXY_URL || PROXY_URL, maxRetries: 4,
+    fetch: async (url, init) => {
+      const headers = new Headers(init?.headers);
+      headers.set("x-synthe-event", eventCode);
+      headers.set("x-api-key", "synthe-proxy");
+      if (action) headers.set("Authorization", `Bearer ${await oidcToken("synthe-proxy")}`);
+      else { headers.delete("Authorization"); headers.set("x-synthe-install", install); }
+      const response = await fetch(url, { ...init, headers });
+      if (response.status === 402 || response.status === 403) {
+        const body = await response.clone().json().catch(() => null) as { error?: { type?: string; message?: string } } | null;
+        if (body?.error?.type === "synthe_credit" && typeof body.error.message === "string") {
+          const refusedHeaders = new Headers(response.headers);
+          refusedHeaders.set("x-should-retry", "false");
+          return new Response(response.body, { status: response.status, headers: refusedHeaders });
+        }
+      }
+      return response;
+    },
+  });
+  const model = sdkModel(client);
+  return { async ask(ask) {
+    eventModels({ model: ask.model });
+    if (ask.maxTokens > 16000) throw new CreditError("Event credit supports at most 16000 output tokens per request.");
+    try { return await model.ask(ask); } catch (error) {
+      const refused = error as { status?: number; error?: { error?: { type?: string; message?: string } } };
+      if ((refused.status === 402 || refused.status === 403) && refused.error?.error?.type === "synthe_credit" && typeof refused.error.error.message === "string") throw new CreditError(refused.error.error.message);
+      throw error;
+    }
+  } };
+}
+
+export function configuredModel(key: string | undefined, eventCode: string | undefined, action = false): Model {
+  if (key?.trim()) return anthropicModel(key.trim());
+  if (eventCode?.trim()) return proxyModel(eventCode.trim(), action);
+  throw new Error("No Anthropic key or event code is set. Set SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY.");
+}
 
 // allowCutOff: a reply that ran into maxTokens is returned as it is (truncated: true) instead of as null. Only for plain
 // text the caller can judge as it stands; a cut-off JSON reply is broken, so JSON callers never set it.
@@ -9,6 +59,10 @@ export interface Model { ask(a: Ask): Promise<Reply> }
 
 export function anthropicModel(apiKey: string): Model {
   const client = new Anthropic({ apiKey, maxRetries: 4 });
+  return sdkModel(client);
+}
+
+function sdkModel(client: Anthropic): Model {
   return {
     async ask({ model, system, user, maxTokens, schema, allowCutOff }) {
       const res = await client.messages.create({
@@ -51,6 +105,7 @@ export async function pool<T, R>(items: T[], limit: number, fn: (item: T) => Pro
 // What a team should do about a failed model call, in plain words. Null when it isn't a known problem with the key or
 // the API, so the caller shows the raw error.
 export function modelProblem(e: unknown): string | null {
+  if (e instanceof CreditError) return e.message;
   const err = e as { status?: unknown; message?: unknown } | null;
   const status = typeof err?.status === "number" ? err.status : null;
   const text = typeof err?.message === "string" ? err.message : "";

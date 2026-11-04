@@ -1,2 +1,3 @@
 node_modules
 .synthe-out
+.synthe/setup-draft.json

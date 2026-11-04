@@ -280,7 +280,12 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     record.outcome = "failed";
     const error = input.error;
     if (error) record.failure = error.kind;
-    if (error?.kind === "busy") {
+    if (error?.kind === "credit") {
+      record.reasons.push(error.message);
+      record.plain = error.message;
+      state.stopped = "credit";
+      stall = false;
+    } else if (error?.kind === "busy") {
       // Overload or rate limits pass by themselves, so a busy hour mustn't use up the rounds allowed without a winner.
       record.reasons.push(`Anthropic's API was busy during the ${error.step} step: ${error.message}`);
       record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";

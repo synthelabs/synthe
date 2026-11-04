@@ -7,7 +7,7 @@ import { readPrompt } from "../core/prompt.ts";
 import { newState, type State } from "../core/state.ts";
 import { sha256 } from "../core/safety.ts";
 import { headline } from "../loop/report.ts";
-import { anthropicModel, modelProblem } from "../model/client.ts";
+import { anthropicModel, configuredModel, eventModels, modelProblem } from "../model/client.ts";
 import { measureNoise, runScore } from "../loop/score.ts";
 import { runWrite } from "../loop/write.ts";
 import { init, type Io } from "./init.ts";
@@ -16,6 +16,9 @@ import { restartState } from "./restart.ts";
 import { stoppedLine } from "./stopped.ts";
 import { askSecret } from "./secret.ts";
 import { upgrade } from "./upgrade.ts";
+import { AgentSetupError, agentOptions } from "./agent.ts";
+import { setKey } from "./key.ts";
+import guide from "../../docs/AGENT-SETUP.md";
 
 const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
   const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -134,21 +137,23 @@ async function restart() {
 // Loads what a round on this computer needs, or says what's missing. Used by try and calibrate.
 function localRun(command: string) {
   if (!setUpHere()) return null;
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) {
-    console.log(`\`npx synthe ${command}\` runs on your computer, changing nothing, and needs your Synthe key:`);
-    console.log(`  ANTHROPIC_API_KEY=your-key npx synthe ${command}`);
+  const key = process.env.SYNTHE_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY;
+  const eventCode = process.env.SYNTHE_EVENT_CODE;
+  if (!key && !eventCode) {
+    console.log(`\`npx synthe ${command}\` runs on your computer, changing nothing, and needs an event code or your own Anthropic key.`);
+    console.log("Set SYNTHE_EVENT_CODE, SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY in your environment, then run this again.");
     process.exitCode = 1;
     return null;
   }
   const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
+  if (!key && eventCode) eventModels(goal.models);
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync(goal.scenarios, "utf8")), model: anthropicModel(key) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync(goal.scenarios, "utf8")), model: configuredModel(key, eventCode) };
 }
 
 // Checks whether the team's checks are marked steadily, and the way the team means them.
@@ -195,21 +200,25 @@ const HELP = `Synthe makes your AI agent's system prompt better while you sleep.
 
 Start here, inside your project's folder:
   npx synthe init     set up this repo and start
+  npx synthe guide    instructions for setup through a coding agent
 
 Then:
   npx synthe status   where it is and what it changed
   npx synthe upgrade  update only the installed workflow for chained rounds
   npx synthe stop     stop it; nothing more runs or changes
   npx synthe restart  start it again, after stop or once you've fixed what stopped it
-  npx synthe try      run one round on your computer, changing nothing (needs ANTHROPIC_API_KEY)
+  npx synthe key      use your own Anthropic key instead of event credit
+  npx synthe try      run one round on your computer, changing nothing (event code or own key)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
-  npx synthe calibrate     check that your checks are marked steadily and the way you mean them (needs ANTHROPIC_API_KEY)
+  npx synthe calibrate     check that your checks are marked steadily and the way you mean them (event code or own key)
 
 More: https://github.com/synthelabs/synthe#readme`;
 
 async function main() {
   const command = process.argv[2];
-  if (command === "init") process.exitCode = (await init(io, process.cwd())) ? 0 : 1;
+  if (command === "init") process.exitCode = (await init(io, process.cwd(), undefined, undefined, process.env, agentOptions(process.argv.slice(3)))) ? 0 : 1;
+  else if (command === "guide") console.log(guide);
+  else if (command === "key") process.exitCode = (await setKey(io)) ? 0 : 1;
   else if (command === "upgrade") console.log(upgrade(process.cwd(), template()));
   else if (command === "stop") await stop();
   else if (command === "status") await status();
@@ -220,10 +229,10 @@ async function main() {
 }
 
 main().catch((e) => {
+  if (e instanceof AgentSetupError) { console.error(e.message); process.exit(1); }
   const problem = modelProblem(e);
   if (problem) {
     console.error(problem);
-    if (process.argv[2] === "init") console.error("Nothing in your repo was changed. Then run `npx synthe init` again.");
   } else {
     console.error(`Synthe hit an error: ${e.message}`);
     console.error("If this keeps happening, open an issue at https://github.com/synthelabs/synthe/issues");

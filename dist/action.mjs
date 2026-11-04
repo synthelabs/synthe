@@ -28413,8 +28413,174 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
 
 // src/model/client.ts
 init_sdk();
+import { randomUUID as randomUUID2 } from "node:crypto";
+
+// src/core/share.ts
+var ENDPOINT = "https://synthe-share.vercel.app/api/round";
+var SECRETS = [
+  [/\b(sk-(?:ant-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,})\b/g, "[key removed]"],
+  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "[token removed]"],
+  [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email removed]"],
+  [/(?<![\w.])\+?\d[\d ().-]{8,}\d(?![\w.])/g, "[phone removed]"]
+];
+var scrub = (text) => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
+var FULL_SHARE_UNTIL = "2026-11-08T23:59:00Z";
+var fullShareActive = (goal, now = /* @__PURE__ */ new Date()) => goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL);
+var shouldShare = (goal) => goal.share === "numbers" || goal.share === "detail" || goal.share === "full";
+var limited = (text, max) => scrub(text).slice(0, max);
+var fullText = (text) => {
+  const clean = scrub(text);
+  const bytes = Buffer.from(clean);
+  return bytes.length <= 100 * 1024 ? clean : bytes.subarray(0, 100 * 1024).toString("utf8").replace(/\uFFFD$/, "");
+};
+var measure = (value, max) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : null;
+function stopCode(stopped) {
+  if (!stopped) return null;
+  if (/^budget of .* is used$/.test(stopped)) return "budget";
+  if (/^reached \d+ rounds$/.test(stopped)) return "max rounds";
+  if (/^\d+ rounds in a row found no winner$/.test(stopped)) return "stalled";
+  if (/^stopped by (the )?team/i.test(stopped)) return "stopped by team";
+  if (stopped === "spend could not be measured") return "spend unknown";
+  return "other";
+}
+function sharePayload(goal, state, record, version, full, now = /* @__PURE__ */ new Date()) {
+  const payload = {
+    round: record.round,
+    outcome: record.outcome,
+    mode: goal.merge_rule.mode,
+    checksBefore: measure(record.checks?.before, 100),
+    checksAfter: measure(record.checks?.after, 100),
+    costUsd: measure(record.costUsd, 100),
+    spentUsd: state.spendUnknown ? null : measure(state.spendUsd, 1e3),
+    stop: stopCode(state.stopped),
+    version
+  };
+  if (goal.share !== "detail" && goal.share !== "full") return payload;
+  const edits = record.edits?.slice(0, 2).map((edit) => ({ find: limited(edit.find, 1500), replace: limited(edit.replace, 1500) }));
+  const detailPayload = {
+    ...payload,
+    detail: {
+      objective: limited(goal.objective, 2e3),
+      checks: (goal.checks ?? []).slice(0, 5).map((check) => limited(check, 300)),
+      change: edits?.length ? {
+        title: limited(record.title ?? record.changed ?? "Prompt change", 120),
+        summary: limited(record.changed ?? record.plain ?? "", 1e3),
+        edits
+      } : null,
+      example: record.example ? {
+        input: limited(record.example.input, 2e3),
+        before: limited(record.example.before, 2e3),
+        after: limited(record.example.after, 2e3)
+      } : null
+    }
+  };
+  if (!fullShareActive(goal, now) || !full) return detailPayload;
+  const fullValue = Object.fromEntries(Object.entries(full).filter(([, value]) => value !== void 0).map(([key, value]) => [key, fullText(value)]));
+  const result = { ...detailPayload, full: fullValue };
+  while (Buffer.byteLength(JSON.stringify(result)) > 256 * 1024) {
+    const [key, value] = Object.entries(fullValue).sort((a, b) => b[1].length - a[1].length)[0];
+    fullValue[key] = value.slice(0, Math.max(0, value.length - 1024));
+  }
+  return result;
+}
+async function oidcToken(audience, env = process.env, fetcher = fetch, signal) {
+  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) throw new Error("GitHub OIDC permission is missing. Run `npx synthe upgrade`.");
+  const url = new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
+  url.searchParams.set("audience", audience);
+  const response = await fetcher(url, { headers: { Authorization: `bearer ${env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` }, signal: signal ?? AbortSignal.timeout(1e4) });
+  if (!response.ok) throw new Error(`GitHub OIDC returned ${response.status}.`);
+  const token = (await response.json()).value;
+  if (typeof token !== "string" || !token) throw new Error("GitHub OIDC returned no token.");
+  return token;
+}
+async function shareRound(payload, env, fetcher = fetch) {
+  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
+    return "Sharing skipped: this workflow needs OIDC permission. Run `npx synthe upgrade`.";
+  }
+  const controller = new AbortController();
+  let timer;
+  try {
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error("timed out"));
+      }, 1e4);
+    });
+    const token = await Promise.race([oidcToken("synthe-share", env, fetcher, controller.signal), timeout]);
+    const response = await Promise.race([fetcher(ENDPOINT, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    }), timeout]);
+    return response.ok ? `Shared round ${payload.round} with Synthe.` : `Sharing skipped: endpoint returned ${response.status}.`;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("GitHub OIDC")) return `Sharing skipped: ${error.message}`;
+    return `Sharing skipped: ${error instanceof Error && error.message === "timed out" ? "request timed out" : "request failed"}.`;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// src/model/client.ts
+var PROXY_URL = "https://synthe-share.vercel.app/api/claude";
+var install = randomUUID2();
+var CreditError = class extends Error {
+};
+function eventModels(models) {
+  for (const model of Object.values(models)) {
+    if (!["claude-haiku-5-5", "claude-sonnet-5-5"].includes(model)) throw new CreditError(`Event credit only supports claude-haiku-5-5 and claude-sonnet-5-5; your goal names ${model}. Use an allowed model or run \`npx synthe key\` to use your own Anthropic key.`);
+  }
+}
+function proxyModel(eventCode, action = false) {
+  const client = new Anthropic({
+    apiKey: "synthe-proxy",
+    baseURL: process.env.SYNTHE_PROXY_URL || PROXY_URL,
+    maxRetries: 4,
+    fetch: async (url, init) => {
+      const headers = new Headers(init?.headers);
+      headers.set("x-synthe-event", eventCode);
+      headers.set("x-api-key", "synthe-proxy");
+      if (action) headers.set("Authorization", `Bearer ${await oidcToken("synthe-proxy")}`);
+      else {
+        headers.delete("Authorization");
+        headers.set("x-synthe-install", install);
+      }
+      const response = await fetch(url, { ...init, headers });
+      if (response.status === 402 || response.status === 403) {
+        const body = await response.clone().json().catch(() => null);
+        if (body?.error?.type === "synthe_credit" && typeof body.error.message === "string") {
+          const refusedHeaders = new Headers(response.headers);
+          refusedHeaders.set("x-should-retry", "false");
+          return new Response(response.body, { status: response.status, headers: refusedHeaders });
+        }
+      }
+      return response;
+    }
+  });
+  const model = sdkModel(client);
+  return { async ask(ask) {
+    eventModels({ model: ask.model });
+    if (ask.maxTokens > 16e3) throw new CreditError("Event credit supports at most 16000 output tokens per request.");
+    try {
+      return await model.ask(ask);
+    } catch (error) {
+      const refused = error;
+      if ((refused.status === 402 || refused.status === 403) && refused.error?.error?.type === "synthe_credit" && typeof refused.error.error.message === "string") throw new CreditError(refused.error.error.message);
+      throw error;
+    }
+  } };
+}
+function configuredModel(key, eventCode, action = false) {
+  if (key?.trim()) return anthropicModel(key.trim());
+  if (eventCode?.trim()) return proxyModel(eventCode.trim(), action);
+  throw new Error("No Anthropic key or event code is set. Set SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY.");
+}
 function anthropicModel(apiKey) {
   const client = new Anthropic({ apiKey, maxRetries: 4 });
+  return sdkModel(client);
+}
+function sdkModel(client) {
   return {
     async ask({ model, system, user, maxTokens, schema, allowCutOff }) {
       const res = await client.messages.create({
@@ -28454,6 +28620,7 @@ async function pool(items, limit2, fn) {
   return results;
 }
 function modelProblem(e) {
+  if (e instanceof CreditError) return e.message;
   const err = e;
   const status = typeof err?.status === "number" ? err.status : null;
   const text = typeof err?.message === "string" ? err.message : "";
@@ -28616,110 +28783,6 @@ function judgeRound(scores, goal, replaced) {
   return best ?? { action: "skip", reasons: reasons.length ? reasons : ["no candidates"], notes };
 }
 
-// src/core/share.ts
-var ENDPOINT = "https://synthe-share.vercel.app/api/round";
-var SECRETS = [
-  [/\b(sk-(?:ant-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,})\b/g, "[key removed]"],
-  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "[token removed]"],
-  [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email removed]"],
-  [/(?<![\w.])\+?\d[\d ().-]{8,}\d(?![\w.])/g, "[phone removed]"]
-];
-var scrub = (text) => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
-var FULL_SHARE_UNTIL = "2026-11-08T23:59:00Z";
-var fullShareActive = (goal, now = /* @__PURE__ */ new Date()) => goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL);
-var shouldShare = (goal) => goal.share === "numbers" || goal.share === "detail" || goal.share === "full";
-var limited = (text, max) => scrub(text).slice(0, max);
-var fullText = (text) => {
-  const clean = scrub(text);
-  const bytes = Buffer.from(clean);
-  return bytes.length <= 100 * 1024 ? clean : bytes.subarray(0, 100 * 1024).toString("utf8").replace(/\uFFFD$/, "");
-};
-var measure = (value, max) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : null;
-function stopCode(stopped) {
-  if (!stopped) return null;
-  if (/^budget of .* is used$/.test(stopped)) return "budget";
-  if (/^reached \d+ rounds$/.test(stopped)) return "max rounds";
-  if (/^\d+ rounds in a row found no winner$/.test(stopped)) return "stalled";
-  if (/^stopped by (the )?team/i.test(stopped)) return "stopped by team";
-  if (stopped === "spend could not be measured") return "spend unknown";
-  return "other";
-}
-function sharePayload(goal, state, record, version, full, now = /* @__PURE__ */ new Date()) {
-  const payload = {
-    round: record.round,
-    outcome: record.outcome,
-    mode: goal.merge_rule.mode,
-    checksBefore: measure(record.checks?.before, 100),
-    checksAfter: measure(record.checks?.after, 100),
-    costUsd: measure(record.costUsd, 100),
-    spentUsd: state.spendUnknown ? null : measure(state.spendUsd, 1e3),
-    stop: stopCode(state.stopped),
-    version
-  };
-  if (goal.share !== "detail" && goal.share !== "full") return payload;
-  const edits = record.edits?.slice(0, 2).map((edit) => ({ find: limited(edit.find, 1500), replace: limited(edit.replace, 1500) }));
-  const detailPayload = {
-    ...payload,
-    detail: {
-      objective: limited(goal.objective, 2e3),
-      checks: (goal.checks ?? []).slice(0, 5).map((check) => limited(check, 300)),
-      change: edits?.length ? {
-        title: limited(record.title ?? record.changed ?? "Prompt change", 120),
-        summary: limited(record.changed ?? record.plain ?? "", 1e3),
-        edits
-      } : null,
-      example: record.example ? {
-        input: limited(record.example.input, 2e3),
-        before: limited(record.example.before, 2e3),
-        after: limited(record.example.after, 2e3)
-      } : null
-    }
-  };
-  if (!fullShareActive(goal, now) || !full) return detailPayload;
-  const fullValue = Object.fromEntries(Object.entries(full).filter(([, value]) => value !== void 0).map(([key, value]) => [key, fullText(value)]));
-  const result = { ...detailPayload, full: fullValue };
-  while (Buffer.byteLength(JSON.stringify(result)) > 256 * 1024) {
-    const [key, value] = Object.entries(fullValue).sort((a, b) => b[1].length - a[1].length)[0];
-    fullValue[key] = value.slice(0, Math.max(0, value.length - 1024));
-  }
-  return result;
-}
-async function shareRound(payload, env, fetcher = fetch) {
-  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
-    return "Sharing skipped: this workflow needs OIDC permission. Run `npx synthe upgrade`.";
-  }
-  const controller = new AbortController();
-  let timer;
-  try {
-    const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => {
-        controller.abort();
-        reject(new Error("timed out"));
-      }, 1e4);
-    });
-    const url = new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
-    url.searchParams.set("audience", "synthe-share");
-    const tokenResponse = await Promise.race([fetcher(url, {
-      headers: { Authorization: `bearer ${env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` },
-      signal: controller.signal
-    }), timeout]);
-    if (!tokenResponse.ok) return `Sharing skipped: GitHub OIDC returned ${tokenResponse.status}.`;
-    const token = (await Promise.race([tokenResponse.json(), timeout])).value;
-    if (typeof token !== "string" || !token) return "Sharing skipped: GitHub OIDC returned no token.";
-    const response = await Promise.race([fetcher(ENDPOINT, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal
-    }), timeout]);
-    return response.ok ? `Shared round ${payload.round} with Synthe.` : `Sharing skipped: endpoint returned ${response.status}.`;
-  } catch (error) {
-    return `Sharing skipped: ${error instanceof Error && error.message === "timed out" ? "request timed out" : "request failed"}.`;
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 // src/loop/report.ts
 var ISSUE_TITLE = "Synthe: prompt report";
 function notTested(goal) {
@@ -28751,6 +28814,7 @@ function headline(goal, state, stoppedByTeam = false) {
     return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
   }
   const last = state.rounds.at(-1);
+  if (state.stopped === "credit") return { title: "Stopped: event credit needs attention", summary: last?.plain ?? "Run `npx synthe key`, then `npx synthe restart`." };
   if (!state.stopped && (missing(last) || badKey(last))) {
     return { title: "Synthe needs you to fix something", summary: `${last.plain} ${spent}` };
   }
@@ -28781,7 +28845,8 @@ function nextSteps(goal, state) {
   if (state.proposal) steps.push(`Review #${state.proposal.pr}: merge it to keep the change, or close it to decline.`);
   if (merged) steps.push("Pull the latest changes before you edit your prompt, so Synthe's changes aren't overwritten.");
   const last = state.rounds.at(-1);
-  if (state.stopped && badKey(last)) steps.push(`${last.plain} Then run \`npx synthe restart\` to start Synthe again.`);
+  if (state.stopped === "credit") steps.push("To use your own Anthropic key, run `npx synthe key`, then `npx synthe restart`.");
+  else if (state.stopped && badKey(last)) steps.push(`${last.plain} Then run \`npx synthe restart\` to start Synthe again.`);
   else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
   if (state.stopped && /no winner$/.test(state.stopped)) {
     steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push, then run \`npx synthe restart\`${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. One line per case, for example:
@@ -29529,7 +29594,12 @@ ${notTested(goal).slice(1).join("\n")}
     record.outcome = "failed";
     const error = input2.error;
     if (error) record.failure = error.kind;
-    if (error?.kind === "busy") {
+    if (error?.kind === "credit") {
+      record.reasons.push(error.message);
+      record.plain = error.message;
+      state.stopped = "credit";
+      stall = false;
+    } else if (error?.kind === "busy") {
       record.reasons.push(`Anthropic's API was busy during the ${error.step} step: ${error.message}`);
       record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
       stall = false;
@@ -29677,7 +29747,7 @@ var package_default = {
     node: ">=20"
   },
   scripts: {
-    build: "esbuild src/cli/main.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/cli.js --banner:js='#!/usr/bin/env node' && esbuild src/action.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/action.mjs",
+    build: "esbuild src/cli/main.ts --bundle --loader:.md=text --platform=node --format=esm --target=node20 --outfile=dist/cli.js --banner:js='#!/usr/bin/env node' && esbuild src/action.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/action.mjs",
     test: "node --test test/*.test.ts",
     typecheck: "tsc --noEmit",
     mutation: "node scripts/mutation-check.mjs",
@@ -29693,6 +29763,7 @@ var package_default = {
 
 // src/loop/failure.ts
 function failureOf(step, e) {
+  if (e instanceof CreditError) return { step, kind: "credit", message: e.message };
   const plain = modelProblem(e);
   if (plain !== null) return { step, kind: /\bkey\b/i.test(plain) ? "key" : "busy", message: plain };
   const raw = e instanceof Error ? e.message : String(e);
@@ -29804,7 +29875,10 @@ async function main() {
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, state.prompt);
   if (prompt === null) throw new Error(`could not find the prompt in ${goal.prompt.path}`);
   const scenarios = parseScenarios(readFileSync(goal.scenarios, "utf8"));
-  const model = anthropicModel(input("anthropic-api-key"));
+  const key = input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY;
+  const eventCode = input("event-code") || process.env.SYNTHE_EVENT_CODE;
+  if (!key && eventCode) eventModels(goal.models);
+  const model = configuredModel(key, eventCode, true);
   if (step === "write") {
     const written = await runWrite(goal, state, prompt, scenarios, model);
     console.log(`Wrote ${written.candidates.length} candidates for ${written.costUsd === null ? "an unknown cost" : `$${written.costUsd.toFixed(4)}`}`);
@@ -29833,6 +29907,7 @@ main().catch((e) => {
     try {
       const failure = failureOf(step, e);
       save("error.json", failure);
+      console.error(failure.message);
       console.log(`::error title=Synthe::${failure.message.replace(/\r?\n/g, " ")}`);
     } catch (saveError) {
       console.error(saveError);

@@ -22,5 +22,5 @@ export function restartState(goal: Goal, state: State, scenariosHash: string | n
     if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget, so this run is finished.` };
     return { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` };
   }
-  return { state: { ...state, stopped: null, stalls: 0 }, note: `It had stopped because: ${stopped}.` };
+  return { state: { ...state, stopped: null, stalls: 0 }, note: stopped === "credit" ? "It had stopped on event credit." : `It had stopped because: ${stopped}.` };
 }

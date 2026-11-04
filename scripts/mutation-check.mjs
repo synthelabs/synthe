@@ -15,6 +15,13 @@ const WORKFLOW = "templates/synthe.yml";
 const TESTS = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
 
 const mutations = [
+  ["event: own key loses to credit", "src/model/client.ts", 'if (key?.trim()) return anthropicModel(key.trim());', 'if (false) return anthropicModel(key.trim());'],
+  ["event: credit is treated as busy", "src/loop/failure.ts", 'kind: "credit", message: e.message', 'kind: "busy", message: e.message'],
+  ["event: credit requests are retried", "src/model/client.ts", 'refusedHeaders.set("x-should-retry", "false");', 'refusedHeaders.set("x-should-retry", "true");'],
+  ["event: credit does not stop the chain", DECIDE, 'state.stopped = "credit";', 'state.stopped = null;'],
+  ["event: agent mode prompts", "src/cli/init.ts", 'if (!agent && (await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)', 'if ((await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)'],
+  ["event: codes are mistaken for keys", "src/cli/init.ts", 'const event = !key.startsWith("sk-ant-");', 'const event = key.startsWith("sk-ant-");'],
+  ["event: budget is not four dollars", "src/cli/init.ts", 'if (event) goal.budget = { max_usd: 4 };', 'if (event) goal.budget = { max_usd: 3 };'],
   ["an absent share setting sends data", SHARE, 'goal.share === "numbers" || goal.share === "detail" || goal.share === "full"', 'goal.share !== "none"'],
   ["DO_NOT_TRACK is ignored", "src/cli/init.ts", '["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "")', 'false'],
   ["numbers-only sends text", SHARE, 'if (goal.share !== "detail" && goal.share !== "full") return payload;', 'if (goal.share === "none") return payload;'],

@@ -7,6 +7,10 @@ import { test } from "node:test";
 import { ACTION, init, type Io } from "../src/cli/init.ts";
 import { upgrade } from "../src/cli/upgrade.ts";
 import { parseGoal, parseScenarios } from "../src/core/goal.ts";
+import { agentOptions, AgentSetupError } from "../src/cli/agent.ts";
+import { AGENT_NEXT, DRAFT_FILE } from "../src/cli/init.ts";
+import { CreditError, type Ask } from "../src/model/client.ts";
+import { setKey } from "../src/cli/key.ts";
 
 const repoDir = (prompt: string) => {
   const dir = mkdtempSync(join(tmpdir(), "synthe-init-"));
@@ -32,6 +36,7 @@ const fakeIo = (dir: string, failing: string[] = [], answers: Record<string, str
     template: () => readFileSync("templates/synthe.yml", "utf8"),
     sleep: async () => {},
     model: () => ({ ask: async () => ({ text: scenarioReply, costUsd: 0.01 }) }),
+    proxy: () => { throw new Error("Unexpected proxy call in an own-key setup"); },
     async run(cmd, args, stdin) {
       ran.push({ cmd, args, stdin });
       if (failing.some((f) => args.join(" ").includes(f))) throw new Error("no");
@@ -241,7 +246,8 @@ test("a key already in ANTHROPIC_API_KEY is only used when the team presses Ente
   const asked: string[] = [];
   io.askSecret = async (q) => { asked.push(q); return ""; };
   assert.equal(await init(io, dir, undefined, "sk-ant-their-own-key"), true);
-  assert.match(asked[0], /press Enter to use the key already in ANTHROPIC_API_KEY/);
+  assert.match(asked[0], /Paste your Crimson Hacks event code/);
+  assert.match(said.join("\n"), /press Enter to use the key already in ANTHROPIC_API_KEY/);
   assert.equal(ran.find((r) => r.args[0] === "secret")!.stdin, "sk-ant-their-own-key");
   assert.match(said.join("\n"), /Using the key in ANTHROPIC_API_KEY/);
 
@@ -251,13 +257,13 @@ test("a key already in ANTHROPIC_API_KEY is only used when the team presses Ente
   assert.equal(pasted.ran.find((r) => r.args[0] === "secret")!.stdin, "sk-ant-test-team-key");
 });
 
-test("a paste that isn't a key is asked again, and three misses set nothing up", async () => {
+test("an empty credential is asked again, and three misses set nothing up", async () => {
   const dir = repoDir(PROMPT);
   const { io, ran, said } = fakeIo(dir);
-  io.askSecret = async () => "npx synthe init";
+  io.askSecret = async () => "";
   assert.equal(await init(io, dir, undefined, ""), false);
-  assert.equal(said.filter((t) => /start with sk-ant-/.test(t)).length, 3);
-  assert.match(said.join("\n"), /No key, so nothing was set up/);
+  assert.equal(said.filter((t) => /Paste your event code or key/.test(t)).length, 3);
+  assert.match(said.join("\n"), /No event code or key, so nothing was set up/);
   assert.ok(!ran.some((r) => r.args[0] === "secret" || r.args[0] === "push"));
   assert.equal(existsSync(join(dir, "synthe.json")), false);
 });
@@ -394,4 +400,206 @@ test("a check the team rewords during setup's quick review is the one saved", as
   assert.equal(await init(io, dir), true);
   assert.match(said.join("\n"), /Quick check that Synthe marks these the way you mean/);
   assert.ok(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).checks!.includes("Asks for the order number before anything else"));
+});
+
+const setupModel = (calls: Ask[]) => ({ async ask(ask: Ask) {
+  calls.push(ask);
+  const schema = JSON.stringify(ask.schema ?? {});
+  const text = schema.includes('"scenarios"') ? JSON.stringify({ ...JSON.parse(scenarioReply), checks: ["Answers the question", "Is concise"] })
+    : schema.includes('"results"') ? JSON.stringify({ results: [1, 2].map((check) => ({ check, applies: true, passes: check === 1 })) })
+    : "A full reply, not clipped.";
+  return { text, costUsd: 0.001 };
+} });
+
+test("event codes are checked cheaply before storing, use the proxy for all setup calls, and default to $4", async () => {
+  for (const environment of [false, true]) {
+    const dir = repoDir(PROMPT);
+    const { io, ran, said } = fakeIo(dir);
+    const calls: Ask[] = [];
+    io.proxy = (code) => { assert.equal(code, "crimson-code"); return setupModel(calls); };
+    io.model = () => { throw new Error("event setup called the direct API"); };
+    io.askSecret = async (question) => {
+      assert.equal(question, "Paste your Crimson Hacks event code (on the QR card), or your own Anthropic key: ");
+      assert.equal(environment, false, "an env code must not prompt");
+      return "crimson-code";
+    };
+    assert.equal(await init(io, dir, undefined, "", environment ? { SYNTHE_EVENT_CODE: "crimson-code" } : {}), true);
+    assert.equal(calls[0].model, "claude-haiku-5-5");
+    assert.equal(calls[0].maxTokens, 5);
+    assert.ok(calls.slice(1).some((call) => call.schema));
+    assert.ok(calls.some((call) => call.system === PROMPT));
+    const secrets = ran.filter((call) => call.args[0] === "secret");
+    assert.equal(secrets.length, 1);
+    assert.deepEqual(secrets[0].args, ["secret", "set", "SYNTHE_EVENT_CODE", "--repo", "o/r"]);
+    assert.equal(secrets[0].stdin, "crimson-code");
+    assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).budget.max_usd, 4);
+    assert.match(said.join("\n"), /Saved your event code as the repo secret SYNTHE_EVENT_CODE/);
+    assert.ok(!ran.some((call) => call.args.includes("SYNTHE_ANTHROPIC_KEY")));
+  }
+});
+
+test("an explicit own key wins over an env event code, keeping the own-key budget", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, ran } = fakeIo(dir);
+  io.askSecret = async () => { throw new Error("explicit env key must not prompt"); };
+  io.proxy = () => { throw new Error("own key must win"); };
+  assert.equal(await init(io, dir, undefined, "", { SYNTHE_ANTHROPIC_KEY: "sk-ant-own", SYNTHE_EVENT_CODE: "event" }), true);
+  assert.equal(ran.find((call) => call.args[0] === "secret")!.stdin, "sk-ant-own");
+  assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).budget.max_usd, 3);
+});
+
+test("a refused code changes nothing, including no draft, secret, or commit", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, ran } = fakeIo(dir);
+  const message = "This event code is wrong. Check the QR card.";
+  let calls = 0;
+  io.proxy = () => ({ async ask(ask) { calls++; assert.equal(ask.maxTokens, 5); throw new CreditError(message); } });
+  await assert.rejects(init(io, dir, undefined, "", { SYNTHE_EVENT_CODE: "wrong" }), { message });
+  assert.equal(calls, 1);
+  for (const file of ["synthe.json", DRAFT_FILE, ".synthe/scenarios.jsonl", ".github/workflows/synthe.yml"]) assert.equal(existsSync(join(dir, file)), false);
+  assert.ok(!ran.some((call) => ["secret", "add", "commit", "push"].includes(call.args[0])));
+});
+
+test("agent preparation never prompts or commits, shows notice and complete calibration, and confirms final or kept checks", async () => {
+  for (const keep of [false, true]) {
+    const dir = repoDir(PROMPT);
+    const { io, ran, said } = fakeIo(dir);
+    const calls: Ask[] = [];
+    io.proxy = () => setupModel(calls);
+    io.ask = io.askSecret = async () => { throw new Error("agent mode prompted"); };
+    const env = { SYNTHE_EVENT_CODE: "private-event-code" };
+    const before = execFileSync("git", ["diff", "--cached"], { cwd: dir, encoding: "utf8" });
+    const options = agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Be clear", "--mode", keep ? "auto" : "review", "--message", "Real customer message"]);
+    assert.equal(await init(io, dir, () => new Date("2026-11-06"), "", env, options), true);
+    assert.equal(execFileSync("git", ["diff", "--cached"], { cwd: dir, encoding: "utf8" }), before);
+    assert.equal(existsSync(join(dir, "synthe.json")), false);
+    assert.ok(!ran.some((call) => ["secret", "add", "commit", "push", "workflow"].includes(call.args[0])));
+    const draftText = readFileSync(join(dir, DRAFT_FILE), "utf8");
+    assert.ok(!draftText.includes(env.SYNTHE_EVENT_CODE));
+    const draft = JSON.parse(draftText);
+    assert.equal(draft.examples.length, 6);
+    const output = said.join("\n");
+    assert.match(output, /The person must see this sharing notice before confirming setup:\nDuring Crimson Hacks/);
+    assert.match(output, /Never your code, and keys, emails and phone numbers are removed first/);
+    assert.match(output, /1\. Answers the question/);
+    assert.match(output, /Your agent replied: A full reply, not clipped\./);
+    assert.match(output, /1\. Answers the question: PASS/);
+    assert.match(output, /2\. Is concise: FAIL/);
+    assert.equal(said.at(-1), AGENT_NEXT);
+    assert.ok(AGENT_NEXT.startsWith("NEXT:"));
+    assert.ok(calls.some((call) => call.user.includes("Real customer message")));
+    assert.ok(!calls.filter((call) => call.system).some((call) => /q2[0-9]/.test(call.user)));
+    const confirmation = agentOptions(["--agent", "--confirm", ...(keep ? ["--keep-checks"] : ["--check", "The person's final check"])]);
+    assert.equal(await init(io, dir, undefined, "", env, confirmation), true);
+    const saved = parseGoal(readFileSync(join(dir, "synthe.json"), "utf8"));
+    assert.deepEqual(saved.checks, keep ? draft.goal.checks : ["The person's final check"]);
+    assert.equal(saved.merge_rule.mode, keep ? "auto" : "propose");
+    assert.equal(saved.budget.max_usd, 4);
+    const staged = ran.find((call) => call.cmd === "git" && call.args[0] === "add")!;
+    assert.deepEqual(staged.args, ["add", "synthe.json", ".synthe/scenarios.jsonl", ".github/workflows/synthe.yml"]);
+    assert.ok(!ran.filter((call) => call.args[0] === "commit" || call.args[0] === "add").some((call) => call.args.includes(DRAFT_FILE)));
+    assert.match(said.join("\n"), /Synthe: prompt report/);
+    assert.match(said.join("\n"), /Watch it live: https:\/\/github.com\/o\/r\/actions\/workflows\/synthe.yml/);
+  }
+});
+
+test("agent flags and credentials are required, with no guessing or stdin fallback", async () => {
+  for (const [args, flag] of [
+    [["--agent"], "--prompt"],
+    [["--agent", "--prompt", "prompt.md"], "--objective"],
+    [["--agent", "--prompt", "prompt.md", "--objective", "Improve"], "--mode"],
+    [["--agent", "--mode", "maybe"], "--mode"],
+    [["--agent", "--confirm"], "--check or --keep-checks"],
+    [["--agent", "--confirm", "--check", ""], "--check"],
+    [["--agent", "--confirm", "--keep-checks", "--check", "Check"], "--check or --keep-checks"],
+    [["--agent", "--api-key", "secret"], "--api-key"],
+  ] as [string[], string][]) {
+    assert.throws(() => agentOptions(args), (error) => error instanceof AgentSetupError && error.message === `${flag} is missing or invalid. Ask the person; don't guess.`);
+  }
+  const dir = repoDir(PROMPT);
+  const { io } = fakeIo(dir);
+  io.ask = io.askSecret = async () => { throw new Error("stdin was read"); };
+  const options = agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Improve", "--mode", "review"]);
+  await assert.rejects(init(io, dir, undefined, "", {}, options), /SYNTHE_EVENT_CODE.*Ask the person; don't guess\./);
+  await assert.rejects(init(io, dir, undefined, "", { SYNTHE_EVENT_CODE: "event" }, { ...options!, prompt: "missing.md" }), /--prompt.*Ask the person; don't guess\./);
+});
+
+test("agent missing GitHub CLI or login gives exactly one instruction", async () => {
+  for (const failing of ["--version", "auth status"]) {
+    const dir = repoDir(PROMPT);
+    const { io, said } = fakeIo(dir, [failing]);
+    io.ask = io.askSecret = async () => { throw new Error("stdin was read"); };
+    const options = agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Improve", "--mode", "review"]);
+    assert.equal(await init(io, dir, undefined, "", {}, options), false);
+    assert.deepEqual(said, ["Ask the person to run `gh auth login` in their terminal once, then run this again."]);
+  }
+});
+
+test("key accepts env or hidden input, stores only the key secret, and explains restarting credit stops", async () => {
+  for (const env of [{ SYNTHE_ANTHROPIC_KEY: "sk-ant-own", ANTHROPIC_API_KEY: "sk-ant-other" }, { ANTHROPIC_API_KEY: "sk-ant-own" }, {}]) {
+    const dir = repoDir(PROMPT);
+    const { io, ran, said } = fakeIo(dir);
+    io.askSecret = async () => "sk-ant-own";
+    const run = io.run;
+    io.run = async (command, args, stdin) => args.includes("Accept: application/vnd.github.raw+json") ? '{"stopped":"credit"}' : run(command, args, stdin);
+    assert.equal(await setKey(io, env), true);
+    const stored = ran.find((call) => call.args[0] === "secret")!;
+    assert.deepEqual(stored.args, ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", "o/r"]);
+    assert.equal(stored.stdin, "sk-ant-own");
+    assert.deepEqual(said, ["Rounds now use your own Anthropic key. The event credit is no longer used.", "The run stopped on event credit. Run `npx synthe restart` to continue."]);
+  }
+});
+
+test("upgrade from the 1.6.2 workflow adds event credit and OIDC to write and score, keeping decide", () => {
+  const dir = repoDir(PROMPT);
+  mkdirSync(join(dir, ".github/workflows"), { recursive: true });
+  const old = readFileSync("test/fixtures/synthe-1.6.2.yml", "utf8").replaceAll("__ACTION__", ACTION).replaceAll("__MINUTE__", "17");
+  writeFileSync(join(dir, ".github/workflows/synthe.yml"), old);
+  const message = upgrade(dir, readFileSync("templates/synthe.yml", "utf8"));
+  const updated = readFileSync(join(dir, ".github/workflows/synthe.yml"), "utf8");
+  assert.match(message, /event credit works through the Synthe proxy; kept backup minute 17/);
+  assert.equal(updated.match(/id-token: write/g)!.length, 3);
+  assert.equal(updated.match(/event-code: \$\{\{ secrets.SYNTHE_EVENT_CODE \}\}/g)!.length, 2);
+  assert.equal(updated.split("  decide:\n")[1], old.split("  decide:\n")[1]);
+  assert.match(updated, /cron: "17 \* \* \* \*"/);
+  assert.match(upgrade(dir, readFileSync("templates/synthe.yml", "utf8")), /already up to date/);
+});
+
+test("agent confirmation rejects stale drafts before changing files or storing secrets", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, ran } = fakeIo(dir);
+  io.ask = io.askSecret = async () => { throw new Error("agent mode prompted"); };
+  const calls: Ask[] = [];
+  io.model = () => setupModel(calls);
+  const env = { SYNTHE_ANTHROPIC_KEY: "sk-ant-own" };
+  const prepare = agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Improve", "--mode", "review"]);
+  await init(io, dir, undefined, "", env, prepare);
+  writeFileSync(join(dir, "prompt.md"), `${PROMPT} Changed after calibration.`);
+  const confirm = agentOptions(["--agent", "--confirm", "--keep-checks"]);
+  await assert.rejects(init(io, dir, undefined, "", env, confirm), /--confirm.*Ask the person; don't guess\./);
+  assert.equal(existsSync(join(dir, "synthe.json")), false);
+  assert.ok(!ran.some((call) => ["secret", "commit", "push"].includes(call.args[0])));
+});
+
+test("a code refused during calibration or confirmation leaves setup files and secrets untouched", async () => {
+  for (const duringConfirmation of [false, true]) {
+    const dir = repoDir(PROMPT);
+    const { io, ran } = fakeIo(dir);
+    const calls: Ask[] = [];
+    const model = setupModel(calls);
+    io.proxy = () => ({ async ask(ask) {
+      if (!duringConfirmation && ask.system) throw new CreditError("Credit ran out during setup.");
+      return model.ask(ask);
+    } });
+    const env = { SYNTHE_EVENT_CODE: "event-code" };
+    const options = agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Improve", "--mode", "auto"]);
+    if (duringConfirmation) {
+      await init(io, dir, undefined, "", env, options);
+      io.proxy = () => ({ async ask() { throw new CreditError("Credit ran out before confirmation."); } });
+    }
+    await assert.rejects(init(io, dir, undefined, "", env, duringConfirmation ? agentOptions(["--agent", "--confirm", "--keep-checks"]) : options), /Credit ran out/);
+    assert.equal(existsSync(join(dir, "synthe.json")), false);
+    assert.equal(existsSync(join(dir, ".synthe/scenarios.jsonl")), false);
+    assert.ok(!ran.some((call) => ["secret", "commit", "push"].includes(call.args[0])));
+  }
 });

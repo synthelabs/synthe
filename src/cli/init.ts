@@ -1,16 +1,19 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULTS, GOAL_FILE, type Goal, type PromptLocation, type Scenario } from "../core/goal.ts";
+import { DEFAULTS, GOAL_FILE, parseGoal, parseScenarios, type Goal, type PromptLocation, type Scenario } from "../core/goal.ts";
 import { findPrompts } from "../core/prompt.ts";
-import { MAX_PROMPT_CHARS, promptPathProblem, redactSecrets } from "../core/safety.ts";
+import { MAX_PROMPT_CHARS, promptPathProblem, redactSecrets, sha256 } from "../core/safety.ts";
 import { ISSUE_TITLE } from "../loop/report.ts";
-import { askJson, type Model } from "../model/client.ts";
+import { askJson, eventModels, proxyModel, type Model } from "../model/client.ts";
+import { askPerson, type AgentOptions } from "./agent.ts";
 import { reviewChecksAtSetup } from "./calibrate.ts";
 import { FULL_SHARE_UNTIL } from "../core/share.ts";
 
 export const ACTION = "synthelabs/synthe@v1";
 export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 export const WORKFLOW_FILE = ".github/workflows/synthe.yml";
+export const DRAFT_FILE = ".synthe/setup-draft.json";
+export const AGENT_NEXT = "NEXT: Show all of this to the person, including the sharing notice, proposed checks and calibration examples. Ask which checks to keep or reword and whether the marks look right. Then run `npx synthe init --agent --confirm --check \"final sentence\"`, repeating `--check` for each final check, or use `--keep-checks` if they keep the proposed checks.";
 const SETUP_BRANCH = "synthe/setup";
 const SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
 
@@ -20,6 +23,7 @@ export interface Io {
   askSecret(question: string): Promise<string>;
   run(cmd: string, args: string[], stdin?: string): Promise<string>;
   model(apiKey: string): Model;
+  proxy?(eventCode: string): Model;
   template(): string;
   sleep(ms: number): Promise<void>;
 }
@@ -130,21 +134,18 @@ async function yesNo(io: Io, question: string): Promise<boolean | null> {
   return null;
 }
 
-// Always asked, even when ANTHROPIC_API_KEY is set: a team building an agent often has its own key there, and Synthe
-// should store and spend the capped Synthe key, not theirs. A paste that isn't a key (often the last command copied)
-// is caught here, instead of failing in the first Actions run.
+// ANTHROPIC_API_KEY still needs an explicit Enter, so a pasted event code doesn't spend the app's own key.
 async function askKey(io: Io, envKey: string | undefined): Promise<string | null> {
-  const question = envKey?.trim()
-    ? "Paste your Synthe key (from the Synthe table), or press Enter to use the key already in ANTHROPIC_API_KEY: "
-    : "Paste your Synthe key (from the Synthe table; it has $3 of credit, paid by Synthe): ";
+  const question = "Paste your Crimson Hacks event code (on the QR card), or your own Anthropic key: ";
+  if (envKey?.trim()) io.say("Or press Enter to use the key already in ANTHROPIC_API_KEY.");
   for (let i = 0; i < 3; i++) {
     const typed = (await io.askSecret(question)).trim();
     const key = typed || envKey?.trim() || "";
-    if (/^sk-ant-\S+$/.test(key)) {
+    if (key) {
       if (!typed) io.say("Using the key in ANTHROPIC_API_KEY.");
       return key;
     }
-    io.say(typed ? "That doesn't look like a key: Synthe keys start with sk-ant-. Paste it again." : "Paste your key, then press Enter.");
+    io.say("Paste your event code or key, then press Enter.");
   }
   return null;
 }
@@ -160,7 +161,13 @@ async function whyGitHubFails(io: Io): Promise<string> {
   return "Run this inside your project's folder, after pushing it to GitHub (you need admin access to the repo).";
 }
 
-export async function init(io: Io, root: string, now = () => new Date(), envKey = process.env.ANTHROPIC_API_KEY, env: Partial<Record<"DO_NOT_TRACK" | "SYNTHE_TELEMETRY", string>> = process.env) {
+export async function init(io: Io, root: string, now = () => new Date(), envKey = process.env.ANTHROPIC_API_KEY, env: Partial<Record<"DO_NOT_TRACK" | "SYNTHE_TELEMETRY" | "SYNTHE_EVENT_CODE" | "SYNTHE_ANTHROPIC_KEY", string>> = process.env, agent?: AgentOptions) {
+  if (agent) {
+    try { await io.run("gh", ["--version"]); await io.run("gh", ["auth", "status"]); } catch {
+      io.say("Ask the person to run `gh auth login` in their terminal once, then run this again.");
+      return false;
+    }
+  }
   let slug: string;
   try {
     slug = (await io.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
@@ -177,12 +184,35 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     io.say(`You're on the branch ${here}. Synthe adds itself to ${branch}, because GitHub only runs scheduled backup jobs from there. Run \`git checkout ${branch}\`, then \`npx synthe init\` again.`);
     return false;
   }
-  io.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.\n`);
+  if (agent?.confirm) {
+    let draft: SetupDraft;
+    try {
+      draft = JSON.parse(readFileSync(join(root, DRAFT_FILE), "utf8"));
+      draft.goal = parseGoal(JSON.stringify(draft.goal));
+      draft.rows = parseScenarios(draft.rows.map((row) => JSON.stringify(row)).join("\n"));
+      if (promptPathProblem(draft.goal.prompt.path)) askPerson("--confirm");
+      const source = readFileSync(join(root, draft.goal.prompt.path), "utf8");
+      if (draft.version !== 1 || draft.slug !== slug || draft.branch !== branch || draft.sourceHash !== sha256(source) || !draft.rows.length || typeof draft.event !== "boolean") askPerson("--confirm");
+    } catch { askPerson("--confirm (run step 1 again)"); }
+    const credential = env.SYNTHE_ANTHROPIC_KEY?.trim() || envKey?.trim() || env.SYNTHE_EVENT_CODE?.trim();
+    if (!credential) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY/ANTHROPIC_API_KEY");
+    if (draft.event !== !credential.startsWith("sk-ant-")) askPerson("--confirm (use the same credential type as step 1)");
+    if (agent.checks.length) draft.goal.checks = agent.checks;
+    if (draft.event) eventModels(draft.goal.models);
+    if (draft.event) await (io.proxy ?? proxyModel)(credential).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
+    return finishSetup(io, root, slug, branch, draft.goal, draft.rows, credential, draft.event);
+  }
+  if (!agent) io.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.\n`);
 
   const tracked = repoTextFiles(await io.run("git", ["ls-files"]), root);
   const prompts = findPrompts(tracked);
   let location: PromptLocation;
-  if (prompts.length === 0) {
+  if (agent) {
+    if (!agent.prompt || promptPathProblem(agent.prompt) || !tracked.some((file) => file.path === agent.prompt)) askPerson("--prompt");
+    const matching = prompts.filter((prompt) => prompt.location.path === agent.prompt);
+    if (matching.length > 1) askPerson("--prompt (put the intended prompt in its own file)");
+    location = matching[0]?.location ?? { kind: "file", path: agent.prompt };
+  } else if (prompts.length === 0) {
     io.say("Synthe couldn't find your agent's system prompt. Put it in its own file (for example prompt.md) and commit it.");
     const path = (await io.ask("Path to that file: ")).trim();
     location = { kind: "file", path };
@@ -199,36 +229,48 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   const promptText = location.kind === "inline" ? location.initial : readFileSync(join(root, location.path), "utf8");
   // Every change to a longer prompt would be refused by the safety check, so the run could only spend and stall.
   if (promptText.length > MAX_PROMPT_CHARS) {
+    if (agent) askPerson("--prompt (too long)");
     io.say(`Your prompt is ${promptText.length.toLocaleString("en-US")} characters, and Synthe works on prompts up to ${MAX_PROMPT_CHARS.toLocaleString("en-US")}. Shorten it, for example by moving reference material such as a menu or FAQ into a separate file your agent loads, then run \`npx synthe init\` again.`);
     return false;
   }
-  const objective = (await io.ask("\nWhat should your agent get better at? One sentence, for example \"answer returns questions correctly and offer an exchange first\":\n> ")).trim();
+  if (agent && !promptText.trim()) askPerson("--prompt");
+  const objective = agent ? agent.objective! : (await io.ask("\nWhat should your agent get better at? One sentence, for example \"answer returns questions correctly and offer an exchange first\":\n> ")).trim();
   if (!objective) { io.say("Synthe needs a goal to work toward. Run `npx synthe init` again and describe one."); return false; }
   // Real messages make the test cases look like the app's real traffic, which matters more than anything else here.
   io.say("\nOptional: paste up to 5 messages real users have sent your agent (or would send), one per line. Press Enter on an empty line when you're done, or right away to skip.");
-  const seeds: string[] = [];
-  while (seeds.length < 5) {
+  const seeds: string[] = agent ? agent.messages : [];
+  while (!agent && seeds.length < 5) {
     const line = (await io.ask(`Real message ${seeds.length + 1} (Enter when done): `)).trim();
     if (!line) break;
     seeds.push(line.slice(0, 500));
   }
   io.say(`\nWhen Synthe finds a clearly better prompt, it can merge it into ${branch} by itself, overnight. If ${branch} deploys your app, each change goes live. Or it can open a pull request each time for you to review.`);
-  let auto = await yesNo(io, `Merge improvements into ${branch} automatically? Type y for automatic, or n to review each one: `);
+  let auto = agent ? agent.mode === "auto" : await yesNo(io, `Merge improvements into ${branch} automatically? Type y for automatic, or n to review each one: `);
   if (auto === null) { auto = false; io.say("No clear answer, so Synthe will open pull requests for you to review."); }
   io.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
   const sharingOff = ["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "") || ["0", "false"].includes(env.SYNTHE_TELEMETRY?.toLowerCase() ?? "");
   const share: Goal["share"] = sharingOff ? "none" : now().getTime() < Date.parse(FULL_SHARE_UNTIL) ? "full" : "detail";
+  if (agent) io.say("The person must see this sharing notice before confirming setup:");
   io.say(sharingOff
     ? "Sharing with Synthe: off (DO_NOT_TRACK is set)."
     : share === "full"
       ? 'During Crimson Hacks (until November 8), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 8 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'
       : 'Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.');
-  const key = await askKey(io, envKey);
-  if (!key) { io.say("No key, so nothing was set up. Get a key from the Synthe table, then run `npx synthe init` again."); return false; }
+  const key = env.SYNTHE_ANTHROPIC_KEY?.trim() || (agent ? envKey?.trim() : "") || env.SYNTHE_EVENT_CODE?.trim() || (agent ? "" : await askKey(io, envKey));
+  if (!key) {
+    if (agent) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY/ANTHROPIC_API_KEY");
+    io.say("No event code or key, so nothing was set up. Run `npx synthe init` again when you have one."); return false;
+  }
+  const event = !key.startsWith("sk-ant-");
+  const model = event ? (io.proxy ?? proxyModel)(key) : io.model(key);
+  if (event) {
+    eventModels(DEFAULTS.models);
+    await model.ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
+  }
 
   const context = repoContext(tracked, location);
   io.say(`\nReading your prompt${context.names.length ? ` and ${context.names.join(" and ")}` : ""}, and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
-  const generated = await generateScenarios(io.model(key), objective, promptText, context.text, seeds);
+  const generated = await generateScenarios(model, objective, promptText, context.text, seeds);
   const { guardrails, policy, brief, rows } = generated;
   if (brief) io.say(`Done. What Synthe understands your agent is for: ${brief}`);
   io.say(`${brief ? "" : "Done. "}Synthe will check your agent's replies against:`);
@@ -243,11 +285,12 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   io.say(`  You can change these in ${GOAL_FILE}, and the test cases in ${SCENARIOS_FILE}.`);
 
   // The team's own measure of a good reply decides every test case, so the team gets the final say on it.
-  let checks = generated.checks;
+  let checks = agent?.checks.length ? agent.checks : generated.checks;
+  let examples: unknown[] = [];
   if (checks.length) {
     io.say("\nSynthe will measure your agent with these checks. On every test case, the reply that passes more of them wins:");
     checks.forEach((c, i) => io.say(`  ${i + 1}. ${c}`));
-    if ((await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false) {
+    if (!agent && (await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false) {
       const own: string[] = [];
       while (own.length < CHECKS_WANTED) {
         const line = (await io.ask(`Check ${own.length + 1}, one sentence about what a good reply does (Enter when done): `)).trim();
@@ -258,14 +301,33 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
       else io.say("No checks typed, so Synthe keeps its suggestions.");
     }
     // A short look at real replies, so the checks mean what the team means before the first round measures them.
-    const review = await reviewChecksAtSetup(io, buildGoal(location, objective, guardrails, policy, brief, checks), promptText, rows, io.model(key));
+    const review = await reviewChecksAtSetup(io, buildGoal(location, objective, guardrails, policy, brief, checks), promptText, rows, model, Boolean(agent));
     checks = review.checks;
-    io.say(`Checks saved in ${GOAL_FILE}. Change them there any time, and run \`npx synthe calibrate\` for a fuller check.`);
+    examples = review.examples;
+    if (!agent) io.say(`Checks saved in ${GOAL_FILE}. Change them there any time, and run \`npx synthe calibrate\` for a fuller check.`);
   }
 
   const goal = buildGoal(location, objective, guardrails, policy, brief, checks);
   goal.share = share;
+  if (event) goal.budget = { max_usd: 4 };
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
+
+  if (agent) {
+    mkdirSync(join(root, ".synthe"), { recursive: true });
+    const draft: SetupDraft = { version: 1, slug, branch, goal, rows, event, sourceHash: sha256(readFileSync(join(root, location.path), "utf8")), examples };
+    writeFileSync(join(root, DRAFT_FILE), `${JSON.stringify(draft, null, 2)}\n`, { mode: 0o600 });
+    io.say(AGENT_NEXT);
+    return true;
+  }
+  return finishSetup(io, root, slug, branch, goal, rows, key, event);
+}
+
+interface SetupDraft { version: number; slug: string; branch: string; goal: Goal; rows: Scenario[]; event: boolean; sourceHash: string; examples: unknown[] }
+
+async function finishSetup(io: Io, root: string, slug: string, branch: string, goal: Goal, rows: Scenario[], key: string, event: boolean) {
+  const auto = goal.merge_rule.mode === "auto";
+  const secret = event ? "SYNTHE_EVENT_CODE" : "SYNTHE_ANTHROPIC_KEY";
+  const saved = `Saved your ${event ? "event code" : "key"} as the repo secret ${secret}.`;
 
   mkdirSync(join(root, ".synthe"), { recursive: true });
   mkdirSync(join(root, ".github/workflows"), { recursive: true });
@@ -273,7 +335,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   writeFileSync(join(root, SCENARIOS_FILE), `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`);
   writeFileSync(join(root, WORKFLOW_FILE), renderWorkflow(io.template()));
 
-  await io.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
+  await io.run("gh", ["secret", "set", secret, "--repo", slug], key);
   try {
     await io.run("gh", ["api", "-X", "PUT", `repos/${slug}/actions/permissions/workflow`,
       "-f", "default_workflow_permissions=read", "-F", "can_approve_pull_request_reviews=true"]);
@@ -287,21 +349,21 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   let setupPr: string | null = null;
   try {
     await io.run("git", ["push"]);
-    io.say(`\nAdded to ${branch} (committed and pushed): ${GOAL_FILE}, ${SCENARIOS_FILE} and ${WORKFLOW_FILE}. Saved your key as the repo secret SYNTHE_ANTHROPIC_KEY.`);
+    io.say(`\nAdded to ${branch} (committed and pushed): ${GOAL_FILE}, ${SCENARIOS_FILE} and ${WORKFLOW_FILE}. ${saved}`);
   } catch {
     try {
       await io.run("git", ["push", "--force", "origin", `HEAD:refs/heads/${SETUP_BRANCH}`]);
-      setupPr = (await io.run("gh", ["pr", "create", "--repo", slug, "--base", branch, "--head", SETUP_BRANCH, "--title", "Add Synthe", "--body", SETUP_PR_BODY])).trim();
+      setupPr = (await io.run("gh", ["pr", "create", "--repo", slug, "--base", branch, "--head", SETUP_BRANCH, "--title", "Add Synthe", "--body", SETUP_PR_BODY.replace("$3", `$${goal.budget.max_usd}`)])).trim();
       // The pull request holds the files now. Without its own copy of the commit, this branch can simply `git pull`
       // after a squash merge instead of hitting "divergent branches". --keep leaves the team's uncommitted work alone.
       await io.run("git", ["reset", "--keep", "HEAD~1"]).catch(() => undefined);
     } catch (e) {
       io.say(`\nGitHub refused the push to ${branch}, and Synthe couldn't open a pull request instead: ${(e as Error).message.trim().split("\n")[0]}`);
-      io.say(`Your key is saved as the repo secret SYNTHE_ANTHROPIC_KEY, and Synthe's files are committed on this computer. Get that commit into ${branch} the way your team usually adds changes, then run \`gh workflow run synthe.yml\` to start the first round. Don't run init again: that would write new test cases.`);
+      io.say(`${saved} Synthe's files are committed on this computer. Get that commit into ${branch} the way your team usually adds changes, then run \`gh workflow run synthe.yml\` to start the first round. Don't run init again: that would write new test cases.`);
       return false;
     }
     io.say(`\n${branch} only takes changes through pull requests, so Synthe opened one with its files: ${setupPr}`);
-    io.say(`Merge it to start Synthe, then run \`git pull\`. Your key is saved as the repo secret SYNTHE_ANTHROPIC_KEY.`);
+    io.say(`Merge it to start Synthe, then run \`git pull\`. ${saved}`);
   }
 
   let started = false;
@@ -315,7 +377,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   }
   // Forks start with Actions turned off, and then nothing would ever run, however long the team waits.
   const actionsOff = !started && !setupPr && (await io.run("gh", ["api", `repos/${slug}/actions/permissions`, "--jq", ".enabled"]).then((o) => o.trim() === "false", () => false));
-  const limits = `Completed rounds start back to back, up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} of your key's credit. A 12-round session usually takes about half an hour.`;
+  const limits = `Completed rounds start back to back, up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} of ${event ? "event credit" : "your key's credit"}. A 12-round session usually takes about half an hour.`;
   io.say(started ? `\nSynthe is running: GitHub accepted the first dispatch. The first round takes a few minutes. ${limits}`
     : setupPr ? `\nSet up, waiting for you to merge ${setupPr}. Merging it starts the first round. ${limits}`
     : actionsOff ? `\nSet up, but GitHub Actions is turned off for this repo, so Synthe can't run yet. Turn it on at https://github.com/${slug}/settings/actions, then start the first round with \`gh workflow run synthe.yml\`. ${limits}`

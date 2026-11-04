@@ -5,7 +5,7 @@ import { sumCosts } from "./core/cost.ts";
 import { resumeIfScenariosChanged, stopReason } from "./core/state.ts";
 import { sha256 } from "./core/safety.ts";
 import { githubRepo, type Repo } from "./github/repo.ts";
-import { anthropicModel } from "./model/client.ts";
+import { configuredModel, eventModels } from "./model/client.ts";
 import { runDecide } from "./loop/decide.ts";
 import { fullShareActive, sharePayload, shareRound, shouldShare } from "./core/share.ts";
 import packageJson from "../package.json" with { type: "json" };
@@ -128,7 +128,10 @@ async function main() {
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, state.prompt);
   if (prompt === null) throw new Error(`could not find the prompt in ${goal.prompt.path}`);
   const scenarios = parseScenarios(readFileSync(goal.scenarios, "utf8"));
-  const model = anthropicModel(input("anthropic-api-key"));
+  const key = input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY;
+  const eventCode = input("event-code") || process.env.SYNTHE_EVENT_CODE;
+  if (!key && eventCode) eventModels(goal.models);
+  const model = configuredModel(key, eventCode, true);
 
   if (step === "write") {
     const written = await runWrite(goal, state, prompt, scenarios, model);
@@ -160,6 +163,7 @@ main().catch((e) => {
     try {
       const failure = failureOf(step, e);
       save("error.json", failure);
+      console.error(failure.message);
       // Shown at the top of the run's page, in words, instead of only a stack trace in the log.
       console.log(`::error title=Synthe::${failure.message.replace(/\r?\n/g, " ")}`);
     } catch (saveError) { console.error(saveError); }

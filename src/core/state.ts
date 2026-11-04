@@ -8,7 +8,7 @@ export interface RoundRecord {
   example?: { input: string; before: string; after: string }; title?: string; unverified?: string[];
   edits?: { find: string; replace: string }[];
   // Why a failed round's write or score step failed, when it said; the report's advice depends on it.
-  failure?: "busy" | "key" | "other";
+  failure?: "busy" | "key" | "credit" | "other";
   // The share of the team's checks passed before and after a merged or proposed change, as whole percentages.
   checks?: { before: number; after: number };
 }

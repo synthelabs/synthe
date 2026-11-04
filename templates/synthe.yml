@@ -20,7 +20,7 @@ jobs:
     # Two writer calls take a minute or two; the cap stops a hung call holding the "synthe" group for hours.
     timeout-minutes: 15
     # pull-requests: read lets it see when a team closes Synthe's proposal.
-    permissions: { contents: read, pull-requests: read }
+    permissions: { contents: read, pull-requests: read, id-token: write }
     outputs:
       go: ${{ steps.write.outputs.go }}
     steps:
@@ -34,6 +34,7 @@ jobs:
           step: write
           github-token: ${{ github.token }}
           anthropic-api-key: ${{ secrets.SYNTHE_ANTHROPIC_KEY }}
+          event-code: ${{ secrets.SYNTHE_EVENT_CODE }}
       - uses: actions/upload-artifact@v4
         if: steps.write.outputs.go == 'true'
         with: { name: candidates, path: .synthe-out/candidates.json, include-hidden-files: true }
@@ -47,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     # About 150 model calls, 6 at a time: a minute or two in live runs. The cap leaves room for the client's retries.
     timeout-minutes: 15
-    permissions: { contents: read }
+    permissions: { contents: read, id-token: write }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -60,6 +61,7 @@ jobs:
           step: score
           github-token: ${{ github.token }}
           anthropic-api-key: ${{ secrets.SYNTHE_ANTHROPIC_KEY }}
+          event-code: ${{ secrets.SYNTHE_EVENT_CODE }}
       - uses: actions/upload-artifact@v4
         with: { name: scores, path: .synthe-out/scores.json, include-hidden-files: true }
       - uses: actions/upload-artifact@v4
