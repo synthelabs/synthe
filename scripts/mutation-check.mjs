@@ -111,6 +111,11 @@ const mutations = [
   ["setup's review shows held-back cases", "src/cli/calibrate.ts", "const cases = scenarios.filter((s) => s.split === \"train\").slice(0, SETUP_CASES);", "const cases = scenarios.slice(0, SETUP_CASES);"],
   ["calibrate trusts too little evidence", "src/cli/calibrate.ts", "} else if (r.applied < MIN_APPLIED) {", "} else if (false) {"],
   ["calibrate trusts checks nobody answered", "src/cli/calibrate.ts", "} else if (r.asked === 0) {", "} else if (false) {"],
+  ["key resets the own-key budget on every switch", "src/cli/key.ts", "if (state.ownKeyFromUsd !== undefined) {", "if (false) {"],
+  ["key takes ANTHROPIC_API_KEY without a terminal", "src/cli/key.ts", "if (!own && !terminal) {", "if (!own && !app && !terminal) {"],
+  ["a failed confirm's local files block a retry", "src/cli/init.ts", "      (await io.run(\"gh\", [\"api\", `repos/${slug}/contents/${path}", "      existsSync(join(root, path)) || (await io.run(\"gh\", [\"api\", `repos/${slug}/contents/${path}"],
+  ["budget stop keeps offering a fresh key budget", "src/loop/report.ts", "state.ownKeyFromUsd === undefined ? \"Run `npx synthe key`", "true ? \"Run `npx synthe key`"],
+  ["proxy sign-in failure reads as a bad key", "src/loop/report.ts", "end.plain === PROXY_AUTH_MESSAGE ? ", "false ? "],
 ];
 
 // Every mutated file as it was before the run. Restoring each mutation from its own copy isn't enough on its own: a

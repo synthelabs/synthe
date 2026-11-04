@@ -28436,7 +28436,7 @@ function headline(goal, state, stoppedByTeam = false) {
     const end = recent.at(-1);
     if (busy(end) && /Synthe's proxy|Credit is unavailable/.test(end.plain ?? "")) return { title: "Stopped: Synthe's proxy needs attention", summary: end.plain };
     if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain };
-    if (badKey(end)) return { title: "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
+    if (badKey(end)) return { title: end.plain === PROXY_AUTH_MESSAGE ? "Stopped: the Synthe proxy couldn't verify this run" : "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
     if (busy(end) && isFinished(state.stopped)) {
       return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
     }
@@ -29412,7 +29412,10 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
     return false;
   }
   if (agent) {
-    const installed = await Promise.all([GOAL_FILE, WORKFLOW_FILE].map(async (path4) => existsSync(join2(root, path4)) || (await io2.run("gh", ["api", `repos/${slug}/contents/${path4}?ref=${encodeURIComponent(branch)}`, "--jq", ".path"]).catch(() => "")).trim() === path4));
+    const installed = await Promise.all([GOAL_FILE, WORKFLOW_FILE].map(async (path4) => (
+      // Only what's on GitHub counts: a --confirm that failed after writing local files must be able to run again.
+      (await io2.run("gh", ["api", `repos/${slug}/contents/${path4}?ref=${encodeURIComponent(branch)}`, "--jq", ".path"]).catch(() => "")).trim() === path4
+    )));
     if (installed.every(Boolean)) {
       io2.say("Synthe is already set up on the default branch. Use `npx synthe restart` to continue; don't run init again.");
       return false;
@@ -29658,7 +29661,7 @@ function restartState(goal, state, scenariosHash = null) {
   const budgetAvailable = /^budget/.test(stopped) && budgetSpend(state) < goal.budget.max_usd;
   if (isFinished(stopped) && (!failedOut || /^budget/.test(stopped)) && !roundsRaised && !budgetAvailable) {
     if (/no winner$/.test(stopped)) return { why: `The last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better. To keep going, add test cases your agent still gets wrong to ${goal.scenarios}, push them, then run \`npx synthe restart\` again.` };
-    if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget. Run \`npx synthe key\` for a fresh own-key budget, or raise budget.max_usd in synthe.json and push it, then run \`npx synthe restart\`.` };
+    if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget. ${state.ownKeyFromUsd === void 0 ? "Run `npx synthe key` for a fresh own-key budget, or raise" : "Raise"} budget.max_usd in synthe.json and push it, then run \`npx synthe restart\`.` };
     return { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` };
   }
   return { state: { ...state, stopped: null, stalls: 0 }, note: stopped === "credit" ? "It had stopped on event credit." : `It had stopped because: ${stopped}.` };
@@ -29708,16 +29711,18 @@ function upgrade(root, template2) {
 
 // src/cli/key.ts
 async function setKey(io2, env = process.env, terminal = Boolean(process.stdin.isTTY)) {
-  if (!env.SYNTHE_ANTHROPIC_KEY?.trim() && !env.ANTHROPIC_API_KEY?.trim() && !terminal) {
+  const own = env.SYNTHE_ANTHROPIC_KEY?.trim(), app = env.ANTHROPIC_API_KEY?.trim();
+  if (!own && !terminal) {
     io2.say("Ask the person to run `npx synthe key` in their own terminal.");
     return false;
   }
-  const key = env.SYNTHE_ANTHROPIC_KEY?.trim() || env.ANTHROPIC_API_KEY?.trim() || (await io2.askSecret("Paste your own Anthropic key: ")).trim();
+  const typed = own ? "" : (await io2.askSecret(app ? "Paste your own Anthropic key, or press Enter to use the key in ANTHROPIC_API_KEY: " : "Paste your own Anthropic key: ")).trim();
+  const key = own || typed || app || "";
   if (!/^sk-ant-\S+$/.test(key)) {
     io2.say("That doesn't look like an Anthropic key: it must start with sk-ant-. Nothing changed.");
     return false;
   }
-  if (!env.SYNTHE_ANTHROPIC_KEY?.trim() && env.ANTHROPIC_API_KEY?.trim()) io2.say("Using the key in ANTHROPIC_API_KEY.");
+  if (!own && !typed && app) io2.say("Using the key in ANTHROPIC_API_KEY.");
   try {
     await (io2.model ?? anthropicModel)(key).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
   } catch (error) {
@@ -29744,6 +29749,11 @@ async function setKey(io2, env = process.env, terminal = Boolean(process.stdin.i
     }
   }
   await io2.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
+  if (state.ownKeyFromUsd !== void 0) {
+    const budgetStop = Boolean(state.stopped && /^budget/.test(state.stopped));
+    io2.say(`Rounds now use this Anthropic key. The budget is unchanged: $${goal.budget.max_usd} from when you first switched to your own key (budget.max_usd in synthe.json).${budgetStop ? " To keep going, raise budget.max_usd in synthe.json and push it, then run `npx synthe restart`." : state.stopped ? " Run `npx synthe restart` to continue." : ""}`);
+    return true;
+  }
   state.ownKeyFromUsd = state.spendUsd;
   const content = Buffer.from(`${JSON.stringify(state, null, 2)}
 `).toString("base64");

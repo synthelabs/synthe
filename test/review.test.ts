@@ -116,6 +116,8 @@ test("review: confirming twice or drafting an installed default branch refuses i
   await init(io, root, undefined, "sk-ant-own", {}, prepare);
   await init(io, root, undefined, "sk-ant-own", {}, confirmation);
   assert.equal(existsSync(join(root, DRAFT_FILE)), false);
+  const pushed = io.run;
+  io.run = async (command, args, stdin) => args.includes(".path") ? args.some((arg) => arg.includes("contents/synthe.json")) ? "synthe.json" : ".github/workflows/synthe.yml" : pushed(command, args, stdin);
   for (const options of [confirmation, prepare]) {
     const before = ran.filter((call) => call.args[0] === "secret").length;
     assert.equal(await init(io, root, undefined, "sk-ant-own", {}, options), false);
@@ -176,11 +178,24 @@ function keyIo(state: State, maxUsd = 4) {
   return { io, said, ran, calls, saved: () => saved };
 }
 
+test("review: a confirmation that failed after writing local files can run again", async (context) => {
+  const { root, io, ran } = setup(context);
+  await init(io, root, undefined, "sk-ant-own", {}, prepare);
+  const run = io.run;
+  io.run = async (command, args, stdin) => { if (args[0] === "secret") throw new Error("HTTP 403: Resource not accessible"); return run(command, args, stdin); };
+  await assert.rejects(init(io, root, undefined, "sk-ant-own", {}, confirmation), /403/);
+  assert.ok(existsSync(join(root, "synthe.json")));
+  io.run = run;
+  assert.notEqual(await init(io, root, undefined, "sk-ant-own", {}, confirmation), false);
+  assert.ok(ran.some((call) => call.args[0] === "secret"));
+});
+
 test("review: key switches at current spend, restart grants fresh budget, then stops correctly", async () => {
   for (const stopped of ["credit", "budget of $4 is used"]) {
     const state = { ...newState(), stopped, spendUsd: stopped === "credit" ? 3.95 : 4 };
     const fake = keyIo(state);
-    assert.equal(await setKey(fake.io, { ANTHROPIC_API_KEY: "sk-ant-own" }, false), true);
+    fake.io.askSecret = async () => "";
+    assert.equal(await setKey(fake.io, { ANTHROPIC_API_KEY: "sk-ant-own" }, true), true);
     assert.deepEqual(fake.calls, [cheap]);
     assert.ok(fake.said.includes("Using the key in ANTHROPIC_API_KEY."));
     assert.equal(fake.saved().ownKeyFromUsd, state.spendUsd);
@@ -195,7 +210,9 @@ test("review: key switches at current spend, restart grants fresh budget, then s
     next.state.stopped = "budget of $4 is used";
     assert.ok("why" in restartState(goal({ budget: { max_usd: 4 } }), next.state));
     assert.ok("state" in restartState(goal({ budget: { max_usd: 5 } }), next.state));
-    assert.match(renderReport(goal(), next.state), /npx synthe key.*raise budget.max_usd.*npx synthe restart/);
+    assert.match(renderReport(goal(), next.state), /Raise budget.max_usd.*npx synthe restart/);
+    assert.doesNotMatch(renderReport(goal(), next.state), /npx synthe key/);
+    assert.doesNotMatch((restartState(goal({ budget: { max_usd: 4 } }), next.state) as { why: string }).why, /npx synthe key/);
   }
   const running = keyIo(newState(), 3);
   await setKey(running.io, { SYNTHE_ANTHROPIC_KEY: "sk-ant-own" });
@@ -203,14 +220,24 @@ test("review: key switches at current spend, restart grants fresh budget, then s
   assert.ok("state" in restartState(goal({ budget: { max_usd: 5 } }), { ...newState(), spendUsd: 4, stopped: "budget of $4 is used" }));
 });
 
+test("review: a second key keeps the first switch's budget, so replacing keys can't reset spending", async () => {
+  const stopped = { ...newState(), stopped: "budget of $4 is used", spendUsd: 8, ownKeyFromUsd: 4 };
+  const fake = keyIo(stopped);
+  assert.equal(await setKey(fake.io, { SYNTHE_ANTHROPIC_KEY: "sk-ant-new" }), true);
+  assert.equal(fake.saved().ownKeyFromUsd, 4);
+  assert.equal(fake.ran.some((args) => args.includes("PUT")), false);
+  assert.equal(fake.said.at(-1), "Rounds now use this Anthropic key. The budget is unchanged: $4 from when you first switched to your own key (budget.max_usd in synthe.json). To keep going, raise budget.max_usd in synthe.json and push it, then run `npx synthe restart`.");
+  assert.ok("why" in restartState(goal({ budget: { max_usd: 4 } }), fake.saved()));
+});
+
 test("review: key closed stdin and non-Anthropic keys fail without reading or saving", async () => {
-  for (const env of [{}, { SYNTHE_ANTHROPIC_KEY: "event-code" }, { ANTHROPIC_API_KEY: "sk-other" }]) {
+  for (const env of [{}, { SYNTHE_ANTHROPIC_KEY: "event-code" }, { ANTHROPIC_API_KEY: "sk-ant-app" }]) {
     const fake = keyIo(newState());
     fake.io.askSecret = async () => { throw new Error("Closed stdin must never prompt"); };
     assert.equal(await setKey(fake.io, env, false), false);
     assert.equal(fake.ran.length, 0);
     assert.equal(fake.calls.length, 0);
-    assert.equal(fake.said.at(-1), Object.keys(env).length ? "That doesn't look like an Anthropic key: it must start with sk-ant-. Nothing changed." : "Ask the person to run `npx synthe key` in their own terminal.");
+    assert.equal(fake.said.at(-1), "SYNTHE_ANTHROPIC_KEY" in env ? "That doesn't look like an Anthropic key: it must start with sk-ant-. Nothing changed." : "Ask the person to run `npx synthe key` in their own terminal.");
   }
 });
 

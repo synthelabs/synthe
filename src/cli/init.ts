@@ -201,7 +201,8 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   }
   if (agent) {
     const installed = await Promise.all([GOAL_FILE, WORKFLOW_FILE].map(async (path) =>
-      existsSync(join(root, path)) || (await io.run("gh", ["api", `repos/${slug}/contents/${path}?ref=${encodeURIComponent(branch)}`, "--jq", ".path"]).catch(() => "")).trim() === path));
+      // Only what's on GitHub counts: a --confirm that failed after writing local files must be able to run again.
+      (await io.run("gh", ["api", `repos/${slug}/contents/${path}?ref=${encodeURIComponent(branch)}`, "--jq", ".path"]).catch(() => "")).trim() === path));
     if (installed.every(Boolean)) { io.say("Synthe is already set up on the default branch. Use `npx synthe restart` to continue; don't run init again."); return false; }
   }
   if (agent?.confirm) {

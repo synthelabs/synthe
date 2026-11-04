@@ -28859,7 +28859,7 @@ function headline(goal, state, stoppedByTeam = false) {
     const end = recent.at(-1);
     if (busy(end) && /Synthe's proxy|Credit is unavailable/.test(end.plain ?? "")) return { title: "Stopped: Synthe's proxy needs attention", summary: end.plain };
     if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain };
-    if (badKey(end)) return { title: "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
+    if (badKey(end)) return { title: end.plain === PROXY_AUTH_MESSAGE ? "Stopped: the Synthe proxy couldn't verify this run" : "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
     if (busy(end) && isFinished(state.stopped)) {
       return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
     }
@@ -28875,7 +28875,7 @@ function nextSteps(goal, state) {
   if (merged) steps.push("Pull the latest changes before you edit your prompt, so Synthe's changes aren't overwritten.");
   const last = state.rounds.at(-1);
   if (state.stopped === "credit") steps.push("To use your own Anthropic key, run `npx synthe key`, then `npx synthe restart`.");
-  else if (state.stopped && /^budget/.test(state.stopped)) steps.push("Run `npx synthe key` for a fresh own-key budget, or raise budget.max_usd in synthe.json and push it, then run `npx synthe restart`.");
+  else if (state.stopped && /^budget/.test(state.stopped)) steps.push(`${state.ownKeyFromUsd === void 0 ? "Run `npx synthe key` for a fresh own-key budget, or raise" : "Raise"} budget.max_usd in synthe.json and push it, then run \`npx synthe restart\`.`);
   else if (state.stopped && badKey(last)) steps.push(`${last.plain} Then run \`npx synthe restart\` to start Synthe again.`);
   else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
   if (state.stopped && /no winner$/.test(state.stopped)) {
@@ -28886,7 +28886,7 @@ function nextSteps(goal, state) {
   if (!state.stopped && !state.proposal && missing(last)) {
     steps.push(`${last.plain} Once it's fixed, run \`npx synthe restart\`. Until then Synthe spends nothing.`);
   } else if (!state.stopped && !state.proposal && badKey(last)) {
-    steps.push(`${last.plain} Run \`npx synthe restart\` after replacing the key.`);
+    steps.push(`${last.plain} Run \`npx synthe restart\` after ${last.plain === PROXY_AUTH_MESSAGE ? "that" : "replacing the key"}.`);
   } else if (!state.stopped && !state.proposal) {
     steps.push(busy(last) ? /Synthe's proxy|Credit is unavailable/.test(last?.plain ?? "") ? `${last.plain} Synthe tried again; if it has stopped, run \`npx synthe restart\`.` : "Nothing to do. Anthropic's API was busy during the last round, so Synthe tried again; if it has stopped, run `npx synthe restart`. Otherwise Synthe stops by itself." : "Nothing to do. Completed rounds start back to back and Synthe stops by itself.");
     steps.push("To keep your agent unchanged, for example before a demo, run `npx synthe stop`.");

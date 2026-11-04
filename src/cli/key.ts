@@ -5,13 +5,16 @@ import { parseGoal } from "../core/goal.ts";
 import { newState, type State } from "../core/state.ts";
 
 export async function setKey(io: Pick<Io, "askSecret" | "run" | "say"> & Partial<Pick<Io, "model">>, env: NodeJS.ProcessEnv = process.env, terminal = Boolean(process.stdin.isTTY)): Promise<boolean> {
-  if (!env.SYNTHE_ANTHROPIC_KEY?.trim() && !env.ANTHROPIC_API_KEY?.trim() && !terminal) {
+  // ANTHROPIC_API_KEY is often the team's app key, so it is only used after a deliberate Enter, as in init.
+  const own = env.SYNTHE_ANTHROPIC_KEY?.trim(), app = env.ANTHROPIC_API_KEY?.trim();
+  if (!own && !terminal) {
     io.say("Ask the person to run `npx synthe key` in their own terminal.");
     return false;
   }
-  const key = env.SYNTHE_ANTHROPIC_KEY?.trim() || env.ANTHROPIC_API_KEY?.trim() || (await io.askSecret("Paste your own Anthropic key: ")).trim();
+  const typed = own ? "" : (await io.askSecret(app ? "Paste your own Anthropic key, or press Enter to use the key in ANTHROPIC_API_KEY: " : "Paste your own Anthropic key: ")).trim();
+  const key = own || typed || app || "";
   if (!/^sk-ant-\S+$/.test(key)) { io.say("That doesn't look like an Anthropic key: it must start with sk-ant-. Nothing changed."); return false; }
-  if (!env.SYNTHE_ANTHROPIC_KEY?.trim() && env.ANTHROPIC_API_KEY?.trim()) io.say("Using the key in ANTHROPIC_API_KEY.");
+  if (!own && !typed && app) io.say("Using the key in ANTHROPIC_API_KEY.");
   try {
     await (io.model ?? anthropicModel)(key).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
   } catch (error) {
@@ -37,6 +40,12 @@ export async function setKey(io: Pick<Io, "askSecret" | "run" | "say"> & Partial
     }
   }
   await io.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
+  // The fresh budget comes once, on leaving event credit: replacing a key again must not reset it, or a run never stops.
+  if (state.ownKeyFromUsd !== undefined) {
+    const budgetStop = Boolean(state.stopped && /^budget/.test(state.stopped));
+    io.say(`Rounds now use this Anthropic key. The budget is unchanged: $${goal.budget.max_usd} from when you first switched to your own key (budget.max_usd in synthe.json).${budgetStop ? " To keep going, raise budget.max_usd in synthe.json and push it, then run `npx synthe restart`." : state.stopped ? " Run `npx synthe restart` to continue." : ""}`);
+    return true;
+  }
   state.ownKeyFromUsd = state.spendUsd;
   const content = Buffer.from(`${JSON.stringify(state, null, 2)}\n`).toString("base64");
   await io.run("gh", ["api", "-X", "PUT", path, "-f", "message=Synthe: switched to own key", "-f", `branch=${STATE_BRANCH}`, ...(file ? ["-f", `sha=${file.sha}`] : []), "-f", `content=${content}`]);

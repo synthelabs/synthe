@@ -8,6 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { renderWorkflow } from "../src/cli/init.ts";
 import { runDecide } from "../src/loop/decide.ts";
 import { failureOf, type Failure } from "../src/loop/failure.ts";
+import { PROXY_AUTH_MESSAGE } from "../src/core/share.ts";
 import { MemoryRepo, goal } from "./helpers.ts";
 
 const BUSY: Failure = { step: "score", kind: "busy", message: "Anthropic's API is busy right now. Wait a few minutes and try again." };
@@ -143,4 +144,15 @@ test("every job has a time limit, and write and score failures reach decide with
   assert.equal(new Set(names).size, names.length);
   // Decide downloads every artifact into .synthe-out, where action.ts loads error.json.
   assert.match(jobs.decide, /with: \{ path: \.synthe-out, merge-multiple: true \}/);
+});
+
+test("a proxy that can't verify the run is reported as a workflow problem, not a bad key", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  const auth: Failure = { step: "write", kind: "key", message: PROXY_AUTH_MESSAGE };
+  await runDecide(goal(), repo, failedRound(auth));
+  assert.match(repo.issue, /Run `npx synthe restart` after that\./);
+  assert.doesNotMatch(repo.issue, /after replacing the key/);
+  for (let i = 0; i < 2; i++) await runDecide(goal(), repo, failedRound(auth));
+  assert.match(repo.issue, /## Stopped: the Synthe proxy couldn't verify this run/);
+  assert.doesNotMatch(repo.issue, /your Synthe key stopped working/);
 });
