@@ -409,6 +409,13 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   }
 
   if (scores) {
+    // Count check failures over every row scored this round, for the report's "what failed most". The rows
+    // themselves aren't kept in state, so the count has to be taken now.
+    const failed: Record<string, number> = {};
+    for (const row of [...scores.baselineTrain, ...scores.baselineHoldout, ...scores.candidates.flatMap((c) => [...c.train, ...(c.holdout ?? [])])]) {
+      for (const check of row.failedChecks ?? []) failed[check] = (failed[check] ?? 0) + 1;
+    }
+    if (Object.keys(failed).length) record.failedChecks = failed;
     // Training rows only: held-back scenarios are never in scores.baselineTrain, so the writer can't learn them.
     // A lesson is a scenario where the current prompt broke a guardrail, failed one of the team's checks, or a rewrite
     // beat it, with both replies.

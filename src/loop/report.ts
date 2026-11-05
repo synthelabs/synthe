@@ -103,6 +103,64 @@ function nextSteps(goal: Goal, state: State): string[] {
   return steps;
 }
 
+const TRIED_GROUPS = ["not clearly better", "did not hold on the hidden test cases", "broke a rule or a guard"] as const;
+
+// Which of the three plain reasons a tried change's outcome belongs to. Outcomes that aren't a
+// judgement on a scored change (it merged, it was never tested, its edit couldn't be applied) don't count.
+function triedGroup(outcome: string): (typeof TRIED_GROUPS)[number] | null {
+  if (outcome === "Merged." || outcome === "Not tested." || outcome.startsWith("Not used:")) return null;
+  if (outcome.startsWith("Broke one of your rules") || outcome.startsWith("Refused by a safety check") || outcome.includes("guards")) return "broke a rule or a guard";
+  if (outcome.includes("hidden")) return "did not hold on the hidden test cases";
+  return "not clearly better";
+}
+
+// Why a run that found no winner stopped, in the team's own numbers: which checks replies failed most,
+// what became of the changes Synthe tried, and what Synthe needs from the team. Shown when the run
+// stopped because the last rounds found no winner, and when the budget ran out. Other stops keep the
+// report they already had.
+export function noWinSection(goal: Goal, state: State): string[] {
+  if (!state.stopped || state.proposal) return [];
+  const budget = /^budget/.test(state.stopped);
+  if (!budget && !/no winner$/.test(state.stopped)) return [];
+  const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
+
+  // What failed most, from the per-round failure counts the decide step keeps. State written before
+  // those counts existed has none; the last scored round's lessons are the fallback, and when there
+  // are neither, the section says so instead of guessing.
+  const counts = new Map<string, number>();
+  for (const r of recent) for (const [check, n] of Object.entries(r.failedChecks ?? {})) counts.set(check, (counts.get(check) ?? 0) + n);
+  if (!counts.size && state.lessons) for (const row of state.lessons.rows) for (const check of row.failedChecks ?? []) counts.set(check, (counts.get(check) ?? 0) + 1);
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 3);
+
+  const groups = new Map<string, number>();
+  for (const r of recent) for (const t of r.tried ?? []) {
+    const g = triedGroup(t.outcome);
+    if (g) groups.set(g, (groups.get(g) ?? 0) + 1);
+  }
+
+  const asks: string[] = [];
+  if (top.length) asks.push(`Add test cases your agent still gets wrong, especially ones where replies fail "${top[0][0]}", to \`${goal.scenarios}\` and push. The format is under "What to do next" below.`);
+  const weak = (state.calibration ?? []).find((c) => c.reading === "disagrees with you" || c.reading === "unsure");
+  if (weak) asks.push(weak.reading === "disagrees with you"
+    ? `Rewrite the check "${weak.check}" in plainer words. When the team marked replies by hand with \`npx synthe calibrate\`, the AI marked them differently from the team, so the check may not say what you mean.`
+    : `Rewrite the check "${weak.check}" in plainer words. When the team marked replies by hand with \`npx synthe calibrate\`, the AI's marking was unsure against the team's, so the check may be hard to mark either way.`);
+  if (budget) asks.push(`Raise \`budget.max_usd\` in \`synthe.json\` if you want more rounds: Synthe stopped when the spend reached the $${goal.budget.max_usd} budget.`);
+
+  const lines = ["### Why there was no win", ""];
+  if (top.length) {
+    lines.push(`**What failed most** in the last ${plural(recent.length, "round")}:`, ...top.map(([check, n]) => `- "${check}" failed in ${n} ${n === 1 ? "reply" : "replies"}, counting every reply Synthe scored.`), "");
+  }
+  const grouped = TRIED_GROUPS.filter((g) => groups.has(g));
+  if (grouped.length) {
+    lines.push("**What the changes Synthe tried did:**", ...grouped.map((g) => `- ${g[0].toUpperCase()}${g.slice(1)}: ${plural(groups.get(g)!, "change")}.`), "");
+  }
+  if (!top.length && !grouped.length) {
+    lines.push("Synthe doesn't have per-check failure counts for these rounds, so it can't say which checks failed most or group the changes it tried.", "");
+  }
+  if (asks.length) lines.push("**What Synthe needs from you:**", ...asks.map((a) => `- ${a}`), "");
+  return lines;
+}
+
 // The round on its Actions run page: the outcome, what was tried, the cost and where the full report is.
 export function roundSummary(goal: Goal, state: State, record: RoundRecord | null, repo: string): string {
   const { title, summary } = headline(goal, state);
@@ -148,6 +206,7 @@ export function renderReport(goal: Goal, state: State, now: Date = new Date()): 
     }
     lines.push("");
   }
+  lines.push(...noWinSection(goal, state));
   lines.push("### What to do next", "", ...nextSteps(goal, state).map((s) => `- ${s}`), "");
   if (state.rounds.length) {
     lines.push(

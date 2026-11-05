@@ -14,6 +14,10 @@ export interface RoundRecord {
   checks?: { before: number; after: number };
   // The same for the team's guards, when they set counter_checks.
   guards?: { before: number; after: number };
+  // How many scored replies failed each of the team's checks this round, counted over every score row
+  // (the current prompt's and each change's, learned-from and hidden). The score rows themselves aren't
+  // kept, so this count is what the report's "what failed most" has to work from.
+  failedChecks?: Record<string, number>;
 }
 
 export interface Landing { branch: string; kind: "merge" | "revert"; text: string; priorPrompt: string; propose?: boolean }
@@ -31,6 +35,12 @@ export interface State {
   scenariosHash: string | null; // scenarios the last round was scored on
   // Training cases from the last round where the current prompt lost or broke a guardrail, for the next writer.
   lessons: { promptHash: string; rows: { id: string; reply: string; better?: string; violation: boolean; failedChecks?: string[] }[] } | null;
+  // The latest hand-marking comparison per check, when calibration results have been saved into state:
+  // the check's text and how the AI's marking read against the team's ("disagrees with you" or "unsure"
+  // means the wording may not say what the team means). The report's rewrite ask reads this; the local
+  // calibrate command writes .synthe/calibration.json, which the report can't see, so this is only
+  // present when something has copied the readings here.
+  calibration?: { check: string; reading: string }[];
   // Set while a decide step is acting, so the next one can tell it died partway and clean up after it.
   pending: { round: number; at: string; costUsd: number | null; land?: Landing } | null;
   // A pull request Synthe opened and left for a person to merge (propose mode, or a repo that requires review).
