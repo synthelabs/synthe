@@ -6,7 +6,7 @@ import { MAX_PROMPT_CHARS, promptPathProblem, redactSecrets } from "../core/safe
 import { ISSUE_TITLE } from "../loop/report.ts";
 import { askJson, type Model } from "../model/client.ts";
 import { reviewChecksAtSetup } from "./calibrate.ts";
-import { FULL_SHARE_UNTIL } from "../core/share.ts";
+import { FULL_SHARE_UNTIL, SHARE_NOTICE_VERSION } from "../core/share.ts";
 
 export const ACTION = "synthelabs/synthe@v1";
 export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
@@ -254,7 +254,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   io.say(sharingOff
     ? "Sharing with Synthe: off (DO_NOT_TRACK is set)."
     : share === "full"
-      ? 'During Crimson Hacks (until November 8), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 8 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'
+      ? 'During Crimson Hacks (until November 9 at 23:59 UTC), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 9 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'
       : 'Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.');
   const key = await askKey(io, envKey);
   if (!key) { io.say("No key, so nothing was set up. Get a key from the Synthe table, then run `npx synthe init` again."); return false; }
@@ -325,6 +325,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
 
   const goal = buildGoal(location, objective, guardrails, policy, brief, checks, guards);
   goal.share = share;
+  if (!sharingOff) goal.share_notice = SHARE_NOTICE_VERSION;
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
 
   mkdirSync(join(root, ".synthe"), { recursive: true });

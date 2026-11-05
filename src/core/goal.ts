@@ -23,6 +23,7 @@ export interface Goal {
   // guards more often by more than merge_rule.guard_margin isn't merged. They never pick a winner.
   counter_checks?: string[];
   share?: "none" | "numbers" | "detail" | "full";
+  share_notice?: string; // version of the sharing notice the team saw at setup, so a shared record ties to that text
   guardrails: string[];
   scenarios: string;
   models: { writer: string; runner: string; judge: string; checker: string };
@@ -72,6 +73,7 @@ export function parseGoal(text: string): Goal {
     if (dup !== undefined) bad(`counter_checks lists the same guard twice ("${dup.slice(0, 60)}"); each guard should appear once`);
   }
   if (g.share !== undefined && !["none", "numbers", "detail", "full"].includes(g.share)) bad("share must be none, numbers, detail or full");
+  if (g.share_notice !== undefined && typeof g.share_notice !== "string") bad("share_notice must be text");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== undefined && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
