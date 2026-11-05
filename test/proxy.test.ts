@@ -83,7 +83,7 @@ test("proxy sends local install IDs, fresh Action OIDC, bounded requests, and ow
   await assert.rejects(local.ask({ ...ask, model: "claude-other" }), /your goal names claude-other/);
   await assert.rejects(local.ask({ ...ask, maxTokens: 16001 }), /at most 16000/);
   assert.throws(() => eventModels({ runner: "claude-other" }), /only supports/);
-  assert.equal(PROXY_URL, "https://synthe-share.vercel.app/api/claude");
+  assert.equal(PROXY_URL, "https://synthe-crimson.vercel.app/api/claude");
   for (const status of [402, 403]) {
     refused = status;
     const before = received.length;

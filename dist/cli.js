@@ -28536,7 +28536,7 @@ function sumCosts(costs) {
 }
 
 // src/model/client.ts
-var PROXY_URL = "https://synthe-share.vercel.app/api/claude";
+var PROXY_URL = "https://synthe-crimson.vercel.app/api/claude";
 var CreditError = class extends Error {
 };
 var ProxyError = class extends Error {
