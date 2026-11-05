@@ -29132,7 +29132,7 @@ function headline(goal, state, stoppedByTeam = false) {
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
-  if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
+  if (recent.length > 0 && (recent.every((r) => r.outcome === "failed") || badKey(recent.at(-1)))) {
     const end = recent.at(-1);
     if (busy(end) && fromSyntheProxy(end.plain)) return { title: "Stopped: Synthe's proxy needs attention", summary: end.plain };
     if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain };
@@ -29157,10 +29157,13 @@ function nextSteps(goal, state) {
   else if (state.stopped && refusedCode(last)) steps.push(`${last.plain} ${CODE_FIX}`);
   else if (state.stopped && badKey(last)) steps.push(`${last.plain} Then run \`npx synthe restart\` to start Synthe again.`);
   else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
-  if (state.stopped && /no winner$/.test(state.stopped)) {
+  if (state.stopped && /no winner$/.test(state.stopped) && !badKey(last)) {
     steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push, then run \`npx synthe restart\`${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. One line per case, for example:
   \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`
   \`expected\` describes a good answer in a sentence. \`split\` is \`train\` (Synthe learns from it) or \`holdout\` (kept hidden to check its changes).`);
+  }
+  if (state.stopped && state.round >= goal.merge_rule.max_rounds && steps.some((s) => s.includes("npx synthe restart")) && !steps.some((s) => s.includes("max_rounds"))) {
+    steps.push(`Synthe has also run all ${goal.merge_rule.max_rounds} rounds, so raise merge_rule.max_rounds in synthe.json and push it before you restart.`);
   }
   if (!state.stopped && !state.proposal && missing(last)) {
     steps.push(`${last.plain} Once it's fixed, run \`npx synthe restart\`. Until then Synthe spends nothing.`);
@@ -30252,7 +30255,7 @@ ${goal.policy ?? ""}`);
 // package.json
 var package_default = {
   name: "synthe",
-  version: "1.7.2",
+  version: "1.7.3",
   description: "Your AI agent's system prompt gets better while you sleep: Synthe tests small changes overnight and merges only the clear wins.",
   keywords: [
     "ai",
