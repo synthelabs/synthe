@@ -30995,6 +30995,7 @@ function localRun(command) {
     return null;
   }
   const { key, eventCode, teamCode } = credential;
+  console.log(credential.line);
   const goal = parseGoal(readFileSync8(GOAL_FILE, "utf8"));
   if (!key && eventCode) eventModels(goal.models);
   const prompt = readPrompt(readFileSync8(goal.prompt.path, "utf8"), goal, null);
