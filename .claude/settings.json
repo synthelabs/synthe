@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/tests-must-pass.mjs\"",
+            "timeout": 300,
+            "statusMessage": "Checking typecheck and tests"
+          }
+        ]
+      }
+    ]
+  }
+}
