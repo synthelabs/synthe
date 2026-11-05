@@ -159,6 +159,9 @@ const allMutations = [
   ["verify skips the score coverage check", EVIDENCE, "if (dropped) return", "if (false) return"],
   ["verify trusts the stored guard rates", EVIDENCE, "if (guardRate(guardRows(base), guards) !== r.guardsBefore) return", "if (false) return"],
   ["verify skips the prompt commit check", EVIDENCE, 'if (typeof r.commit === "string" && /^[0-9a-f]{40}$/.test(r.commit)) {', "if (false) {"],
+  ["calibration kappa sign flipped", "src/cli/calibrate.ts", "const kappa = (po - pe) / (1 - pe);", "const kappa = (po - pe) / (1 + pe);"],
+  ["calibration swaps true-positive and true-negative rates", "src/cli/calibrate.ts", "return { tpr: tp / (tp + fn), tnr: tn / (tn + fp), kappa, reading };", "return { tpr: tn / (tn + fp), tnr: tp / (tp + fn), kappa, reading };"],
+  ["calibration prints numbers from too few labels", "src/cli/calibrate.ts", 'if (labels.length < MIN_APPLIED) return none("too few replies to judge");', 'if (false) return none("too few replies to judge");'],
 ];
 
 const selectedFiles = process.argv.slice(2);
