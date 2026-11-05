@@ -142,7 +142,7 @@ function localRun(command: string) {
   const eventCode = process.env.SYNTHE_EVENT_CODE;
   if (!key && !eventCode) {
     console.log(`\`npx synthe ${command}\` runs on your computer, changing nothing, and needs an event code or your own Anthropic key.`);
-    console.log("Set SYNTHE_EVENT_CODE, SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY in your environment, then run this again.");
+    console.log("Set SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE, or SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY, in your environment, then run this again.");
     process.exitCode = 1;
     return null;
   }
@@ -154,7 +154,7 @@ function localRun(command: string) {
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync(goal.scenarios, "utf8")), model: configuredModel(key, eventCode) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, process.env.SYNTHE_TEAM_CODE) };
 }
 
 // Checks whether the team's checks are marked steadily, and the way the team means them.

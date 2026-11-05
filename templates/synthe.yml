@@ -35,6 +35,7 @@ jobs:
           github-token: ${{ github.token }}
           anthropic-api-key: ${{ secrets.SYNTHE_ANTHROPIC_KEY }}
           event-code: ${{ secrets.SYNTHE_EVENT_CODE }}
+          team-code: ${{ secrets.SYNTHE_TEAM_CODE }}
       - uses: actions/upload-artifact@v4
         if: steps.write.outputs.go == 'true'
         with: { name: candidates, path: .synthe-out/candidates.json, include-hidden-files: true }
@@ -62,6 +63,7 @@ jobs:
           github-token: ${{ github.token }}
           anthropic-api-key: ${{ secrets.SYNTHE_ANTHROPIC_KEY }}
           event-code: ${{ secrets.SYNTHE_EVENT_CODE }}
+          team-code: ${{ secrets.SYNTHE_TEAM_CODE }}
       - uses: actions/upload-artifact@v4
         with: { name: scores, path: .synthe-out/scores.json, include-hidden-files: true }
       - uses: actions/upload-artifact@v4

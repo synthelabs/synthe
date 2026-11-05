@@ -4,7 +4,7 @@ import { DEFAULTS, GOAL_FILE, parseGoal, parseScenarios, type Goal, type PromptL
 import { findPrompts } from "../core/prompt.ts";
 import { MAX_PROMPT_CHARS, promptPathProblem, redactSecrets, sha256 } from "../core/safety.ts";
 import { ISSUE_TITLE } from "../loop/report.ts";
-import { askJson, eventModels, modelProblem, proxyModel, type Model } from "../model/client.ts";
+import { askJson, eventModels, modelProblem, normalizeTeamCode, ProxyError, proxyModel, TEAM_CODE, type Model } from "../model/client.ts";
 import { askPerson, type AgentOptions } from "./agent.ts";
 import { reviewChecksAtSetup } from "./calibrate.ts";
 import { FULL_SHARE_UNTIL } from "../core/share.ts";
@@ -24,7 +24,7 @@ export interface Io {
   askSecret(question: string): Promise<string>;
   run(cmd: string, args: string[], stdin?: string): Promise<string>;
   model(apiKey: string): Model;
-  proxy?(eventCode: string): Model;
+  proxy?(eventCode: string, teamCode?: string): Model;
   template(): string;
   sleep(ms: number): Promise<void>;
 }
@@ -135,8 +135,21 @@ async function yesNo(io: Io, question: string): Promise<boolean | null> {
   return null;
 }
 
+// The team code from the organizers' card. Typed hidden, normalized like the server, and never stored outside the repo secret.
+async function askTeam(io: Io, envTeam?: string): Promise<string | null> {
+  const fromEnv = normalizeTeamCode(envTeam ?? "");
+  if (TEAM_CODE.test(fromEnv)) return fromEnv;
+  if (fromEnv) io.say("SYNTHE_TEAM_CODE doesn't look like a team code (crim-xxxx-xxxx-xxxx-xxxx).");
+  for (let i = 0; i < 3; i++) {
+    const typed = normalizeTeamCode(await io.askSecret("Paste your team code (on the card from the Synthe table, starts with crim-): "));
+    if (TEAM_CODE.test(typed)) return typed;
+    io.say("That doesn't look like a team code. It looks like crim-xxxx-xxxx-xxxx-xxxx.");
+  }
+  return null;
+}
+
 // ANTHROPIC_API_KEY still needs an explicit Enter, so a pasted event code doesn't spend the app's own key.
-async function askKey(io: Io, envKey: string | undefined, preferred?: string): Promise<string | null> {
+async function askKey(io: Io, envKey: string | undefined, preferred?: string, envTeam?: string): Promise<{ key: string; team?: string } | null> {
   const question = "Paste your Crimson Hacks event code (on the QR card), or your own Anthropic key: ";
   if (envKey?.trim() && !preferred) io.say("Or press Enter to use the key already in ANTHROPIC_API_KEY.");
   for (let i = 0; i < 3; i++) {
@@ -148,18 +161,34 @@ async function askKey(io: Io, envKey: string | undefined, preferred?: string): P
         continue;
       }
       if (!typed && !preferred) io.say("Using the key in ANTHROPIC_API_KEY.");
+      const team = key.startsWith("sk-ant-") ? undefined : await askTeam(io, envTeam);
+      if (team === null) return null;
+      // Kept for the next try when only the event code was wrong.
+      if (team) envTeam = team;
       try {
-        await credentialModel(io, key).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
-        return key;
-      } catch (error) { io.say(modelProblem(error) ?? (error as Error).message); continue; }
+        await credentialModel(io, key, team).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
+        return { key, team };
+      } catch (error) {
+        io.say(modelProblem(error) ?? (error as Error).message);
+        // A refused team code is asked again, not reused from the environment.
+        if (error instanceof ProxyError && error.status === 403) envTeam = undefined;
+        continue;
+      }
     }
     io.say("Paste your event code or key, then press Enter.");
   }
   return null;
 }
 
-function credentialModel(io: Io, key: string): Model {
-  return key.startsWith("sk-ant-") ? io.model(key) : (io.proxy ?? proxyModel)(key);
+function credentialModel(io: Io, key: string, team?: string): Model {
+  return key.startsWith("sk-ant-") ? io.model(key) : io.proxy ? io.proxy(key, team) : proxyModel(key, false, team);
+}
+
+// Agent setup reads the team code only from SYNTHE_TEAM_CODE, the same way it reads the event code.
+function agentTeam(env: Partial<Record<string, string>>): string {
+  const team = normalizeTeamCode(env.SYNTHE_TEAM_CODE ?? "");
+  if (!TEAM_CODE.test(team)) askPerson("SYNTHE_TEAM_CODE (the team code from the card, crim-xxxx-xxxx-xxxx-xxxx)");
+  return team;
 }
 
 function sharingDisabled(env: NodeJS.ProcessEnv): boolean {
@@ -187,7 +216,7 @@ async function whyGitHubFails(io: Io): Promise<string> {
   return "Run this inside your project's folder, after pushing it to GitHub (you need admin access to the repo).";
 }
 
-export async function init(io: Io, root: string, now = () => new Date(), envKey = process.env.ANTHROPIC_API_KEY, env: Partial<Record<"DO_NOT_TRACK" | "SYNTHE_TELEMETRY" | "SYNTHE_EVENT_CODE" | "SYNTHE_ANTHROPIC_KEY", string>> = process.env, agent?: AgentOptions) {
+export async function init(io: Io, root: string, now = () => new Date(), envKey = process.env.ANTHROPIC_API_KEY, env: Partial<Record<"DO_NOT_TRACK" | "SYNTHE_TELEMETRY" | "SYNTHE_EVENT_CODE" | "SYNTHE_ANTHROPIC_KEY" | "SYNTHE_TEAM_CODE", string>> = process.env, agent?: AgentOptions) {
   if (agent) {
     try { await io.run("gh", ["--version"]); await io.run("gh", ["auth", "status"]); } catch {
       io.say("Ask the person to run `gh auth login` in their terminal once, then run this again.");
@@ -235,16 +264,19 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     if (agent.checks.length) draft.goal.checks = agent.checks;
     if (agent.share) draft.goal.share = agent.share;
     if (sharingDisabled(env)) draft.goal.share = "none";
+    const team = draft.event ? agentTeam(env) : undefined;
     if (draft.event) eventModels(draft.goal.models);
-    if (draft.event) await (io.proxy ?? proxyModel)(credential).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
-    const finished = await finishSetup(io, root, slug, branch, draft.goal, draft.rows, credential, draft.event);
+    if (draft.event) await credentialModel(io, credential, team).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
+    const finished = await finishSetup(io, root, slug, branch, draft.goal, draft.rows, credential, draft.event, team);
     if (finished) rmSync(join(root, DRAFT_FILE), { force: true });
     return finished;
   }
   if (!agent) io.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.\n`);
 
   const preferred = setupCredential(env, envKey, Boolean(agent));
-  const key = agent ? preferred : await askKey(io, envKey, env.SYNTHE_ANTHROPIC_KEY?.trim() || env.SYNTHE_EVENT_CODE?.trim());
+  const chosen = agent ? (preferred ? { key: preferred, team: preferred.startsWith("sk-ant-") ? undefined : agentTeam(env) } : null)
+    : await askKey(io, envKey, env.SYNTHE_ANTHROPIC_KEY?.trim() || env.SYNTHE_EVENT_CODE?.trim(), env.SYNTHE_TEAM_CODE);
+  const key = chosen?.key, team = chosen?.team;
   if (!key) {
     if (agent) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY (agent setup never uses ANTHROPIC_API_KEY)");
     io.say("Nothing in your repo was changed. Run `npx synthe init` again when you have a working event code or key."); return false;
@@ -283,7 +315,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     return false;
   }
   if (agent && !promptText.trim()) askPerson("--prompt");
-  const model = credentialModel(io, key);
+  const model = credentialModel(io, key, team);
   if (event) eventModels(DEFAULTS.models);
   if (agent) await model.ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
   const objective = agent ? agent.objective! : (await io.ask("\nWhat should your agent get better at? One sentence, for example \"answer returns questions correctly and offer an exchange first\":\n> ")).trim();
@@ -362,15 +394,15 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     io.say(AGENT_NEXT);
     return true;
   }
-  return finishSetup(io, root, slug, branch, goal, rows, key, event);
+  return finishSetup(io, root, slug, branch, goal, rows, key, event, team);
 }
 
 interface SetupDraft { version: number; slug: string; branch: string; goal: Goal; rows: Scenario[]; event: boolean; sourceHash: string; examples: unknown[] }
 
-async function finishSetup(io: Io, root: string, slug: string, branch: string, goal: Goal, rows: Scenario[], key: string, event: boolean) {
+async function finishSetup(io: Io, root: string, slug: string, branch: string, goal: Goal, rows: Scenario[], key: string, event: boolean, team?: string) {
   const auto = goal.merge_rule.mode === "auto";
   const secret = event ? "SYNTHE_EVENT_CODE" : "SYNTHE_ANTHROPIC_KEY";
-  const saved = `Saved your ${event ? "event code" : "key"} as the repo secret ${secret}.`;
+  const saved = event && team ? "Saved your event code and team code as the repo secrets SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE." : `Saved your ${event ? "event code" : "key"} as the repo secret ${secret}.`;
 
   mkdirSync(join(root, ".synthe"), { recursive: true });
   mkdirSync(join(root, ".github/workflows"), { recursive: true });
@@ -380,6 +412,7 @@ async function finishSetup(io: Io, root: string, slug: string, branch: string, g
   ignoreDraft(root);
 
   await io.run("gh", ["secret", "set", secret, "--repo", slug], key);
+  if (event && team) await io.run("gh", ["secret", "set", "SYNTHE_TEAM_CODE", "--repo", slug], team);
   try {
     await io.run("gh", ["api", "-X", "PUT", `repos/${slug}/actions/permissions/workflow`,
       "-f", "default_workflow_permissions=read", "-F", "can_approve_pull_request_reviews=true"]);

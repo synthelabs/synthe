@@ -28618,6 +28618,7 @@ async function shareRound(payload, env, fetcher = fetch) {
 
 // src/model/client.ts
 var PROXY_URL = "https://synthe-crimson.vercel.app/api/claude";
+var normalizeTeamCode = (code) => code.trim().toLowerCase().replace(/\s+/g, "");
 var CreditError = class extends Error {
 };
 var ProxyError = class extends Error {
@@ -28632,7 +28633,8 @@ function eventModels(models) {
     if (!["claude-haiku-5-5", "claude-sonnet-5-5"].includes(model)) throw new CreditError(`Event credit only supports claude-haiku-5-5 and claude-sonnet-5-5; your goal names ${model}. Use an allowed model or run \`npx synthe key\` to use your own Anthropic key.`);
   }
 }
-function proxyModel(eventCode, action = false) {
+function proxyModel(eventCode, action = false, teamCode) {
+  const team = teamCode ? normalizeTeamCode(teamCode) : "";
   const client = new Anthropic({
     apiKey: "synthe-proxy",
     baseURL: process.env.SYNTHE_PROXY_URL || PROXY_URL,
@@ -28641,6 +28643,7 @@ function proxyModel(eventCode, action = false) {
     fetch: async (url, init) => {
       const headers = new Headers(init?.headers);
       headers.set("x-synthe-event", eventCode);
+      if (team) headers.set("x-synthe-team", team);
       headers.set("x-api-key", "synthe-proxy");
       if (action) headers.set("Authorization", `Bearer ${await oidcToken("synthe-proxy")}`);
       else {
@@ -28668,6 +28671,7 @@ function proxyModel(eventCode, action = false) {
     } catch (error) {
       const refused = error;
       if ((refused.status === 402 || refused.status === 403) && refused.error?.error?.type === "synthe_credit" && typeof refused.error.error.message === "string") throw new CreditError(refused.error.error.message);
+      if (refused.status === 403 && refused.error?.error?.type === "synthe_proxy_auth" && typeof refused.error.error.message === "string") throw new ProxyError(403, `The Synthe proxy refused this request: ${refused.error.error.message}`);
       if (refused.status === 401) {
         if (refused.error?.error?.type === "synthe_proxy_auth") throw new ProxyError(401, PROXY_AUTH_MESSAGE);
         throw new CreditError("Synthe's sponsored Anthropic key was rejected. Ask at the Synthe table; your workflow does not need upgrading. Once the organizer fixes it, run `npx synthe restart`.");
@@ -28678,9 +28682,9 @@ function proxyModel(eventCode, action = false) {
     }
   } };
 }
-function configuredModel(key, eventCode, action = false) {
+function configuredModel(key, eventCode, action = false, teamCode) {
   if (key?.trim()) return anthropicModel(key.trim());
-  if (eventCode?.trim()) return proxyModel(eventCode.trim(), action);
+  if (eventCode?.trim()) return proxyModel(eventCode.trim(), action, teamCode?.trim() || void 0);
   throw new Error("No Anthropic key or event code is set. Set SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY.");
 }
 function anthropicModel(apiKey) {
@@ -28973,7 +28977,7 @@ function nextSteps(goal, state) {
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");
   }
-  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete the `SYNTHE_ANTHROPIC_KEY` and `SYNTHE_EVENT_CODE` secrets in your repo's settings.");
+  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete the `SYNTHE_ANTHROPIC_KEY`, `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE` secrets in your repo's settings.");
   return steps;
 }
 function roundSummary(goal, state, record, repo) {
@@ -29874,7 +29878,7 @@ var package_default = {
 function failureOf(step, e) {
   if (e instanceof Error && e.message === PROXY_AUTH_MESSAGE) return { step, kind: "key", message: e.message };
   if (e instanceof CreditError) return { step, kind: "credit", message: e.message };
-  if (e instanceof ProxyError) return { step, kind: e.status === 401 ? "key" : "busy", message: e.message };
+  if (e instanceof ProxyError) return { step, kind: e.status === 401 || e.status === 403 ? "key" : "busy", message: e.message };
   const plain = modelProblem(e);
   if (plain !== null) return { step, kind: /\bkey\b/i.test(plain) ? "key" : "busy", message: plain };
   const raw = e instanceof Error ? e.message : String(e);
@@ -29990,7 +29994,7 @@ async function main() {
   const key = input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY;
   const eventCode = input("event-code") || process.env.SYNTHE_EVENT_CODE;
   if (!key && eventCode) eventModels(goal.models);
-  const model = configuredModel(key, eventCode, true);
+  const model = configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE);
   if (step === "write") {
     const written = await runWrite(goal, state, prompt, scenarios, model);
     console.log(`Wrote ${written.candidates.length} candidates for ${written.costUsd === null ? "an unknown cost" : `$${written.costUsd.toFixed(4)}`}`);
