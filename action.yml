@@ -2,7 +2,7 @@ name: Synthe
 description: Improves an agent's system prompt against simulated scenarios and merges what wins.
 branding: { icon: trending-up, color: blue }
 inputs:
-  step: { description: "write, score or decide", required: true }
+  step: { description: "write, score, decide or cancel", required: true }
   github-token: { description: Token for this job, required: true }
   anthropic-api-key: { description: "Model key, used by write and score only", required: false, default: "" }
   event-code: { description: "Event credit code, used only without your own model key", required: false, default: "" }
