@@ -28049,7 +28049,7 @@ var init_sdk = __esm({
 
 // src/cli/main.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync5, readFileSync as readFileSync7, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync5, readFileSync as readFileSync7, writeFileSync as writeFileSync5 } from "node:fs";
 import { createInterface as createInterface3 } from "node:readline/promises";
 
 // src/core/goal.ts
@@ -29089,10 +29089,12 @@ async function runLocalTry(cwd, goal, prompt, scenarios, model) {
 }
 
 // src/cli/init.ts
-import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, statSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join3 } from "node:path";
+import { mkdirSync as mkdirSync3, readFileSync as readFileSync2, statSync, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join4 } from "node:path";
 
 // src/cli/calibrate.ts
+import { mkdirSync as mkdirSync2, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join3 } from "node:path";
 var CASES = 20;
 var MIN_APPLIED = 4;
 var QUESTIONS = 8;
@@ -29101,6 +29103,8 @@ var AGREE = 0.75;
 var MIN_MISSES = 2;
 var SETUP_CASES = 6;
 var SETUP_QUESTIONS = 4;
+var KAPPA_WELL = 0.6;
+var KAPPA_UNSURE = 0.2;
 var clip2 = (t, n) => (t.length > n ? `${t.slice(0, n).trimEnd()}...` : t).replace(/\s+/g, " ").trim();
 function pick(open, max) {
   const items = [];
@@ -29129,8 +29133,36 @@ An AI marked this reply as ${item.passes ? "passing" : "failing"} the check, but
   const text = typeof value?.check === "string" ? value.check.trim() : "";
   return text && text.length <= 300 && text !== check ? text : null;
 }
+function checkStats(labels) {
+  const none = (reading2) => ({ tpr: null, tnr: null, kappa: null, reading: reading2 });
+  if (labels.length < MIN_APPLIED) return none("too few replies to judge");
+  const tp = labels.filter((l) => l.team && l.ai).length, fn = labels.filter((l) => l.team && !l.ai).length;
+  const tn = labels.filter((l) => !l.team && !l.ai).length, fp = labels.filter((l) => !l.team && l.ai).length;
+  if (tp + fn === 0 || tn + fp === 0) return none("not enough variety");
+  const n = labels.length;
+  const po = (tp + tn) / n;
+  const pe = ((tp + fn) * (tp + fp) + (tn + fp) * (tn + fn)) / (n * n);
+  const kappa = (po - pe) / (1 - pe);
+  const reading = kappa >= KAPPA_WELL ? "matches you well" : kappa >= KAPPA_UNSURE ? "unsure" : "disagrees with you";
+  return { tpr: tp / (tp + fn), tnr: tn / (tn + fp), kappa, reading };
+}
+function calibrationRows(results, labels) {
+  return results.map((r, c) => {
+    const { tpr, tnr, kappa, reading } = checkStats(labels[c]);
+    return { check: r.check, applied: r.applied, agreed: r.agreed, steady: r.steady, tpr, tnr, kappa, verdict: reading };
+  });
+}
+var calibrationSummary = (rows) => `Calibration: ${rows.filter((r) => r.kappa !== null && r.kappa >= KAPPA_WELL).length} of ${rows.length} checks match your judgement (kappa 0.6 or more)`;
+function writeCalibration(dir, file) {
+  mkdirSync2(dir, { recursive: true });
+  const path4 = join3(dir, "calibration.json"), temp = join3(dir, `calibration.json.${process.pid}.tmp`);
+  writeFileSync2(temp, `${JSON.stringify(file, null, 2)}
+`);
+  renameSync2(temp, path4);
+}
+var pct = (x) => `${Math.round(x * 100)}%`;
 async function reviewReplies(io2, model, writer, checks, items, costs) {
-  const asked = checks.map(() => 0), agreed = checks.map(() => 0);
+  const asked = checks.map(() => 0), agreed = checks.map(() => 0), labels = checks.map(() => []);
   const reworded = /* @__PURE__ */ new Set();
   const reword = (c, text) => {
     checks[c] = text.slice(0, 300);
@@ -29151,6 +29183,7 @@ async function reviewReplies(io2, model, writer, checks, items, costs) {
     if (!/^[yn]/.test(answer)) continue;
     const teamPasses = answer.startsWith("y");
     asked[it.c]++;
+    labels[it.c].push({ team: teamPasses, ai: it.passes });
     if (teamPasses === it.passes) {
       agreed[it.c]++;
       continue;
@@ -29162,7 +29195,7 @@ async function reviewReplies(io2, model, writer, checks, items, costs) {
     if (suggested && /^y(es)?$/i.test(choice)) reword(it.c, suggested);
     else if (choice && !/^n(o)?$/i.test(choice)) reword(it.c, choice);
   }
-  return { asked, agreed, reworded };
+  return { asked, agreed, reworded, labels };
 }
 async function reviewChecksAtSetup(io2, goal, prompt, scenarios, model) {
   const checks = [...goal.checks ?? []];
@@ -29186,7 +29219,7 @@ Quick check that Synthe marks these the way you mean: ${items.length} of your ag
   }
   return { checks, costUsd: sumCosts(costs) };
 }
-async function calibrate(io2, goal, prompt, scenarios, model) {
+async function calibrate(io2, goal, prompt, scenarios, model, outDir) {
   const checks = goal.checks?.filter((c) => c.trim()) ?? [];
   if (checks.length === 0) {
     io2.say("There are no checks in synthe.json, so there's nothing to calibrate. Synthe is using its AI judge's side-by-side preference instead.");
@@ -29255,13 +29288,24 @@ async function calibrate(io2, goal, prompt, scenarios, model) {
     io2.say(`  ${c + 1}. ${clip2(r.check, 90)}
      ${line}`);
   }
+  const rows = calibrationRows(results, review.labels.map((l, c) => review.reworded.has(c) ? [] : l));
+  io2.say("\nHow well each check matches your judgement:");
+  for (const [c, r] of rows.entries()) {
+    const numbers = r.kappa === null ? "" : ` Agreement ${pct(r.agreed / results[c].asked)}, steadiness ${pct(r.steady / r.applied)}, passes caught ${pct(r.tpr)}, fails caught ${pct(r.tnr)}, kappa ${r.kappa.toFixed(2)}.`;
+    io2.say(`  ${c + 1}. ${clip2(r.check, 90)}
+     ${r.verdict[0].toUpperCase()}${r.verdict.slice(1)}.${numbers}`);
+  }
+  const report = { timestamp: (/* @__PURE__ */ new Date()).toISOString(), modelIds: { checker: goal.models.checker, writer: goal.models.writer }, checks: rows };
+  if (outDir !== void 0) writeCalibration(outDir, report);
+  io2.say(`
+${calibrationSummary(rows)}`);
   const fix = results.filter((r) => r.verdict !== "trustworthy" && r.verdict !== "reworded").length;
   io2.say(fix ? `
 ${fix} of ${checks.length} checks need attention. Edit them in synthe.json, push, then run npx synthe calibrate again.` : review.reworded.size ? "" : `
 All ${checks.length} checks can be trusted, so the number in Synthe's report means what you think it does.`);
   const costUsd2 = sumCosts(costs);
   io2.say(`Cost: ${costUsd2 === null ? "unknown" : costUsd2 < 0.01 ? "under $0.01" : `$${costUsd2.toFixed(2)}`}`);
-  return { results, checks, costUsd: costUsd2 };
+  return { results, checks, costUsd: costUsd2, report };
 }
 
 // src/cli/init.ts
@@ -29384,7 +29428,7 @@ function renderWorkflow(template2, random = Math.random, chosenMinute) {
 function repoTextFiles(listing, root) {
   return listing.split("\n").filter(Boolean).flatMap((path4) => {
     try {
-      const full = join3(root, path4);
+      const full = join4(root, path4);
       return statSync(full).size < 2e5 ? [{ path: path4, text: readFileSync2(full, "utf8") }] : [];
     } catch {
       return [];
@@ -29475,7 +29519,7 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
     io2.say(refused);
     return false;
   }
-  const promptText = location.kind === "inline" ? location.initial : readFileSync2(join3(root, location.path), "utf8");
+  const promptText = location.kind === "inline" ? location.initial : readFileSync2(join4(root, location.path), "utf8");
   if (promptText.length > MAX_PROMPT_CHARS) {
     io2.say(`Your prompt is ${promptText.length.toLocaleString("en-US")} characters, and Synthe works on prompts up to ${MAX_PROMPT_CHARS.toLocaleString("en-US")}. Shorten it, for example by moving reference material such as a menu or FAQ into a separate file your agent loads, then run \`npx synthe init\` again.`);
     return false;
@@ -29574,13 +29618,13 @@ Synthe couldn't propose guards this time, so it will run with your checks alone.
   goal.share = share;
   if (!sharingOff) goal.share_notice = SHARE_NOTICE_VERSION;
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
-  mkdirSync2(join3(root, ".synthe"), { recursive: true });
-  mkdirSync2(join3(root, ".github/workflows"), { recursive: true });
-  writeFileSync2(join3(root, GOAL_FILE), `${JSON.stringify(goal, null, 2)}
+  mkdirSync3(join4(root, ".synthe"), { recursive: true });
+  mkdirSync3(join4(root, ".github/workflows"), { recursive: true });
+  writeFileSync3(join4(root, GOAL_FILE), `${JSON.stringify(goal, null, 2)}
 `);
-  writeFileSync2(join3(root, SCENARIOS_FILE), `${rows.map((r) => JSON.stringify(r)).join("\n")}
+  writeFileSync3(join4(root, SCENARIOS_FILE), `${rows.map((r) => JSON.stringify(r)).join("\n")}
 `);
-  writeFileSync2(join3(root, WORKFLOW_FILE), renderWorkflow(io2.template()));
+  writeFileSync3(join4(root, WORKFLOW_FILE), renderWorkflow(io2.template()));
   await io2.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
   try {
     await io2.run("gh", [
@@ -29643,7 +29687,7 @@ Set up, but GitHub did not accept the first dispatch. Run \`gh workflow run synt
 
 // src/cli/migrate.ts
 import { existsSync, readFileSync as readFileSync3 } from "node:fs";
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 var MAX_DROP = 5;
 function parseArgs(args) {
   const out = { dryRun: false };
@@ -29684,8 +29728,8 @@ async function migrate(args, env) {
   };
   const parsed = parseArgs(args);
   if (typeof parsed === "string") return fail(parsed);
-  if (!existsSync(join4(env.cwd, GOAL_FILE))) return fail("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
-  const goal = parseGoal(readFileSync3(join4(env.cwd, GOAL_FILE), "utf8"));
+  if (!existsSync(join5(env.cwd, GOAL_FILE))) return fail("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
+  const goal = parseGoal(readFileSync3(join5(env.cwd, GOAL_FILE), "utf8"));
   const from = parsed.from ?? goal.models.writer;
   const to = parsed.to;
   if (!to) return fail("Say which model to try: npx synthe migrate --to <model>");
@@ -29693,9 +29737,9 @@ async function migrate(args, env) {
   const unknown = [from, to].find((m) => !known.includes(m));
   if (unknown) return fail(`Synthe doesn't know the model "${unknown}", so it can't work out what it costs. Models it knows: ${known.join(", ")}.`);
   if (from === to) return fail(`--from and --to are both ${to}. Pick two different models to compare.`);
-  const prompt = readPrompt(readFileSync3(join4(env.cwd, goal.prompt.path), "utf8"), goal, null);
+  const prompt = readPrompt(readFileSync3(join5(env.cwd, goal.prompt.path), "utf8"), goal, null);
   if (prompt === null) return fail(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
-  const scenarios = parseScenarios(readFileSync3(join4(env.cwd, goal.scenarios), "utf8"));
+  const scenarios = parseScenarios(readFileSync3(join5(env.cwd, goal.scenarios), "utf8"));
   let real = env.model;
   if (!parsed.dryRun && !real) {
     if (!env.apiKey) return fail("`npx synthe migrate` runs on your computer, changing nothing, and needs your Synthe key:\n  ANTHROPIC_API_KEY=your-key npx synthe migrate --to " + to + "\nTo see the layout without spending anything, add --dry-run.");
@@ -29805,10 +29849,10 @@ async function askSecret(question, input = process.stdin, output = process.stdou
 }
 
 // src/cli/upgrade.ts
-import { existsSync as existsSync2, readFileSync as readFileSync4, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join5 } from "node:path";
+import { existsSync as existsSync2, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join6 } from "node:path";
 function upgrade(root, template2) {
-  const path4 = join5(root, WORKFLOW_FILE);
+  const path4 = join6(root, WORKFLOW_FILE);
   if (!existsSync2(path4)) throw new Error(`No ${WORKFLOW_FILE} found. Run \`npx synthe init\` first.`);
   const before = readFileSync4(path4, "utf8");
   if (!before.includes("synthelabs/synthe@v1")) throw new Error(`${WORKFLOW_FILE} is not a Synthe workflow; left it unchanged.`);
@@ -29816,14 +29860,14 @@ function upgrade(root, template2) {
   const minute = cron ? Math.max(1, Number(cron[1])) : void 0;
   const after = renderWorkflow(template2, Math.random, minute);
   if (after === before) return `${WORKFLOW_FILE} is already up to date. No files changed.`;
-  writeFileSync3(path4, after);
+  writeFileSync4(path4, after);
   return `Updated ${WORKFLOW_FILE}: rounds now chain immediately, a cancelled run no longer counts as a round, and sharing (if you turned it on) can prove which repo sent it; kept backup minute ${minute ?? "random"}. No other files changed. Commit and push this workflow file to activate it.`;
 }
 
 // src/core/evidence.ts
 import { execFileSync } from "node:child_process";
 import { existsSync as existsSync3, readdirSync, readFileSync as readFileSync5 } from "node:fs";
-import { basename, dirname as dirname2, join as join6 } from "node:path";
+import { basename, dirname as dirname2, join as join7 } from "node:path";
 var EVIDENCE_DIR = ".synthe/evidence";
 var evidencePath = (round) => `${EVIDENCE_DIR}/round-${round}.json`;
 function sortKeys(value) {
@@ -29835,8 +29879,8 @@ function sortKeys(value) {
 }
 var canonicalJson = (value) => JSON.stringify(sortKeys(value));
 var hashEvidence = (record) => sha256(canonicalJson({ ...record, sha256: "" }));
-var pct = (n, of) => Math.round(100 * n / of);
-var guardRate2 = (rows, guards) => guards === 0 || rows.length === 0 || rows.some((r) => r.violation === null) ? null : pct(rows.filter((r) => r.violation === false).length, rows.length);
+var pct2 = (n, of) => Math.round(100 * n / of);
+var guardRate2 = (rows, guards) => guards === 0 || rows.length === 0 || rows.some((r) => r.violation === null) ? null : pct2(rows.filter((r) => r.violation === false).length, rows.length);
 var roundOf = (name) => /^round-(\d+)\.json$/.exec(name)?.[1];
 function recomputeProblem(r, goal, splits) {
   const missing2 = r.scenarioScores.find((s) => !splits.has(s.id));
@@ -29909,19 +29953,19 @@ function verifyEvidence(filePath, repoRoot) {
   } else {
     let prev;
     try {
-      prev = JSON.parse(readFileSync5(join6(dir, `round-${prevRound}.json`), "utf8"));
+      prev = JSON.parse(readFileSync5(join7(dir, `round-${prevRound}.json`), "utf8"));
     } catch {
       return { ok: false, reason: `round-${prevRound}.json can't be read` };
     }
     if (r.prevEvidenceHash === null) return { ok: false, reason: `round-${prevRound}.json exists, but this record says it follows nothing` };
     if (hashEvidence(prev) !== r.prevEvidenceHash) return { ok: false, reason: `the chain is broken: this record follows a different round-${prevRound}.json than the one next to it` };
   }
-  const goalPath = join6(repoRoot, GOAL_FILE);
+  const goalPath = join7(repoRoot, GOAL_FILE);
   let goal;
   let splits;
   try {
     goal = parseGoal(readFileSync5(goalPath, "utf8"));
-    splits = new Map(parseScenarios(readFileSync5(join6(repoRoot, goal.scenarios), "utf8")).map((s) => [s.id, s.split]));
+    splits = new Map(parseScenarios(readFileSync5(join7(repoRoot, goal.scenarios), "utf8")).map((s) => [s.id, s.split]));
   } catch (e) {
     return { ok: false, reason: `couldn't read the goal and test cases in ${repoRoot} to recheck the verdict: ${e.message}` };
   }
@@ -29963,7 +30007,7 @@ function verify(file, root, say = console.log) {
 
 // src/cli/undo.ts
 import { existsSync as existsSync4, readFileSync as readFileSync6 } from "node:fs";
-import { join as join7 } from "node:path";
+import { join as join8 } from "node:path";
 var undoBranch = (round) => `synthe/undo-round-${round}`;
 function promptWithHash(source, goal, hash) {
   if (goal.prompt.kind === "file") return sha256(source) === hash ? source : null;
@@ -29977,7 +30021,7 @@ async function undo(d, roundArg) {
     say("Say which round to undo, for example: npx synthe undo 3");
     return 1;
   }
-  const local = join7(d.root, evidencePath(round));
+  const local = join8(d.root, evidencePath(round));
   const text = existsSync4(local) ? readFileSync6(local, "utf8") : await repo.readFile(evidencePath(round), STATE_BRANCH);
   if (text === null) {
     say(`No evidence for round ${round}. Rounds that changed nothing or didn't finish have none; check the number against \`npx synthe status\`.`);
@@ -30351,11 +30395,11 @@ function localRun(command) {
 async function calibrateChecks() {
   const local = localRun("calibrate");
   if (!local) return;
-  const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model);
+  const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result) return;
   if (result.checks.some((c, i) => c !== local.goal.checks?.[i])) {
     const saved = JSON.parse(readFileSync7(GOAL_FILE, "utf8"));
-    writeFileSync4(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}
+    writeFileSync5(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}
 `);
     console.log(`
 Saved your reworded checks in ${GOAL_FILE}. Push them so Synthe's next round uses them:`);
