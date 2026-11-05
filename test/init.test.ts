@@ -49,6 +49,7 @@ const fakeIo = (dir: string, failing: string[] = [], answers: Record<string, str
 };
 
 const PROMPT = "You are a very helpful assistant for hikers needing trail advice.";
+const TEAM = "crim-abcd-efgh-jkmn-pqrs";
 
 test("init sets up everything and starts the first run", async () => {
   const dir = repoDir(PROMPT);
@@ -416,24 +417,30 @@ test("event codes are checked cheaply before storing, use the proxy for all setu
     const dir = repoDir(PROMPT);
     const { io, ran, said } = fakeIo(dir);
     const calls: Ask[] = [];
-    io.proxy = (code) => { assert.equal(code, "crimson-code"); return setupModel(calls); };
+    io.proxy = (code, team) => { assert.equal(code, "crimson-code"); assert.equal(team, TEAM); return setupModel(calls); };
     io.model = () => { throw new Error("event setup called the direct API"); };
+    const asked: string[] = [];
     io.askSecret = async (question) => {
-      assert.equal(question, "Paste your Crimson Hacks event code (on the QR card), or your own Anthropic key: ");
-      assert.equal(environment, false, "an env code must not prompt");
-      return "crimson-code";
+      assert.equal(environment, false, "env codes must not prompt");
+      asked.push(question);
+      return question.startsWith("Paste your team code") ? " CRIM-ABCD-EFGH-JKMN-PQRS " : "crimson-code";
     };
-    assert.equal(await init(io, dir, undefined, "", environment ? { SYNTHE_EVENT_CODE: "crimson-code" } : {}), true);
+    assert.equal(await init(io, dir, undefined, "", environment ? { SYNTHE_EVENT_CODE: "crimson-code", SYNTHE_TEAM_CODE: TEAM } : {}), true);
+    if (!environment) assert.deepEqual(asked, ["Paste your Crimson Hacks event code (on the QR card), or your own Anthropic key: ", "Paste your team code (on the card from the Synthe table, starts with crim-): "]);
     assert.equal(calls[0].model, "claude-haiku-5-5");
     assert.equal(calls[0].maxTokens, 5);
     assert.ok(calls.slice(1).some((call) => call.schema));
     assert.ok(calls.some((call) => call.system === PROMPT));
     const secrets = ran.filter((call) => call.args[0] === "secret");
-    assert.equal(secrets.length, 1);
+    assert.equal(secrets.length, 2);
     assert.deepEqual(secrets[0].args, ["secret", "set", "SYNTHE_EVENT_CODE", "--repo", "o/r"]);
     assert.equal(secrets[0].stdin, "crimson-code");
+    assert.deepEqual(secrets[1].args, ["secret", "set", "SYNTHE_TEAM_CODE", "--repo", "o/r"]);
+    assert.equal(secrets[1].stdin, TEAM);
+    assert.ok(!ran.some((call) => call.args.join(" ").includes(TEAM)), "the team code never goes in argv");
+    assert.ok(!readFileSync(join(dir, "synthe.json"), "utf8").includes(TEAM));
     assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).budget.max_usd, 4);
-    assert.match(said.join("\n"), /Saved your event code as the repo secret SYNTHE_EVENT_CODE/);
+    assert.match(said.join("\n"), /Saved your event code and team code as the repo secrets SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE/);
     assert.ok(!ran.some((call) => call.args.includes("SYNTHE_ANTHROPIC_KEY")));
   }
 });
@@ -454,8 +461,8 @@ test("a refused code changes nothing, including no draft, secret, or commit", as
   const message = "This event code is wrong. Check the QR card.";
   let calls = 0;
   io.proxy = () => ({ async ask(ask) { calls++; assert.equal(ask.maxTokens, 5); throw new CreditError(message); } });
-  io.askSecret = async () => "wrong";
-  assert.equal(await init(io, dir, undefined, "", { SYNTHE_EVENT_CODE: "wrong" }), false);
+  io.askSecret = async (question) => question.startsWith("Paste your team code") ? TEAM : "wrong";
+  assert.equal(await init(io, dir, undefined, "", { SYNTHE_EVENT_CODE: "wrong", SYNTHE_TEAM_CODE: TEAM }), false);
   assert.equal(calls, 3);
   for (const file of ["synthe.json", DRAFT_FILE, ".synthe/scenarios.jsonl", ".github/workflows/synthe.yml"]) assert.equal(existsSync(join(dir, file)), false);
   assert.ok(!ran.some((call) => ["secret", "add", "commit", "push"].includes(call.args[0])));
@@ -471,7 +478,7 @@ test("agent preparation never prompts or commits, shows notice and complete cali
     const calls: Ask[] = [];
     io.proxy = () => setupModel(calls);
     io.ask = io.askSecret = async () => { throw new Error("agent mode prompted"); };
-    const env = { SYNTHE_EVENT_CODE: "private-event-code" };
+    const env = { SYNTHE_EVENT_CODE: "private-event-code", SYNTHE_TEAM_CODE: TEAM };
     const before = execFileSync("git", ["diff", "--cached"], { cwd: dir, encoding: "utf8" });
     const options = agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Be clear", "--mode", keep ? "auto" : "review", "--message", "Real customer message"]);
     assert.equal(await init(io, dir, () => new Date("2026-11-06"), "", env, options), true);
@@ -482,6 +489,7 @@ test("agent preparation never prompts or commits, shows notice and complete cali
     assert.ok(!ran.some((call) => ["secret", "add", "commit", "push", "workflow"].includes(call.args[0])));
     const draftText = readFileSync(join(dir, DRAFT_FILE), "utf8");
     assert.ok(!draftText.includes(env.SYNTHE_EVENT_CODE));
+    assert.ok(!draftText.includes(TEAM));
     const draft = JSON.parse(draftText);
     assert.equal(draft.examples.length, 6);
     const output = said.join("\n");
@@ -503,6 +511,7 @@ test("agent preparation never prompts or commits, shows notice and complete cali
     assert.deepEqual(saved.checks, keep ? draft.goal.checks : ["The person's final check"]);
     assert.equal(saved.merge_rule.mode, keep ? "auto" : "propose");
     assert.equal(saved.budget.max_usd, 4);
+    assert.equal(ran.find((call) => call.args[2] === "SYNTHE_TEAM_CODE")!.stdin, TEAM);
     const staged = ran.find((call) => call.cmd === "git" && call.args[0] === "add")!;
     assert.deepEqual(staged.args, ["add", "synthe.json", ".synthe/scenarios.jsonl", ".github/workflows/synthe.yml"]);
     assert.ok(!ran.filter((call) => call.args[0] === "commit" || call.args[0] === "add").some((call) => call.args.includes(DRAFT_FILE)));
@@ -529,7 +538,9 @@ test("agent flags and credentials are required, with no guessing or stdin fallba
   io.ask = io.askSecret = async () => { throw new Error("stdin was read"); };
   const options = agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Improve", "--mode", "review"]);
   await assert.rejects(init(io, dir, undefined, "", {}, options), /SYNTHE_EVENT_CODE.*Ask the person; don't guess\./);
-  await assert.rejects(init(io, dir, undefined, "", { SYNTHE_EVENT_CODE: "event" }, { ...options!, prompt: "missing.md" }), /--prompt.*Ask the person; don't guess\./);
+  await assert.rejects(init(io, dir, undefined, "", { SYNTHE_EVENT_CODE: "event" }, options), /SYNTHE_TEAM_CODE.*Ask the person; don't guess\./);
+  await assert.rejects(init(io, dir, undefined, "", { SYNTHE_EVENT_CODE: "event", SYNTHE_TEAM_CODE: "not-a-code" }, options), /SYNTHE_TEAM_CODE.*Ask the person; don't guess\./);
+  await assert.rejects(init(io, dir, undefined, "", { SYNTHE_EVENT_CODE: "event", SYNTHE_TEAM_CODE: TEAM }, { ...options!, prompt: "missing.md" }), /--prompt.*Ask the person; don't guess\./);
 });
 
 test("agent missing GitHub CLI or login gives exactly one instruction", async () => {
@@ -568,6 +579,7 @@ test("upgrade from the 1.6.2 workflow adds event credit and OIDC to write and sc
   assert.match(message, /event credit works through the Synthe proxy; kept backup minute 17/);
   assert.equal(updated.match(/id-token: write/g)!.length, 3);
   assert.equal(updated.match(/event-code: \$\{\{ secrets.SYNTHE_EVENT_CODE \}\}/g)!.length, 2);
+  assert.equal(updated.match(/team-code: \$\{\{ secrets.SYNTHE_TEAM_CODE \}\}/g)!.length, 2);
   assert.equal(updated.split("  decide:\n")[1], old.split("  decide:\n")[1]);
   assert.match(updated, /cron: "17 \* \* \* \*"/);
   assert.match(upgrade(dir, readFileSync("templates/synthe.yml", "utf8")), /already up to date/);
@@ -602,7 +614,7 @@ test("a code refused during calibration or confirmation leaves setup files and s
       if (!duringConfirmation && ask.system) throw new CreditError("Credit ran out during setup.");
       return model.ask(ask);
     } });
-    const env = { SYNTHE_EVENT_CODE: "event-code" };
+    const env = { SYNTHE_EVENT_CODE: "event-code", SYNTHE_TEAM_CODE: TEAM };
     const options = agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Improve", "--mode", "auto"]);
     if (duringConfirmation) {
       await init(io, dir, undefined, "", env, options);

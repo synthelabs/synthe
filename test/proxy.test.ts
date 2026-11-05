@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { configuredModel, CreditError, eventModels, modelProblem, PROXY_URL, proxyModel } from "../src/model/client.ts";
+import { configuredModel, CreditError, eventModels, modelProblem, PROXY_URL, ProxyError, proxyModel } from "../src/model/client.ts";
 import { failureOf } from "../src/loop/failure.ts";
 import { runDecide } from "../src/loop/decide.ts";
 import { headline } from "../src/loop/report.ts";
@@ -83,7 +83,7 @@ test("proxy sends local install IDs, fresh Action OIDC, bounded requests, and ow
   await assert.rejects(local.ask({ ...ask, model: "claude-other" }), /your goal names claude-other/);
   await assert.rejects(local.ask({ ...ask, maxTokens: 16001 }), /at most 16000/);
   assert.throws(() => eventModels({ runner: "claude-other" }), /only supports/);
-  assert.equal(PROXY_URL, "https://synthe-share.vercel.app/api/claude");
+  assert.equal(PROXY_URL, "https://synthe-crimson.vercel.app/api/claude");
   for (const status of [402, 403]) {
     refused = status;
     const before = received.length;
@@ -95,6 +95,59 @@ test("proxy sends local install IDs, fresh Action OIDC, bounded requests, and ow
     });
     assert.equal(received.length, before + 1, "credit is never retried, even if the server requests retries");
   }
+});
+
+test("the team code rides on every proxy call, normalized, and a team refusal shows the server's words without retrying", async (context) => {
+  const received: any[] = [];
+  let refuse = false;
+  const words = "That team code isn't recognised. Check the card from the Synthe table.";
+  const server = createServer((request, response) => {
+    if (request.url?.startsWith("/oidc?")) return response.end(JSON.stringify({ value: "oidc" }));
+    request.resume();
+    request.on("end", () => {
+      received.push(request.headers);
+      response.setHeader("content-type", "application/json");
+      if (refuse) { response.statusCode = 403; return response.end(JSON.stringify({ type: "error", error: { type: "synthe_proxy_auth", message: words } })); }
+      response.end(JSON.stringify({ content: [{ type: "text", text: "OK" }], stop_reason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }));
+    });
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  context.after(() => server.close());
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const previous = { ...process.env };
+  context.after(() => { process.env = previous; });
+  const config = mkdtempSync(join(tmpdir(), "synthe-team-config-"));
+  context.after(() => rmSync(config, { recursive: true, force: true }));
+  Object.assign(process.env, { XDG_CONFIG_HOME: config, SYNTHE_PROXY_URL: `${base}/api/claude`, ACTIONS_ID_TOKEN_REQUEST_URL: `${base}/oidc?`, ACTIONS_ID_TOKEN_REQUEST_TOKEN: "github-token" });
+  const ask = { model: "claude-haiku-5-5", user: "hi", maxTokens: 5 };
+  await proxyModel("crimson", false, " CRIM-ABCD-EFGH-JKMN-PQRS ").ask(ask);
+  await configuredModel(undefined, "crimson", true, "crim-abcd-efgh-jkmn-pqrs").ask(ask);
+  await configuredModel(undefined, "crimson", true, "  ").ask(ask);
+  await configuredModel("sk-ant-own", "crimson", true, "crim-abcd-efgh-jkmn-pqrs").ask(ask).catch(() => undefined);
+  assert.equal(received[0]["x-synthe-team"], "crim-abcd-efgh-jkmn-pqrs");
+  assert.match(received[0]["x-synthe-install"], /^[0-9a-f-]{36}$/);
+  assert.equal(received[1]["x-synthe-team"], "crim-abcd-efgh-jkmn-pqrs");
+  assert.equal(received[1].authorization, "Bearer oidc");
+  assert.equal(received[1]["x-synthe-event"], "crimson");
+  assert.equal(received[2]["x-synthe-team"], undefined);
+  assert.equal(received.length, 3, "an own key never reaches the proxy");
+  refuse = true;
+  const before = received.length;
+  const message = `The Synthe proxy refused this request: ${words}`;
+  let failure;
+  await assert.rejects(proxyModel("crimson", true, "crim-abcd-efgh-jkmn-pqrs").ask(ask), (error: unknown) => {
+    assert.ok(error instanceof ProxyError);
+    assert.equal(error.status, 403);
+    assert.equal(modelProblem(error), message);
+    failure = failureOf("write", error);
+    assert.deepEqual(failure, { step: "write", kind: "key", message });
+    return true;
+  });
+  assert.equal(received.length, before + 1, "a team refusal is never retried");
+  const repo = new MemoryRepo("Old prompt.");
+  const record = await runDecide(goal(), repo, { candidates: null, scores: null, costUsd: null, error: failure });
+  assert.equal(record!.plain, message);
+  assert.doesNotMatch(repo.issue, /replace your Anthropic key/);
 });
 
 test("credit stops the chain persistently and reports the proxy message verbatim, then restart clears it", async () => {

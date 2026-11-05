@@ -4,6 +4,9 @@ import { costUsd } from "../core/cost.ts";
 import { oidcToken, PROXY_AUTH_MESSAGE } from "../core/share.ts";
 
 export const PROXY_URL = "https://synthe-crimson.vercel.app/api/claude";
+// Organizer-issued team codes, shaped like the server's TEAM_CODE (synthe-share lib/spend.ts). Normalized the same way.
+export const TEAM_CODE = /^crim(-[a-hjkmnp-z2-9]{4}){4}$/;
+export const normalizeTeamCode = (code: string) => code.trim().toLowerCase().replace(/\s+/g, "");
 export class CreditError extends Error {}
 export class ProxyError extends Error {
   status: number;
@@ -16,11 +19,13 @@ export function eventModels(models: Record<string, string>): void {
   }
 }
 
-export function proxyModel(eventCode: string, action = false): Model {
+export function proxyModel(eventCode: string, action = false, teamCode?: string): Model {
+  const team = teamCode ? normalizeTeamCode(teamCode) : "";
   const client = new Anthropic({ apiKey: "synthe-proxy", baseURL: process.env.SYNTHE_PROXY_URL || PROXY_URL, maxRetries: 2, logLevel: "off",
     fetch: async (url, init) => {
       const headers = new Headers(init?.headers);
       headers.set("x-synthe-event", eventCode);
+      if (team) headers.set("x-synthe-team", team);
       headers.set("x-api-key", "synthe-proxy");
       if (action) headers.set("Authorization", `Bearer ${await oidcToken("synthe-proxy")}`);
       else { headers.delete("Authorization"); headers.set("x-synthe-install", setupInstallId()); }
@@ -43,6 +48,8 @@ export function proxyModel(eventCode: string, action = false): Model {
     try { return await model.ask(ask); } catch (error) {
       const refused = error as { status?: number; error?: { error?: { type?: string; message?: string } } };
       if ((refused.status === 402 || refused.status === 403) && refused.error?.error?.type === "synthe_credit" && typeof refused.error.error.message === "string") throw new CreditError(refused.error.error.message);
+      // A missing, unknown or revoked team code, a wrong event code, or a repo linked to another team: the server's words.
+      if (refused.status === 403 && refused.error?.error?.type === "synthe_proxy_auth" && typeof refused.error.error.message === "string") throw new ProxyError(403, `The Synthe proxy refused this request: ${refused.error.error.message}`);
       if (refused.status === 401) {
         if (refused.error?.error?.type === "synthe_proxy_auth") throw new ProxyError(401, PROXY_AUTH_MESSAGE);
         throw new CreditError("Synthe's sponsored Anthropic key was rejected. Ask at the Synthe table; your workflow does not need upgrading. Once the organizer fixes it, run `npx synthe restart`.");
@@ -54,9 +61,9 @@ export function proxyModel(eventCode: string, action = false): Model {
   } };
 }
 
-export function configuredModel(key: string | undefined, eventCode: string | undefined, action = false): Model {
+export function configuredModel(key: string | undefined, eventCode: string | undefined, action = false, teamCode?: string): Model {
   if (key?.trim()) return anthropicModel(key.trim());
-  if (eventCode?.trim()) return proxyModel(eventCode.trim(), action);
+  if (eventCode?.trim()) return proxyModel(eventCode.trim(), action, teamCode?.trim() || undefined);
   throw new Error("No Anthropic key or event code is set. Set SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY.");
 }
 

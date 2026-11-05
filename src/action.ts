@@ -132,7 +132,7 @@ async function main() {
   const key = input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY;
   const eventCode = input("event-code") || process.env.SYNTHE_EVENT_CODE;
   if (!key && eventCode) eventModels(goal.models);
-  const model = configuredModel(key, eventCode, true);
+  const model = configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE);
 
   if (step === "write") {
     const written = await runWrite(goal, state, prompt, scenarios, model);

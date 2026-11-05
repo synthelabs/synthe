@@ -11,7 +11,7 @@ import { setKey } from "../src/cli/key.ts";
 import { restartState } from "../src/cli/restart.ts";
 import { newState, stopReason, type State } from "../src/core/state.ts";
 import { oidcToken, PROXY_AUTH_MESSAGE } from "../src/core/share.ts";
-import { anthropicModel, CreditError, modelProblem, proxyModel, type Ask } from "../src/model/client.ts";
+import { anthropicModel, CreditError, modelProblem, ProxyError, proxyModel, type Ask } from "../src/model/client.ts";
 import { failureOf } from "../src/loop/failure.ts";
 import { renderReport } from "../src/loop/report.ts";
 import { runDecide } from "../src/loop/decide.ts";
@@ -21,6 +21,8 @@ const prepare = agentOptions(["--agent", "--prompt", "prompt.md", "--objective",
 const confirmation = agentOptions(["--agent", "--confirm", "--keep-checks"]);
 const scenarios = JSON.stringify({ guardrails: ["Never lie"], policy: "", checks: [], scenarios: Array.from({ length: 30 }, (_, index) => ({ input: `question ${index}`, expected: "A useful reply" })) });
 const cheap = { model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 };
+const TEAM = "crim-abcd-efgh-jkmn-pqrs";
+const teamPrompt = (question: string) => question.startsWith("Paste your team code");
 
 function setup(context: { after: (fn: () => void) => void }) {
   const root = mkdtempSync(join(tmpdir(), "synthe-review-"));
@@ -53,7 +55,7 @@ test("review: event credential beats the app key in interactive and both agent s
     const { root, io, said, ran, calls } = setup(context);
     io.model = () => { throw new Error("The student's app key must not be charged"); };
     io.askSecret = async () => { throw new Error("Explicit event code must not prompt"); };
-    const env = { SYNTHE_EVENT_CODE: "crimson" };
+    const env = { SYNTHE_EVENT_CODE: "crimson", SYNTHE_TEAM_CODE: TEAM };
     assert.equal(await init(io, root, undefined, "sk-ant-app", env, agent ? prepare : undefined), true);
     assert.ok(calls.every((call) => call.proxy && call.key === "crimson"));
     assert.match(said.join("\n"), /Credential: Crimson Hacks event code, \$4 local run budget \(not a credit allowance\)/);
@@ -67,6 +69,7 @@ test("review: event credential beats the app key in interactive and both agent s
       assert.equal(await init(io, root, undefined, "sk-ant-app", env, confirmation), true);
     }
     assert.equal(ran.find((call) => call.args[0] === "secret")!.stdin, "crimson");
+    assert.equal(ran.find((call) => call.args[2] === "SYNTHE_TEAM_CODE")!.stdin, TEAM);
     assert.equal(JSON.parse(readFileSync(join(root, "synthe.json"), "utf8")).budget.max_usd, 4);
   }
 });
@@ -115,7 +118,7 @@ test("review: confirmation shares respect opt-outs, explicit choice, and draft d
 
 test("review: confirmation refuses a changed credential type without changing the draft", async (context) => {
   const { root, io, ran } = setup(context);
-  await init(io, root, undefined, "", { SYNTHE_EVENT_CODE: "crimson" }, prepare);
+  await init(io, root, undefined, "", { SYNTHE_EVENT_CODE: "crimson", SYNTHE_TEAM_CODE: TEAM }, prepare);
   const before = readFileSync(join(root, DRAFT_FILE), "utf8");
   await assert.rejects(init(io, root, undefined, "sk-ant-app", { SYNTHE_ANTHROPIC_KEY: "sk-ant-app" }, confirmation), /same credential type as step 1/);
   assert.equal(readFileSync(join(root, DRAFT_FILE), "utf8"), before);
@@ -124,7 +127,7 @@ test("review: confirmation refuses a changed credential type without changing th
 
 test("review: confirmation never falls back to the app key", async (context) => {
   const { root, io, calls, ran } = setup(context);
-  await init(io, root, undefined, "sk-ant-app", { SYNTHE_EVENT_CODE: "crimson" }, prepare);
+  await init(io, root, undefined, "sk-ant-app", { SYNTHE_EVENT_CODE: "crimson", SYNTHE_TEAM_CODE: TEAM }, prepare);
   const before = readFileSync(join(root, DRAFT_FILE), "utf8");
   const count = calls.length;
   await assert.rejects(init(io, root, undefined, "sk-ant-app", {}, confirmation), /agent setup never uses ANTHROPIC_API_KEY/);
@@ -136,7 +139,7 @@ test("review: confirmation never falls back to the app key", async (context) => 
 test("review: interactive setup never sends another provider's key", async (context) => {
   const { root, io, calls, said } = setup(context);
   const answers = ["sk-proj-private", "crimson"];
-  io.askSecret = async () => answers.shift()!;
+  io.askSecret = async (question) => teamPrompt(question) ? TEAM : answers.shift()!;
   assert.equal(await init(io, root, undefined, "", {}), true);
   assert.ok(calls.length > 0);
   assert.ok(calls.every((call) => call.key === "crimson" && call.proxy));
@@ -167,22 +170,48 @@ test("review: interactive bad codes retry before asking any setup questions", as
   const { root, io, said, calls } = setup(context);
   const ask = io.ask;
   let attempts = 0;
-  io.askSecret = async () => ++attempts === 1 ? "mistyped" : "crimson";
+  let teamAsks = 0;
+  io.askSecret = async (question) => teamPrompt(question) ? (teamAsks++, TEAM) : ++attempts === 1 ? "mistyped" : "crimson";
   const proxy = io.proxy!;
   io.proxy = (key) => key === "mistyped" ? { ask: async (request) => { assert.deepEqual(request, cheap); throw new CreditError("That event code is wrong."); } } : proxy(key);
   io.ask = async (question) => { assert.equal(attempts, 2); return ask(question); };
   assert.equal(await init(io, root, undefined, "", {}), true);
   assert.ok(said.includes("That event code is wrong."));
+  assert.equal(teamAsks, 1, "a typed team code is reused when only the event code was wrong");
   assert.ok(calls.every((call) => call.key === "crimson"));
   const failed = setup(context);
   failed.io.ask = async () => { throw new Error("Setup questions must wait"); };
-  failed.io.askSecret = async () => "wrong";
+  failed.io.askSecret = async (question) => teamPrompt(question) ? TEAM : "wrong";
   let failures = 0;
   failed.io.proxy = () => ({ ask: async () => { failures++; throw new CreditError("Wrong code"); } });
   assert.equal(await init(failed.io, failed.root, undefined, "", {}), false);
   assert.equal(failures, 3);
   assert.match(failed.said.at(-1)!, /^Nothing in your repo was changed/);
   assert.equal(failed.ran.some((call) => call.args[0] === "secret"), false);
+});
+
+test("review: team codes are checked for shape before any call, and a refused team code is asked again", async (context) => {
+  const { root, io, said, ran } = setup(context);
+  const typed = ["crim-1234", "crim-zzzz-zzzz-zzzz-zzzz", TEAM];
+  let events = 0;
+  io.askSecret = async (question) => teamPrompt(question) ? typed.shift()! : (events++, "crimson");
+  const proxy = io.proxy!;
+  const refusal = "The Synthe proxy refused this request: That team code isn't recognised. Check the card from the Synthe table.";
+  const tried: (string | undefined)[] = [];
+  io.proxy = (key, team) => { tried.push(team); return team === "crim-zzzz-zzzz-zzzz-zzzz" ? { ask: async () => { throw new ProxyError(403, refusal); } } : proxy(key, team); };
+  assert.equal(await init(io, root, undefined, "", {}), true);
+  assert.ok(said.includes("That doesn't look like a team code. It looks like crim-xxxx-xxxx-xxxx-xxxx."));
+  assert.ok(said.includes(refusal));
+  assert.ok(!tried.includes("crim-1234"), "a malformed team code is never sent");
+  assert.equal(typed.length, 0);
+  assert.equal(events, 2);
+  assert.equal(ran.find((call) => call.args[2] === "SYNTHE_TEAM_CODE")!.stdin, TEAM);
+  const env = setup(context);
+  env.io.askSecret = async (question) => teamPrompt(question) ? TEAM : "crimson";
+  const envProxy = env.io.proxy!;
+  env.io.proxy = (key, team) => team === "crim-zzzz-zzzz-zzzz-zzzz" ? { ask: async () => { throw new ProxyError(403, refusal); } } : envProxy(key, team);
+  assert.equal(await init(env.io, env.root, undefined, "", { SYNTHE_EVENT_CODE: "crimson", SYNTHE_TEAM_CODE: "crim-zzzz-zzzz-zzzz-zzzz" }), true);
+  assert.equal(env.ran.find((call) => call.args[2] === "SYNTHE_TEAM_CODE")!.stdin, TEAM, "a refused env team code is replaced by the typed one");
 });
 
 function keyIo(state: State, maxUsd = 4) {
@@ -300,7 +329,7 @@ test("review: credit report always includes the own-key next step, even for a te
   const repo = new MemoryRepo("Old prompt.");
   await runDecide(goal(), repo, { candidates: null, scores: null, costUsd: null, error: failureOf("write", new CreditError("Credit exhausted.")) });
   assert.match(repo.issue, /To use your own Anthropic key, run `npx synthe key`, then `npx synthe restart`/);
-  assert.match(repo.issue, /delete the `SYNTHE_ANTHROPIC_KEY` and `SYNTHE_EVENT_CODE` secrets/);
+  assert.match(repo.issue, /delete the `SYNTHE_ANTHROPIC_KEY`, `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE` secrets/);
 });
 
 test("review: Anthropic key failures direct people to synthe key", () => {

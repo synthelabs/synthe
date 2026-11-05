@@ -24,16 +24,16 @@ gh auth status
 
 ## 2. Credit
 
-1. Ask the person for the Crimson Hacks event code from the QR card. Or they can use their own Anthropic key (it starts with `sk-ant-`).
+1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the card the Synthe table gave their team (it starts with `crim-`). Event credit needs both. Or they can use their own Anthropic key (it starts with `sk-ant-`) and skip both codes.
 2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person's own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):
 
 ```
-SYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent ...
+SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent ...
 ```
 
 3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.
 
-Agent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app's key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.
+Agent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app's key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.
 
 ## 3. Find the system prompt
 
@@ -53,10 +53,10 @@ Agent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE`. Both dr
 Run this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.
 
 ```
-SYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"
+SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"
 ```
 
-With an own key, use `SYNTHE_ANTHROPIC_KEY=<key>` in place of `SYNTHE_EVENT_CODE=<code>`, here and in step 7.
+With an own key, use `SYNTHE_ANTHROPIC_KEY=<key>` in place of `SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code>`, here and in step 7.
 
 Use `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.
 
@@ -80,13 +80,13 @@ Follow the `NEXT:` line that step 1 printed.
 Run this with one `--check` per check the person kept, using their final wording:
 
 ```
-SYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --confirm --check "<final sentence>" --check "<final sentence>"
+SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --confirm --check "<final sentence>" --check "<final sentence>"
 ```
 
 If the person accepted every proposed check as it is, run this instead:
 
 ```
-SYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --confirm --keep-checks
+SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --confirm --keep-checks
 ```
 
 Add `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft's sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don't confirm twice.
