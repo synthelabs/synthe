@@ -1,7 +1,7 @@
 import type { Goal, Scenario } from "../core/goal.ts";
 import type { State } from "../core/state.ts";
 import { sumCosts } from "../core/cost.ts";
-import { sha256 } from "../core/safety.ts";
+import { promptPathProblem, sha256 } from "../core/safety.ts";
 import { candidateFingerprint, candidateScope, validateCandidateMemory } from "../core/candidate-history.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
 
@@ -22,10 +22,10 @@ export interface Edit { find: string; replace: string }
 // Words that name the test itself: a prompt only needs them to talk to whoever judges its replies. An edit may not
 // add them, since the agent is being tested and a prompt that addresses the test is gaming it. Everyday words such as
 // score, grading or evaluation aren't here: live, they blocked about one honest edit in three for a tutor bot.
-const JUDGING = /\b(judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?|held[- ]back)\b/gi;
+const JUDGING = /\b(judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?|held[- ]back|counter[_ -]checks?|guard checks?|attack cases?|evidence files?)\b/gi;
 // A legal bot's prompt talks about judges: a word family the prompt, goal or policy already uses is the agent's own
 // subject, so only judging words from other families count.
-const FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark)\w*/gi;
+const FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark|counter[_ -]check|guard check|attack case|evidence file)\w*/gi;
 const family = (w: string) => w.toLowerCase().slice(0, 4);
 const ownFamilies = (known: string) => new Set((known.match(FAMILY) ?? []).map(family));
 const judgingWords = (t: string, own: Set<string>) => (t.match(JUDGING) ?? []).filter((w) => !own.has(family(w)));
@@ -93,12 +93,15 @@ ${cases.join("\n")}
 }
 
 export async function runWrite(goal: Goal, state: State, prompt: string, scenarios: Scenario[], model: Model): Promise<Written> {
+  const protectedPath = promptPathProblem(goal.prompt.path) ?? (goal.prompt.path === goal.scenarios ? "the prompt is the scenario file" : null);
+  if (protectedPath) return { candidates: [], costUsd: 0, rejected: [protectedPath] };
   // Held-back scenarios stay out of this: the writer must never see what it is finally judged on.
   const train = scenarios.filter((s) => s.split === "train");
   const lessons = lessonText(state, prompt, train);
   const scope = candidateScope(goal, prompt);
   const tried = new Set(validateCandidateMemory(state.candidateHistory ?? []).filter((entry) => entry.scope === scope).map((entry) => entry.fingerprint));
-  const history = tried.size ? `${tried.size} candidate texts were already attempted for this goal and prompt. Repeated text will be rejected before scoring. Try a different instruction.` : "None yet.";
+  const roundOutcomes = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}.`).join("\n");
+  const history = [tried.size ? `${tried.size} candidate texts were already attempted for this goal and prompt. Repeated text will be rejected before scoring. Try a different instruction.` : "", roundOutcomes].filter(Boolean).join("\n") || "None yet.";
   // Ideas from recent rounds that didn't win, so each round tries something new instead of paying for a repeat.
   // These are the writer's own one-line summaries of its earlier edits, never candidate texts or customer data.
   const triedSummaries = [...new Set(state.rounds.slice(-5).flatMap((r) => (r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary))))];

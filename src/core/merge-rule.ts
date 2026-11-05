@@ -3,7 +3,8 @@ import type { Goal } from "./goal.ts";
 // One scenario's result. A null score means it could not be measured.
 // reply is kept only for the current prompt's training rows, so the next writer can study what went wrong.
 // failed and applicable count the team's checks on this reply; failedChecks names them for the next writer.
-export interface ScoreRow { id: string; score: number | null; violation: boolean | null; reply?: string; failed?: number; applicable?: number; failedChecks?: string[] }
+// guardFailed and guardApplicable count the team's guards the same way. Guards are measured, never used to score.
+export interface ScoreRow { id: string; score: number | null; violation: boolean | null; reply?: string; failed?: number; applicable?: number; failedChecks?: string[]; guardFailed?: number; guardApplicable?: number }
 
 // The share of the team's checks the replies passed, as a whole percentage, or null when no check applied or a reply
 // wasn't checked. The same rows must be compared on both sides.
@@ -11,6 +12,22 @@ export function checkRate(rows: ScoreRow[]): number | null {
   if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
   const applicable = rows.reduce((n, r) => n + r.applicable!, 0);
   return applicable === 0 ? null : Math.round((100 * (applicable - rows.reduce((n, r) => n + r.failed!, 0))) / applicable);
+}
+
+// The same measure for the team's guards: the share they passed, or null when none applied or a reply wasn't checked.
+export function guardRate(rows: ScoreRow[], rounded = true): number | null {
+  if (rows.length === 0 || new Set(rows.map((r) => r.id)).size !== rows.length || rows.some((r) => !Number.isSafeInteger(r.guardApplicable) || !Number.isSafeInteger(r.guardFailed) || r.guardApplicable! < 0 || r.guardFailed! < 0 || r.guardFailed! > r.guardApplicable!)) return null;
+  const applicable = rows.reduce((n, r) => n + r.guardApplicable!, 0);
+  if (applicable === 0) return null;
+  const rate = (100 * (applicable - rows.reduce((n, r) => n + r.guardFailed!, 0))) / applicable;
+  return rounded ? Math.round(rate) : rate;
+}
+
+// "Your guards held at 94%, down from 96%." in the report, wherever guard numbers are shown.
+export function guardSentence(g: { before: number; after: number }): string {
+  if (g.after > g.before) return `Your guards improved from ${g.before}% to ${g.after}%.`;
+  if (g.after === g.before) return `Your guards held at ${g.after}%.`;
+  return `Your guards held at ${g.after}%, down from ${g.before}%.`;
 }
 
 export interface CandidateScore { id: string; train: ScoreRow[]; holdout?: ScoreRow[] }
@@ -27,7 +44,7 @@ export interface RoundScores {
 // reasons are technical, for logs and receipts. plain and notes say the same for the team, in everyday words:
 // plain explains the decision, notes says what happened to each candidate.
 export type Verdict =
-  | { action: "merge"; candidateId: string; before: number; after: number; heldBefore: number; heldAfter: number; wins: number; losses: number; heldWins: number; heldLosses: number; checks?: { before: number; after: number }; reasons: string[]; plain: string; notes: Record<string, string> }
+  | { action: "merge"; candidateId: string; before: number; after: number; heldBefore: number; heldAfter: number; wins: number; losses: number; heldWins: number; heldLosses: number; checks?: { before: number; after: number }; guards?: { before: number; after: number }; reasons: string[]; plain: string; notes: Record<string, string> }
   | { action: "revert"; reasons: string[]; plain: string; notes: Record<string, string> }
   | { action: "skip"; reasons: string[]; notes: Record<string, string> };
 
@@ -151,12 +168,35 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
       notes[c.id] = `Broke one of your rules in ${cases(added)} where your current prompt follows it, so it wasn't used.`;
       continue;
     }
+    // Guards catch a change that wins the checks by gaming them. They only measure, so they can refuse a merge but
+    // never pick a winner. Same rows on both sides, like the checks.
+    const currentHeld = scores.baselineHoldout.filter((r) => c.holdout!.some((h) => h.id === r.id));
+    const guardBefore = guardRate([...scores.baselineTrain, ...currentHeld]);
+    const guardAfter = guardRate([...c.train, ...c.holdout]);
+    if (goal.counter_checks?.length) {
+      if (guardBefore === null || guardAfter === null) {
+        reasons.push(`${c.id}: guard verdicts missing`);
+        notes[c.id] = "Your guards couldn't be checked on its replies, so it wasn't used.";
+        continue;
+      }
+      const exactBefore = guardRate([...scores.baselineTrain, ...currentHeld], false)!;
+      const exactAfter = guardRate([...c.train, ...c.holdout], false)!;
+      if (exactBefore - exactAfter > goal.merge_rule.guard_margin) {
+        // The reason reports the same unrounded drop the decision used, to one decimal when it isn't
+        // whole: a drop of 3.2 against a margin of 3 must not read as "a drop of 3 where 3 is allowed".
+        const drop = exactBefore - exactAfter;
+        const dropText = Number.isInteger(drop) ? `${drop}` : drop.toFixed(1);
+        reasons.push(`${c.id}: guards passed ${guardAfter}% against ${guardBefore}% for the current prompt, a drop of ${dropText} points where ${goal.merge_rule.guard_margin} is allowed`);
+        notes[c.id] = `Its replies looked better, but they pass your guards less often (${guardAfter}% against ${guardBefore}%), which can mean it is gaming your checks, so it wasn't used.`;
+        continue;
+      }
+    }
+    const guards = goal.counter_checks?.length ? { before: guardBefore!, after: guardAfter! } : undefined;
     const stillBroken = breaks(c.train) + breaks(c.holdout);
     const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout!.some((h) => h.id === r.id)));
     notes[c.id] = "Also looked better, but another change did better still.";
     if (best === null || after > best.after) {
       // The team's own number first, when they set checks: it is what they asked Synthe to improve.
-      const currentHeld = scores.baselineHoldout.filter((r) => c.holdout!.some((h) => h.id === r.id));
       const rateBefore = checkRate([...scores.baselineTrain, ...currentHeld]);
       const rateAfter = checkRate([...c.train, ...c.holdout]);
       const rates = rateBefore !== null && rateAfter !== null ? { before: rateBefore, after: rateAfter } : undefined;
@@ -164,10 +204,11 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
       const rules = wasBroken > 0
         ? stillBroken > 0 ? ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in ${stillBroken}.` : ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in none.`
         : " It follows your rules in every test case.";
+      const guardLine = guards ? ` ${guardSentence(guards)}` : "";
       best = {
         action: "merge", candidateId: c.id, before, after, heldBefore: beforeHoldout, heldAfter: held, wins: split.wins, losses: split.losses,
-        heldWins: heldSplit.w, heldLosses: heldSplit.l, notes, ...(rates ? { checks: rates } : {}),
-        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}`,
+        heldWins: heldSplit.w, heldLosses: heldSplit.l, notes, ...(rates ? { checks: rates } : {}), ...(guards ? { guards } : {}),
+        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}${guardLine}`,
         reasons: [`judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`],
       };
     }

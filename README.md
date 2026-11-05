@@ -63,8 +63,16 @@ Local `try` saves only candidate fingerprints in `.synthe-local/try-history.json
 
 ## Change what it aims for
 
-- `synthe.json`: `checks` (up to 5 plain sentences, each something a good reply does, such as "Asks for the order number before anything else"; these decide every test case), `brief` (what your agent is for), `objective` (what to get better at), `guardrails` (rules it must never break), `policy` (your business rules, which setup copies from your prompt so the judge knows what's allowed), `budget`, and `"merge_rule": { "mode": "propose" }` to review every change.
+- `synthe.json`: `checks` (up to 5 plain sentences, each something a good reply does, such as "Asks for the order number before anything else"; these decide every test case), `counter_checks` (optional guards, up to 5 sentences, usually one per check, each catching a way to pass a check without really helping, such as "Still answers the question fully" for "Stays under three sentences"; a change that passes the guards clearly less often isn't merged, `merge_rule.guard_margin` sets how many points less is allowed, 3 by default. Guards are marked by the same kind of AI as checks. They reduce gaming but do not remove it.), `brief` (what your agent is for), `objective` (what to get better at), `guardrails` (rules it must never break), `policy` (your business rules, which setup copies from your prompt so the judge knows what's allowed), `budget`, and `"merge_rule": { "mode": "propose" }` to review every change.
 - `.synthe/scenarios.jsonl`: the test cases, one per line, such as `{"id": "s31", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}`. `split` is `train` (Synthe learns from it) or `holdout` (kept hidden to check its changes). After adding cases to a finished run, `npx synthe restart` starts it again.
+
+### Guard checks (experimental)
+
+Guards are off by default in `init`. Their live impact and added cost have not been measured. Setup asks whether you want to opt in before proposing them. You can also add `counter_checks` yourself. Old goal files work without this field and make no guard calls. A missing or malformed guard mark, or no applicable marks, blocks a guarded merge. Guards measure the share of applicable checks passed over matching training and hidden case IDs; they never choose which reply wins. The writer does not receive the guards, attacks or evidence files.
+
+`npx synthe try --noise` uses independent replies and independent marks from training cases only. Identical reply text is not compared against itself by the duel judge. Different replies are judged in both orders; disagreement is inconclusive unless the team's checks decide the case. The report shows the absolute guard pass-rate spread, or an inconclusive result with fallback `guard_margin: 3`. This is one sample, not a calibrated safety bound, and it never changes your settings or the merge thresholds. Zero observed spread does not establish steadiness.
+
+Default-on guards still need a live fixture reviewed by a person: block at least one gamed win, block no clearly good candidate over three rounds, and add at most 20% to round cost. Fake tests do not pass that gate. Guards use the same kind of AI as checks; they reduce gaming, not remove it.
 
 ## Removing it
 

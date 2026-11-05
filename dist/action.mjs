@@ -28055,7 +28055,7 @@ var GOAL_FILE = "synthe.json";
 var MAX_CHECKS = 5;
 var DEFAULTS = {
   models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5", checker: "claude-sonnet-5-5" },
-  merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3 },
+  merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
   budget: { max_usd: 3 }
 };
 function parseGoal(text) {
@@ -28073,10 +28073,29 @@ function parseGoal(text) {
   if (g.checks !== void 0 && (!Array.isArray(g.checks) || g.checks.length > MAX_CHECKS || g.checks.some((c) => typeof c !== "string" || !c.trim() || c.length > 300))) {
     bad(`checks must be a list of up to ${MAX_CHECKS} sentences`);
   }
+  if (g.counter_checks !== void 0) {
+    const list = g.counter_checks;
+    if (!Array.isArray(list) || list.length > MAX_CHECKS || list.some((c) => typeof c !== "string" || !c.trim() || c.length > 300)) {
+      bad(`counter_checks must be a list of up to ${MAX_CHECKS} sentences`);
+    }
+    const own = new Set((g.checks ?? []).map((c) => c.trim().toLowerCase()));
+    const same = list.find((c) => own.has(c.trim().toLowerCase()));
+    if (same !== void 0) bad(`counter_checks repeats a check ("${same.slice(0, 60)}"); a guard should catch a reply that games that check, not restate it`);
+    const seen = /* @__PURE__ */ new Set();
+    const dup = list.find((c) => {
+      const key = c.trim().toLowerCase();
+      if (seen.has(key)) return true;
+      seen.add(key);
+      return false;
+    });
+    if (dup !== void 0) bad(`counter_checks lists the same guard twice ("${dup.slice(0, 60)}"); each guard should appear once`);
+  }
   if (g.share !== void 0 && !["none", "numbers", "detail", "full"].includes(g.share)) bad("share must be none, numbers, detail or full");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
+  const margin = g.merge_rule?.guard_margin;
+  if (margin !== void 0 && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad("merge_rule.guard_margin must be 0 or more");
   return {
     ...g,
     guardrails: g.guardrails ?? [],
@@ -28209,6 +28228,8 @@ import { createHash } from "node:crypto";
 var sha256 = (text) => createHash("sha256").update(text).digest("hex");
 var MAX_PROMPT_CHARS = 2e4;
 var SENSITIVE_PATHS = [
+  /(^|\/)\.synthe\//,
+  /(^|\/)synthe\.json$/,
   /^\.github\//,
   /^\.gitlab-ci\.yml$/,
   /^\.circleci\//,
@@ -28474,6 +28495,18 @@ function checkRate(rows) {
   const applicable = rows.reduce((n, r) => n + r.applicable, 0);
   return applicable === 0 ? null : Math.round(100 * (applicable - rows.reduce((n, r) => n + r.failed, 0)) / applicable);
 }
+function guardRate(rows, rounded = true) {
+  if (rows.length === 0 || new Set(rows.map((r) => r.id)).size !== rows.length || rows.some((r) => !Number.isSafeInteger(r.guardApplicable) || !Number.isSafeInteger(r.guardFailed) || r.guardApplicable < 0 || r.guardFailed < 0 || r.guardFailed > r.guardApplicable)) return null;
+  const applicable = rows.reduce((n, r) => n + r.guardApplicable, 0);
+  if (applicable === 0) return null;
+  const rate = 100 * (applicable - rows.reduce((n, r) => n + r.guardFailed, 0)) / applicable;
+  return rounded ? Math.round(rate) : rate;
+}
+function guardSentence(g) {
+  if (g.after > g.before) return `Your guards improved from ${g.before}% to ${g.after}%.`;
+  if (g.after === g.before) return `Your guards held at ${g.after}%.`;
+  return `Your guards held at ${g.after}%, down from ${g.before}%.`;
+}
 var cases = (n) => `${n} case${n === 1 ? "" : "s"}`;
 function tally(rows, current) {
   const split = paired(rows, current);
@@ -28586,16 +28619,36 @@ function judgeRound(scores, goal, replaced) {
       notes[c.id] = `Broke one of your rules in ${cases(added)} where your current prompt follows it, so it wasn't used.`;
       continue;
     }
+    const currentHeld = scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id));
+    const guardBefore = guardRate([...scores.baselineTrain, ...currentHeld]);
+    const guardAfter = guardRate([...c.train, ...c.holdout]);
+    if (goal.counter_checks?.length) {
+      if (guardBefore === null || guardAfter === null) {
+        reasons.push(`${c.id}: guard verdicts missing`);
+        notes[c.id] = "Your guards couldn't be checked on its replies, so it wasn't used.";
+        continue;
+      }
+      const exactBefore = guardRate([...scores.baselineTrain, ...currentHeld], false);
+      const exactAfter = guardRate([...c.train, ...c.holdout], false);
+      if (exactBefore - exactAfter > goal.merge_rule.guard_margin) {
+        const drop = exactBefore - exactAfter;
+        const dropText = Number.isInteger(drop) ? `${drop}` : drop.toFixed(1);
+        reasons.push(`${c.id}: guards passed ${guardAfter}% against ${guardBefore}% for the current prompt, a drop of ${dropText} points where ${goal.merge_rule.guard_margin} is allowed`);
+        notes[c.id] = `Its replies looked better, but they pass your guards less often (${guardAfter}% against ${guardBefore}%), which can mean it is gaming your checks, so it wasn't used.`;
+        continue;
+      }
+    }
+    const guards = goal.counter_checks?.length ? { before: guardBefore, after: guardAfter } : void 0;
     const stillBroken = breaks(c.train) + breaks(c.holdout);
     const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id)));
     notes[c.id] = "Also looked better, but another change did better still.";
     if (best === null || after > best.after) {
-      const currentHeld = scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id));
       const rateBefore = checkRate([...scores.baselineTrain, ...currentHeld]);
       const rateAfter = checkRate([...c.train, ...c.holdout]);
       const rates = rateBefore !== null && rateAfter !== null ? { before: rateBefore, after: rateAfter } : void 0;
       const lead = rates ? `Your checks passed ${rates.after}% of the time, up from ${rates.before}%. ` : "";
       const rules = wasBroken > 0 ? stillBroken > 0 ? ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in ${stillBroken}.` : ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in none.` : " It follows your rules in every test case.";
+      const guardLine = guards ? ` ${guardSentence(guards)}` : "";
       best = {
         action: "merge",
         candidateId: c.id,
@@ -28609,7 +28662,8 @@ function judgeRound(scores, goal, replaced) {
         heldLosses: heldSplit.l,
         notes,
         ...rates ? { checks: rates } : {},
-        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}`,
+        ...guards ? { guards } : {},
+        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}${guardLine}`,
         reasons: [`judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
       };
     }
@@ -28748,6 +28802,8 @@ function headline(goal, state, stoppedByTeam = false) {
   const merged = state.rounds.filter((r) => r.outcome === "merged").length;
   const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
   const gain = rated.length ? `Your checks now pass ${rated.at(-1).checks.after}% of the time, up from ${rated[0].checks.before}%. ` : "";
+  const guarded = state.rounds.filter((r) => r.outcome === "merged" && r.guards);
+  const guardLine = guarded.length ? `${guardSentence({ before: guarded[0].guards.before, after: guarded.at(-1).guards.after })} ` : "";
   const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;
   if (state.proposal) {
     return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
@@ -28757,11 +28813,11 @@ function headline(goal, state, stoppedByTeam = false) {
     return { title: "Synthe needs you to fix something", summary: `${last.plain} ${spent}` };
   }
   if (!state.stopped && stoppedByTeam) {
-    return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
+    return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}${guardLine}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
     const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
-    return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
+    return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}${guardLine}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
@@ -28775,7 +28831,7 @@ function headline(goal, state, stoppedByTeam = false) {
     if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, get a new key from the Synthe table." };
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
-  return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
+  return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
 }
 function nextSteps(goal, state) {
   const merged = state.rounds.some((r) => r.outcome === "merged" || r.outcome === "reverted");
@@ -28903,8 +28959,8 @@ var ANGLES = [
 ];
 var MAX_EDITS = 2;
 var MAX_EDIT_CHARS = 1500;
-var JUDGING = /\b(judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?|held[- ]back)\b/gi;
-var FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark)\w*/gi;
+var JUDGING = /\b(judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?|held[- ]back|counter[_ -]checks?|guard checks?|attack cases?|evidence files?)\b/gi;
+var FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark|counter[_ -]check|guard check|attack case|evidence file)\w*/gi;
 var family = (w) => w.toLowerCase().slice(0, 4);
 var ownFamilies = (known) => new Set((known.match(FAMILY) ?? []).map(family));
 var judgingWords = (t, own) => (t.match(JUDGING) ?? []).filter((w) => !own.has(family(w)));
@@ -28970,11 +29026,14 @@ ${cases2.join("\n")}
 `;
 }
 async function runWrite(goal, state, prompt, scenarios, model) {
+  const protectedPath = promptPathProblem(goal.prompt.path) ?? (goal.prompt.path === goal.scenarios ? "the prompt is the scenario file" : null);
+  if (protectedPath) return { candidates: [], costUsd: 0, rejected: [protectedPath] };
   const train = scenarios.filter((s) => s.split === "train");
   const lessons = lessonText(state, prompt, train);
   const scope = candidateScope(goal, prompt);
   const tried = new Set(validateCandidateMemory(state.candidateHistory ?? []).filter((entry) => entry.scope === scope).map((entry) => entry.fingerprint));
-  const history = tried.size ? `${tried.size} candidate texts were already attempted for this goal and prompt. Repeated text will be rejected before scoring. Try a different instruction.` : "None yet.";
+  const roundOutcomes = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}.`).join("\n");
+  const history = [tried.size ? `${tried.size} candidate texts were already attempted for this goal and prompt. Repeated text will be rejected before scoring. Try a different instruction.` : "", roundOutcomes].filter(Boolean).join("\n") || "None yet.";
   const triedSummaries = [...new Set(state.rounds.slice(-5).flatMap((r) => r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary)))];
   const notAgain = triedSummaries.length ? `
 Already tried in earlier rounds without winning; don't propose these again:
@@ -29088,8 +29147,8 @@ Business policy (what the agent may and may not offer):
 ${goal.policy.trim().slice(0, 4e3)}` : ""
 ].join("");
 var squash = (t) => t.replace(/\s+/g, " ").trim().toLowerCase();
-async function askChecks(goal, model, s, text) {
-  const checks = goal.checks?.filter((c) => c.trim()) ?? [];
+async function askChecks(goal, model, s, text, list) {
+  const checks = (list ?? goal.checks ?? []).filter((c) => c.trim());
   const judged = await askJson(model, {
     model: goal.models.judge,
     maxTokens: 800,
@@ -29108,11 +29167,11 @@ ${checks.map((c, i) => `${i + 1}. ${c}`).join("\n")}
 For every check, by its number: does it apply to this message at all, and if it applies, does this reply pass it? Be strict: pass a check only when the reply clearly does what it says.`
   });
   const rows = judged.value?.results;
-  if (!Array.isArray(rows) || rows.length !== checks.length || checks.some((_, i) => rows.filter((r) => r.check === i + 1).length !== 1)) return { verdicts: null, costUsd: judged.costUsd };
+  if (!Array.isArray(rows) || rows.some((r) => !r || typeof r.applies !== "boolean" || typeof r.passes !== "boolean") || rows.length !== checks.length || checks.some((_, i) => rows.filter((r) => r.check === i + 1).length !== 1)) return { verdicts: null, costUsd: judged.costUsd };
   const by = new Map(rows.map((r) => [r.check, r]));
   return { verdicts: checks.map((_, i) => ({ applies: by.get(i + 1).applies === true, passes: by.get(i + 1).passes === true })), costUsd: judged.costUsd };
 }
-function scorer(goal, model, random = Math.random) {
+function scorer(goal, model, random = Math.random, noise = false) {
   const costs = [];
   const cut = /* @__PURE__ */ new Set();
   let cutOff = 0;
@@ -29126,6 +29185,7 @@ function scorer(goal, model, random = Math.random) {
     return r.text;
   };
   const duel = async (s, first, current, challenger) => {
+    if (noise && current === challenger) return { row: { id: s.id, score: TIE, violation: null, reply: challenger.slice(0, REPLY_KEPT) }, currentViolation: null, full: challenger };
     const [a, b] = first ? [challenger, current] : [current, challenger];
     const cutNote = cut.has(a) || cut.has(b) ? `
 A reply may stop mid-sentence because it hit the agent's length limit. Judge what it says up to that point, and don't mark it down just for being cut off.
@@ -29167,7 +29227,12 @@ Which reply better meets the goal for this situation? Answer "A" or "B", or "tie
       const current = currentReplies.get(s.id) ?? null;
       const mine = await reply(prompt, s);
       if (current === null || mine === null) return { row: { id: s.id, score: null, violation: null }, currentViolation: null };
-      return decideByChecks(s, await duel(s, set.indexOf(s) % 2 === 0 !== flip, current, mine), current, mine);
+      const judged = await duel(s, set.indexOf(s) % 2 === 0 !== flip, current, mine);
+      if (noise && current !== mine) {
+        const swapped = await duel(s, set.indexOf(s) % 2 === 0 === flip, current, mine);
+        if (judged.row.score !== swapped.row.score) judged.row.score = null;
+      }
+      return measureGuards(s, await decideByChecks(s, judged, current, mine), current, mine);
     });
   };
   const repliesFor = async (prompt, set) => new Map(await pool(set, CONCURRENCY, async (s) => [s.id, await reply(prompt, s)]));
@@ -29195,22 +29260,32 @@ Does this reply clearly break one of the guardrails? The business policy and the
     return v.breaks && typeof v.quote === "string" && squash(v.quote).length >= 8 && squash(text).includes(squash(v.quote));
   };
   const checks = goal.checks?.filter((c) => c.trim()) ?? [];
+  const guards = goal.counter_checks?.filter((c) => c.trim()) ?? [];
   const checkedReplies = /* @__PURE__ */ new Map();
-  const checkReply = (s, text) => {
-    const key = `${s.id}\0${text}`;
+  const checkReply = (s, text, kind = "checks", sample = "") => {
+    const list = kind === "guards" ? guards : checks;
+    const key = JSON.stringify([s.id, text, kind, noise ? sample : ""]);
     if (!checkedReplies.has(key)) checkedReplies.set(key, (async () => {
-      const { verdicts, costUsd: costUsd2 } = await askChecks(goal, model, s, text);
+      const { verdicts, costUsd: costUsd2 } = await askChecks(goal, model, s, text, kind === "guards" ? guards : void 0);
       costs.push(costUsd2);
       if (!verdicts) return null;
-      const failedChecks = verdicts.flatMap((v, i) => v.applies && !v.passes ? [checks[i]] : []);
+      const failedChecks = verdicts.flatMap((v, i) => v.applies && !v.passes ? [list[i]] : []);
       return { failed: failedChecks.length, applicable: verdicts.filter((v) => v.applies).length, failedChecks };
     })());
     return checkedReplies.get(key);
   };
+  const measureGuards = async (s, judged, current, challenger) => {
+    if (guards.length === 0) return judged;
+    const [mine, theirs] = await Promise.all([checkReply(s, challenger, "guards", "second"), checkReply(s, current, "guards", "first")]);
+    judged.currentGuards = theirs;
+    if (mine) Object.assign(judged.row, { guardFailed: mine.failed, guardApplicable: mine.applicable });
+    return judged;
+  };
   const decideByChecks = async (s, judged, current, challenger) => {
     if (checks.length === 0) return judged;
-    const [mine, theirs] = await Promise.all([checkReply(s, challenger), checkReply(s, current)]);
+    const [mine, theirs] = await Promise.all([checkReply(s, challenger, "checks", "second"), checkReply(s, current, "checks", "first")]);
     judged.currentChecks = theirs;
+    if (noise && (!mine || !theirs)) judged.row.score = null;
     if (!mine) return judged;
     Object.assign(judged.row, { failed: mine.failed, applicable: mine.applicable });
     if (theirs && mine.failed !== theirs.failed) judged.row.score = mine.failed < theirs.failed ? WIN : LOSS;
@@ -29224,12 +29299,14 @@ function currentRows(set, replies, duels) {
     if (text === null) return { id: s.id, score: null, violation: null };
     const flags = duels.map((d) => d[i]?.currentViolation).filter((f) => typeof f === "boolean");
     const checked = duels.map((d) => d[i]?.currentChecks).find((c) => Boolean(c));
+    const guarded = duels.map((d) => d[i]?.currentGuards).find((c) => Boolean(c));
     return {
       id: s.id,
       score: EVEN,
       violation: flags.length ? flags.some(Boolean) : null,
       reply: text.slice(0, REPLY_KEPT),
-      ...checked ? { failed: checked.failed, applicable: checked.applicable, ...checked.failedChecks.length ? { failedChecks: checked.failedChecks } : {} } : {}
+      ...checked ? { failed: checked.failed, applicable: checked.applicable, ...checked.failedChecks.length ? { failedChecks: checked.failedChecks } : {} } : {},
+      ...guarded ? { guardFailed: guarded.failed, guardApplicable: guarded.applicable } : {}
     };
   });
 }
@@ -29311,6 +29388,13 @@ function explainScores(scores, scenarios, samples = 3) {
   };
   if (scores.baselineTrain.some((r) => typeof r.applicable === "number")) {
     lines.push(`checks passed on learned-from cases: current ${rate(scores.baselineTrain)}${scores.candidates.map((c) => `, ${c.id} ${rate(c.train)}`).join("")}`);
+  }
+  if (scores.baselineTrain.some((r) => typeof r.guardApplicable === "number")) {
+    const guard = (rows) => {
+      const r = guardRate(rows);
+      return r === null ? "unknown" : `${r}%`;
+    };
+    lines.push(`guards passed on learned-from cases: current ${guard(scores.baselineTrain)}${scores.candidates.map((c) => `, ${c.id} ${guard(c.train)}`).join("")}`);
   }
   for (const c of scores.candidates) {
     lines.push(`${c.id} training: ${tally2(c.train)}${c.holdout ? `; held back: ${tally2(c.holdout)}` : ""}`);
@@ -29619,7 +29703,7 @@ ${goal.policy ?? ""}`);
           if (unverified.length) record.unverified = unverified;
         }
         if (landed) {
-          Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...verdict.checks ? { checks: verdict.checks } : {} });
+          Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...verdict.checks ? { checks: verdict.checks } : {}, ...verdict.guards ? { guards: verdict.guards } : {} });
           record.changed = chosen?.summary ?? "A change to the prompt";
           record.plain = verdict.plain;
           if (!landed.proposed) {

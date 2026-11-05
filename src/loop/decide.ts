@@ -340,7 +340,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
           if (unverified.length) record.unverified = unverified;
         }
         if (landed) {
-          Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...(verdict.checks ? { checks: verdict.checks } : {}) });
+          Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...(verdict.checks ? { checks: verdict.checks } : {}), ...(verdict.guards ? { guards: verdict.guards } : {}) });
           record.changed = chosen?.summary ?? "A change to the prompt";
           record.plain = verdict.plain;
           if (!landed.proposed) {

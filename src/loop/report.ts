@@ -1,4 +1,5 @@
 import type { Goal } from "../core/goal.ts";
+import { guardSentence } from "../core/merge-rule.ts";
 import { isFinished, type RoundRecord, type State } from "../core/state.ts";
 import { FULL_SHARE_UNTIL } from "../core/share.ts";
 
@@ -36,6 +37,8 @@ export function headline(goal: Goal, state: State, stoppedByTeam = false): { tit
   // The team's own number, from before the first merge to after the latest one, when they set checks.
   const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
   const gain = rated.length ? `Your checks now pass ${rated.at(-1)!.checks!.after}% of the time, up from ${rated[0].checks!.before}%. ` : "";
+  const guarded = state.rounds.filter((r) => r.outcome === "merged" && r.guards);
+  const guardLine = guarded.length ? `${guardSentence({ before: guarded[0].guards!.before, after: guarded.at(-1)!.guards!.after })} ` : "";
   const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;
   if (state.proposal) {
     return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
@@ -45,12 +48,12 @@ export function headline(goal: Goal, state: State, stoppedByTeam = false): { tit
     return { title: "Synthe needs you to fix something", summary: `${last!.plain} ${spent}` };
   }
   if (!state.stopped && stoppedByTeam) {
-    return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
+    return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}${guardLine}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
     const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
     return merged > 0
-      ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` }
+      ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}${guardLine}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` }
       : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better`
@@ -68,7 +71,7 @@ export function headline(goal: Goal, state: State, stoppedByTeam = false): { tit
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
   return merged > 0
-    ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` }
+    ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` }
     : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
 }
 

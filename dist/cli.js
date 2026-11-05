@@ -28058,7 +28058,7 @@ var GOAL_FILE = "synthe.json";
 var MAX_CHECKS = 5;
 var DEFAULTS = {
   models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5", checker: "claude-sonnet-5-5" },
-  merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3 },
+  merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
   budget: { max_usd: 3 }
 };
 function parseGoal(text) {
@@ -28076,10 +28076,29 @@ function parseGoal(text) {
   if (g.checks !== void 0 && (!Array.isArray(g.checks) || g.checks.length > MAX_CHECKS || g.checks.some((c) => typeof c !== "string" || !c.trim() || c.length > 300))) {
     bad(`checks must be a list of up to ${MAX_CHECKS} sentences`);
   }
+  if (g.counter_checks !== void 0) {
+    const list = g.counter_checks;
+    if (!Array.isArray(list) || list.length > MAX_CHECKS || list.some((c) => typeof c !== "string" || !c.trim() || c.length > 300)) {
+      bad(`counter_checks must be a list of up to ${MAX_CHECKS} sentences`);
+    }
+    const own = new Set((g.checks ?? []).map((c) => c.trim().toLowerCase()));
+    const same = list.find((c) => own.has(c.trim().toLowerCase()));
+    if (same !== void 0) bad(`counter_checks repeats a check ("${same.slice(0, 60)}"); a guard should catch a reply that games that check, not restate it`);
+    const seen = /* @__PURE__ */ new Set();
+    const dup = list.find((c) => {
+      const key = c.trim().toLowerCase();
+      if (seen.has(key)) return true;
+      seen.add(key);
+      return false;
+    });
+    if (dup !== void 0) bad(`counter_checks lists the same guard twice ("${dup.slice(0, 60)}"); each guard should appear once`);
+  }
   if (g.share !== void 0 && !["none", "numbers", "detail", "full"].includes(g.share)) bad("share must be none, numbers, detail or full");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
+  const margin = g.merge_rule?.guard_margin;
+  if (margin !== void 0 && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad("merge_rule.guard_margin must be 0 or more");
   return {
     ...g,
     guardrails: g.guardrails ?? [],
@@ -28176,6 +28195,8 @@ import { createHash } from "node:crypto";
 var sha256 = (text) => createHash("sha256").update(text).digest("hex");
 var MAX_PROMPT_CHARS = 2e4;
 var SENSITIVE_PATHS = [
+  /(^|\/)\.synthe\//,
+  /(^|\/)synthe\.json$/,
   /^\.github\//,
   /^\.gitlab-ci\.yml$/,
   /^\.circleci\//,
@@ -28223,137 +28244,23 @@ function literalProblem(text, delimiter2) {
   return null;
 }
 
-// src/core/share.ts
-var FULL_SHARE_UNTIL = "2026-11-08T23:59:00Z";
-
-// src/loop/report.ts
-var ISSUE_TITLE = "Synthe: prompt report";
-var money = (state) => state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}` : `$${state.spendUsd.toFixed(2)}`;
-var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")} back to back`;
-var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
-var badKey = (r) => r?.outcome === "failed" && r.failure === "key";
-var busy = (r) => r?.outcome === "failed" && r.failure === "busy";
-function headline(goal, state, stoppedByTeam = false) {
-  const merged = state.rounds.filter((r) => r.outcome === "merged").length;
-  const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
-  const gain = rated.length ? `Your checks now pass ${rated.at(-1).checks.after}% of the time, up from ${rated[0].checks.before}%. ` : "";
-  const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;
-  if (state.proposal) {
-    return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
-  }
-  const last = state.rounds.at(-1);
-  if (!state.stopped && (missing(last) || badKey(last))) {
-    return { title: "Synthe needs you to fix something", summary: `${last.plain} ${spent}` };
-  }
-  if (!state.stopped && stoppedByTeam) {
-    return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
-  }
-  if (!state.stopped) {
-    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
-    return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
-  }
-  const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
-  const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
-  if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
-    const end = recent.at(-1);
-    if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain };
-    if (badKey(end)) return { title: "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
-    if (busy(end) && isFinished(state.stopped)) {
-      return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
-    }
-    if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, get a new key from the Synthe table." };
-  }
-  if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
-  return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
-}
-
-// src/model/client.ts
-init_sdk();
-
-// src/core/cost.ts
-var PRICES = {
-  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
-  "claude-sonnet-5-5": { input: 2, output: 10 },
-  "claude-opus-5-5": { input: 4, output: 20 },
-  // Teams still on Sonnet 4.5 need a price to see what moving off it (it retires 2026-11-30) would cost.
-  "claude-sonnet-4-5": { input: 3, output: 15 }
-};
-var knownModels = () => Object.keys(PRICES);
-function costUsd(model, usage) {
-  const price = PRICES[model];
-  if (!price || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
-  const input = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) * 1.25 + (usage.cache_read_input_tokens ?? 0) * 0.1;
-  return (input * price.input + usage.output_tokens * price.output) / 1e6;
-}
-function sumCosts(costs) {
-  let total = 0;
-  for (const c of costs) {
-    if (c === null) return null;
-    total += c;
-  }
-  return total;
-}
-
-// src/model/client.ts
-function anthropicModel(apiKey) {
-  const client = new Anthropic({ apiKey, maxRetries: 4 });
-  return {
-    async ask({ model, system, user, maxTokens, schema, allowCutOff }) {
-      const res = await client.messages.create({
-        model,
-        max_tokens: maxTokens,
-        system,
-        messages: [{ role: "user", content: user }],
-        // Haiku's thinking would spend the output limit on short scoring calls.
-        ...model.startsWith("claude-haiku") ? { thinking: { type: "disabled" } } : {},
-        output_config: { effort: "low", ...schema ? { format: { type: "json_schema", schema } } : {} }
-      });
-      const text = res.content.flatMap((b) => b.type === "text" ? [b.text] : []).join("");
-      const finished = res.stop_reason === "end_turn" && text.length > 0;
-      const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text.length > 0;
-      return { text: finished || cutOff ? text : null, costUsd: costUsd(model, res.usage), ...cutOff ? { truncated: true } : {} };
-    }
-  };
-}
-async function askJson(model, a) {
-  const reply = await model.ask(a);
-  if (reply.text === null) return { value: null, costUsd: reply.costUsd };
-  try {
-    return { value: JSON.parse(reply.text), costUsd: reply.costUsd };
-  } catch {
-    return { value: null, costUsd: reply.costUsd };
-  }
-}
-async function pool(items, limit2, fn) {
-  const results = new Array(items.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(limit2, items.length) }, async () => {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i]);
-    }
-  }));
-  return results;
-}
-function modelProblem(e) {
-  const err = e;
-  const status2 = typeof err?.status === "number" ? err.status : null;
-  const text = typeof err?.message === "string" ? err.message : "";
-  if (status2 === 401) return "Your Synthe key was rejected. Check you copied all of it (it starts with sk-ant-), or ask the Synthe table for a new one.";
-  if (/credit balance is too low/i.test(text)) return "Your Synthe key has no credit left. Ask the Synthe table for a new key.";
-  if (/usage limit|spend limit/i.test(text)) return "Your Synthe key has reached its spending limit. Ask the Synthe table for a new key.";
-  if (status2 === 403) return "Your Synthe key isn't allowed to use this model. Ask the Synthe table for a new key.";
-  if (status2 === 429 || status2 === 529 || status2 !== null && status2 >= 500) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
-  if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
-  return null;
-}
-
 // src/core/merge-rule.ts
 function checkRate(rows) {
   if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
   const applicable = rows.reduce((n, r) => n + r.applicable, 0);
   return applicable === 0 ? null : Math.round(100 * (applicable - rows.reduce((n, r) => n + r.failed, 0)) / applicable);
+}
+function guardRate(rows, rounded = true) {
+  if (rows.length === 0 || new Set(rows.map((r) => r.id)).size !== rows.length || rows.some((r) => !Number.isSafeInteger(r.guardApplicable) || !Number.isSafeInteger(r.guardFailed) || r.guardApplicable < 0 || r.guardFailed < 0 || r.guardFailed > r.guardApplicable)) return null;
+  const applicable = rows.reduce((n, r) => n + r.guardApplicable, 0);
+  if (applicable === 0) return null;
+  const rate = 100 * (applicable - rows.reduce((n, r) => n + r.guardFailed, 0)) / applicable;
+  return rounded ? Math.round(rate) : rate;
+}
+function guardSentence(g) {
+  if (g.after > g.before) return `Your guards improved from ${g.before}% to ${g.after}%.`;
+  if (g.after === g.before) return `Your guards held at ${g.after}%.`;
+  return `Your guards held at ${g.after}%, down from ${g.before}%.`;
 }
 var cases = (n) => `${n} case${n === 1 ? "" : "s"}`;
 function tally(rows, current) {
@@ -28467,16 +28374,36 @@ function judgeRound(scores, goal, replaced) {
       notes[c.id] = `Broke one of your rules in ${cases(added)} where your current prompt follows it, so it wasn't used.`;
       continue;
     }
+    const currentHeld = scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id));
+    const guardBefore = guardRate([...scores.baselineTrain, ...currentHeld]);
+    const guardAfter = guardRate([...c.train, ...c.holdout]);
+    if (goal.counter_checks?.length) {
+      if (guardBefore === null || guardAfter === null) {
+        reasons.push(`${c.id}: guard verdicts missing`);
+        notes[c.id] = "Your guards couldn't be checked on its replies, so it wasn't used.";
+        continue;
+      }
+      const exactBefore = guardRate([...scores.baselineTrain, ...currentHeld], false);
+      const exactAfter = guardRate([...c.train, ...c.holdout], false);
+      if (exactBefore - exactAfter > goal.merge_rule.guard_margin) {
+        const drop = exactBefore - exactAfter;
+        const dropText = Number.isInteger(drop) ? `${drop}` : drop.toFixed(1);
+        reasons.push(`${c.id}: guards passed ${guardAfter}% against ${guardBefore}% for the current prompt, a drop of ${dropText} points where ${goal.merge_rule.guard_margin} is allowed`);
+        notes[c.id] = `Its replies looked better, but they pass your guards less often (${guardAfter}% against ${guardBefore}%), which can mean it is gaming your checks, so it wasn't used.`;
+        continue;
+      }
+    }
+    const guards = goal.counter_checks?.length ? { before: guardBefore, after: guardAfter } : void 0;
     const stillBroken = breaks(c.train) + breaks(c.holdout);
     const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id)));
     notes[c.id] = "Also looked better, but another change did better still.";
     if (best === null || after > best.after) {
-      const currentHeld = scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id));
       const rateBefore = checkRate([...scores.baselineTrain, ...currentHeld]);
       const rateAfter = checkRate([...c.train, ...c.holdout]);
       const rates = rateBefore !== null && rateAfter !== null ? { before: rateBefore, after: rateAfter } : void 0;
       const lead = rates ? `Your checks passed ${rates.after}% of the time, up from ${rates.before}%. ` : "";
       const rules = wasBroken > 0 ? stillBroken > 0 ? ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in ${stillBroken}.` : ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in none.` : " It follows your rules in every test case.";
+      const guardLine = guards ? ` ${guardSentence(guards)}` : "";
       best = {
         action: "merge",
         candidateId: c.id,
@@ -28490,13 +28417,142 @@ function judgeRound(scores, goal, replaced) {
         heldLosses: heldSplit.l,
         notes,
         ...rates ? { checks: rates } : {},
-        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}`,
+        ...guards ? { guards } : {},
+        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}${guardLine}`,
         reasons: [`judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
       };
     }
   }
   if (best) best.notes[best.candidateId] = "Merged.";
   return best ?? { action: "skip", reasons: reasons.length ? reasons : ["no candidates"], notes };
+}
+
+// src/core/share.ts
+var FULL_SHARE_UNTIL = "2026-11-08T23:59:00Z";
+
+// src/loop/report.ts
+var ISSUE_TITLE = "Synthe: prompt report";
+var money = (state) => state.spendUnknown ? `over $${state.spendUsd.toFixed(2)}` : `$${state.spendUsd.toFixed(2)}`;
+var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")} back to back`;
+var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
+var badKey = (r) => r?.outcome === "failed" && r.failure === "key";
+var busy = (r) => r?.outcome === "failed" && r.failure === "busy";
+function headline(goal, state, stoppedByTeam = false) {
+  const merged = state.rounds.filter((r) => r.outcome === "merged").length;
+  const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
+  const gain = rated.length ? `Your checks now pass ${rated.at(-1).checks.after}% of the time, up from ${rated[0].checks.before}%. ` : "";
+  const guarded = state.rounds.filter((r) => r.outcome === "merged" && r.guards);
+  const guardLine = guarded.length ? `${guardSentence({ before: guarded[0].guards.before, after: guarded.at(-1).guards.after })} ` : "";
+  const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;
+  if (state.proposal) {
+    return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
+  }
+  const last = state.rounds.at(-1);
+  if (!state.stopped && (missing(last) || badKey(last))) {
+    return { title: "Synthe needs you to fix something", summary: `${last.plain} ${spent}` };
+  }
+  if (!state.stopped && stoppedByTeam) {
+    return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}${guardLine}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
+  }
+  if (!state.stopped) {
+    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
+    return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}${guardLine}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
+  }
+  const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
+  const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
+  if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
+    const end = recent.at(-1);
+    if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain };
+    if (badKey(end)) return { title: "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
+    if (busy(end) && isFinished(state.stopped)) {
+      return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
+    }
+    if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, get a new key from the Synthe table." };
+  }
+  if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
+  return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
+}
+
+// src/model/client.ts
+init_sdk();
+
+// src/core/cost.ts
+var PRICES = {
+  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
+  "claude-sonnet-5-5": { input: 2, output: 10 },
+  "claude-opus-5-5": { input: 4, output: 20 },
+  // Teams still on Sonnet 4.5 need a price to see what moving off it (it retires 2026-11-30) would cost.
+  "claude-sonnet-4-5": { input: 3, output: 15 }
+};
+var knownModels = () => Object.keys(PRICES);
+function costUsd(model, usage) {
+  const price = PRICES[model];
+  if (!price || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
+  const input = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) * 1.25 + (usage.cache_read_input_tokens ?? 0) * 0.1;
+  return (input * price.input + usage.output_tokens * price.output) / 1e6;
+}
+function sumCosts(costs) {
+  let total = 0;
+  for (const c of costs) {
+    if (c === null) return null;
+    total += c;
+  }
+  return total;
+}
+
+// src/model/client.ts
+function anthropicModel(apiKey) {
+  const client = new Anthropic({ apiKey, maxRetries: 4 });
+  return {
+    async ask({ model, system, user, maxTokens, schema, allowCutOff }) {
+      const res = await client.messages.create({
+        model,
+        max_tokens: maxTokens,
+        system,
+        messages: [{ role: "user", content: user }],
+        // Haiku's thinking would spend the output limit on short scoring calls.
+        ...model.startsWith("claude-haiku") ? { thinking: { type: "disabled" } } : {},
+        output_config: { effort: "low", ...schema ? { format: { type: "json_schema", schema } } : {} }
+      });
+      const text = res.content.flatMap((b) => b.type === "text" ? [b.text] : []).join("");
+      const finished = res.stop_reason === "end_turn" && text.length > 0;
+      const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text.length > 0;
+      return { text: finished || cutOff ? text : null, costUsd: costUsd(model, res.usage), ...cutOff ? { truncated: true } : {} };
+    }
+  };
+}
+async function askJson(model, a) {
+  const reply = await model.ask(a);
+  if (reply.text === null) return { value: null, costUsd: reply.costUsd };
+  try {
+    return { value: JSON.parse(reply.text), costUsd: reply.costUsd };
+  } catch {
+    return { value: null, costUsd: reply.costUsd };
+  }
+}
+async function pool(items, limit2, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit2, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  }));
+  return results;
+}
+function modelProblem(e) {
+  const err = e;
+  const status2 = typeof err?.status === "number" ? err.status : null;
+  const text = typeof err?.message === "string" ? err.message : "";
+  if (status2 === 401) return "Your Synthe key was rejected. Check you copied all of it (it starts with sk-ant-), or ask the Synthe table for a new one.";
+  if (/credit balance is too low/i.test(text)) return "Your Synthe key has no credit left. Ask the Synthe table for a new key.";
+  if (/usage limit|spend limit/i.test(text)) return "Your Synthe key has reached its spending limit. Ask the Synthe table for a new key.";
+  if (status2 === 403) return "Your Synthe key isn't allowed to use this model. Ask the Synthe table for a new key.";
+  if (status2 === 429 || status2 === 529 || status2 !== null && status2 >= 500) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
+  if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
+  return null;
 }
 
 // src/core/candidate-history.ts
@@ -28526,8 +28582,8 @@ var ANGLES = [
 ];
 var MAX_EDITS = 2;
 var MAX_EDIT_CHARS = 1500;
-var JUDGING = /\b(judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?|held[- ]back)\b/gi;
-var FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark)\w*/gi;
+var JUDGING = /\b(judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?|held[- ]back|counter[_ -]checks?|guard checks?|attack cases?|evidence files?)\b/gi;
+var FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark|counter[_ -]check|guard check|attack case|evidence file)\w*/gi;
 var family = (w) => w.toLowerCase().slice(0, 4);
 var ownFamilies = (known) => new Set((known.match(FAMILY) ?? []).map(family));
 var judgingWords = (t, own) => (t.match(JUDGING) ?? []).filter((w) => !own.has(family(w)));
@@ -28593,11 +28649,14 @@ ${cases2.join("\n")}
 `;
 }
 async function runWrite(goal, state, prompt, scenarios, model) {
+  const protectedPath = promptPathProblem(goal.prompt.path) ?? (goal.prompt.path === goal.scenarios ? "the prompt is the scenario file" : null);
+  if (protectedPath) return { candidates: [], costUsd: 0, rejected: [protectedPath] };
   const train = scenarios.filter((s) => s.split === "train");
   const lessons = lessonText(state, prompt, train);
   const scope = candidateScope(goal, prompt);
   const tried = new Set(validateCandidateMemory(state.candidateHistory ?? []).filter((entry) => entry.scope === scope).map((entry) => entry.fingerprint));
-  const history = tried.size ? `${tried.size} candidate texts were already attempted for this goal and prompt. Repeated text will be rejected before scoring. Try a different instruction.` : "None yet.";
+  const roundOutcomes = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}.`).join("\n");
+  const history = [tried.size ? `${tried.size} candidate texts were already attempted for this goal and prompt. Repeated text will be rejected before scoring. Try a different instruction.` : "", roundOutcomes].filter(Boolean).join("\n") || "None yet.";
   const triedSummaries = [...new Set(state.rounds.slice(-5).flatMap((r) => r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary)))];
   const notAgain = triedSummaries.length ? `
 Already tried in earlier rounds without winning; don't propose these again:
@@ -28703,8 +28762,8 @@ Business policy (what the agent may and may not offer):
 ${goal.policy.trim().slice(0, 4e3)}` : ""
 ].join("");
 var squash = (t) => t.replace(/\s+/g, " ").trim().toLowerCase();
-async function askChecks(goal, model, s, text) {
-  const checks = goal.checks?.filter((c) => c.trim()) ?? [];
+async function askChecks(goal, model, s, text, list) {
+  const checks = (list ?? goal.checks ?? []).filter((c) => c.trim());
   const judged = await askJson(model, {
     model: goal.models.judge,
     maxTokens: 800,
@@ -28723,11 +28782,11 @@ ${checks.map((c, i) => `${i + 1}. ${c}`).join("\n")}
 For every check, by its number: does it apply to this message at all, and if it applies, does this reply pass it? Be strict: pass a check only when the reply clearly does what it says.`
   });
   const rows = judged.value?.results;
-  if (!Array.isArray(rows) || rows.length !== checks.length || checks.some((_, i) => rows.filter((r) => r.check === i + 1).length !== 1)) return { verdicts: null, costUsd: judged.costUsd };
+  if (!Array.isArray(rows) || rows.some((r) => !r || typeof r.applies !== "boolean" || typeof r.passes !== "boolean") || rows.length !== checks.length || checks.some((_, i) => rows.filter((r) => r.check === i + 1).length !== 1)) return { verdicts: null, costUsd: judged.costUsd };
   const by = new Map(rows.map((r) => [r.check, r]));
   return { verdicts: checks.map((_, i) => ({ applies: by.get(i + 1).applies === true, passes: by.get(i + 1).passes === true })), costUsd: judged.costUsd };
 }
-function scorer(goal, model, random = Math.random) {
+function scorer(goal, model, random = Math.random, noise = false) {
   const costs = [];
   const cut = /* @__PURE__ */ new Set();
   let cutOff = 0;
@@ -28741,6 +28800,7 @@ function scorer(goal, model, random = Math.random) {
     return r.text;
   };
   const duel = async (s, first, current, challenger) => {
+    if (noise && current === challenger) return { row: { id: s.id, score: TIE, violation: null, reply: challenger.slice(0, REPLY_KEPT) }, currentViolation: null, full: challenger };
     const [a, b] = first ? [challenger, current] : [current, challenger];
     const cutNote = cut.has(a) || cut.has(b) ? `
 A reply may stop mid-sentence because it hit the agent's length limit. Judge what it says up to that point, and don't mark it down just for being cut off.
@@ -28782,7 +28842,12 @@ Which reply better meets the goal for this situation? Answer "A" or "B", or "tie
       const current = currentReplies.get(s.id) ?? null;
       const mine = await reply(prompt, s);
       if (current === null || mine === null) return { row: { id: s.id, score: null, violation: null }, currentViolation: null };
-      return decideByChecks(s, await duel(s, set.indexOf(s) % 2 === 0 !== flip, current, mine), current, mine);
+      const judged = await duel(s, set.indexOf(s) % 2 === 0 !== flip, current, mine);
+      if (noise && current !== mine) {
+        const swapped = await duel(s, set.indexOf(s) % 2 === 0 === flip, current, mine);
+        if (judged.row.score !== swapped.row.score) judged.row.score = null;
+      }
+      return measureGuards(s, await decideByChecks(s, judged, current, mine), current, mine);
     });
   };
   const repliesFor = async (prompt, set) => new Map(await pool(set, CONCURRENCY, async (s) => [s.id, await reply(prompt, s)]));
@@ -28810,22 +28875,32 @@ Does this reply clearly break one of the guardrails? The business policy and the
     return v.breaks && typeof v.quote === "string" && squash(v.quote).length >= 8 && squash(text).includes(squash(v.quote));
   };
   const checks = goal.checks?.filter((c) => c.trim()) ?? [];
+  const guards = goal.counter_checks?.filter((c) => c.trim()) ?? [];
   const checkedReplies = /* @__PURE__ */ new Map();
-  const checkReply = (s, text) => {
-    const key = `${s.id}\0${text}`;
+  const checkReply = (s, text, kind = "checks", sample = "") => {
+    const list = kind === "guards" ? guards : checks;
+    const key = JSON.stringify([s.id, text, kind, noise ? sample : ""]);
     if (!checkedReplies.has(key)) checkedReplies.set(key, (async () => {
-      const { verdicts, costUsd: costUsd2 } = await askChecks(goal, model, s, text);
+      const { verdicts, costUsd: costUsd2 } = await askChecks(goal, model, s, text, kind === "guards" ? guards : void 0);
       costs.push(costUsd2);
       if (!verdicts) return null;
-      const failedChecks = verdicts.flatMap((v, i) => v.applies && !v.passes ? [checks[i]] : []);
+      const failedChecks = verdicts.flatMap((v, i) => v.applies && !v.passes ? [list[i]] : []);
       return { failed: failedChecks.length, applicable: verdicts.filter((v) => v.applies).length, failedChecks };
     })());
     return checkedReplies.get(key);
   };
+  const measureGuards = async (s, judged, current, challenger) => {
+    if (guards.length === 0) return judged;
+    const [mine, theirs] = await Promise.all([checkReply(s, challenger, "guards", "second"), checkReply(s, current, "guards", "first")]);
+    judged.currentGuards = theirs;
+    if (mine) Object.assign(judged.row, { guardFailed: mine.failed, guardApplicable: mine.applicable });
+    return judged;
+  };
   const decideByChecks = async (s, judged, current, challenger) => {
     if (checks.length === 0) return judged;
-    const [mine, theirs] = await Promise.all([checkReply(s, challenger), checkReply(s, current)]);
+    const [mine, theirs] = await Promise.all([checkReply(s, challenger, "checks", "second"), checkReply(s, current, "checks", "first")]);
     judged.currentChecks = theirs;
+    if (noise && (!mine || !theirs)) judged.row.score = null;
     if (!mine) return judged;
     Object.assign(judged.row, { failed: mine.failed, applicable: mine.applicable });
     if (theirs && mine.failed !== theirs.failed) judged.row.score = mine.failed < theirs.failed ? WIN : LOSS;
@@ -28839,12 +28914,14 @@ function currentRows(set, replies, duels) {
     if (text === null) return { id: s.id, score: null, violation: null };
     const flags = duels.map((d) => d[i]?.currentViolation).filter((f) => typeof f === "boolean");
     const checked = duels.map((d) => d[i]?.currentChecks).find((c) => Boolean(c));
+    const guarded = duels.map((d) => d[i]?.currentGuards).find((c) => Boolean(c));
     return {
       id: s.id,
       score: EVEN,
       violation: flags.length ? flags.some(Boolean) : null,
       reply: text.slice(0, REPLY_KEPT),
-      ...checked ? { failed: checked.failed, applicable: checked.applicable, ...checked.failedChecks.length ? { failedChecks: checked.failedChecks } : {} } : {}
+      ...checked ? { failed: checked.failed, applicable: checked.applicable, ...checked.failedChecks.length ? { failedChecks: checked.failedChecks } : {} } : {},
+      ...guarded ? { guardFailed: guarded.failed, guardApplicable: guarded.applicable } : {}
     };
   });
 }
@@ -28916,12 +28993,30 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
   return { scores, costUsd: sumCosts(costs), calls: costs.length, checks };
 }
 async function measureNoise(goal, prompt, scenarios, model) {
-  const { costs, challenge, repliesFor } = scorer(goal, model);
-  const first = await repliesFor(prompt, scenarios);
-  const rows = (await challenge("self", prompt, scenarios, first)).map((d) => d.row);
+  const { costs, challenge, repliesFor } = scorer(goal, model, Math.random, true);
+  const train = scenarios.filter((s) => s.split === "train");
+  const first = await repliesFor(prompt, train);
+  const duels = await challenge("self", prompt, train, first);
+  const rows = duels.map((d) => d.row);
   const split = paired(rows, rows.map((r) => ({ ...r, score: r.score === null ? null : EVEN })));
   const ties = rows.filter((r) => r.score === TIE).length;
-  return { wins: split?.wins ?? null, losses: split?.losses ?? null, ties, p: split?.p ?? null, costUsd: sumCosts(costs) };
+  const guardBefore = guardRate(currentRows(train, first, [duels]), false);
+  const guardAfter = guardRate(rows, false);
+  const spread = guardBefore === null || guardAfter === null || train.length < 5 ? null : Math.abs(guardBefore - guardAfter);
+  return {
+    wins: split?.wins ?? null,
+    losses: split?.losses ?? null,
+    ties,
+    p: split ? Math.min(1, 2 * signP(Math.max(split.wins, split.losses), Math.min(split.wins, split.losses))) : null,
+    cases: train.length,
+    guards: goal.counter_checks?.length ? { before: guardBefore, after: guardAfter, spread, margin: spread ?? 3 } : void 0,
+    costUsd: sumCosts(costs)
+  };
+}
+function explainNoise(noise) {
+  const lines = [noise.wins === null || noise.cases < 5 ? "Noise is inconclusive: too few training cases, missing marks, or reply-order disagreement. This does not show that the judge is steady." : `Your prompt against itself on ${noise.cases} training cases: better in ${noise.wins}, worse in ${noise.losses}, the same in ${noise.ties}. This is one sample of reply and marker variation, not proof of a steady judge or a merge threshold. Hidden cases were not used.`];
+  if (noise.guards) lines.push(noise.guards.spread === null ? "Guard noise is inconclusive. Keep the fallback guard_margin of 3; no setting was changed." : `Guard pass-rate spread: ${noise.guards.spread.toFixed(2)} points between independent samples. A measured guard_margin for review is ${noise.guards.margin.toFixed(2)}; no setting was changed. This sample does not establish the impact or cost gate.`);
+  return lines;
 }
 async function compareRunners(goal, prompt, scenarios, from, to, model, random = Math.random) {
   const on = (runner) => ({ ...goal, models: { ...goal.models, runner } });
@@ -29231,8 +29326,37 @@ Write ${ASK_FOR} varied, realistic user messages for testing it, each with a one
   }
   throw new Error("Synthe couldn't write test cases for your prompt this time. Nothing in your repo was changed; run `npx synthe init` again.");
 }
-function buildGoal(prompt, objective, guardrails, policy = "", brief = "", checks = []) {
-  return { version: 1, prompt, objective, ...brief ? { brief } : {}, ...checks.length ? { checks } : {}, ...policy ? { policy } : {}, guardrails, scenarios: SCENARIOS_FILE, ...DEFAULTS };
+var GUARDS_SCHEMA = {
+  type: "object",
+  properties: { guards: { type: "array", items: { type: "string" } } },
+  required: ["guards"],
+  additionalProperties: false
+};
+var sameText = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+async function proposeGuards(model, brief, checks) {
+  try {
+    const { value } = await askJson(model, {
+      model: DEFAULTS.models.writer,
+      maxTokens: 1e3,
+      schema: GUARDS_SCHEMA,
+      user: `An AI agent's team measures its replies with these checks. Each is one plain sentence about a single reply.
+${brief ? `
+What the agent is for: ${brief.slice(0, 1e3)}
+` : ""}
+Checks:
+${checks.map((c, i) => `${i + 1}. ${c}`).join("\n")}
+
+For each check, in the same order, write one guard: a plain sentence about a single reply that catches a way to pass that check without really helping. For example, for "Offers an exchange before a refund" a guard is "Offers an exchange only when the customer's problem calls for one, not on every reply"; for "Stays under three sentences" a guard is "Still answers the customer's question completely". Each guard must be something anyone could check by reading only the user's message and that reply, and must not repeat its check.`
+    });
+    if (!value || !Array.isArray(value.guards)) return null;
+    const guards = value.guards.filter((g) => typeof g === "string" && Boolean(g.trim())).map((g) => g.trim().slice(0, 300)).filter((g, i, all) => !checks.some((c) => sameText(c, g)) && all.findIndex((o) => sameText(o, g)) === i).slice(0, Math.min(checks.length, MAX_CHECKS));
+    return guards.length === checks.length && guards.length > 0 ? guards : null;
+  } catch {
+    return null;
+  }
+}
+function buildGoal(prompt, objective, guardrails, policy = "", brief = "", checks = [], counterChecks = []) {
+  return { version: 1, prompt, objective, ...brief ? { brief } : {}, ...checks.length ? { checks } : {}, ...counterChecks.length ? { counter_checks: counterChecks } : {}, ...policy ? { policy } : {}, guardrails, scenarios: SCENARIOS_FILE, ...DEFAULTS };
 }
 var CODE = /\.(ts|tsx|js|jsx|mjs|py)$/;
 function repoContext(files, location) {
@@ -29411,7 +29535,35 @@ Reading your prompt${context2.names.length ? ` and ${context2.names.join(" and "
     checks = review.checks;
     io2.say(`Checks saved in ${GOAL_FILE}. Change them there any time, and run \`npx synthe calibrate\` for a fuller check.`);
   }
-  const goal = buildGoal(location, objective, guardrails, policy, brief, checks);
+  let guards = [];
+  if (checks.length) io2.say("\nGuards are off by default: their live impact and added cost have not been measured. You can opt in, or add counter_checks to synthe.json later. The fallback guard_margin is 3.");
+  if (checks.length && await yesNo(io2, "Enable experimental guards? Type y to opt in, or n to keep them off: ") === true) {
+    const proposed = await proposeGuards(io2.model(key), brief, checks);
+    if (!proposed) {
+      io2.say(`
+Synthe couldn't propose guards this time, so it will run with your checks alone. You can add up to ${MAX_CHECKS} sentences as "counter_checks" in ${GOAL_FILE} any time.`);
+    } else {
+      io2.say("\nChecks can be gamed, for example by padding a reply until it ticks every box. Synthe will also mark each reply against these guards, and won't merge a change that passes them clearly less often:");
+      proposed.forEach((g, i) => io2.say(`  ${i + 1}. ${g}`));
+      guards = proposed;
+      if (await yesNo(io2, "Use these guards? Type y, or n to write your own: ") === false) {
+        const own = [];
+        while (own.length < CHECKS_WANTED) {
+          const line = (await io2.ask(`Guard ${own.length + 1}, one sentence about what a reply that games your checks gets wrong (Enter when done): `)).trim().slice(0, 300);
+          if (!line) break;
+          if ([...checks, ...own].some((c) => sameText(c, line))) {
+            io2.say("That repeats a check or a guard you already have, so it was skipped.");
+            continue;
+          }
+          own.push(line);
+        }
+        if (own.length) guards = own;
+        else io2.say("No guards typed, so Synthe keeps its suggestions.");
+      }
+      io2.say(`Guards saved in ${GOAL_FILE} as "counter_checks". Change them there any time.`);
+    }
+  }
+  const goal = buildGoal(location, objective, guardrails, policy, brief, checks, guards);
   goal.share = share;
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
   mkdirSync2(join3(root, ".synthe"), { recursive: true });
@@ -29810,9 +29962,9 @@ async function tryRound() {
   if (!local) return;
   const { goal, prompt, scenarios, model } = local;
   if (process.argv.includes("--noise")) {
-    console.log("Comparing your prompt with itself on every test case...");
+    console.log("Comparing independent replies from your prompt on training cases only...");
     const n = await measureNoise(goal, prompt, scenarios, model);
-    console.log(n.wins === null ? "Some replies couldn't be judged, so this can't say how much the judge varies." : `Your prompt against itself: better in ${n.wins} test cases, worse in ${n.losses}, the same in ${n.ties}. The prompts are identical, so any lean is just the judge varying. A real improvement has to beat that clearly.`);
+    for (const line of explainNoise(n)) console.log(line);
     console.log(`Cost: ${n.costUsd === null ? "unknown" : `$${n.costUsd.toFixed(2)}`}`);
     return;
   }

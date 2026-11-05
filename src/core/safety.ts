@@ -7,6 +7,7 @@ export const MAX_PROMPT_CHARS = 20_000;
 
 // From Synthe's synthe_risk.py: paths that run code, ship dependencies, alter CI or hold secrets.
 const SENSITIVE_PATHS = [
+  /(^|\/)\.synthe\//, /(^|\/)synthe\.json$/,
   /^\.github\//, /^\.gitlab-ci\.yml$/, /^\.circleci\//, /^Jenkinsfile$/, /\.pem$/, /\.key$/, /(^|\/)id_rsa/, /(^|\/)id_ed25519/,
   /(^|\/)\.env(\.|$)/, /(^|\/)Dockerfile/, /(^|\/)package(-lock)?\.json$/, /(^|\/)pnpm-lock\.yaml$/, /(^|\/)yarn\.lock$/,
   /(^|\/)(poetry|uv|Cargo)\.lock$/, /(^|\/)go\.sum$/, /(^|\/)setup\.py$/, /(^|\/)pyproject\.toml$/, /(^|\/)Makefile$/,
