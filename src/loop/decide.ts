@@ -11,6 +11,7 @@ import type { Candidate } from "./write.ts";
 import type { Failure } from "./failure.ts";
 import { WIN } from "./score.ts";
 import { candidateScope, rememberCandidates } from "../core/candidate-history.ts";
+import { fromSyntheProxy, PROXY_REFUSED } from "../core/share.ts";
 
 export const BUSY_RETRIES = 2;
 export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null; calibration?: { check: string; reading: string }[] | null }
@@ -315,11 +316,11 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       stall = false;
     } else if (error?.kind === "busy") {
       // Overload or rate limits pass by themselves, so a busy hour mustn't use up the rounds allowed without a winner.
-      record.reasons.push(/Synthe's proxy|Credit is unavailable/.test(error.message) ? error.message : `Anthropic's API was busy during the ${error.step} step: ${error.message}`);
-      record.plain = /Synthe's proxy|Credit is unavailable/.test(error.message) ? error.message : "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
+      record.reasons.push(fromSyntheProxy(error.message) ? error.message : `Anthropic's API was busy during the ${error.step} step: ${error.message}`);
+      record.plain = fromSyntheProxy(error.message) ? error.message : "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
       stall = false;
     } else if (error?.kind === "key") {
-      record.reasons.push(`the ${error.step} step's key was refused: ${error.message}`);
+      record.reasons.push(error.message.startsWith(PROXY_REFUSED) ? `the ${error.step} step was refused by the Synthe proxy: ${error.message.slice(PROXY_REFUSED.length)}` : `the ${error.step} step's key was refused: ${error.message}`);
       record.plain = error.message.startsWith("The Synthe proxy") ? error.message : `This round didn't finish. ${error.message.split(/(?<=\.) /)[0]} Run \`npx synthe key\` to replace your Anthropic key.`;
     } else {
       record.reasons.push("the round did not finish; check the Actions log and the API key");

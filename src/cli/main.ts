@@ -9,6 +9,7 @@ import { headline } from "../loop/report.ts";
 import { anthropicModel, configuredModel, eventModels, modelProblem } from "../model/client.ts";
 import { explainNoise, measureNoise } from "../loop/score.ts";
 import { runLocalTry } from "./try-round.ts";
+import { localCredential } from "./local-credential.ts";
 import { init, type Io } from "./init.ts";
 import { calibrate } from "./calibrate.ts";
 import { migrate } from "./migrate.ts";
@@ -159,14 +160,15 @@ async function undoRound() {
 // Loads what a round on this computer needs, or says what's missing. Used by try and calibrate.
 function localRun(command: string) {
   if (!setUpHere()) return null;
-  const key = process.env.SYNTHE_ANTHROPIC_KEY?.trim() || (process.env.SYNTHE_EVENT_CODE?.trim() ? undefined : process.env.ANTHROPIC_API_KEY?.trim());
-  const eventCode = process.env.SYNTHE_EVENT_CODE;
-  if (!key && !eventCode) {
+  const credential = localCredential(process.env);
+  if (!credential) {
     console.log(`\`npx synthe ${command}\` runs on your computer, changing nothing, and needs an event code or your own Anthropic key.`);
     console.log("Set SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE, or SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY, in your environment, then run this again.");
     process.exitCode = 1;
     return null;
   }
+  const { key, eventCode, teamCode } = credential;
+  console.log(credential.line);
   const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
   if (!key && eventCode) eventModels(goal.models);
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, null);
@@ -175,7 +177,7 @@ function localRun(command: string) {
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, process.env.SYNTHE_TEAM_CODE) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, teamCode) };
 }
 
 // Checks whether the team's checks are marked steadily, and the way the team means them.

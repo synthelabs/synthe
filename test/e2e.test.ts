@@ -474,6 +474,7 @@ test("local try and calibrate print credit refusals, exit nonzero and leave ever
     });
     assert.equal(result.code, 1);
     assert.ok(result.output.includes(proxyMessage));
+    assert.ok(result.output.includes("Credential: Crimson Hacks event credit. SYNTHE_TEAM_CODE isn't set"), "local commands say which credential they use");
     // Local try holds its history lock in the ignored .synthe-local/ folder; a refused call leaves it empty.
     assert.deepEqual(readdirSync(dir, { recursive: true }).map(String).filter((path) => path !== ".synthe-local").sort(), before.filter((path) => path !== ".synthe-local"));
     if (existsSync(join(dir, ".synthe-local"))) assert.deepEqual(readdirSync(join(dir, ".synthe-local")), []);

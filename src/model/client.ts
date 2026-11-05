@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { setupInstallId } from "./install.ts";
 import { costUsd } from "../core/cost.ts";
-import { oidcToken, PROXY_AUTH_MESSAGE } from "../core/share.ts";
+import { oidcToken, PROXY_AUTH_MESSAGE, PROXY_REFUSED } from "../core/share.ts";
 
 export const PROXY_URL = "https://synthe-crimson.vercel.app/api/claude";
 // Organizer-issued team codes, shaped like the server's TEAM_CODE (synthe-share lib/spend.ts). Normalized the same way.
@@ -49,7 +49,7 @@ export function proxyModel(eventCode: string, action = false, teamCode?: string)
       const refused = error as { status?: number; error?: { error?: { type?: string; message?: string } } };
       if ((refused.status === 402 || refused.status === 403) && refused.error?.error?.type === "synthe_credit" && typeof refused.error.error.message === "string") throw new CreditError(refused.error.error.message);
       // A missing, unknown or revoked team code, a wrong event code, or a repo linked to another team: the server's words.
-      if (refused.status === 403 && refused.error?.error?.type === "synthe_proxy_auth" && typeof refused.error.error.message === "string") throw new ProxyError(403, `The Synthe proxy refused this request: ${refused.error.error.message}`);
+      if (refused.status === 403 && refused.error?.error?.type === "synthe_proxy_auth" && typeof refused.error.error.message === "string") throw new ProxyError(403, `${PROXY_REFUSED}${refused.error.error.message}`);
       if (refused.status === 401) {
         if (refused.error?.error?.type === "synthe_proxy_auth") throw new ProxyError(401, PROXY_AUTH_MESSAGE);
         throw new CreditError("Synthe's sponsored Anthropic key was rejected. Ask at the Synthe table; your workflow does not need upgrading. Once the organizer fixes it, run `npx synthe restart`.");
