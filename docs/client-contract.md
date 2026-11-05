@@ -53,11 +53,11 @@ When a round fails, the error text sits in the team's workflow logs, where we ca
 
 ## 4. Sharing levels and the notice
 
-- **Levels.** `none` sends nothing. `numbers` sends rounds, outcomes, checks, cost and stop reasons only. `detail` adds the goal, the checks, Synthe's prompt edits and one example message with its replies, never the whole prompt or the test-case file. `full` adds the prompt, the test cases and the final prompt, and exists only inside the event window: today the window closes 2026-11-08T23:59:00Z (`FULL_SHARE_UNTIL` in `src/core/share.ts`), after which `full` behaves as `detail`.
-- **The notice is part of this contract.** The text init shows before setup is the agreement the team acts on. Changing a word of it creates a new notice version. Once the version name is settled, init records it in `synthe.json` and every event carries it as `notice`, so a record can always be tied to the text the team actually saw.
+- **Levels.** `none` sends nothing. `numbers` sends rounds, outcomes, checks, cost and stop reasons only. `detail` adds the goal, the checks, Synthe's prompt edits and one example message with its replies, never the whole prompt or the test-case file. `full` adds the prompt, the test cases and the final prompt, and exists only inside the event window: the window closes 2026-11-09T23:59:00Z (`FULL_SHARE_UNTIL` in `src/core/share.ts`; extended from November 8 to November 9 by the founders on 2026-11-04, before the event, so the notice teams see at setup names the real date), after which `full` behaves as `detail`.
+- **The notice is part of this contract.** The text init shows before setup is the agreement the team acts on. Changing a word of it creates a new notice version. The version name is settled: `crimson-2026-11-v1`. Init records it in `synthe.json` as `share_notice`. Carrying it on every event as `notice` is follow-on work, held until the endpoint accepts the field.
 - **Opt out any time.** `"share": "none"` in `synthe.json` stops all events from the next round on. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` at init turns sharing off from the start. The remove-my-data path is the service's side: deleting the team's issue in `synthelabs/synthe-feedback` (detail and full content) or `synthelabs/synthe-runs` (numbers).
 
-*Status: levels and the window are shipped. The notice version name is an open policy item (see section 6).*
+*Status: levels and the window are shipped. The notice version is named and recorded at setup; the `notice` event field is follow-on work.*
 
 ## 5. Rules that do not change
 
@@ -68,7 +68,7 @@ When a round fails, the error text sits in the team's workflow logs, where we ca
 
 ## 6. Open items
 
-- **Policy, for the founders to settle:** the sharing notice text and its version name; how long each level's data is kept after November 8; whether the November 8 23:59 UTC collection cutoff moves. The client records the settled answers here and in `synthe.json`.
+- **Policy, settled 2026-11-04:** the notice is version `crimson-2026-11-v1`; the collection cutoff moved to November 9 23:59 UTC (client side in `FULL_SHARE_UNTIL`; the proxy's own end date is set on the service side). How long each level's data is kept after the event is deliberately not promised yet; no retention date is stated to teams until the founders settle one.
 - **Client follow-on work:** the `candidates` and `results` stage events (section 2), the diagnostics template and init wiring (section 3), and the `notice` field once the name is settled (section 4).
 
 ## Appendix: synthe-diagnostics.yml template
