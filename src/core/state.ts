@@ -39,11 +39,10 @@ export interface State {
   scenariosHash: string | null; // scenarios the last round was scored on
   // Training cases from the last round where the current prompt lost or broke a guardrail, for the next writer.
   lessons: { promptHash: string; rows: { id: string; reply: string; better?: string; violation: boolean; failedChecks?: string[] }[] } | null;
-  // The latest hand-marking comparison per check, when calibration results have been saved into state:
-  // the check's text and how the AI's marking read against the team's ("disagrees with you" or "unsure"
-  // means the wording may not say what the team means). The report's rewrite ask reads this; the local
-  // calibrate command writes .synthe/calibration.json, which the report can't see, so this is only
-  // present when something has copied the readings here.
+  // The latest hand-marking comparison per check: the check's text and how the AI's marking read against
+  // the team's ("disagrees with you" or "unsure" means the wording may not say what the team means). The
+  // report's rewrite ask reads this. The local calibrate command writes .synthe/calibration.json; the
+  // decide step copies that file's readings here each round (see calibrationReadings).
   calibration?: { check: string; reading: string }[];
   // Set while a decide step is acting, so the next one can tell it died partway and clean up after it.
   pending: { round: number; at: string; costUsd: number | null; land?: Landing } | null;
@@ -55,6 +54,22 @@ export interface State {
   // Hash of the last evidence record written, so the next one can chain to it.
   evidenceHash?: string;
   rounds: RoundRecord[];
+}
+
+// The readings in a .synthe/calibration.json file's text: each check and how its marking read against the
+// team's. Null when the text isn't a calibration file, so a stray or damaged file is simply ignored.
+export function calibrationReadings(text: string): { check: string; reading: string }[] | null {
+  try {
+    const file = JSON.parse(text) as { checks?: unknown };
+    if (!Array.isArray(file?.checks)) return null;
+    const rows = file.checks.flatMap((r) => {
+      const row = r as { check?: unknown; verdict?: unknown };
+      return typeof row?.check === "string" && typeof row?.verdict === "string" ? [{ check: row.check, reading: row.verdict }] : [];
+    });
+    return rows.length ? rows : null;
+  } catch {
+    return null;
+  }
 }
 
 export const newState = (): State => ({

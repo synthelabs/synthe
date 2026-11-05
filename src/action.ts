@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { ATTACKS_FILE, GOAL_FILE, parseAttacks, parseGoal, parseScenarios, type Attack } from "./core/goal.ts";
 import { readPrompt } from "./core/prompt.ts";
 import { sumCosts } from "./core/cost.ts";
-import { resumeIfScenariosChanged, stopReason } from "./core/state.ts";
+import { calibrationReadings, resumeIfScenariosChanged, stopReason } from "./core/state.ts";
 import { sha256 } from "./core/safety.ts";
 import { githubRepo, type Repo } from "./github/repo.ts";
 import { anthropicModel } from "./model/client.ts";
@@ -51,7 +51,9 @@ async function main() {
     const startSource = fullActive && beforeState?.round === 0 ? await repo.readFile(goal.prompt.path, branch) : null;
     const startPrompt = startSource === null || !beforeState ? null : readPrompt(startSource, goal, beforeState.prompt);
     const scenarios = startPrompt !== null ? await repo.readFile(goal.scenarios, branch) : null;
-    const record = await runDecide(goal, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json") });
+    const calibrationText = await repo.readFile(".synthe/calibration.json", branch);
+    const calibration = calibrationText === null ? null : calibrationReadings(calibrationText);
+    const record = await runDecide(goal, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json"), calibration });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     const state = await repo.readState();
     if (record && state.chainReady && state.round === record.round && state.round < goal.merge_rule.max_rounds && !state.stopped && !state.proposal && !state.pending) {

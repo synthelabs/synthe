@@ -130,3 +130,29 @@ test("decide keeps the round's check failure counts from the score rows", async 
   const record = await runDecide(goal(), repo, { candidates: [{ id: "c1", text: "Better prompt." }], scores, costUsd: 0.1 });
   assert.deepEqual(record?.failedChecks, { "Asks for the order number first": 3, "Stays under three sentences": 1 });
 });
+
+test("calibration readings handed to decide land in state, and the no-win ask can then name the check", async () => {
+  const { calibrationReadings } = await import("../src/core/state.ts");
+  const file = JSON.stringify({ timestamp: "t", modelIds: { checker: "c", writer: "w" }, checks: [
+    { check: "Asks for the order number first", verdict: "disagrees with you" },
+    { check: "A check the goal dropped", verdict: "unsure" },
+    { check: "Stays under three sentences", verdict: "matches you well" },
+  ] });
+  const readings = calibrationReadings(file);
+  assert.equal(readings?.length, 3);
+  assert.equal(calibrationReadings("not json"), null);
+  assert.equal(calibrationReadings("{}"), null);
+  const scores: RoundScores = {
+    baselineHash: sha256("Old prompt."), baselineTrain: trainRows(50), baselineHoldout: heldRows(50),
+    candidates: [{ id: "c1", train: trainRows(60), holdout: heldRows(55) }],
+  };
+  const repo = new MemoryRepo("Old prompt.");
+  const g = goal({ checks: ["Asks for the order number first", "Stays under three sentences"] });
+  await runDecide(g, repo, { candidates: [{ id: "c1", text: "Better prompt." }], scores, costUsd: 0.1, calibration: readings });
+  assert.deepEqual(repo.state.calibration, [
+    { check: "Asks for the order number first", reading: "disagrees with you" },
+    { check: "Stays under three sentences", reading: "matches you well" },
+  ]);
+  const stalledState = stalled([skipped(1), skipped(2), skipped(3)], { calibration: repo.state.calibration });
+  assert.match(noWinSection(g, stalledState).join("\n"), /Rewrite the check "Asks for the order number first" in plainer words/);
+});

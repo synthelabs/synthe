@@ -28635,11 +28635,19 @@ var ANGLES = [
 ];
 var MAX_EDITS = 2;
 var MAX_EDIT_CHARS = 1500;
-var JUDGING = /\b(judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?|held[- ]back|counter[_ -]checks?|guard checks?|attack cases?|evidence files?)\b/gi;
-var FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark|counter[_ -]check|guard check|attack case|evidence file)\w*/gi;
+var JUDGING = /\b(held[- ]back|hidden tests?|counter[_ -]checks?|guard checks?|attack cases?|evidence files?)\b/gi;
+var FAMILY = /\b(held[- ]back|hidden test|counter[_ -]check|guard check|attack case|evidence file)\w*/gi;
 var family = (w) => w.toLowerCase().slice(0, 4);
 var ownFamilies = (known) => new Set((known.match(FAMILY) ?? []).map(family));
 var judgingWords = (t, own) => (t.match(JUDGING) ?? []).filter((w) => !own.has(family(w)));
+var JUDGE_TALK = [
+  /\b(?:judges?|graders?|evaluators?|markers?)\b[^.!?]{0,40}\b(?:prefers?|wants?|likes?|rewards?|scores?|grades?|marks?|rates?|evaluates?|looks for)\b/i,
+  /\b(?:scored|graded|marked|rated|evaluated|judged|checked) (?:by|against)\b[^.!?]{0,30}\b(?:judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?)\b/i,
+  /\b(?:give|award|grant)\b[^.!?]{0,40}\b(?:full|top|high|maximum) (?:marks?|score|grade|points?)\b/i,
+  /\bdeserves? (?:a )?(?:high|full|top|good) (?:score|grade|marks?|rating)\b/i,
+  /\b(?:dear|note to|message to|attention)\b[^.!?]{0,20}\b(?:judge|grader|evaluator)\b/i
+];
+var judgeTalk = (t) => JUDGE_TALK.flatMap((p) => t.match(new RegExp(p.source, "gi")) ?? []);
 var SCHEMA = {
   type: "object",
   properties: {
@@ -28669,6 +28677,8 @@ ${known}`);
     if (e.replace.length > MAX_EDIT_CHARS || e.find.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
     const added = judgingWords(e.replace, own);
     if (added.length > judgingWords(e.find, own).length) return { problem: `an edit talks about judging or scores ("${added[0].toLowerCase()}")` };
+    const talk = judgeTalk(e.replace);
+    if (talk.length > judgeTalk(e.find).length) return { problem: `an edit talks about judging or scores ("${talk[0].toLowerCase()}")` };
     if (e.find === "") {
       text = `${text.trimEnd()}
 

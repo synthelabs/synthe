@@ -19,16 +19,30 @@ const MAX_EDIT_CHARS = 1500;
 
 export interface Edit { find: string; replace: string }
 
-// Words that name the test itself: a prompt only needs them to talk to whoever judges its replies. An edit may not
-// add them, since the agent is being tested and a prompt that addresses the test is gaming it. Everyday words such as
-// score, grading or evaluation aren't here: live, they blocked about one honest edit in three for a tutor bot.
-const JUDGING = /\b(judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?|held[- ]back|counter[_ -]checks?|guard checks?|attack cases?|evidence files?)\b/gi;
-// A legal bot's prompt talks about judges: a word family the prompt, goal or policy already uses is the agent's own
-// subject, so only judging words from other families count.
-const FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark|counter[_ -]check|guard check|attack case|evidence file)\w*/gi;
+// Words that name Synthe's own machinery: a prompt only needs them to talk about the test itself, so an edit may
+// not add them. Talking about judging as a subject is different: a tutor may discuss rubrics, test cases or
+// benchmarks all day. What an edit may not do is talk to whoever evaluates the replies, which is what JUDGE_TALK
+// catches below. (Everyday words such as score, grading or evaluation were never blocked: live, a vocabulary
+// block on judging words blocked about one honest edit in three for a tutor bot.)
+const JUDGING = /\b(held[- ]back|hidden tests?|counter[_ -]checks?|guard checks?|attack cases?|evidence files?)\b/gi;
+// A word family the prompt, goal or policy already uses is the agent's own subject, so only judging words from
+// other families count.
+const FAMILY = /\b(held[- ]back|hidden test|counter[_ -]check|guard check|attack case|evidence file)\w*/gi;
 const family = (w: string) => w.toLowerCase().slice(0, 4);
 const ownFamilies = (known: string) => new Set((known.match(FAMILY) ?? []).map(family));
 const judgingWords = (t: string, own: Set<string>) => (t.match(JUDGING) ?? []).filter((w) => !own.has(family(w)));
+
+// Talking to the judge: the evaluator as the actor ("the judge prefers"), the reply framed as evaluated
+// ("checked against a rubric"), a plea for the outcome ("give this full marks", "deserves a high score"), or a
+// direct address ("note to the grader"). These are the prompt tailoring itself to the test.
+const JUDGE_TALK = [
+  /\b(?:judges?|graders?|evaluators?|markers?)\b[^.!?]{0,40}\b(?:prefers?|wants?|likes?|rewards?|scores?|grades?|marks?|rates?|evaluates?|looks for)\b/i,
+  /\b(?:scored|graded|marked|rated|evaluated|judged|checked) (?:by|against)\b[^.!?]{0,30}\b(?:judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?)\b/i,
+  /\b(?:give|award|grant)\b[^.!?]{0,40}\b(?:full|top|high|maximum) (?:marks?|score|grade|points?)\b/i,
+  /\bdeserves? (?:a )?(?:high|full|top|good) (?:score|grade|marks?|rating)\b/i,
+  /\b(?:dear|note to|message to|attention)\b[^.!?]{0,20}\b(?:judge|grader|evaluator)\b/i,
+];
+const judgeTalk = (t: string) => JUDGE_TALK.flatMap((p) => t.match(new RegExp(p.source, "gi")) ?? []);
 
 const SCHEMA = {
   type: "object",
@@ -61,6 +75,8 @@ export function applyEdits(prompt: string, edits: unknown, known = ""): { text: 
     if (e.replace.length > MAX_EDIT_CHARS || e.find.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
     const added = judgingWords(e.replace, own);
     if (added.length > judgingWords(e.find, own).length) return { problem: `an edit talks about judging or scores ("${added[0].toLowerCase()}")` };
+    const talk = judgeTalk(e.replace);
+    if (talk.length > judgeTalk(e.find).length) return { problem: `an edit talks about judging or scores ("${talk[0].toLowerCase()}")` };
     if (e.find === "") { text = `${text.trimEnd()}\n\n${e.replace.trim()}\n`; continue; }
     const at = text.indexOf(e.find);
     if (at === -1) return { problem: "an edit's text isn't in the prompt" };

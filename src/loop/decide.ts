@@ -13,7 +13,7 @@ import { WIN } from "./score.ts";
 import { candidateScope, rememberCandidates } from "../core/candidate-history.ts";
 
 export const BUSY_RETRIES = 2;
-export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null }
+export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null; calibration?: { check: string; reading: string }[] | null }
 
 const LESSONS = 6;
 
@@ -137,6 +137,13 @@ async function recover(goal: Goal, repo: Repo, state: State): Promise<boolean> {
 
 export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now = new Date()): Promise<RoundRecord | null> {
   const state = await repo.readState();
+  // The team's last calibration, read from .synthe/calibration.json by the caller: the readings belong in
+  // state, where the report's rewrite-a-check ask can see them. Readings for checks the goal no longer has
+  // are dropped, so the ask never names a check that isn't there any more.
+  if (input.calibration) {
+    const current = new Set(goal.checks ?? []);
+    state.calibration = input.calibration.filter((r) => current.has(r.check));
+  }
   const { merge_rule, budget } = goal;
   const recovered = await recover(goal, repo, state);
   // While a proposal waits for review, nothing else happens: no candidates, no spend, no round.

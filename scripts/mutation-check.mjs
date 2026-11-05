@@ -87,6 +87,8 @@ const allMutations = [
   ["settling trusts the proposed text over what merged", DECIDE, "const live = source === null ? null : readPrompt(source, goal, p.text);", "const live = p.text;"],
   ["scoring pays when there's nothing to compare", SCORE, "  if (safe.length === 0 && !hasPrior) {", "  if (false) {"],
   ["an edit may add talk of judging or scores", WRITE, "if (added.length > judgingWords(e.find, own).length) return", "if (false) return"],
+  ["an edit may talk to the judge", WRITE, "if (talk.length > judgeTalk(e.find).length) return", "if (false) return"],
+  ["calibration readings never reach state", "src/loop/decide.ts", "if (input.calibration) {", "if (false) {"],
   ["the judge never sees the business policy", SCORE, "goal.policy?.trim() ? `\\nBusiness policy", "false ? `\\nBusiness policy"],
   ["setup defaults an unclear merge answer to automatic", "src/cli/init.ts", "if (auto === null) { auto = false;", "if (auto === null) { auto = true;"],
   ["unknown cost merges", DECIDE, "input.costUsd === null", "false"],
