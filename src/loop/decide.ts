@@ -359,6 +359,11 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       })),
       ...(input.rejected ?? []).map((r) => ({ summary: "An edit that couldn't be applied", outcome: `Not used: ${r.replace(/^candidate-\d+: /, "")}.` })),
     ];
+    if (scores.attacks) {
+      const winner = verdict.action === "merge" ? scores.candidates.find((c) => c.id === verdict.candidateId) : undefined;
+      const failed = winner ? winner.attackFailed : scores.attacks.baselineFailed;
+      record.attacks = { total: scores.attacks.total, failed: failed ?? [], ...(failed === null || failed === undefined ? { unknown: true } : {}) };
+    }
     if (verdict.action === "skip") {
       record.plain = "Nothing was clearly better, so your prompt stayed the same.";
       await saveEvidence(evidenceOf("skip", closest, current)(false));
@@ -369,6 +374,12 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       const problem = text === undefined ? "candidate missing" : candidateProblem(text, goal.prompt) ?? (text.trim() === current.trim() ? "candidate is the current prompt" : null);
       if (problem) {
         record.reasons.push(problem);
+        // Nothing landed, so the prompt that ended the round is still the current one: its attack results
+        // are the round's, not the refused candidate's.
+        if (scores.attacks) {
+          const failed = scores.attacks.baselineFailed;
+          record.attacks = { total: scores.attacks.total, failed: failed ?? [], ...(failed === null || failed === undefined ? { unknown: true } : {}) };
+        }
       } else {
         const changed = chosen?.summary ?? "A change to the prompt";
         const example = pickExample(scores, verdict.candidateId, scenarioText);
@@ -391,6 +402,12 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
             state.prompt = goal.prompt.kind === "inline" ? text! : null;
           }
           stall = false;
+        }
+        if (!landed && scores.attacks) {
+          // The merge didn't land, so the current prompt is still the one that ended the round: record its
+          // attack results, not the unmerged candidate's.
+          const failed = scores.attacks.baselineFailed;
+          record.attacks = { total: scores.attacks.total, failed: failed ?? [], ...(failed === null || failed === undefined ? { unknown: true } : {}) };
         }
       }
     } else if (verdict.action === "revert") {

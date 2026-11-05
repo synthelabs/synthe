@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { GOAL_FILE, parseGoal, parseScenarios } from "./core/goal.ts";
+import { ATTACKS_FILE, GOAL_FILE, parseAttacks, parseGoal, parseScenarios, type Attack } from "./core/goal.ts";
 import { readPrompt } from "./core/prompt.ts";
 import { sumCosts } from "./core/cost.ts";
 import { resumeIfScenariosChanged, stopReason } from "./core/state.ts";
@@ -141,7 +141,10 @@ async function main() {
     if (!written) throw new Error("candidates are missing");
     const last = state.lastMerge;
     const prior = last && !last.reverted && last.mergedHash === sha256(prompt) ? last.priorPrompt : null;
-    const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior);
+    // The frozen attack set, when the repo has one. It is loaded here, in the score step, so attack text can
+    // never reach the write step or the writer.
+    const attacks: Attack[] = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync(ATTACKS_FILE, "utf8")) : [];
+    const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks);
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
     for (const line of explainScores(scored.scores, scenarios)) console.log(line);
     const { confirmed, dismissed, failed, excusedConfirmed } = scored.checks;

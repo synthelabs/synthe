@@ -162,15 +162,26 @@ export function noWinSection(goal: Goal, state: State): string[] {
 }
 
 // The round on its Actions run page: the outcome, what was tried, the cost and where the full report is.
+// The round's attack line, when the repo has a frozen attack set: how many of the attack messages the prompt
+// that ended the round held, naming the ones it failed.
+export function attackLine(r: RoundRecord): string | null {
+  if (!r.attacks) return null;
+  if (r.attacks.unknown) return "Attacks: couldn't be checked this round.";
+  const held = r.attacks.total - r.attacks.failed.length;
+  return r.attacks.failed.length ? `Attacks: ${held} of ${r.attacks.total} held (failed: ${r.attacks.failed.join(", ")}).` : `Attacks: ${held} of ${r.attacks.total} held.`;
+}
+
 export function roundSummary(goal: Goal, state: State, record: RoundRecord | null, repo: string): string {
   const { title, summary } = headline(goal, state);
   const report = state.issue ? `Full report: https://github.com/${repo}/issues/${state.issue}` : "";
   if (!record) return [`## Synthe: ${title}`, "", summary, "", report, ""].join("\n");
   const cost = record.costUsd === null ? "unknown" : `$${record.costUsd.toFixed(2)}`;
   const tried = record.tried?.length ? record.tried.map((t) => `- ${t.summary} *${t.outcome}*`) : [];
+  const attacks = attackLine(record);
   return [
     `## Synthe round ${record.round}: ${OUTCOME[record.outcome].toLowerCase()}${record.pr ? ` (#${record.pr})` : ""}`, "",
     ...(record.plain ? [record.plain, ""] : []),
+    ...(attacks ? [attacks, ""] : []),
     ...(tried.length ? ["What Synthe tried:", ...tried, ""] : []),
     `Cost of this round: ${cost}. ${summary}`, "", report, "",
   ].join("\n");
@@ -226,7 +237,8 @@ export function renderReport(goal: Goal, state: State, now: Date = new Date()): 
         : `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}. Turn it off with "share": "none" in synthe.json.`,
     `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
-    ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}. ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),
+    ...(state.rounds.some((r) => r.attacks) ? ["- Attacks: each round, the current prompt and the winning change also answer the frozen attack messages in `.synthe/attacks.jsonl`, and a change that fails one the current prompt passes isn't merged. Attacks are a basic check, not a security test."] : []),
+    ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}.${attackLine(r) ? ` ${attackLine(r)}` : ""} ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),
     "", "</details>", "",
     ...notTested(goal), "",
     "Only your prompt file can change. Was this useful? React 👍 or 👎 on this issue to tell us.",

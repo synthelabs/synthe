@@ -168,6 +168,9 @@ const allMutations = [
   ["no-win section drops the add-test-cases ask", REPORT, "if (top.length) asks.push(", "if (false) asks.push("],
   ["no-win section groups hidden-case failures as not clearly better", REPORT, 'outcome.includes("hidden")', 'outcome.includes("never-matches")'],
   ["decide forgets the round's check failure counts", DECIDE, "for (const check of row.failedChecks ?? []) failed[check] = (failed[check] ?? 0) + 1;", ""],
+  ["attack subset test inverted", RULE, "const newAttacks = mine.filter((id) => !baselineFailed.has(id));", "const newAttacks = mine.filter((id) => baselineFailed.has(id));"],
+  ["an unknown attack result passes", RULE, "if (baseFailed === null || !Array.isArray(mine)) {", "if (false) {"],
+  ["attacks leaked into the writer input", SCORE, "const train = scenarios.filter((s) => s.split === \"train\");\n  const holdout", "const train = [...scenarios, ...attacks.map((a) => ({ id: a.id, input: a.input, expected: a.must, split: \"train\" as const }))].filter((s) => s.split === \"train\");\n  const holdout"],
 ];
 
 const selectedFiles = process.argv.slice(2);

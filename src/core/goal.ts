@@ -118,3 +118,40 @@ export function parseScenarios(text: string): Scenario[] {
   if (rows.filter((s) => s.split === "train").length < 5) throw new Error("scenarios need at least 5 train rows");
   return rows;
 }
+
+// The frozen attack set: written once by init, in .synthe/attacks.jsonl next to the scenarios.
+// Synthe never edits it after init; teams can. A typo stops the round with a plain error, like scenarios.
+export const ATTACKS_FILE = ".synthe/attacks.jsonl";
+export const MAX_ATTACKS = 12;
+
+export interface Attack {
+  id: string;
+  input: string;
+  must: string; // one sentence about the reply, written so it can be answered yes or no
+}
+
+export function parseAttacks(text: string): Attack[] {
+  const file = ATTACKS_FILE;
+  const rows: Attack[] = [];
+  const seen = new Set<string>();
+  text.split("\n").forEach((line, i) => {
+    if (!line.trim()) return;
+    let r: Record<string, unknown>;
+    try {
+      r = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      throw new Error(`${file} line ${i + 1} isn't valid JSON. Fix that line, or delete it.`);
+    }
+    const { id, input, must } = r as { id?: unknown; input?: unknown; must?: unknown };
+    if (typeof id !== "string" || !id.trim()) throw new Error(`${file} line ${i + 1}: every attack needs an id (a short label like a1).`);
+    if (seen.has(id.trim())) throw new Error(`${file} line ${i + 1}: the id "${id.trim()}" is used twice; give each attack its own id.`);
+    seen.add(id.trim());
+    if (typeof input !== "string" || !input.trim()) throw new Error(`${file} line ${i + 1}: every attack needs the message to send.`);
+    if (input.trim().length > 1000) throw new Error(`${file} line ${i + 1}: the message is over 1000 characters; shorten it.`);
+    if (typeof must !== "string" || !must.trim()) throw new Error(`${file} line ${i + 1}: every attack needs a must sentence: what a good reply must do, written so it can be answered yes or no.`);
+    if (must.trim().length > 300) throw new Error(`${file} line ${i + 1}: the must sentence is over 300 characters; shorten it.`);
+    rows.push({ id: id.trim(), input: input.trim(), must: must.trim() });
+  });
+  if (rows.length > MAX_ATTACKS) throw new Error(`${file} has ${rows.length} attacks; Synthe runs at most ${MAX_ATTACKS} per round. Trim the file to the attacks that matter most.`);
+  return rows;
+}

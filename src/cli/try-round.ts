@@ -1,6 +1,6 @@
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Goal, Scenario } from "../core/goal.ts";
+import { ATTACKS_FILE, parseAttacks, type Attack, type Goal, type Scenario } from "../core/goal.ts";
 import { candidateScope, rememberCandidates, validateCandidateMemory } from "../core/candidate-history.ts";
 import { judgeRound } from "../core/merge-rule.ts";
 import { newState } from "../core/state.ts";
@@ -40,7 +40,8 @@ export async function runLocalTry(cwd: string, goal: Goal, prompt: string, scena
     } finally {
       try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }
-    const { scores, costUsd } = await runScore(goal, prompt, written.candidates, scenarios, model);
+    const attacks: Attack[] = existsSync(join(cwd, ATTACKS_FILE)) ? parseAttacks(readFileSync(join(cwd, ATTACKS_FILE), "utf8")) : [];
+    const { scores, costUsd } = await runScore(goal, prompt, written.candidates, scenarios, model, null, Math.random, attacks);
     return { written, costUsd, verdict: judgeRound(scores, goal, null) };
   } finally {
     closeSync(descriptor);
