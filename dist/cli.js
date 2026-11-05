@@ -28049,7 +28049,7 @@ var init_sdk = __esm({
 
 // src/cli/main.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync3, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "node:fs";
 import { createInterface as createInterface3 } from "node:readline/promises";
 
 // src/core/goal.ts
@@ -28425,8 +28425,11 @@ init_sdk();
 var PRICES = {
   "claude-haiku-5-5": { input: 0.1, output: 0.5 },
   "claude-sonnet-5-5": { input: 2, output: 10 },
-  "claude-opus-5-5": { input: 4, output: 20 }
+  "claude-opus-5-5": { input: 4, output: 20 },
+  // Teams still on Sonnet 4.5 need a price to see what moving off it (it retires 2026-11-30) would cost.
+  "claude-sonnet-4-5": { input: 3, output: 15 }
 };
+var knownModels = () => Object.keys(PRICES);
 function costUsd(model, usage) {
   const price = PRICES[model];
   if (!price || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
@@ -28893,6 +28896,14 @@ async function measureNoise(goal, prompt, scenarios, model) {
   const split = paired(rows, rows.map((r) => ({ ...r, score: r.score === null ? null : EVEN })));
   const ties = rows.filter((r) => r.score === TIE).length;
   return { wins: split?.wins ?? null, losses: split?.losses ?? null, ties, p: split?.p ?? null, costUsd: sumCosts(costs) };
+}
+async function compareRunners(goal, prompt, scenarios, from, to, model, random = Math.random) {
+  const on = (runner) => ({ ...goal, models: { ...goal.models, runner } });
+  const old = scorer(on(from), model, random);
+  const next = scorer(on(to), model, random);
+  const replies = await old.repliesFor(prompt, scenarios);
+  const duels = await next.challenge("migrate", prompt, scenarios, replies);
+  return { before: currentRows(scenarios, replies, [duels]), after: duels.map((d) => d.row) };
 }
 
 // src/cli/init.ts
@@ -29434,6 +29445,123 @@ Set up, but GitHub did not accept the first dispatch. Run \`gh workflow run synt
   return true;
 }
 
+// src/cli/migrate.ts
+import { existsSync, readFileSync as readFileSync2 } from "node:fs";
+import { join as join4 } from "node:path";
+var MAX_DROP = 5;
+function parseArgs(args) {
+  const out = { dryRun: false };
+  for (let i = 0; i < args.length; i++) {
+    const [flag, inline] = args[i].split(/=(.*)/s);
+    if (flag === "--dry-run") out.dryRun = true;
+    else if (flag === "--from" || flag === "--to") {
+      const value = inline ?? args[++i];
+      if (!value || value.startsWith("--")) return `${flag} needs a model name, like ${flag} claude-sonnet-5-5.`;
+      out[flag === "--from" ? "from" : "to"] = value;
+    } else return `Unknown option ${args[i]}. Use --to <model>, and optionally --from <model> and --dry-run.`;
+  }
+  return out;
+}
+function dryRunModel(goal) {
+  return {
+    async ask(a) {
+      const cost = costUsd(a.model, { input_tokens: 500, output_tokens: 300 });
+      if (!a.schema) return { text: `[dry run] a reply from ${a.model}`, costUsd: cost };
+      const props = a.schema.properties ?? {};
+      const checks = goal.checks?.filter((c) => c.trim()) ?? [];
+      const answer = "results" in props ? { results: checks.map((_, i) => ({ check: i + 1, applies: true, passes: true })) } : { better: "tie", a_guardrail_ok: true, b_guardrail_ok: true };
+      return { text: JSON.stringify(answer), costUsd: cost };
+    }
+  };
+}
+var money2 = (n) => n === null ? "unknown" : `$${n.toFixed(3)}`;
+var signed = (n, digits = 1) => `${n > 0 ? "+" : ""}${n.toFixed(digits)}`;
+function costSection(before, after) {
+  const change = before !== null && after !== null && before > 0 ? `${signed(100 * (after - before) / before, 0)}%` : "unknown";
+  return ["Cost per round (answering every test case once)", `  Before: ${money2(before)}  After: ${money2(after)}  Change: ${change}`, ""];
+}
+async function migrate(args, env) {
+  const say = env.say;
+  const fail = (text) => {
+    say(text);
+    return 1;
+  };
+  const parsed = parseArgs(args);
+  if (typeof parsed === "string") return fail(parsed);
+  if (!existsSync(join4(env.cwd, GOAL_FILE))) return fail("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
+  const goal = parseGoal(readFileSync2(join4(env.cwd, GOAL_FILE), "utf8"));
+  const from = parsed.from ?? goal.models.writer;
+  const to = parsed.to;
+  if (!to) return fail("Say which model to try: npx synthe migrate --to <model>");
+  const known = knownModels();
+  const unknown = [from, to].find((m) => !known.includes(m));
+  if (unknown) return fail(`Synthe doesn't know the model "${unknown}", so it can't work out what it costs. Models it knows: ${known.join(", ")}.`);
+  if (from === to) return fail(`--from and --to are both ${to}. Pick two different models to compare.`);
+  const prompt = readPrompt(readFileSync2(join4(env.cwd, goal.prompt.path), "utf8"), goal, null);
+  if (prompt === null) return fail(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
+  const scenarios = parseScenarios(readFileSync2(join4(env.cwd, goal.scenarios), "utf8"));
+  let real = env.model;
+  if (!parsed.dryRun && !real) {
+    if (!env.apiKey) return fail("`npx synthe migrate` runs on your computer, changing nothing, and needs your Synthe key:\n  ANTHROPIC_API_KEY=your-key npx synthe migrate --to " + to + "\nTo see the layout without spending anything, add --dry-run.");
+    real = anthropicModel(env.apiKey);
+  }
+  const model = parsed.dryRun ? dryRunModel(goal) : real;
+  const costs = [];
+  const replyCosts = /* @__PURE__ */ new Map([[from, []], [to, []]]);
+  const metered = {
+    async ask(a) {
+      const r = await model.ask(a);
+      costs.push(r.costUsd);
+      if (!a.schema) replyCosts.get(a.model)?.push(r.costUsd);
+      return r;
+    }
+  };
+  const train = scenarios.filter((s) => s.split === "train").length;
+  say(`Migrating from ${from} to ${to}`);
+  say(`
+Scenarios: ${train} train + ${scenarios.length - train} holdout = ${scenarios.length} total`);
+  if (parsed.dryRun) say("Dry run: no model was called. Every reply ties and every check passes, so the scores below are placeholders; the costs are estimates from a fixed size of call.");
+  say(`Your current prompt answers each test case on both models. The judge and checks stay as configured (judge ${goal.models.judge}).
+`);
+  const { before, after } = await compareRunners(goal, prompt, scenarios, from, to, metered, env.random);
+  const judged = after.flatMap((a, i) => typeof a.score === "number" && typeof before[i].score === "number" ? [[before[i], a]] : []);
+  if (judged.length === 0) return fail("None of the test cases could be judged, so there's nothing to compare. Try again in a few minutes; if it keeps happening, open an issue at https://github.com/synthelabs/synthe/issues");
+  const avg = (rows) => rows.reduce((n, r) => n + r.score, 0) / rows.length;
+  const judgeBefore = avg(judged.map(([b]) => b)), judgeAfter = avg(judged.map(([, a]) => a));
+  const count = (score) => judged.filter(([, a]) => a.score === score).length;
+  const lines = [];
+  lines.push(`Test cases: better on ${to} in ${count(WIN)}, worse in ${count(LOSS)}, the same in ${count(TIE)}${judged.length < scenarios.length ? `. ${scenarios.length - judged.length} couldn't be judged and are left out` : ""}`, "");
+  lines.push("Judge score (all scenarios, head to head: 50 is even)", `  Before: ${judgeBefore.toFixed(1)}  After: ${judgeAfter.toFixed(1)}  Change: ${signed(judgeAfter - judgeBefore)}`, "");
+  let rateDrop = 0, rateChange = null;
+  if (goal.checks?.some((c) => c.trim())) {
+    const both = judged.filter(([b, a]) => [b, a].every((r) => typeof r.failed === "number" && typeof r.applicable === "number"));
+    const rateBefore = checkRate(both.map(([b]) => b)), rateAfter = checkRate(both.map(([, a]) => a));
+    if (rateBefore === null || rateAfter === null) lines.push("Check pass rate", "  Couldn't be measured: no check applied to these test cases, or the checker's answers were incomplete.", "");
+    else {
+      rateDrop = rateBefore - rateAfter;
+      rateChange = rateAfter - rateBefore;
+      lines.push("Check pass rate", `  Before: ${rateBefore}%  After: ${rateAfter}%  Change: ${signed(rateChange, 0)}pp`, "");
+    }
+  }
+  const costBefore = sumCosts(replyCosts.get(from)), costAfter = sumCosts(replyCosts.get(to));
+  lines.push(...costSection(costBefore, costAfter));
+  const judgeDrop = judgeBefore - judgeAfter;
+  const worse = [];
+  if (judgeDrop > MAX_DROP) worse.push(`judge score dropped more than ${MAX_DROP} points`);
+  if (rateDrop > MAX_DROP) worse.push(`check pass rate dropped more than ${MAX_DROP}pp`);
+  const cheaper = costBefore !== null && costAfter !== null && costAfter < costBefore;
+  const better = judgeAfter - judgeBefore > MAX_DROP || (rateChange ?? 0) > MAX_DROP;
+  if (parsed.dryRun) lines.push("Verdict: none from a dry run. Run again without --dry-run to compare real replies.");
+  else if (worse.length) lines.push(`Verdict: ${worse.join("; ")}. Review before switching.`);
+  else if (cheaper) lines.push(`Verdict: Looks good: ${better ? "better" : "similar"} quality, lower cost.`);
+  else lines.push(`Verdict: Review before switching. ${costBefore === null || costAfter === null ? "The cost couldn't be worked out." : "The new model doesn't cost less."}`);
+  lines.push("", "This is one run on each model, so small changes can be the judge varying. `npx synthe try --noise` shows how much it varies.");
+  const spent = sumCosts(costs);
+  lines.push(parsed.dryRun ? `Cost of this comparison: $0.00 (dry run). A real run would cost about ${money2(spent)}.` : `Cost of this comparison: ${money2(spent)}`);
+  say(lines.join("\n"));
+  return 0;
+}
+
 // src/cli/restart.ts
 function restartState(goal, state, scenariosHash = null) {
   const stopped = state.stopped;
@@ -29481,12 +29609,12 @@ async function askSecret(question, input = process.stdin, output = process.stdou
 }
 
 // src/cli/upgrade.ts
-import { existsSync, readFileSync as readFileSync2, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join4 } from "node:path";
+import { existsSync as existsSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join5 } from "node:path";
 function upgrade(root, template2) {
-  const path4 = join4(root, WORKFLOW_FILE);
-  if (!existsSync(path4)) throw new Error(`No ${WORKFLOW_FILE} found. Run \`npx synthe init\` first.`);
-  const before = readFileSync2(path4, "utf8");
+  const path4 = join5(root, WORKFLOW_FILE);
+  if (!existsSync2(path4)) throw new Error(`No ${WORKFLOW_FILE} found. Run \`npx synthe init\` first.`);
+  const before = readFileSync3(path4, "utf8");
   if (!before.includes("synthelabs/synthe@v1")) throw new Error(`${WORKFLOW_FILE} is not a Synthe workflow; left it unchanged.`);
   const cron = before.match(/cron:\s*["']?(\d+)(?:-59\/10)? \* \* \* \*/);
   const minute = cron ? Math.max(1, Number(cron[1])) : void 0;
@@ -29516,10 +29644,10 @@ async function ask(question) {
   rl.close();
   return answer;
 }
-var template = () => readFileSync3(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync4(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 function setUpHere() {
-  if (existsSync2(GOAL_FILE)) return true;
+  if (existsSync3(GOAL_FILE)) return true;
   console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
   process.exitCode = 1;
   return false;
@@ -29548,7 +29676,7 @@ async function status() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync3(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync4(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -29571,7 +29699,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync3(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync4(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -29581,7 +29709,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync2(goal.scenarios) ? sha256(readFileSync3(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync3(goal.scenarios) ? sha256(readFileSync4(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -29615,14 +29743,14 @@ function localRun(command) {
     process.exitCode = 1;
     return null;
   }
-  const goal = parseGoal(readFileSync3(GOAL_FILE, "utf8"));
-  const prompt = readPrompt(readFileSync3(goal.prompt.path, "utf8"), goal, null);
+  const goal = parseGoal(readFileSync4(GOAL_FILE, "utf8"));
+  const prompt = readPrompt(readFileSync4(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync3(goal.scenarios, "utf8")), model: anthropicModel(key) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync4(goal.scenarios, "utf8")), model: anthropicModel(key) };
 }
 async function calibrateChecks() {
   const local = localRun("calibrate");
@@ -29630,7 +29758,7 @@ async function calibrateChecks() {
   const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result) return;
   if (result.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync3(GOAL_FILE, "utf8"));
+    const saved = JSON.parse(readFileSync4(GOAL_FILE, "utf8"));
     writeFileSync4(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}
 `);
     console.log(`
@@ -29672,6 +29800,7 @@ Then:
   npx synthe try      run one round on your computer, changing nothing (needs ANTHROPIC_API_KEY)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
   npx synthe calibrate     check that your checks are marked steadily and the way you mean them (needs ANTHROPIC_API_KEY)
+  npx synthe migrate --to <model>   compare your prompt on another model, changing nothing (needs ANTHROPIC_API_KEY; add --dry-run to spend nothing)
 
 More: https://github.com/synthelabs/synthe#readme`;
 async function main() {
@@ -29683,6 +29812,7 @@ async function main() {
   else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
   else if (command === "calibrate") await calibrateChecks();
+  else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.ANTHROPIC_API_KEY });
   else console.log(HELP);
 }
 main().catch((e) => {

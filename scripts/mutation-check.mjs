@@ -104,6 +104,8 @@ const mutations = [
   ["setup's review shows held-back cases", "src/cli/calibrate.ts", "const cases = scenarios.filter((s) => s.split === \"train\").slice(0, SETUP_CASES);", "const cases = scenarios.slice(0, SETUP_CASES);"],
   ["calibrate trusts too little evidence", "src/cli/calibrate.ts", "} else if (r.applied < MIN_APPLIED) {", "} else if (false) {"],
   ["calibrate trusts checks nobody answered", "src/cli/calibrate.ts", "} else if (r.asked === 0) {", "} else if (false) {"],
+  ["migrate's score drop threshold is inverted", "src/cli/migrate.ts", "if (judgeDrop > MAX_DROP)", "if (judgeDrop < MAX_DROP)"],
+  ["migrate doesn't report cost", "src/cli/migrate.ts", "lines.push(...costSection(costBefore, costAfter));", ""],
   ["calibration kappa sign flipped", "src/cli/calibrate.ts", "const kappa = (po - pe) / (1 - pe);", "const kappa = (po - pe) / (1 + pe);"],
   ["calibration swaps true-positive and true-negative rates", "src/cli/calibrate.ts", "return { tpr: tp / (tp + fn), tnr: tn / (tn + fp), kappa, reading };", "return { tpr: tn / (tn + fp), tnr: tp / (tp + fn), kappa, reading };"],
   ["calibration prints numbers from too few labels", "src/cli/calibrate.ts", 'if (labels.length < MIN_APPLIED) return none("too few replies to judge");', 'if (false) return none("too few replies to judge");'],
