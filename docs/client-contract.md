@@ -4,9 +4,9 @@ What the Synthe client (the `synthe` npm package and the workflows it installs i
 
 Services:
 
-- **Sponsored model credit:** `POST https://synthe-share.vercel.app/api/claude/v1/messages`
-- **Round events (private ingest):** `POST https://synthe-share.vercel.app/api/events`
-- **Diagnostics (private ingest):** `POST https://synthe-share.vercel.app/api/diagnostics`
+- **Sponsored model credit:** `POST https://synthe-crimson.vercel.app/api/claude/v1/messages`
+- **Round events (private ingest):** `POST https://synthe-crimson.vercel.app/api/events`
+- **Diagnostics (private ingest):** `POST https://synthe-crimson.vercel.app/api/diagnostics`
 - **Round summaries (the older, numbers-only path, still live):** `POST https://synthe-share.vercel.app/api/round`
 
 The ingest endpoints and the team-credit mode are built on the synthe-share branches `crimson/team-enrollment` and `crimson/private-ingest`, stacked on PR #2 (synthe-share PRs #3 and #4). Rishab's copy of this contract lives on the ingest branch; this copy was reconciled against it line by line on 2026-11-04. Where the two copies differ, the ingest branch's copy wins until this one is reconciled again.
