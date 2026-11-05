@@ -2,7 +2,7 @@
 
 Friday, November 6. Nothing here has been used or sent yet.
 
-Operators: see [no-spend readiness](OFFLINE-READINESS.md) before publishing or printing. The event flow is not yet in the published package, and the existing `v1.6.2` tag does not contain the pending event changes. Match the dollar amounts below to the final configured caps before distributing this kit.
+Operators: see [no-spend readiness](OFFLINE-READINESS.md) before publishing or printing. The event flow is live in the published package (v1.7.3 on npm). The dollar amounts below match the configured caps as of November 5.
 
 ## Intro slide
 
@@ -35,7 +35,7 @@ Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop a
 ## Table script
 
 - **What it changes:** only the system prompt, on your default branch.
-- **What it costs you:** nothing with the event code. $4 of event credit per GitHub account (shared by all your repos); the proxy caps event spend.
+- **What it costs you:** nothing with the event code. Each install runs on a $4 budget, and the Synthe proxy caps total event spend.
 - **What it won't do:** run your code or touch anything else.
 - **How good is it?** It tests against simulated scenarios, so check the results yourself.
 - **Prompt in code?** It handles most inline strings. If not, move the prompt into a file.
