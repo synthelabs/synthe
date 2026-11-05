@@ -28545,7 +28545,7 @@ function headline(goal, state, stoppedByTeam = false) {
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
-  if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
+  if (recent.length > 0 && (recent.every((r) => r.outcome === "failed") || badKey(recent.at(-1)))) {
     const end = recent.at(-1);
     if (busy(end) && fromSyntheProxy(end.plain)) return { title: "Stopped: Synthe's proxy needs attention", summary: end.plain };
     if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain };
@@ -30325,21 +30325,23 @@ Scenarios: ${train} train + ${scenarios.length - train} holdout = ${scenarios.le
 function restartState(goal, state, scenariosHash = null) {
   const stopped = state.stopped;
   if (!stopped) return { state, note: "" };
+  const noRoundsLeft = state.round >= goal.merge_rule.max_rounds && !/^reached \d+ rounds$/.test(stopped) ? { why: `Synthe has also run all ${goal.merge_rule.max_rounds} rounds. Raise merge_rule.max_rounds in synthe.json, push it, then run \`npx synthe restart\` again; otherwise it would stop again straight away.` } : null;
   if (scenariosHash !== null) {
     const next = { ...state };
-    if (resumeIfScenariosChanged(next, scenariosHash)) return { state: next, note: "Your test cases changed, so it continues." };
+    if (resumeIfScenariosChanged(next, scenariosHash)) return noRoundsLeft ?? { state: next, note: "Your test cases changed, so it continues." };
   }
   if (state.spendUnknown) return { why: "Synthe couldn't measure what a round cost, so it won't spend any more on this run." };
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
-  const failedOut = recent.length > 0 && recent.every((r) => r.outcome === "failed");
+  const last = state.rounds.at(-1);
+  const failedOut = recent.length > 0 && (recent.every((r) => r.outcome === "failed") || last?.outcome === "failed" && last.failure === "key");
   const roundsRaised = /^reached \d+ rounds$/.test(stopped) && state.round < goal.merge_rule.max_rounds;
   const budgetAvailable = /^budget/.test(stopped) && budgetSpend(state) < goal.budget.max_usd;
-  if (budgetAvailable && state.round >= goal.merge_rule.max_rounds) return { why: `There's budget again, but Synthe has also run all ${goal.merge_rule.max_rounds} rounds. Raise merge_rule.max_rounds in synthe.json, push it, then run \`npx synthe restart\` again.` };
   if (isFinished(stopped) && (!failedOut || /^budget/.test(stopped)) && !roundsRaised && !budgetAvailable) {
     if (/no winner$/.test(stopped)) return { why: `The last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better. To keep going, add test cases your agent still gets wrong to ${goal.scenarios}, push them, then run \`npx synthe restart\` again.` };
     if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget. ${state.ownKeyFromUsd === void 0 ? "Run `npx synthe key` for a fresh own-key budget, or raise" : "Raise"} budget.max_usd in synthe.json${state.round >= goal.merge_rule.max_rounds ? ` (and merge_rule.max_rounds: all ${goal.merge_rule.max_rounds} rounds have run)` : ""} and push it, then run \`npx synthe restart\`.` };
     return { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` };
   }
+  if (noRoundsLeft) return noRoundsLeft;
   return { state: { ...state, stopped: null, stalls: 0 }, note: stopped === "credit" ? "It had stopped on event credit." : `It had stopped because: ${stopped}.` };
 }
 
