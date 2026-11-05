@@ -33,6 +33,7 @@ const allMutations = [
   ["an absent share setting sends data", SHARE, 'goal.share === "numbers" || goal.share === "detail" || goal.share === "full"', 'goal.share !== "none"'],
   ["DO_NOT_TRACK is ignored", "src/cli/init.ts", '["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "")', 'false'],
   ["numbers-only sends text", SHARE, 'if (goal.share !== "detail" && goal.share !== "full") return payload;', 'if (goal.share === "none") return payload;'],
+  ["init records no notice version", "src/cli/init.ts", "goal.share_notice = SHARE_NOTICE_VERSION;", ""],
   ["full sends prompt after the cutoff", SHARE, 'now.getTime() < Date.parse(FULL_SHARE_UNTIL)', 'true'],
   ["detail sends the prompt", SHARE, 'goal.share === "full" && now.getTime()', 'true && now.getTime()'],
   ["example input dropped", SHARE, '        input: limited(record.example.input, 2000),\n', ''],

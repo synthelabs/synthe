@@ -28091,6 +28091,7 @@ function parseGoal(text) {
     if (dup !== void 0) bad(`counter_checks lists the same guard twice ("${dup.slice(0, 60)}"); each guard should appear once`);
   }
   if (g.share !== void 0 && !["none", "numbers", "detail", "full"].includes(g.share)) bad("share must be none, numbers, detail or full");
+  if (g.share_notice !== void 0 && typeof g.share_notice !== "string") bad("share_notice must be text");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
@@ -28681,7 +28682,7 @@ var SECRETS = [
   [/(?<![\w.])\+?\d[\d ().-]{8,}\d(?![\w.])/g, "[phone removed]"]
 ];
 var scrub = (text) => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
-var FULL_SHARE_UNTIL = "2026-11-08T23:59:00Z";
+var FULL_SHARE_UNTIL = "2026-11-09T23:59:00Z";
 var fullShareActive = (goal, now = /* @__PURE__ */ new Date()) => goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL);
 var shouldShare = (goal) => goal.share === "numbers" || goal.share === "detail" || goal.share === "full";
 var limited = (text, max) => scrub(text).slice(0, max);
@@ -28918,7 +28919,7 @@ function renderReport(goal, state, now = /* @__PURE__ */ new Date()) {
     "",
     `- Goal: ${goal.objective}`,
     `- Rounds: ${state.round} of up to ${goal.merge_rule.max_rounds}. Spent ${money(state)} of $${goal.budget.max_usd}.`,
-    goal.share === "none" || !goal.share ? "- Sharing with Synthe: off." : goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL) ? '- Sharing with Synthe: everything for Crimson Hacks (prompt and test cases until November 8), then numbers and what changed. Turn it off with "share": "none" in synthe.json.' : `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}. Turn it off with "share": "none" in synthe.json.`,
+    goal.share === "none" || !goal.share ? "- Sharing with Synthe: off." : goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL) ? '- Sharing with Synthe: everything for Crimson Hacks (prompt and test cases until November 9), then numbers and what changed. Turn it off with "share": "none" in synthe.json.' : `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}. Turn it off with "share": "none" in synthe.json.`,
     `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
     ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}. ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),

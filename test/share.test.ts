@@ -129,7 +129,7 @@ test("shareRound times out without failing its caller", async () => {
 test("the report names the share level and workflow skips cancellation", () => {
   for (const share of [undefined, "none"] as const) assert.match(renderReport(goal({ share }), { ...state, rounds: [record] }), /Sharing with Synthe: off\./);
   for (const [share, label] of [["numbers", "numbers only"], ["detail", "numbers and what changed"], ["full", "numbers and what changed"]] as const) assert.match(renderReport(goal({ share }), { ...state, rounds: [record] }, new Date(FULL_SHARE_UNTIL)), new RegExp(`Sharing with Synthe: ${label}\\. Turn it off with "share": "none" in synthe.json`));
-  assert.match(renderReport(goal({ share: "full" }), { ...state, rounds: [record] }, new Date(Date.parse(FULL_SHARE_UNTIL) - 1)), /Sharing with Synthe: everything for Crimson Hacks \(prompt and test cases until November 8\), then numbers and what changed\./);
+  assert.match(renderReport(goal({ share: "full" }), { ...state, rounds: [record] }, new Date(Date.parse(FULL_SHARE_UNTIL) - 1)), /Sharing with Synthe: everything for Crimson Hacks \(prompt and test cases until November 9\), then numbers and what changed\./);
   const workflow = readFileSync("templates/synthe.yml", "utf8");
   assert.match(workflow, /if: \$\{\{ !cancelled\(\) && needs.write.result != 'skipped' && needs.write.outputs.go != 'false' \}\}/);
   assert.match(workflow, /permissions: \{ contents: write, pull-requests: write, issues: write, actions: write, id-token: write \}/);

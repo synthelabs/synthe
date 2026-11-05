@@ -119,7 +119,7 @@ test("init shows what it inferred and what happens next, in plain words", async 
   assert.match(text, /up to 12 rounds and \$3 of your key's credit/);
   assert.match(text, /A 12-round session usually takes about half an hour/);
   assert.match(text, /Automatic merging: on\. Changes go into o\/r as soon as they win\./);
-  assert.match(text, /During Crimson Hacks \(until November 8\), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases/);
+  assert.match(text, /During Crimson Hacks \(until November 9 at 23:59 UTC\), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases/);
   assert.match(text, /You can keep editing your prompt: Synthe always starts from the latest version on o\/r/);
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).merge_rule.mode, "auto");
 });
@@ -171,17 +171,18 @@ test("init announces full sharing before writing synthe.json during Crimson Hack
     io.ask = async (question) => { questions.push(question); return ask(question); };
     const say = io.say;
     io.say = (message) => { if (message.startsWith("During Crimson Hacks")) assert.equal(existsSync(join(dir, "synthe.json")), false); say(message); };
-    assert.equal(await init(io, dir, () => new Date("2026-11-08T23:58:59Z")), true);
+    assert.equal(await init(io, dir, () => new Date("2026-11-09T23:58:59Z")), true);
     assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share, "full");
+    assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share_notice, "crimson-2026-11-v1");
     assert.ok(!questions.some((q) => /share how this run goes|type 1, 2 or 3/i.test(q)));
-    assert.ok(said.includes('During Crimson Hacks (until November 8), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 8 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'));
+    assert.ok(said.includes('During Crimson Hacks (until November 9 at 23:59 UTC), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 9 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'));
     assert.ok(!ran.some((r) => r.args[0] === "issue" && r.args[1] === "create"));
 });
 
 test("init defaults to detail at and after the cutoff", async () => {
   const dir = repoDir(PROMPT);
   const { io, said } = fakeIo(dir);
-  assert.equal(await init(io, dir, () => new Date("2026-11-08T23:59:00Z")), true);
+  assert.equal(await init(io, dir, () => new Date("2026-11-09T23:59:00Z")), true);
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share, "detail");
   assert.ok(said.includes('Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'));
 });
