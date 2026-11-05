@@ -9,6 +9,7 @@ const WRITE = "src/loop/write.ts";
 const STATE = "src/core/state.ts";
 const GITHUB = "src/github/repo.ts";
 const SHARE = "src/core/share.ts";
+const REPORT = "src/loop/report.ts";
 const EVIDENCE = "src/core/evidence.ts";
 const WORKFLOW = "templates/synthe.yml";
 
@@ -162,6 +163,11 @@ const allMutations = [
   ["calibration kappa sign flipped", "src/cli/calibrate.ts", "const kappa = (po - pe) / (1 - pe);", "const kappa = (po - pe) / (1 + pe);"],
   ["calibration swaps true-positive and true-negative rates", "src/cli/calibrate.ts", "return { tpr: tp / (tp + fn), tnr: tn / (tn + fp), kappa, reading };", "return { tpr: tn / (tn + fp), tnr: tp / (tp + fn), kappa, reading };"],
   ["calibration prints numbers from too few labels", "src/cli/calibrate.ts", 'if (labels.length < MIN_APPLIED) return none("too few replies to judge");', 'if (false) return none("too few replies to judge");'],
+  ["no-win section ranks the least failed check first", REPORT, "b[1] - a[1] || (a[0] < b[0] ? -1 : 1)", "a[1] - b[1] || (a[0] < b[0] ? -1 : 1)"],
+  ["no-win section appears for other stop reasons", REPORT, "if (!budget && !/no winner$/.test(state.stopped)) return [];", "if (false) return [];"],
+  ["no-win section drops the add-test-cases ask", REPORT, "if (top.length) asks.push(", "if (false) asks.push("],
+  ["no-win section groups hidden-case failures as not clearly better", REPORT, 'outcome.includes("hidden")', 'outcome.includes("never-matches")'],
+  ["decide forgets the round's check failure counts", DECIDE, "for (const check of row.failedChecks ?? []) failed[check] = (failed[check] ?? 0) + 1;", ""],
 ];
 
 const selectedFiles = process.argv.slice(2);
