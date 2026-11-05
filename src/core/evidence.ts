@@ -47,6 +47,12 @@ export interface EvidenceRecord {
   checksAfter: number | null;
   guardsBefore: number | null;
   guardsAfter: number | null;
+  // The frozen attack set's results, when the repo has one: how many attacks ran, which ones the current
+  // prompt failed, and which ones the recorded candidate failed. A null list means that side's result was
+  // unknown, which blocks a merge. Verify needs these to re-run the merge rule faithfully: without them an
+  // attack-blocked verdict recomputes as a merge and a genuine record looks tampered with. Absent when the
+  // repo has no attacks file, and in records written before this was kept.
+  attacks?: { total: number; baselineFailed: string[] | null; candidateFailed: string[] | null };
   costUsd: number | null;
   prevEvidenceHash: string | null;
   sha256: string;
@@ -130,6 +136,7 @@ export function buildEvidence(p: EvidenceParams): EvidenceRecord {
     checksAfter: p.checks?.after ?? null,
     guardsBefore: guardRate(base, guards),
     guardsAfter: guardRate(after, guards),
+    ...(scores.attacks ? { attacks: { total: scores.attacks.total, baselineFailed: scores.attacks.baselineFailed, candidateFailed: cand?.attackFailed ?? null } } : {}),
     costUsd: p.costUsd,
     prevEvidenceHash: p.prevEvidenceHash,
     sha256: "",
@@ -164,6 +171,12 @@ export function recomputeProblem(r: EvidenceRecord, goal: Goal, splits: Map<stri
     const holdout = side("holdout", cand);
     const c: CandidateScore = { id: r.candidateId, train: side("train", cand), ...(holdout.some((h) => h.score !== null) ? { holdout } : {}) };
     scores.candidates = [c];
+  }
+  // The recorded attack results go back into the rebuilt scores, so the merge rule's attack gate re-runs
+  // exactly as it ran live. The attack inputs themselves are not stored; the gate needs only the failures.
+  if (r.attacks) {
+    scores.attacks = { total: r.attacks.total, baselineFailed: r.attacks.baselineFailed, inputs: {} };
+    if (scores.candidates.length) scores.candidates[0].attackFailed = r.attacks.candidateFailed;
   }
   // The stored guard and check rates are recomputed from the per-row counts, not trusted: an edit to the
   // headline numbers (with the hash fixed) is caught here, the same way a flipped verdict is.
@@ -209,6 +222,10 @@ export function verifyEvidence(filePath: string, repoRoot: string): VerifyResult
   if (typeof r?.round !== "number" || typeof r.sha256 !== "string" || !Array.isArray(r.scenarioScores) || !Array.isArray(r.verdictReasons)
     || r.scenarioScores.some((s) => s === null || typeof s !== "object" || typeof s.id !== "string")
     || r.verdictReasons.some((x) => typeof x !== "string")) {
+    return { ok: false, reason: `${filePath} isn't a Synthe evidence file` };
+  }
+  if (r.attacks !== undefined && (r.attacks === null || typeof r.attacks !== "object" || typeof r.attacks.total !== "number"
+    || ![r.attacks.baselineFailed, r.attacks.candidateFailed].every((list) => list === null || (Array.isArray(list) && list.every((x) => typeof x === "string"))))) {
     return { ok: false, reason: `${filePath} isn't a Synthe evidence file` };
   }
   const named = roundOf(basename(filePath));

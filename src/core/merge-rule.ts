@@ -30,7 +30,15 @@ export function guardSentence(g: { before: number; after: number }): string {
   return `Your guards held at ${g.after}%, down from ${g.before}%.`;
 }
 
-export interface CandidateScore { id: string; train: ScoreRow[]; holdout?: ScoreRow[] }
+export interface CandidateScore {
+  id: string;
+  train: ScoreRow[];
+  holdout?: ScoreRow[];
+  // Ids of the frozen attack messages this candidate's replies failed, when attacks were run. Null or missing
+  // while attacks exist means the result is unknown, and an unknown result blocks a merge, like a duel that
+  // couldn't be judged. Only the round's winning candidate is measured (see runScore), so the others stay unset.
+  attackFailed?: string[] | null;
+}
 
 export interface RoundScores {
   baselineHash: string;
@@ -39,12 +47,16 @@ export interface RoundScores {
   candidates: CandidateScore[];
   // The prompt the last merge replaced, challenging the current one head to head, when that merge is still live.
   prior?: ScoreRow[];
+  // The frozen attack set's results, when the repo has one: how many attacks ran, which ones the current
+  // prompt's replies failed (null when that couldn't be measured), and each attack's message, so logs and
+  // reports can name a failed attack. Attack results never reach the writer: they live only in the scores.
+  attacks?: { total: number; baselineFailed: string[] | null; inputs: Record<string, string> };
 }
 
 // reasons are technical, for logs and receipts. plain and notes say the same for the team, in everyday words:
 // plain explains the decision, notes says what happened to each candidate.
 export type Verdict =
-  | { action: "merge"; candidateId: string; before: number; after: number; heldBefore: number; heldAfter: number; wins: number; losses: number; heldWins: number; heldLosses: number; checks?: { before: number; after: number }; guards?: { before: number; after: number }; reasons: string[]; plain: string; notes: Record<string, string> }
+  | { action: "merge"; candidateId: string; before: number; after: number; heldBefore: number; heldAfter: number; wins: number; losses: number; heldWins: number; heldLosses: number; checks?: { before: number; after: number }; guards?: { before: number; after: number }; attacks?: { held: number; total: number }; reasons: string[]; plain: string; notes: Record<string, string> }
   | { action: "revert"; reasons: string[]; plain: string; notes: Record<string, string> }
   | { action: "skip"; reasons: string[]; notes: Record<string, string> };
 
@@ -191,6 +203,25 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
         continue;
       }
     }
+    // Attacks work like guardrail breaks: only a new failure blocks. Failing an attack the current prompt
+    // already fails is no worse than what is live, but an attack that couldn't be marked is unknown, and an
+    // unknown result blocks the merge.
+    if (scores.attacks) {
+      const baseFailed = scores.attacks.baselineFailed;
+      const mine = c.attackFailed;
+      if (baseFailed === null || !Array.isArray(mine)) {
+        reasons.push(`${c.id}: attack results missing`);
+        notes[c.id] = "Its replies couldn't be checked against your attack messages, so it wasn't used.";
+        continue;
+      }
+      const baselineFailed = new Set(baseFailed);
+      const newAttacks = mine.filter((id) => !baselineFailed.has(id));
+      if (newAttacks.length) {
+        reasons.push(`${c.id}: fails ${newAttacks.map((id) => `attack ${id}`).join(", ")} that the current prompt passes`);
+        notes[c.id] = `It failed ${newAttacks.length === 1 ? "an attack message" : "attack messages"} (${newAttacks.join(", ")}) that your current prompt handles, so it wasn't used.`;
+        continue;
+      }
+    }
     const guards = goal.counter_checks?.length ? { before: guardBefore!, after: guardAfter! } : undefined;
     const stillBroken = breaks(c.train) + breaks(c.holdout);
     const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout!.some((h) => h.id === r.id)));
@@ -205,10 +236,12 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
         ? stillBroken > 0 ? ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in ${stillBroken}.` : ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in none.`
         : " It follows your rules in every test case.";
       const guardLine = guards ? ` ${guardSentence(guards)}` : "";
+      const attacks = scores.attacks ? { held: scores.attacks.total - (c.attackFailed?.length ?? 0), total: scores.attacks.total } : undefined;
+      const attackLine = attacks ? ` Attacks: ${attacks.held} of ${attacks.total} held.` : "";
       best = {
         action: "merge", candidateId: c.id, before, after, heldBefore: beforeHoldout, heldAfter: held, wins: split.wins, losses: split.losses,
-        heldWins: heldSplit.w, heldLosses: heldSplit.l, notes, ...(rates ? { checks: rates } : {}), ...(guards ? { guards } : {}),
-        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}${guardLine}`,
+        heldWins: heldSplit.w, heldLosses: heldSplit.l, notes, ...(rates ? { checks: rates } : {}), ...(guards ? { guards } : {}), ...(attacks ? { attacks } : {}),
+        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}${guardLine}${attackLine}`,
         reasons: [`judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`],
       };
     }

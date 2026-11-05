@@ -18,6 +18,10 @@ export interface RoundRecord {
   // (the current prompt's and each change's, learned-from and hidden). The score rows themselves aren't
   // kept, so this count is what the report's "what failed most" has to work from.
   failedChecks?: Record<string, number>;
+  // The frozen attack set's result for the round, when the repo has one: how many attacks ran and the ids the
+  // prompt that ended the round (the winning change, or the current prompt when nothing merged) failed.
+  // unknown: the current prompt's attack results couldn't be measured, so no held count is claimed.
+  attacks?: { total: number; failed: string[]; unknown?: boolean };
 }
 
 export interface Landing { branch: string; kind: "merge" | "revert"; text: string; priorPrompt: string; propose?: boolean }

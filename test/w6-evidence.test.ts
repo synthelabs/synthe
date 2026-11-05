@@ -259,6 +259,25 @@ test("check rates are recomputed from the stored per-scenario counts", async () 
   assert.match((check(root, 1) as { reason: string }).reason, /checksAfter doesn't match/);
 });
 
+test("an attack-blocked verdict verifies, and edited attack results fail", async () => {
+  const { buildEvidence } = await import("../src/core/evidence.ts");
+  const { judgeRound } = await import("../src/core/merge-rule.ts");
+  const root = project();
+  const g = goal({ checks: ["Asks first"] });
+  const scores = scored("Old prompt.", 50, 50, 60, 55);
+  scores.attacks = { total: 2, baselineFailed: [], inputs: { a1: "one", a2: "two" } };
+  scores.candidates[0].attackFailed = ["a2"];
+  const verdict = judgeRound(scores, g, null);
+  assert.equal(verdict.action, "skip");
+  assert.match(verdict.reasons.join(" "), /attack a2/);
+  const rec = buildEvidence({ round: 1, goal: g, promptBefore: "Old prompt.", promptAfter: "Old prompt.", verdict: "skip", verdictReasons: [...verdict.reasons], scores, candidateId: "c1", costUsd: 0.1, prevEvidenceHash: null });
+  write(root, 1, rec);
+  assert.equal(verifyEvidence(join(root, evidencePath(1)), root).ok, true, JSON.stringify(verifyEvidence(join(root, evidencePath(1)), root)));
+  rec.attacks!.candidateFailed = [];
+  write(root, 1, rehash(rec));
+  assert.equal(verifyEvidence(join(root, evidencePath(1)), root).ok, false);
+});
+
 test("a record missing most of its scores fails, even with a regenerated hash", async () => {
   const root = await threeRounds();
   const r = read(root, 2);
