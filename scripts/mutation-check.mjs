@@ -9,6 +9,7 @@ const WRITE = "src/loop/write.ts";
 const STATE = "src/core/state.ts";
 const GITHUB = "src/github/repo.ts";
 const SHARE = "src/core/share.ts";
+const EVIDENCE = "src/core/evidence.ts";
 const WORKFLOW = "templates/synthe.yml";
 
 // Every test file, so a new one is never left out of the check.
@@ -152,6 +153,12 @@ const allMutations = [
   ["writer reads a protected prompt path", WRITE, "if (protectedPath) return", "if (false) return"],
   ["writer reads a scenario file as its prompt", WRITE, "goal.prompt.path === goal.scenarios", "false"],
   ["guard attack evidence paths writable", "src/core/safety.ts", "  /(^|\\/)\\.synthe\\//, /(^|\\/)synthe\\.json$/,\n", ""],
+  ["verify skips the hash check", EVIDENCE, "if (hashEvidence(r) !== r.sha256) return", "if (false) return"],
+  ["verify skips the chain check", EVIDENCE, "if (hashEvidence(prev) !== r.prevEvidenceHash) return", "if (false) return"],
+  ["verify skips the verdict recompute", EVIDENCE, "const problem = recomputeProblem(r, goal, splits);", "const problem = null as string | null;"],
+  ["verify skips the score coverage check", EVIDENCE, "if (dropped) return", "if (false) return"],
+  ["verify trusts the stored guard rates", EVIDENCE, "if (guardRate(guardRows(base), guards) !== r.guardsBefore) return", "if (false) return"],
+  ["verify skips the prompt commit check", EVIDENCE, 'if (typeof r.commit === "string" && /^[0-9a-f]{40}$/.test(r.commit)) {', "if (false) {"],
 ];
 
 const selectedFiles = process.argv.slice(2);

@@ -42,6 +42,22 @@ It runs at most 12 rounds, usually finishing a full session in about half an hou
 - To keep your agent unchanged, for example before a demo, run `npx synthe stop`.
 - `npx synthe status` shows where it is.
 
+## Evidence for each round
+
+Each round that reached a decision (a merge, a pull request left for review, a put-back, or "nothing was clearly better") leaves a small record, `.synthe/evidence/round-N.json`, on the `synthe/state` branch. It holds hashes of the prompt before and after, the verdict and its reasons, the model names, each test case's id and scores, and the hash of the previous record. It holds no prompt text, replies or test-case text. Each pull request quotes its record's hash.
+
+To check one, copy the folder from that branch into your checkout, then run it from your project's folder:
+
+```
+git fetch origin synthe/state
+git restore --source origin/synthe/state --worktree -- .synthe/evidence
+npx synthe verify .synthe/evidence/round-3.json
+```
+
+It prints `PASS` or `FAIL: <reason>`. It checks that the file still matches its own hash, that it follows the record before it, that the prompt in your repo at the commit the round was tested at matches the record's before-hash, and that the recorded scores still give the recorded verdict when run through the merge rule again with your current `synthe.json` and test cases; the recorded check and guard rates are recomputed from the per-case counts too. Records written before the tested commit was kept can't have their prompt checked, and the result says so. If you change `synthe.json` or the test cases after a round, an old record can no longer be rechecked and fails.
+
+**Limits:** tamper-evident, not signed. A person who can rewrite the repo can rewrite the record. Editing one record after the fact is caught, but someone who rewrites every later record too, or deletes the newest one, isn't.
+
 ## What it doesn't test
 
 The test cases are simulated single messages, not real users or full conversations, and your agent's tools aren't run. A better result here is a strong hint, not proof of how real users will react.
@@ -58,6 +74,8 @@ The test cases are simulated single messages, not real users or full conversatio
 | `npx synthe try` | Run one round on your machine without changing your prompt (needs `ANTHROPIC_API_KEY`) |
 | `npx synthe try --noise` | Compare your prompt with itself to see how much the judge varies |
 | `npx synthe calibrate` | Check that your checks are marked the same way each time and the way you mean them, and reword any that aren't (needs `ANTHROPIC_API_KEY`) |
+| `npx synthe verify FILE` | Check one round's evidence record, for example `.synthe/evidence/round-3.json` |
+| `npx synthe undo N` | Open a pull request that puts back the prompt from before round N |
 
 Local `try` saves only candidate fingerprints in `.synthe-local/try-history.json`, not prompts, replies or test cases. It rejects repeated text (including case, spacing and punctuation variants) before scoring, both within a round and across runs with the same goal and prompt. It keeps the latest 1,000 fingerprints; differently worded versions of the same idea can still get through. Keep `.synthe-local/` out of version control. Remove the history file explicitly to start fresh; corrupt history stops the run instead of silently forgetting it. No prompt file is written. `try --noise` does not read or write this history.
 

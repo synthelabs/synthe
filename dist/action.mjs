@@ -28423,13 +28423,16 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
       return text === null ? newState() : { ...newState(), ...JSON.parse(text) };
     },
     async writeState(state) {
-      const exists = await blobSha(STATE_PATH, STATE_BRANCH) !== void 0;
+      await repo.writeStateFile(STATE_PATH, `${JSON.stringify(state, null, 2)}
+`, `Synthe round ${state.round}`);
+    },
+    async writeStateFile(path4, content, message) {
+      const exists = await blobSha(path4, STATE_BRANCH) !== void 0;
       if (!exists) {
         const res = await call("GET", `/git/ref/heads/${encodeURIComponent(STATE_BRANCH)}`);
         if (res.status === 404) await createBranch(STATE_BRANCH, await repo.headSha(await repo.defaultBranch()));
       }
-      await putFile(STATE_BRANCH, STATE_PATH, `${JSON.stringify(state, null, 2)}
-`, `Synthe round ${state.round}`);
+      await putFile(STATE_BRANCH, path4, content, message);
     }
   };
   return repo;
@@ -28671,6 +28674,70 @@ function judgeRound(scores, goal, replaced) {
   }
   if (best) best.notes[best.candidateId] = "Merged.";
   return best ?? { action: "skip", reasons: reasons.length ? reasons : ["no candidates"], notes };
+}
+
+// src/core/evidence.ts
+var EVIDENCE_DIR = ".synthe/evidence";
+var evidencePath = (round) => `${EVIDENCE_DIR}/round-${round}.json`;
+function sortKeys(value) {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => [k, sortKeys(v)]));
+  }
+  return value;
+}
+var canonicalJson = (value) => JSON.stringify(sortKeys(value));
+var hashEvidence = (record) => sha256(canonicalJson({ ...record, sha256: "" }));
+var evidenceFile = (record) => `${JSON.stringify(record, null, 2)}
+`;
+var pct = (n, of) => Math.round(100 * n / of);
+var guardRate2 = (rows, guards) => guards === 0 || rows.length === 0 || rows.some((r) => r.violation === null) ? null : pct(rows.filter((r) => r.violation === false).length, rows.length);
+var flag = (violation) => typeof violation === "boolean" ? { n: violation ? 1 : 0 } : null;
+function buildEvidence(p) {
+  const { scores } = p;
+  const cand = p.candidateId === null ? void 0 : scores.candidates.find((c) => c.id === p.candidateId);
+  const own = new Map([...cand?.train ?? [], ...cand?.holdout ?? []].map((r) => [r.id, r]));
+  const prior = new Map((p.prior ?? []).map((r) => [r.id, r]));
+  const base = [...scores.baselineTrain, ...scores.baselineHoldout];
+  const scenarioScores = base.map((b) => {
+    const c = own.get(b.id) ?? prior.get(b.id);
+    const guard = flag(c?.violation);
+    const baseGuard = flag(b.violation);
+    return {
+      id: b.id,
+      baselineScore: b.score,
+      candidateScore: c?.score ?? null,
+      ...typeof c?.failed === "number" ? { checkFailed: c.failed } : {},
+      ...typeof c?.applicable === "number" ? { checkApplicable: c.applicable } : {},
+      ...typeof b.failed === "number" ? { baselineCheckFailed: b.failed } : {},
+      ...typeof b.applicable === "number" ? { baselineCheckApplicable: b.applicable } : {},
+      ...guard ? { guardFailed: guard.n } : {},
+      ...baseGuard ? { baselineGuardFailed: baseGuard.n } : {}
+    };
+  });
+  const after = cand ? [...cand.train, ...cand.holdout ?? []] : [];
+  const guards = p.goal.guardrails.length;
+  const record = {
+    round: p.round,
+    promptHashBefore: sha256(p.promptBefore),
+    promptHashAfter: sha256(p.promptAfter),
+    verdict: p.verdict,
+    verdictReasons: p.verdictReasons,
+    candidateId: p.candidateId,
+    commit: p.commit ?? null,
+    mergeMode: p.goal.merge_rule.mode,
+    modelIds: { ...p.goal.models },
+    scenarioScores,
+    checksBefore: p.checks?.before ?? null,
+    checksAfter: p.checks?.after ?? null,
+    guardsBefore: guardRate2(base, guards),
+    guardsAfter: guardRate2(after, guards),
+    costUsd: p.costUsd,
+    prevEvidenceHash: p.prevEvidenceHash,
+    sha256: ""
+  };
+  record.sha256 = hashEvidence(record);
+  return record;
 }
 
 // src/core/share.ts
@@ -29559,6 +29626,15 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
   if (current !== null) state.candidateHistory = rememberCandidates(state.candidateHistory ?? [], candidateScope(goal, current), (input2.candidates ?? []).filter((candidate) => typeof candidate.text === "string").map((candidate) => candidate.text));
   await repo.writeState(state);
   let stall = true;
+  const saveEvidence = async (rec) => {
+    try {
+      await repo.writeStateFile(evidencePath(round), evidenceFile(rec), `Synthe round ${round}: evidence`);
+      state.evidenceHash = rec.sha256;
+      await repo.writeState(state);
+    } catch (e) {
+      record.reasons.push(`couldn't save the evidence file: ${e.message.slice(0, 200)}`);
+    }
+  };
   const land = async (text, kind, title, why) => {
     const branch = `synthe/round-${round}`;
     const landing = { branch, kind, text, priorPrompt: current, propose: merge_rule.mode === "propose" };
@@ -29568,12 +29644,13 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
     const sha = await repo.commitFile({ branch, baseSha: head, path: path4, content, message: title });
     const short = (h) => h ? `\`sha256:${h.slice(0, 12)}\`` : "unknown";
     const { writer, runner, judge, checker } = goal.models;
-    const receipt = [
+    const receiptFor = (proposed) => [
       "Fingerprints of exactly what was tested, so anyone can check or reproduce this decision. You can ignore them.",
       `- Commit tested: \`${head.slice(0, 12)}\``,
       `- Prompt before: ${short(sha256(current))}, after: ${short(sha256(text))}`,
       `- Test cases: ${short(scenariosHash)}, goal file: ${short(input2.goalHash)}`,
-      `- AI models: writer ${writer}, agent ${runner}, judge ${judge}, rule checker ${checker}`
+      `- AI models: writer ${writer}, agent ${runner}, judge ${judge}, rule checker ${checker}`,
+      ...why.evidence ? [`- Evidence: \`${evidencePath(round)}\` on the \`${STATE_BRANCH}\` branch, sha256 \`${why.evidence(proposed).sha256}\`. Check it with \`npx synthe verify\`.`] : []
     ].join("\n");
     const when = `${now.toISOString().slice(0, 16).replace("T", " ")} UTC`;
     const bodyFor = (proposed, blocked = false) => [
@@ -29587,7 +29664,7 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
       "Tested on simulated messages only. It can't tell you how real users will react.",
       `<details><summary>Fingerprints of what was tested</summary>
 
-${receipt}
+${receiptFor(proposed)}
 
 The judge's numbers: ${why.technical}
 
@@ -29612,11 +29689,13 @@ ${notTested(goal).slice(1).join("\n")}
     }
     if (landing.propose) {
       state.proposal = { ...landing, pr, round };
+      if (why.evidence) await saveEvidence(why.evidence(true));
       return { pr, proposed: true };
     }
     const merged = await repo.mergePr(pr, sha);
     if (merged.merged) {
       await repo.deleteBranch(branch);
+      if (why.evidence) await saveEvidence(why.evidence(false));
       return { pr, proposed: false };
     }
     if (merged.problem === "blocked") {
@@ -29625,6 +29704,7 @@ ${notTested(goal).slice(1).join("\n")}
       await repo.writeState(state);
       state.proposal = { ...landing, pr, round };
       await repo.updatePrBody(pr, bodyFor(true, true));
+      if (why.evidence) await saveEvidence(why.evidence(true));
       return { pr, proposed: true };
     }
     await repo.closePr(pr);
@@ -29671,6 +29751,37 @@ ${notTested(goal).slice(1).join("\n")}
     const replaced = last && !last.reverted && last.mergedHash === scores.baselineHash && scores.prior ? scores.prior : null;
     const verdict = judgeRound(scores, goal, replaced);
     record.reasons.push(...verdict.reasons);
+    const closest = scores.candidates.reduce((best, c) => {
+      const m = mean(c.train) ?? -Infinity;
+      return best === null || m > best.m ? { id: c.id, m } : best;
+    }, null)?.id ?? null;
+    let prevEvidenceHash = state.evidenceHash ?? null;
+    for (let k = round - 1; k >= 1; k--) {
+      try {
+        const text = await repo.readFile(evidencePath(k), STATE_BRANCH);
+        if (text === null) continue;
+        const rec = JSON.parse(text);
+        if (typeof rec.sha256 === "string" && hashEvidence(rec) === rec.sha256) {
+          prevEvidenceHash = rec.sha256;
+          break;
+        }
+      } catch {
+      }
+    }
+    const evidenceOf = (kind, candidateId, after, extra = {}) => (proposed) => buildEvidence({
+      round,
+      goal,
+      promptBefore: current,
+      promptAfter: after,
+      verdict: kind === "merge" && proposed ? "propose" : kind,
+      verdictReasons: [...verdict.reasons],
+      scores,
+      candidateId,
+      costUsd: input2.costUsd,
+      prevEvidenceHash,
+      commit: head,
+      ...extra
+    });
     record.tried = [
       ...input2.candidates.map((c) => ({
         summary: c.summary ?? "A change to the prompt",
@@ -29678,7 +29789,10 @@ ${notTested(goal).slice(1).join("\n")}
       })),
       ...(input2.rejected ?? []).map((r) => ({ summary: "An edit that couldn't be applied", outcome: `Not used: ${r.replace(/^candidate-\d+: /, "")}.` }))
     ];
-    if (verdict.action === "skip") record.plain = "Nothing was clearly better, so your prompt stayed the same.";
+    if (verdict.action === "skip") {
+      record.plain = "Nothing was clearly better, so your prompt stayed the same.";
+      await saveEvidence(evidenceOf("skip", closest, current)(false));
+    }
     if (verdict.action === "merge") {
       const chosen = input2.candidates.find((c) => c.id === verdict.candidateId);
       const text = chosen?.text;
@@ -29695,7 +29809,7 @@ ${goal.policy ?? ""}`);
           text,
           "merge",
           `Synthe: ${name}`,
-          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified }
+          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified, evidence: evidenceOf("merge", verdict.candidateId, text, { checks: verdict.checks }) }
         );
         if (landed) {
           if (example) record.example = example;
@@ -29716,7 +29830,7 @@ ${goal.policy ?? ""}`);
       }
     } else if (verdict.action === "revert") {
       const prior = state.lastMerge.priorPrompt;
-      const landed = await land(prior, "revert", "Synthe: undo the last prompt change", { changed: "Puts back the prompt from before Synthe's last change.", plain: verdict.plain, technical: verdict.reasons.join(" ") });
+      const landed = await land(prior, "revert", "Synthe: undo the last prompt change", { changed: "Puts back the prompt from before Synthe's last change.", plain: verdict.plain, technical: verdict.reasons.join(" "), evidence: evidenceOf("revert", null, prior, { prior: replaced }) });
       if (landed) {
         Object.assign(record, { outcome: landed.proposed ? "proposed" : "reverted", pr: landed.pr });
         record.changed = "Put back the prompt from before the last change";

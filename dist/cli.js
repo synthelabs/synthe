@@ -9810,10 +9810,10 @@ async function setupSkills(ctx) {
   for (const skill of session.agent.skills) {
     try {
       const version = await client.beta.skills.versions.retrieve(skill.version, { skill_id: skill.skill_id });
-      let dirname2 = path.basename(version.name.trim());
-      if (dirname2 === "" || dirname2 === "." || dirname2 === "..")
-        dirname2 = skill.skill_id;
-      const dest = path.resolve(skillsRoot, dirname2);
+      let dirname3 = path.basename(version.name.trim());
+      if (dirname3 === "" || dirname3 === "." || dirname3 === "..")
+        dirname3 = skill.skill_id;
+      const dest = path.resolve(skillsRoot, dirname3);
       if (dest !== skillsRoot && !dest.startsWith(skillsRoot + path.sep)) {
         log.warn("skill name escapes the skills dir; skipping", {
           component: "agent-tool-context",
@@ -28049,7 +28049,7 @@ var init_sdk = __esm({
 
 // src/cli/main.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync3, readFileSync as readFileSync5, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync5, readFileSync as readFileSync7, writeFileSync as writeFileSync4 } from "node:fs";
 import { createInterface as createInterface3 } from "node:readline/promises";
 
 // src/core/goal.ts
@@ -28142,6 +28142,11 @@ function readPrompt(source, goal, tracked) {
   const { path: path4, delimiter: delimiter2 } = goal.prompt;
   const left2 = findPrompts([{ path: path4, text: source }]).flatMap((f) => f.location.kind === "inline" && f.location.delimiter === delimiter2 ? [f.location.initial] : []);
   return left2.length === 1 && source.split(left2[0]).length === 2 ? left2[0] : null;
+}
+function writePrompt(source, location, current, next) {
+  if (location.kind === "file") return next;
+  const [before, after] = source.split(current);
+  return `${before}${next}${after}`;
 }
 var PROMPT_FILE = /(^|\/)[^/]*(prompt|system|instructions)[^/]*\.(md|txt)$/i;
 var SKIP_PATH = /(^|\/)(node_modules|dist|build|\.next|\.git|venv|\.venv|__pycache__)\//;
@@ -29815,6 +29820,392 @@ function upgrade(root, template2) {
   return `Updated ${WORKFLOW_FILE}: rounds now chain immediately, a cancelled run no longer counts as a round, and sharing (if you turned it on) can prove which repo sent it; kept backup minute ${minute ?? "random"}. No other files changed. Commit and push this workflow file to activate it.`;
 }
 
+// src/core/evidence.ts
+import { execFileSync } from "node:child_process";
+import { existsSync as existsSync3, readdirSync, readFileSync as readFileSync5 } from "node:fs";
+import { basename, dirname as dirname2, join as join6 } from "node:path";
+var EVIDENCE_DIR = ".synthe/evidence";
+var evidencePath = (round) => `${EVIDENCE_DIR}/round-${round}.json`;
+function sortKeys(value) {
+  if (Array.isArray(value)) return value.map(sortKeys);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => [k, sortKeys(v)]));
+  }
+  return value;
+}
+var canonicalJson = (value) => JSON.stringify(sortKeys(value));
+var hashEvidence = (record) => sha256(canonicalJson({ ...record, sha256: "" }));
+var pct = (n, of) => Math.round(100 * n / of);
+var guardRate2 = (rows, guards) => guards === 0 || rows.length === 0 || rows.some((r) => r.violation === null) ? null : pct(rows.filter((r) => r.violation === false).length, rows.length);
+var roundOf = (name) => /^round-(\d+)\.json$/.exec(name)?.[1];
+function recomputeProblem(r, goal, splits) {
+  const missing2 = r.scenarioScores.find((s) => !splits.has(s.id));
+  if (missing2) return `scenario ${missing2.id} isn't in ${goal.scenarios}, so the verdict can't be rechecked`;
+  const present = new Set(r.scenarioScores.map((s) => s.id));
+  const dropped = [...splits.keys()].find((id) => !present.has(id));
+  if (dropped) return `the record has no scores for scenario ${dropped}, so it is incomplete and the verdict can't be rechecked`;
+  if (r.mergeMode === "propose" && r.verdict === "merge") return "the record says the round ran in review mode, where Synthe never merges by itself, but the verdict says it merged";
+  const rowOf = (s, score, guard) => ({ id: s.id, score, violation: guard === void 0 ? null : guard > 0 });
+  const side = (split, pick2) => r.scenarioScores.filter((s) => splits.get(s.id) === split).map(pick2);
+  const base = (s) => rowOf(s, s.baselineScore, s.baselineGuardFailed);
+  const cand = (s) => rowOf(s, s.candidateScore, s.guardFailed);
+  const scores = { baselineHash: r.promptHashBefore, baselineTrain: side("train", base), baselineHoldout: side("holdout", base), candidates: [] };
+  let replaced = null;
+  if (r.verdict === "revert") {
+    replaced = r.scenarioScores.map((s) => rowOf(s, s.candidateScore, void 0));
+  } else if (r.candidateId !== null) {
+    const holdout = side("holdout", cand);
+    const c = { id: r.candidateId, train: side("train", cand), ...holdout.some((h) => h.score !== null) ? { holdout } : {} };
+    scores.candidates = [c];
+  }
+  const guardRows = (pick2) => [...side("train", pick2), ...side("holdout", pick2)];
+  const guards = goal.guardrails.length;
+  if (guardRate2(guardRows(base), guards) !== r.guardsBefore) return "the recorded guardsBefore doesn't match the recorded per-scenario guard results";
+  const expectedGuardsAfter = r.verdict === "revert" ? null : guardRate2(scores.candidates.length ? guardRows(cand) : [], guards);
+  if (expectedGuardsAfter !== r.guardsAfter) return "the recorded guardsAfter doesn't match the recorded per-scenario guard results";
+  if (r.checksBefore !== null || r.checksAfter !== null) {
+    const rateOf = (rows, label) => {
+      if (rows.some((row) => typeof row.failed !== "number" || typeof row.applicable !== "number")) throw new Error(`the record doesn't store the per-scenario check counts needed to recheck its ${label}`);
+      return checkRate(rows);
+    };
+    try {
+      const holdIds = new Set((scores.candidates[0]?.holdout ?? []).map((h) => h.id));
+      const baseCheck = (s) => ({ id: s.id, score: s.baselineScore, violation: null, failed: s.baselineCheckFailed, applicable: s.baselineCheckApplicable });
+      const candCheck = (s) => ({ id: s.id, score: s.candidateScore, violation: null, failed: s.checkFailed, applicable: s.checkApplicable });
+      const before = rateOf([...side("train", baseCheck), ...side("holdout", baseCheck).filter((row) => holdIds.has(row.id))], "checksBefore");
+      if (before !== r.checksBefore) return "the recorded checksBefore doesn't match the recorded per-scenario check results";
+      const after = rateOf(scores.candidates.length ? [...side("train", candCheck), ...side("holdout", candCheck).filter((row) => holdIds.has(row.id))] : [], "checksAfter");
+      if (r.verdict !== "revert" && after !== r.checksAfter) return "the recorded checksAfter doesn't match the recorded per-scenario check results";
+    } catch (e) {
+      return e.message;
+    }
+  }
+  const v = judgeRound(scores, goal, replaced);
+  const want = r.verdict === "propose" ? "merge" : r.verdict;
+  if (v.action !== want) return `the stored verdict is ${r.verdict}, but the recorded scores give ${v.action}`;
+  if (r.verdict !== "skip" && JSON.stringify(v.reasons) !== JSON.stringify(r.verdictReasons)) return "the recorded reasons don't match what the recorded scores give";
+  return null;
+}
+function verifyEvidence(filePath, repoRoot) {
+  let r;
+  try {
+    r = JSON.parse(readFileSync5(filePath, "utf8"));
+  } catch (e) {
+    return { ok: false, reason: `couldn't read ${filePath} as evidence: ${e.message}` };
+  }
+  if (typeof r?.round !== "number" || typeof r.sha256 !== "string" || !Array.isArray(r.scenarioScores) || !Array.isArray(r.verdictReasons) || r.scenarioScores.some((s) => s === null || typeof s !== "object" || typeof s.id !== "string") || r.verdictReasons.some((x) => typeof x !== "string")) {
+    return { ok: false, reason: `${filePath} isn't a Synthe evidence file` };
+  }
+  const named = roundOf(basename(filePath));
+  if (named !== void 0 && Number(named) !== r.round) {
+    return { ok: false, reason: `the file is named round-${named}.json but the record inside says round ${r.round}` };
+  }
+  if (hashEvidence(r) !== r.sha256) return { ok: false, reason: "the file's contents don't match its hash, so it was edited after it was written" };
+  const dir = dirname2(filePath);
+  const earlier = (existsSync3(dir) ? readdirSync(dir) : []).flatMap((f) => roundOf(f) !== void 0 && Number(roundOf(f)) < r.round ? [Number(roundOf(f))] : []);
+  const prevRound = earlier.length ? Math.max(...earlier) : null;
+  if (prevRound === null) {
+    if (r.prevEvidenceHash !== null) return { ok: false, reason: `it follows another record, but no earlier round-N.json is next to it in ${dir}` };
+  } else {
+    let prev;
+    try {
+      prev = JSON.parse(readFileSync5(join6(dir, `round-${prevRound}.json`), "utf8"));
+    } catch {
+      return { ok: false, reason: `round-${prevRound}.json can't be read` };
+    }
+    if (r.prevEvidenceHash === null) return { ok: false, reason: `round-${prevRound}.json exists, but this record says it follows nothing` };
+    if (hashEvidence(prev) !== r.prevEvidenceHash) return { ok: false, reason: `the chain is broken: this record follows a different round-${prevRound}.json than the one next to it` };
+  }
+  const goalPath = join6(repoRoot, GOAL_FILE);
+  let goal;
+  let splits;
+  try {
+    goal = parseGoal(readFileSync5(goalPath, "utf8"));
+    splits = new Map(parseScenarios(readFileSync5(join6(repoRoot, goal.scenarios), "utf8")).map((s) => [s.id, s.split]));
+  } catch (e) {
+    return { ok: false, reason: `couldn't read the goal and test cases in ${repoRoot} to recheck the verdict: ${e.message}` };
+  }
+  const notes = [];
+  if (typeof r.commit === "string" && /^[0-9a-f]{40}$/.test(r.commit)) {
+    let atCommit;
+    try {
+      atCommit = execFileSync("git", ["-C", repoRoot, "show", `${r.commit}:${goal.prompt.path}`], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+    } catch {
+      return { ok: false, reason: `couldn't read ${goal.prompt.path} at the recorded commit ${r.commit.slice(0, 12)} in this checkout, so the prompt this record is about can't be checked` };
+    }
+    const prompts = goal.prompt.kind === "file" ? [atCommit] : findPrompts([{ path: goal.prompt.path, text: atCommit }]).flatMap((f) => f.location.kind === "inline" ? [f.location.initial] : []);
+    if (!prompts.some((t) => sha256(t) === r.promptHashBefore)) {
+      return { ok: false, reason: "the prompt at the recorded commit doesn't match the record's promptHashBefore, so the record isn't about the change it claims" };
+    }
+  } else {
+    notes.push("Note: the prompt at the recorded commit wasn't checked: this record names no full commit id");
+  }
+  const problem = recomputeProblem(r, goal, splits);
+  if (problem) return { ok: false, reason: problem };
+  return { ok: true, notes };
+}
+
+// src/cli/verify.ts
+function verify(file, root, say = console.log) {
+  if (!file) {
+    say("Say which record to check, for example: npx synthe verify .synthe/evidence/round-3.json");
+    return 1;
+  }
+  const result = verifyEvidence(file, root);
+  if (!result.ok) {
+    say(`FAIL: ${result.reason}`);
+    return 1;
+  }
+  for (const note of result.notes) say(note);
+  say("PASS");
+  return 0;
+}
+
+// src/cli/undo.ts
+import { existsSync as existsSync4, readFileSync as readFileSync6 } from "node:fs";
+import { join as join7 } from "node:path";
+var undoBranch = (round) => `synthe/undo-round-${round}`;
+function promptWithHash(source, goal, hash) {
+  if (goal.prompt.kind === "file") return sha256(source) === hash ? source : null;
+  const found = findPrompts([{ path: goal.prompt.path, text: source }]).flatMap((f) => f.location.kind === "inline" ? [f.location.initial] : []);
+  return found.find((t) => sha256(t) === hash) ?? null;
+}
+async function undo(d, roundArg) {
+  const { repo, goal, say } = d;
+  const round = Number(roundArg);
+  if (!Number.isInteger(round) || round < 1) {
+    say("Say which round to undo, for example: npx synthe undo 3");
+    return 1;
+  }
+  const local = join7(d.root, evidencePath(round));
+  const text = existsSync4(local) ? readFileSync6(local, "utf8") : await repo.readFile(evidencePath(round), STATE_BRANCH);
+  if (text === null) {
+    say(`No evidence for round ${round}. Rounds that changed nothing or didn't finish have none; check the number against \`npx synthe status\`.`);
+    return 1;
+  }
+  let record;
+  try {
+    record = JSON.parse(text);
+  } catch {
+    say(`The evidence for round ${round} isn't readable. Run \`npx synthe verify\` on it.`);
+    return 1;
+  }
+  if (hashEvidence(record) !== record.sha256) {
+    say(`The evidence for round ${round} doesn't match its hash, so it can't be trusted to undo from. Run \`npx synthe verify\` on it.`);
+    return 1;
+  }
+  if (record.promptHashBefore === record.promptHashAfter) {
+    say(`Round ${round} didn't change your prompt, so there's nothing to undo.`);
+    return 0;
+  }
+  const branch = undoBranch(round);
+  const existing = await repo.findPr(branch);
+  if (existing && (existing.open || existing.merged)) {
+    say(`A revert PR already exists: https://github.com/${d.slug}/pull/${existing.number}`);
+    return 0;
+  }
+  const base = await repo.defaultBranch();
+  const head = await repo.headSha(base);
+  const source = await repo.readFile(goal.prompt.path, head);
+  const current = source === null ? null : readPrompt(source, goal, (await repo.readState()).prompt);
+  if (source === null || current === null) {
+    say(`Couldn't find your prompt in ${goal.prompt.path}, so nothing was changed.`);
+    return 1;
+  }
+  if (sha256(current) === record.promptHashBefore) {
+    say(`Your prompt already matches the one from before round ${round}. Nothing to undo.`);
+    return 0;
+  }
+  if (sha256(current) !== record.promptHashAfter) {
+    say(`Your prompt has changed since round ${round}, so undoing it would drop the later changes too. Undo the latest change first, or edit the prompt by hand.`);
+    return 1;
+  }
+  let before = null;
+  for (const version of await d.history(goal.prompt.path)) {
+    before = promptWithHash(version, goal, record.promptHashBefore);
+    if (before !== null) break;
+  }
+  if (before === null) {
+    say(`Couldn't find the prompt from before round ${round} in this repo's git history. Fetch the full history (\`git fetch --unshallow\`) and try again.`);
+    return 1;
+  }
+  const title = `Synthe: undo round ${round}`;
+  await repo.commitFile({ branch, baseSha: head, path: goal.prompt.path, content: writePrompt(source, goal.prompt, current, before), message: title });
+  const pr = await repo.openPr({
+    branch,
+    base,
+    title,
+    body: [
+      `Puts back the prompt from before Synthe's round ${round}, as asked by \`npx synthe undo ${round}\`.`,
+      `Prompt now: \`sha256:${record.promptHashAfter.slice(0, 12)}\`, after this change: \`sha256:${record.promptHashBefore.slice(0, 12)}\`.`,
+      "Merge this pull request to keep the undo, or close it to leave the prompt as it is."
+    ].join("\n\n")
+  });
+  say(`Opened https://github.com/${d.slug}/pull/${pr} to undo round ${round}. Merge it to put the old prompt back.`);
+  return 0;
+}
+
+// src/github/repo.ts
+var Refusal = class extends Error {
+  problem;
+  plain;
+  constructor(problem, plain, detail) {
+    super(detail);
+    this.problem = problem;
+    this.plain = plain;
+  }
+};
+var isRateLimited = (status2, headers, text) => status2 === 429 || status2 === 403 && (headers.get("x-ratelimit-remaining") === "0" || /rate limit/i.test(text));
+var classify = (res, text) => isRateLimited(res.status, res.headers, text) ? "rate_limited" : res.status === 405 ? "blocked" : res.status === 401 ? "token" : res.status === 403 ? "permission" : res.status === 409 ? "moved" : "other";
+var STATE_PATH = "state.json";
+var RETRIES = 2;
+var sleepFor = (ms) => new Promise((r) => setTimeout(r, ms));
+function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepFor) {
+  const call = async (method, path4, body, accept = "application/vnd.github+json") => {
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(`${api}/repos/${slug}${path4}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, Accept: accept, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "synthe" },
+        body: body === void 0 ? void 0 : JSON.stringify(body)
+      });
+      if (attempt >= RETRIES) return res;
+      if (res.status >= 500) {
+        if (method === "POST" || method === "PUT") return res;
+        await sleep2(5e3);
+        continue;
+      }
+      if (res.status !== 429 && res.status !== 403) return res;
+      const text = await res.clone().text();
+      if (!isRateLimited(res.status, res.headers, text)) return res;
+      const wait = Number(res.headers.get("retry-after"));
+      await sleep2(Math.min(Number.isFinite(wait) && wait > 0 ? wait * 1e3 : 2e4, 6e4));
+    }
+  };
+  const json = async (method, path4, body) => {
+    const res = await call(method, path4, body);
+    if (!res.ok) throw new Error(`GitHub ${method} ${path4}: ${res.status} ${(await res.text()).slice(0, 300)}`);
+    return res.status === 204 ? null : res.json();
+  };
+  const blobSha = async (path4, branch) => {
+    const res = await call("GET", `/contents/${encodeURI(path4)}?ref=${encodeURIComponent(branch)}`);
+    return res.ok ? (await res.json()).sha : void 0;
+  };
+  const putFile = async (branch, path4, content, message) => {
+    const sha = await blobSha(path4, branch);
+    const out = await json("PUT", `/contents/${encodeURI(path4)}`, {
+      message,
+      branch,
+      sha,
+      content: Buffer.from(content, "utf8").toString("base64")
+    });
+    return out.commit.sha;
+  };
+  const createBranch = async (branch, sha) => {
+    const res = await call("POST", "/git/refs", { ref: `refs/heads/${branch}`, sha });
+    if (res.ok) return;
+    if (res.status === 422) return void await json("PATCH", `/git/refs/heads/${encodeURIComponent(branch)}`, { sha, force: true });
+    throw new Error(`GitHub POST /git/refs: ${res.status} ${(await res.text()).slice(0, 300)}`);
+  };
+  const refuseIssue = async (res) => {
+    const text = await res.text();
+    const detail = `GitHub issue write: ${res.status} ${text.slice(0, 300)}`;
+    const problem = res.status === 410 ? "issues_off" : classify(res, text);
+    if (problem === "issues_off") throw new Refusal(problem, `Issues are turned off in this repo, so Synthe can't write its report; turn on Issues at https://github.com/${slug}/settings`, detail);
+    if (problem === "permission" || problem === "token") throw new Refusal(problem, `GitHub won't let the workflow write the report issue; give the workflow the 'issues: write' permission`, detail);
+    throw new Error(detail);
+  };
+  const repo = {
+    async dispatchWorkflow() {
+      const res = await call("POST", "/actions/workflows/synthe.yml/dispatches", { ref: await repo.defaultBranch() });
+      if (res.ok) return;
+      const detail = (await res.text()).slice(0, 300);
+      const problem = classify(res, detail);
+      if (problem === "permission" || problem === "token") throw new Refusal(problem, "GitHub denied Actions write access", `GitHub workflow dispatch: ${res.status} ${detail}`);
+      if (problem === "rate_limited") throw new Refusal(problem, "GitHub rate limited workflow dispatch", `GitHub workflow dispatch: ${res.status} ${detail}`);
+      throw new Error(`GitHub workflow dispatch: ${res.status} ${detail}`);
+    },
+    async defaultBranch() {
+      return (await json("GET", "")).default_branch;
+    },
+    async headSha(branch) {
+      return (await json("GET", `/git/ref/heads/${encodeURIComponent(branch)}`)).object.sha;
+    },
+    async readFile(path4, ref) {
+      const res = await call("GET", `/contents/${encodeURI(path4)}?ref=${encodeURIComponent(ref)}`, void 0, "application/vnd.github.raw+json");
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`GitHub read ${path4}: ${res.status}`);
+      return res.text();
+    },
+    async commitFile({ branch, baseSha, path: path4, content, message }) {
+      await createBranch(branch, baseSha);
+      return putFile(branch, path4, content, message);
+    },
+    async openPr({ branch, base, title, body }) {
+      const res = await call("POST", "/pulls", { head: branch, base, title, body });
+      if (res.ok) return (await res.json()).number;
+      const text = await res.text();
+      const detail = `GitHub POST /pulls: ${res.status} ${text.slice(0, 300)}`;
+      const problem = classify(res, text);
+      if (problem === "permission") throw new Refusal(problem, `GitHub Actions isn't allowed to open pull requests here; turn on 'Allow GitHub Actions to create and approve pull requests' at https://github.com/${slug}/settings/actions`, detail);
+      if (problem === "token") throw new Refusal(problem, "GitHub refused the workflow's token", detail);
+      throw new Error(detail);
+    },
+    async mergePr(number, sha) {
+      const res = await call("PUT", `/pulls/${number}/merge`, { sha, merge_method: "squash" });
+      if (res.ok) return { merged: true };
+      const text = await res.text();
+      if (res.status >= 500) {
+        const back = await call("GET", `/pulls/${number}`);
+        if (back.status >= 500) throw new Error(`GitHub PUT /pulls/${number}/merge: ${res.status}, and couldn't tell whether it merged (${back.status})`);
+        if (back.ok && (await back.json()).merged === true) return { merged: true };
+      }
+      return { merged: false, why: `${res.status} ${text.slice(0, 200)}`, problem: classify(res, text) };
+    },
+    async deleteBranch(branch) {
+      await call("DELETE", `/git/refs/heads/${encodeURIComponent(branch)}`);
+    },
+    async closePr(number) {
+      await call("PATCH", `/pulls/${number}`, { state: "closed" });
+    },
+    async updatePrBody(number, body) {
+      await call("PATCH", `/pulls/${number}`, { body });
+    },
+    async findPr(branch) {
+      const owner = slug.split("/")[0];
+      const list = await json("GET", `/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`);
+      const pr = Array.isArray(list) ? list[0] : void 0;
+      return pr ? { number: pr.number, open: pr.state === "open", merged: Boolean(pr.merged_at) } : null;
+    },
+    async upsertIssue(number, title, body) {
+      let res;
+      if (number !== null) {
+        res = await call("PATCH", `/issues/${number}`, { title, body });
+        if (res.ok) return number;
+        if (res.status !== 404 && res.status !== 410) return refuseIssue(res);
+      }
+      res = await call("POST", "/issues", { title, body });
+      return res.ok ? (await res.json()).number : refuseIssue(res);
+    },
+    async readState() {
+      const text = await repo.readFile(STATE_PATH, STATE_BRANCH);
+      return text === null ? newState() : { ...newState(), ...JSON.parse(text) };
+    },
+    async writeState(state) {
+      await repo.writeStateFile(STATE_PATH, `${JSON.stringify(state, null, 2)}
+`, `Synthe round ${state.round}`);
+    },
+    async writeStateFile(path4, content, message) {
+      const exists = await blobSha(path4, STATE_BRANCH) !== void 0;
+      if (!exists) {
+        const res = await call("GET", `/git/ref/heads/${encodeURIComponent(STATE_BRANCH)}`);
+        if (res.status === 404) await createBranch(STATE_BRANCH, await repo.headSha(await repo.defaultBranch()));
+      }
+      await putFile(STATE_BRANCH, path4, content, message);
+    }
+  };
+  return repo;
+}
+
 // src/cli/main.ts
 var run = (cmd, args, stdin) => new Promise((resolve2, reject) => {
   const child = spawn2(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -29837,10 +30228,10 @@ async function ask(question) {
   rl.close();
   return answer;
 }
-var template = () => readFileSync5(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync7(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 function setUpHere() {
-  if (existsSync3(GOAL_FILE)) return true;
+  if (existsSync5(GOAL_FILE)) return true;
   console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
   process.exitCode = 1;
   return false;
@@ -29869,7 +30260,7 @@ async function status() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync5(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync7(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -29892,7 +30283,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync5(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync7(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -29902,7 +30293,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync3(goal.scenarios) ? sha256(readFileSync5(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync5(goal.scenarios) ? sha256(readFileSync7(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -29927,6 +30318,18 @@ async function restart() {
   console.log(`Started again.${note} GitHub accepted the dispatch. Completed rounds start back to back.`);
   console.log(`Watch it: https://github.com/${slug}/actions/workflows/synthe.yml`);
 }
+async function undoRound() {
+  if (!setUpHere()) return;
+  const slug = await repoSlug();
+  if (!slug) return;
+  const goal = parseGoal(readFileSync7(GOAL_FILE, "utf8"));
+  const token = (await run("gh", ["auth", "token"])).trim();
+  const history = async (path4) => {
+    const shas = (await run("git", ["log", "--format=%H", "--", path4])).split("\n").filter(Boolean);
+    return Promise.all(shas.map((sha) => run("git", ["show", `${sha}:${path4}`])));
+  };
+  process.exitCode = await undo({ repo: githubRepo(slug, token), goal, root: process.cwd(), slug, history, say: console.log }, process.argv[3]);
+}
 function localRun(command) {
   if (!setUpHere()) return null;
   const key = process.env.ANTHROPIC_API_KEY;
@@ -29936,14 +30339,14 @@ function localRun(command) {
     process.exitCode = 1;
     return null;
   }
-  const goal = parseGoal(readFileSync5(GOAL_FILE, "utf8"));
-  const prompt = readPrompt(readFileSync5(goal.prompt.path, "utf8"), goal, null);
+  const goal = parseGoal(readFileSync7(GOAL_FILE, "utf8"));
+  const prompt = readPrompt(readFileSync7(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync5(goal.scenarios, "utf8")), model: anthropicModel(key) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync7(goal.scenarios, "utf8")), model: anthropicModel(key) };
 }
 async function calibrateChecks() {
   const local = localRun("calibrate");
@@ -29951,7 +30354,7 @@ async function calibrateChecks() {
   const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model);
   if (!result) return;
   if (result.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync5(GOAL_FILE, "utf8"));
+    const saved = JSON.parse(readFileSync7(GOAL_FILE, "utf8"));
     writeFileSync4(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}
 `);
     console.log(`
@@ -29986,6 +30389,8 @@ Start here, inside your project's folder:
 Then:
   npx synthe status   where it is and what it changed
   npx synthe upgrade  update only the installed workflow for chained rounds
+  npx synthe verify FILE   check a round's evidence record (.synthe/evidence/round-N.json)
+  npx synthe undo N   open a pull request that puts back the prompt from before round N
   npx synthe stop     stop it; nothing more runs or changes
   npx synthe restart  start it again, after stop or once you've fixed what stopped it
   npx synthe try      run one round on your computer without changing your prompt (needs ANTHROPIC_API_KEY)
@@ -30002,6 +30407,8 @@ async function main() {
   else if (command === "status") await status();
   else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
+  else if (command === "verify") process.exitCode = verify(process.argv[3], process.cwd());
+  else if (command === "undo") await undoRound();
   else if (command === "calibrate") await calibrateChecks();
   else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.ANTHROPIC_API_KEY });
   else console.log(HELP);
