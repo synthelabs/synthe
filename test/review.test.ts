@@ -107,6 +107,7 @@ test("review: confirmation shares respect opt-outs, explicit choice, and draft d
     const options = agentOptions(["--agent", "--confirm", "--keep-checks", ...(share ? ["--share", share] : [])]);
     assert.equal(await init(io, root, undefined, "sk-ant-own", { ...env, SYNTHE_ANTHROPIC_KEY: "sk-ant-own" }, options), true);
     assert.equal(JSON.parse(readFileSync(join(root, "synthe.json"), "utf8")).share, expected);
+    assert.equal(JSON.parse(readFileSync(join(root, "synthe.json"), "utf8")).share_notice, expected === "none" ? undefined : "crimson-2026-11-v1");
     assert.equal(existsSync(join(root, DRAFT_FILE)), false);
     assert.match(readFileSync(join(root, ".gitignore"), "utf8"), /^\/\.synthe\/setup-draft.json\n$/);
     assert.ok(!ran.find((call) => call.args[0] === "add")!.args.includes(".gitignore"));
@@ -114,6 +115,14 @@ test("review: confirmation shares respect opt-outs, explicit choice, and draft d
     assert.ok(!ran.find((call) => call.args[0] === "add")!.args.includes(DRAFT_FILE));
   }
   assert.throws(() => agentOptions(["--agent", "--confirm", "--keep-checks", "--share", "full"]), /--share/);
+  // The notice version follows the level chosen at confirmation, including turning sharing back on.
+  const { root, io } = setup(context);
+  assert.equal(await init(io, root, () => new Date("2026-11-06"), "sk-ant-own", { SYNTHE_ANTHROPIC_KEY: "sk-ant-own" }, agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Be helpful", "--mode", "review", "--share", "none"])), true);
+  assert.equal(JSON.parse(readFileSync(join(root, DRAFT_FILE), "utf8")).goal.share_notice, undefined);
+  assert.equal(await init(io, root, undefined, "sk-ant-own", { SYNTHE_ANTHROPIC_KEY: "sk-ant-own" }, agentOptions(["--agent", "--confirm", "--keep-checks", "--share", "detail"])), true);
+  const saved = JSON.parse(readFileSync(join(root, "synthe.json"), "utf8"));
+  assert.equal(saved.share, "detail");
+  assert.equal(saved.share_notice, "crimson-2026-11-v1");
 });
 
 test("review: confirmation refuses a changed credential type without changing the draft", async (context) => {

@@ -18,7 +18,12 @@ export interface Goal {
   // The team's own measure of a good reply: plain sentences, each checkable from one reply. On every test case, the
   // reply that fails fewer of them wins; the AI judge only breaks ties.
   checks?: string[];
+  // Guards: one plain sentence per check about what a padded or gamed reply gets wrong (for example "Stays on the
+  // customer's question instead of adding filler"). They only measure: a change that passes more checks but fails
+  // guards more often by more than merge_rule.guard_margin isn't merged. They never pick a winner.
+  counter_checks?: string[];
   share?: "none" | "numbers" | "detail" | "full";
+  share_notice?: string; // version of the sharing notice the team saw at setup, so a shared record ties to that text
   guardrails: string[];
   scenarios: string;
   models: { writer: string; runner: string; judge: string; checker: string };
@@ -29,13 +34,14 @@ export interface Goal {
     noise_margin: number; // points below the replaced prompt before a merge is reverted
     max_rounds: number;
     stall_rounds: number; // rounds in a row without a winner before stopping
+    guard_margin: number; // points the guard pass rate may fall before a change is refused, when counter_checks are set
   };
   budget: { max_usd: number };
 }
 
 export const DEFAULTS = {
   models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5", checker: "claude-sonnet-5-5" },
-  merge_rule: { mode: "auto" as "auto" | "propose", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3 },
+  merge_rule: { mode: "auto" as "auto" | "propose", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
   budget: { max_usd: 3 },
 };
 
@@ -52,10 +58,27 @@ export function parseGoal(text: string): Goal {
   if (g.checks !== undefined && (!Array.isArray(g.checks) || g.checks.length > MAX_CHECKS || g.checks.some((c: unknown) => typeof c !== "string" || !c.trim() || c.length > 300))) {
     bad(`checks must be a list of up to ${MAX_CHECKS} sentences`);
   }
+  if (g.counter_checks !== undefined) {
+    const list = g.counter_checks;
+    if (!Array.isArray(list) || list.length > MAX_CHECKS || list.some((c: unknown) => typeof c !== "string" || !c.trim() || c.length > 300)) {
+      bad(`counter_checks must be a list of up to ${MAX_CHECKS} sentences`);
+    }
+    // A guard that repeats a check measures nothing the check doesn't already.
+    const own = new Set((g.checks ?? []).map((c: string) => c.trim().toLowerCase()));
+    const same = list.find((c: string) => own.has(c.trim().toLowerCase()));
+    if (same !== undefined) bad(`counter_checks repeats a check ("${same.slice(0, 60)}"); a guard should catch a reply that games that check, not restate it`);
+    // A guard listed twice is marked and counted twice, so it weighs double in the guard rate for no reason.
+    const seen = new Set<string>();
+    const dup = list.find((c: string) => { const key = c.trim().toLowerCase(); if (seen.has(key)) return true; seen.add(key); return false; });
+    if (dup !== undefined) bad(`counter_checks lists the same guard twice ("${dup.slice(0, 60)}"); each guard should appear once`);
+  }
   if (g.share !== undefined && !["none", "numbers", "detail", "full"].includes(g.share)) bad("share must be none, numbers, detail or full");
+  if (g.share_notice !== undefined && typeof g.share_notice !== "string") bad("share_notice must be text");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== undefined && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
+  const margin = g.merge_rule?.guard_margin;
+  if (margin !== undefined && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad("merge_rule.guard_margin must be 0 or more");
   return {
     ...g,
     guardrails: g.guardrails ?? [],
@@ -93,5 +116,42 @@ export function parseScenarios(text: string): Scenario[] {
   }
   // Fewer can never clear the merge rule: even 4 wins and no losses could be chance.
   if (rows.filter((s) => s.split === "train").length < 5) throw new Error("scenarios need at least 5 train rows");
+  return rows;
+}
+
+// The frozen attack set: written once by init, in .synthe/attacks.jsonl next to the scenarios.
+// Synthe never edits it after init; teams can. A typo stops the round with a plain error, like scenarios.
+export const ATTACKS_FILE = ".synthe/attacks.jsonl";
+export const MAX_ATTACKS = 12;
+
+export interface Attack {
+  id: string;
+  input: string;
+  must: string; // one sentence about the reply, written so it can be answered yes or no
+}
+
+export function parseAttacks(text: string): Attack[] {
+  const file = ATTACKS_FILE;
+  const rows: Attack[] = [];
+  const seen = new Set<string>();
+  text.split("\n").forEach((line, i) => {
+    if (!line.trim()) return;
+    let r: Record<string, unknown>;
+    try {
+      r = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      throw new Error(`${file} line ${i + 1} isn't valid JSON. Fix that line, or delete it.`);
+    }
+    const { id, input, must } = r as { id?: unknown; input?: unknown; must?: unknown };
+    if (typeof id !== "string" || !id.trim()) throw new Error(`${file} line ${i + 1}: every attack needs an id (a short label like a1).`);
+    if (seen.has(id.trim())) throw new Error(`${file} line ${i + 1}: the id "${id.trim()}" is used twice; give each attack its own id.`);
+    seen.add(id.trim());
+    if (typeof input !== "string" || !input.trim()) throw new Error(`${file} line ${i + 1}: every attack needs the message to send.`);
+    if (input.trim().length > 1000) throw new Error(`${file} line ${i + 1}: the message is over 1000 characters; shorten it.`);
+    if (typeof must !== "string" || !must.trim()) throw new Error(`${file} line ${i + 1}: every attack needs a must sentence: what a good reply must do, written so it can be answered yes or no.`);
+    if (must.trim().length > 300) throw new Error(`${file} line ${i + 1}: the must sentence is over 300 characters; shorten it.`);
+    rows.push({ id: id.trim(), input: input.trim(), must: must.trim() });
+  });
+  if (rows.length > MAX_ATTACKS) throw new Error(`${file} has ${rows.length} attacks; Synthe runs at most ${MAX_ATTACKS} per round. Trim the file to the attacks that matter most.`);
   return rows;
 }

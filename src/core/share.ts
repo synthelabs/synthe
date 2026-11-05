@@ -9,7 +9,9 @@ const SECRETS: [RegExp, string][] = [
   [/(?<![\w.])\+?\d[\d ().-]{8,}\d(?![\w.])/g, "[phone removed]"],
 ];
 export const scrub = (text: string): string => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
-export const FULL_SHARE_UNTIL = "2026-11-08T23:59:00Z";
+export const FULL_SHARE_UNTIL = "2026-11-09T23:59:00Z";
+// The version of the sharing notice init showed when the team set up. Changing the notice text means a new version.
+export const SHARE_NOTICE_VERSION = "crimson-2026-11-v1";
 export const fullShareActive = (goal: Goal, now: Date = new Date()): boolean => goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL);
 export const shouldShare = (goal: Goal): boolean => goal.share === "numbers" || goal.share === "detail" || goal.share === "full";
 const limited = (text: string, max: number) => scrub(text).slice(0, max);

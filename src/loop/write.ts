@@ -1,7 +1,8 @@
 import type { Goal, Scenario } from "../core/goal.ts";
 import type { State } from "../core/state.ts";
 import { sumCosts } from "../core/cost.ts";
-import { sha256 } from "../core/safety.ts";
+import { promptPathProblem, sha256 } from "../core/safety.ts";
+import { candidateFingerprint, candidateScope, validateCandidateMemory } from "../core/candidate-history.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
 
 export interface Candidate { id: string; text: string; summary?: string; title?: string; edits?: Edit[] }
@@ -18,16 +19,30 @@ const MAX_EDIT_CHARS = 1500;
 
 export interface Edit { find: string; replace: string }
 
-// Words that name the test itself: a prompt only needs them to talk to whoever judges its replies. An edit may not
-// add them, since the agent is being tested and a prompt that addresses the test is gaming it. Everyday words such as
-// score, grading or evaluation aren't here: live, they blocked about one honest edit in three for a tutor bot.
-const JUDGING = /\b(judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?|held[- ]back)\b/gi;
-// A legal bot's prompt talks about judges: a word family the prompt, goal or policy already uses is the agent's own
-// subject, so only judging words from other families count.
-const FAMILY = /\b(judg|grad|evaluat|rubric|scor|test cases?|held[- ]back|benchmark)\w*/gi;
+// Words that name Synthe's own machinery: a prompt only needs them to talk about the test itself, so an edit may
+// not add them. Talking about judging as a subject is different: a tutor may discuss rubrics, test cases or
+// benchmarks all day. What an edit may not do is talk to whoever evaluates the replies, which is what JUDGE_TALK
+// catches below. (Everyday words such as score, grading or evaluation were never blocked: live, a vocabulary
+// block on judging words blocked about one honest edit in three for a tutor bot.)
+const JUDGING = /\b(held[- ]back|hidden tests?|counter[_ -]checks?|guard checks?|attack cases?|evidence files?)\b/gi;
+// A word family the prompt, goal or policy already uses is the agent's own subject, so only judging words from
+// other families count.
+const FAMILY = /\b(held[- ]back|hidden test|counter[_ -]check|guard check|attack case|evidence file)\w*/gi;
 const family = (w: string) => w.toLowerCase().slice(0, 4);
 const ownFamilies = (known: string) => new Set((known.match(FAMILY) ?? []).map(family));
 const judgingWords = (t: string, own: Set<string>) => (t.match(JUDGING) ?? []).filter((w) => !own.has(family(w)));
+
+// Talking to the judge: the evaluator as the actor ("the judge prefers"), the reply framed as evaluated
+// ("checked against a rubric"), a plea for the outcome ("give this full marks", "deserves a high score"), or a
+// direct address ("note to the grader"). These are the prompt tailoring itself to the test.
+const JUDGE_TALK = [
+  /\b(?:judges?|graders?|evaluators?|markers?)\b[^.!?]{0,40}\b(?:prefers?|wants?|likes?|rewards?|scores?|grades?|marks?|rates?|evaluates?|looks for)\b/i,
+  /\b(?:scored|graded|marked|rated|evaluated|judged|checked) (?:by|against)\b[^.!?]{0,30}\b(?:judges?|graders?|evaluators?|rubrics?|benchmarks?|test cases?)\b/i,
+  /\b(?:give|award|grant)\b[^.!?]{0,40}\b(?:full|top|high|maximum) (?:marks?|score|grade|points?)\b/i,
+  /\bdeserves? (?:a )?(?:high|full|top|good) (?:score|grade|marks?|rating)\b/i,
+  /\b(?:dear|note to|message to|attention)\b[^.!?]{0,20}\b(?:judge|grader|evaluator)\b/i,
+];
+const judgeTalk = (t: string) => JUDGE_TALK.flatMap((p) => t.match(new RegExp(p.source, "gi")) ?? []);
 
 const SCHEMA = {
   type: "object",
@@ -60,6 +75,8 @@ export function applyEdits(prompt: string, edits: unknown, known = ""): { text: 
     if (e.replace.length > MAX_EDIT_CHARS || e.find.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
     const added = judgingWords(e.replace, own);
     if (added.length > judgingWords(e.find, own).length) return { problem: `an edit talks about judging or scores ("${added[0].toLowerCase()}")` };
+    const talk = judgeTalk(e.replace);
+    if (talk.length > judgeTalk(e.find).length) return { problem: `an edit talks about judging or scores ("${talk[0].toLowerCase()}")` };
     if (e.find === "") { text = `${text.trimEnd()}\n\n${e.replace.trim()}\n`; continue; }
     const at = text.indexOf(e.find);
     if (at === -1) return { problem: "an edit's text isn't in the prompt" };
@@ -92,13 +109,19 @@ ${cases.join("\n")}
 }
 
 export async function runWrite(goal: Goal, state: State, prompt: string, scenarios: Scenario[], model: Model): Promise<Written> {
+  const protectedPath = promptPathProblem(goal.prompt.path) ?? (goal.prompt.path === goal.scenarios ? "the prompt is the scenario file" : null);
+  if (protectedPath) return { candidates: [], costUsd: 0, rejected: [protectedPath] };
   // Held-back scenarios stay out of this: the writer must never see what it is finally judged on.
   const train = scenarios.filter((s) => s.split === "train");
   const lessons = lessonText(state, prompt, train);
+  const scope = candidateScope(goal, prompt);
+  const tried = new Set(validateCandidateMemory(state.candidateHistory ?? []).filter((entry) => entry.scope === scope).map((entry) => entry.fingerprint));
+  const roundOutcomes = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}.`).join("\n");
+  const history = [tried.size ? `${tried.size} candidate texts were already attempted for this goal and prompt. Repeated text will be rejected before scoring. Try a different instruction.` : "", roundOutcomes].filter(Boolean).join("\n") || "None yet.";
   // Ideas from recent rounds that didn't win, so each round tries something new instead of paying for a repeat.
-  const tried = [...new Set(state.rounds.slice(-5).flatMap((r) => (r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary))))];
-  const notAgain = tried.length ? `\nAlready tried in earlier rounds without winning; don't propose these again:\n${tried.map((t) => `- ${t}`).join("\n")}\n` : "";
-  const history = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}. ${r.reasons.join(" ")}`).join("\n") || "None yet.";
+  // These are the writer's own one-line summaries of its earlier edits, never candidate texts or customer data.
+  const triedSummaries = [...new Set(state.rounds.slice(-5).flatMap((r) => (r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary))))];
+  const notAgain = triedSummaries.length ? `\nAlready tried in earlier rounds without winning; don't propose these again:\n${triedSummaries.map((t) => `- ${t}`).join("\n")}\n` : "";
   // The team's checks decide each test case, so the writer aims at them directly.
   const checks = goal.checks?.length ? `\nThe team measures a good reply with these checks; a change wins by making replies pass more of them:\n${goal.checks.map((c) => `- ${c}`).join("\n")}` : "";
   const quoteRule = goal.prompt.kind === "inline"
@@ -131,6 +154,10 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
     const applied = applyEdits(prompt, r.value.edits, `${goal.objective}\n${goal.policy ?? ""}`);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
+    const fingerprint = candidateFingerprint(applied.text);
+    if (fingerprint === candidateFingerprint(prompt)) return void rejected.push(`${id}: edits change only formatting or case`);
+    if (tried.has(fingerprint)) return void rejected.push(`${id}: materially identical candidate already tried for this goal and prompt`);
+    tried.add(fingerprint);
     candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : undefined,
       title: typeof r.value.title === "string" && r.value.title.trim() ? r.value.title.trim().replace(/\.$/, "").slice(0, 60) : undefined, edits: r.value.edits });
   });

@@ -2,14 +2,13 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { GOAL_FILE, STATE_BRANCH, parseGoal, parseScenarios } from "../core/goal.ts";
-import { judgeRound } from "../core/merge-rule.ts";
 import { readPrompt } from "../core/prompt.ts";
 import { newState, type State } from "../core/state.ts";
 import { sha256 } from "../core/safety.ts";
 import { headline } from "../loop/report.ts";
 import { anthropicModel, configuredModel, eventModels, modelProblem } from "../model/client.ts";
-import { measureNoise, runScore } from "../loop/score.ts";
-import { runWrite } from "../loop/write.ts";
+import { explainNoise, measureNoise } from "../loop/score.ts";
+import { runLocalTry } from "./try-round.ts";
 import { init, type Io } from "./init.ts";
 import { calibrate } from "./calibrate.ts";
 import { migrate } from "./migrate.ts";
@@ -20,6 +19,9 @@ import { upgrade } from "./upgrade.ts";
 import { AgentSetupError, agentOptions } from "./agent.ts";
 import { setKey } from "./key.ts";
 import { guide } from "./guide.ts";
+import { verify } from "./verify.ts";
+import { undo } from "./undo.ts";
+import { githubRepo } from "../github/repo.ts";
 
 const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
   const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -28,6 +30,9 @@ const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
   child.stderr.on("data", (d) => { err += d; });
   child.on("error", reject);
   child.on("close", (code) => (code === 0 ? resolve(out) : reject(new Error(err || `${cmd} failed`))));
+  // A command that exits without reading its stdin (a stub `gh`, a fast failure) closes the pipe first;
+  // without this, that surfaces as an unhandled EPIPE and crashes the CLI instead of reporting the failure.
+  child.stdin.on("error", () => {});
   child.stdin.end(stdin ?? "");
 });
 
@@ -135,6 +140,22 @@ async function restart() {
   console.log(`Watch it: https://github.com/${slug}/actions/workflows/synthe.yml`);
 }
 
+// Opens a pull request that reverts one round's prompt change. Nothing is spent: it only talks to GitHub.
+async function undoRound() {
+  if (!setUpHere()) return;
+  const slug = await repoSlug();
+  if (!slug) return;
+  const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
+  // The token goes in a header and nowhere else: never in an argument or a URL.
+  const token = (await run("gh", ["auth", "token"])).trim();
+  // Every version of the prompt file, newest first. Git history is where the old text lives; records keep only hashes.
+  const history = async (path: string) => {
+    const shas = (await run("git", ["log", "--format=%H", "--", path])).split("\n").filter(Boolean);
+    return Promise.all(shas.map((sha) => run("git", ["show", `${sha}:${path}`])));
+  };
+  process.exitCode = await undo({ repo: githubRepo(slug, token), goal, root: process.cwd(), slug, history, say: console.log }, process.argv[3]);
+}
+
 // Loads what a round on this computer needs, or says what's missing. Used by try and calibrate.
 function localRun(command: string) {
   if (!setUpHere()) return null;
@@ -161,7 +182,7 @@ function localRun(command: string) {
 async function calibrateChecks() {
   const local = localRun("calibrate");
   if (!local) return;
-  const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model);
+  const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result) return;
   // Rewordings the team made during the questions are saved, so the next round measures what they mean.
   if (result.checks.some((c, i) => c !== local.goal.checks?.[i])) {
@@ -173,24 +194,20 @@ async function calibrateChecks() {
   if (result.results.some((r) => r.verdict !== "trustworthy")) process.exitCode = 1;
 }
 
-// Runs one round on this computer and changes nothing, so a team can see what Synthe would do.
+// Runs one round on this computer without changing the prompt, so a team can see what Synthe would do.
 async function tryRound() {
   const local = localRun("try");
   if (!local) return;
   const { goal, prompt, scenarios, model } = local;
   if (process.argv.includes("--noise")) {
-    console.log("Comparing your prompt with itself on every test case...");
+    console.log("Comparing independent replies from your prompt on training cases only...");
     const n = await measureNoise(goal, prompt, scenarios, model);
-    console.log(n.wins === null
-      ? "Some replies couldn't be judged, so this can't say how much the judge varies."
-      : `Your prompt against itself: better in ${n.wins} test cases, worse in ${n.losses}, the same in ${n.ties}. The prompts are identical, so any lean is just the judge varying. A real improvement has to beat that clearly.`);
+    for (const line of explainNoise(n)) console.log(line);
     console.log(`Cost: ${n.costUsd === null ? "unknown" : `$${n.costUsd.toFixed(2)}`}`);
     return;
   }
-  console.log("Trying one round on your computer. This takes a few minutes and changes nothing in your repo...");
-  const written = await runWrite(goal, newState(), prompt, scenarios, model);
-  const { scores, costUsd } = await runScore(goal, prompt, written.candidates, scenarios, model);
-  const verdict = judgeRound(scores, goal, null);
+  console.log("Trying one round on your computer. Your prompt stays unchanged; candidate fingerprints are saved in .synthe-local/try-history.json...");
+  const { written, costUsd, verdict } = await runLocalTry(process.cwd(), goal, prompt, scenarios, model);
   for (const c of written.candidates) console.log(`- ${c.title ?? c.summary ?? c.id}: ${verdict.notes[c.id] ?? "not tested"}`);
   for (const r of written.rejected ?? []) console.log(`- An edit that couldn't be applied: ${r.replace(/^candidate-\d+: /, "")}`);
   console.log(verdict.action === "merge" ? `In a real run, Synthe would merge this. ${verdict.plain}` : "In a real run, nothing would change this round.");
@@ -206,6 +223,8 @@ Start here, inside your project's folder:
 Then:
   npx synthe status   where it is and what it changed
   npx synthe upgrade  update only the installed workflow for chained rounds
+  npx synthe verify FILE   check a round's evidence record (.synthe/evidence/round-N.json)
+  npx synthe undo N   open a pull request that puts back the prompt from before round N
   npx synthe stop     stop it; nothing more runs or changes
   npx synthe restart  start it again, after stop or once you've fixed what stopped it
   npx synthe key      use your own Anthropic key instead of event credit
@@ -229,6 +248,8 @@ async function main() {
   else if (command === "status") await status();
   else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
+  else if (command === "verify") process.exitCode = verify(process.argv[3], process.cwd());
+  else if (command === "undo") await undoRound();
   else if (command === "calibrate") await calibrateChecks();
   else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.ANTHROPIC_API_KEY });
   else console.log(HELP);

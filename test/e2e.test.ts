@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -324,6 +324,16 @@ test("a backup replacing a proposal-close run can resume review immediately", as
   assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/);
 });
 
+test("status after manual stop overrides a still-running report headline", async () => {
+  reset();
+  const gh = join(dir, "gh");
+  writeFileSync(gh, `#!/bin/sh\ncase "$*" in\n*"repo view"*) echo 'o/r';;\n*"actions/workflows"*) echo disabled_manually;;\n*) echo '{"round":1,"rounds":[],"spendUsd":0.1}';;\nesac\n`);
+  chmodSync(gh, 0o700);
+  const output = execFileSync("node", [resolve("dist/cli.js"), "status"], { cwd: dir, env: { PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8" });
+  assert.match(output, /Stopped with npx synthe stop/);
+  assert.doesNotMatch(output, /Synthe is working|getting better|updates after each round/);
+});
+
 test("a closed PR starts a round only for the current same-repo Synthe proposal", async () => {
   reset();
   pulls = [{ number: 1, state: "closed", merged_at: null }];
@@ -464,7 +474,9 @@ test("local try and calibrate print credit refusals, exit nonzero and leave ever
     });
     assert.equal(result.code, 1);
     assert.ok(result.output.includes(proxyMessage));
-    assert.deepEqual(readdirSync(dir, { recursive: true }).map(String).sort(), before);
+    // Local try holds its history lock in the ignored .synthe-local/ folder; a refused call leaves it empty.
+    assert.deepEqual(readdirSync(dir, { recursive: true }).map(String).filter((path) => path !== ".synthe-local").sort(), before.filter((path) => path !== ".synthe-local"));
+    if (existsSync(join(dir, ".synthe-local"))) assert.deepEqual(readdirSync(join(dir, ".synthe-local")), []);
     assert.equal(readFileSync(join(dir, "prompt.md"), "utf8"), promptBefore);
     assert.equal(readFileSync(join(dir, "synthe.json"), "utf8"), goalBefore);
     assert.ok(requestHeaders.every((headers) => headers["x-synthe-event"] === "crimson" && headers["x-synthe-install"] && !headers.authorization));

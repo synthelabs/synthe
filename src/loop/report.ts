@@ -1,4 +1,5 @@
 import type { Goal } from "../core/goal.ts";
+import { guardSentence } from "../core/merge-rule.ts";
 import { budgetSpend, isFinished, type RoundRecord, type State } from "../core/state.ts";
 import { FULL_SHARE_UNTIL, PROXY_AUTH_MESSAGE } from "../core/share.ts";
 
@@ -36,6 +37,8 @@ export function headline(goal: Goal, state: State, stoppedByTeam = false): { tit
   // The team's own number, from before the first merge to after the latest one, when they set checks.
   const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
   const gain = rated.length ? `Your checks now pass ${rated.at(-1)!.checks!.after}% of the time, up from ${rated[0].checks!.before}%. ` : "";
+  const guarded = state.rounds.filter((r) => r.outcome === "merged" && r.guards);
+  const guardLine = guarded.length ? `${guardSentence({ before: guarded[0].guards!.before, after: guarded.at(-1)!.guards!.after })} ` : "";
   const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;
   if (state.proposal) {
     return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
@@ -46,12 +49,12 @@ export function headline(goal: Goal, state: State, stoppedByTeam = false): { tit
     return { title: "Synthe needs you to fix something", summary: `${last!.plain} ${spent}` };
   }
   if (!state.stopped && stoppedByTeam) {
-    return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
+    return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}${guardLine}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
     const wait = busy(last) ? /Synthe's proxy|Credit is unavailable/.test(last?.plain ?? "") ? ` ${last!.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
     return merged > 0
-      ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` }
+      ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}${guardLine}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` }
       : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better`
@@ -70,7 +73,7 @@ export function headline(goal: Goal, state: State, stoppedByTeam = false): { tit
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
   return merged > 0
-    ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` }
+    ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` }
     : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
 }
 
@@ -104,16 +107,85 @@ function nextSteps(goal: Goal, state: State): string[] {
   return steps;
 }
 
+const TRIED_GROUPS = ["not clearly better", "did not hold on the hidden test cases", "broke a rule or a guard"] as const;
+
+// Which of the three plain reasons a tried change's outcome belongs to. Outcomes that aren't a
+// judgement on a scored change (it merged, it was never tested, its edit couldn't be applied) don't count.
+function triedGroup(outcome: string): (typeof TRIED_GROUPS)[number] | null {
+  if (outcome === "Merged." || outcome === "Not tested." || outcome.startsWith("Not used:")) return null;
+  if (outcome.startsWith("Broke one of your rules") || outcome.startsWith("Refused by a safety check") || outcome.includes("guards")) return "broke a rule or a guard";
+  if (outcome.includes("hidden")) return "did not hold on the hidden test cases";
+  return "not clearly better";
+}
+
+// Why a run that found no winner stopped, in the team's own numbers: which checks replies failed most,
+// what became of the changes Synthe tried, and what Synthe needs from the team. Shown when the run
+// stopped because the last rounds found no winner, and when the budget ran out. Other stops keep the
+// report they already had.
+export function noWinSection(goal: Goal, state: State): string[] {
+  if (!state.stopped || state.proposal) return [];
+  const budget = /^budget/.test(state.stopped);
+  if (!budget && !/no winner$/.test(state.stopped)) return [];
+  const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
+
+  // What failed most, from the per-round failure counts the decide step keeps. State written before
+  // those counts existed has none; the last scored round's lessons are the fallback, and when there
+  // are neither, the section says so instead of guessing.
+  const counts = new Map<string, number>();
+  for (const r of recent) for (const [check, n] of Object.entries(r.failedChecks ?? {})) counts.set(check, (counts.get(check) ?? 0) + n);
+  if (!counts.size && state.lessons) for (const row of state.lessons.rows) for (const check of row.failedChecks ?? []) counts.set(check, (counts.get(check) ?? 0) + 1);
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).slice(0, 3);
+
+  const groups = new Map<string, number>();
+  for (const r of recent) for (const t of r.tried ?? []) {
+    const g = triedGroup(t.outcome);
+    if (g) groups.set(g, (groups.get(g) ?? 0) + 1);
+  }
+
+  const asks: string[] = [];
+  if (top.length) asks.push(`Add test cases your agent still gets wrong, especially ones where replies fail "${top[0][0]}", to \`${goal.scenarios}\` and push. The format is under "What to do next" below.`);
+  const weak = (state.calibration ?? []).find((c) => c.reading === "disagrees with you" || c.reading === "unsure");
+  if (weak) asks.push(weak.reading === "disagrees with you"
+    ? `Rewrite the check "${weak.check}" in plainer words. When the team marked replies by hand with \`npx synthe calibrate\`, the AI marked them differently from the team, so the check may not say what you mean.`
+    : `Rewrite the check "${weak.check}" in plainer words. When the team marked replies by hand with \`npx synthe calibrate\`, the AI's marking was unsure against the team's, so the check may be hard to mark either way.`);
+  if (budget) asks.push(`Raise \`budget.max_usd\` in \`synthe.json\` if you want more rounds: Synthe stopped when the spend reached the $${goal.budget.max_usd} budget.`);
+
+  const lines = ["### Why there was no win", ""];
+  if (top.length) {
+    lines.push(`**What failed most** in the last ${plural(recent.length, "round")}:`, ...top.map(([check, n]) => `- "${check}" failed in ${n} ${n === 1 ? "reply" : "replies"}, counting every reply Synthe scored.`), "");
+  }
+  const grouped = TRIED_GROUPS.filter((g) => groups.has(g));
+  if (grouped.length) {
+    lines.push("**What the changes Synthe tried did:**", ...grouped.map((g) => `- ${g[0].toUpperCase()}${g.slice(1)}: ${plural(groups.get(g)!, "change")}.`), "");
+  }
+  if (!top.length && !grouped.length) {
+    lines.push("Synthe doesn't have per-check failure counts for these rounds, so it can't say which checks failed most or group the changes it tried.", "");
+  }
+  if (asks.length) lines.push("**What Synthe needs from you:**", ...asks.map((a) => `- ${a}`), "");
+  return lines;
+}
+
 // The round on its Actions run page: the outcome, what was tried, the cost and where the full report is.
+// The round's attack line, when the repo has a frozen attack set: how many of the attack messages the prompt
+// that ended the round held, naming the ones it failed.
+export function attackLine(r: RoundRecord): string | null {
+  if (!r.attacks) return null;
+  if (r.attacks.unknown) return "Attacks: couldn't be checked this round.";
+  const held = r.attacks.total - r.attacks.failed.length;
+  return r.attacks.failed.length ? `Attacks: ${held} of ${r.attacks.total} held (failed: ${r.attacks.failed.join(", ")}).` : `Attacks: ${held} of ${r.attacks.total} held.`;
+}
+
 export function roundSummary(goal: Goal, state: State, record: RoundRecord | null, repo: string): string {
   const { title, summary } = headline(goal, state);
   const report = state.issue ? `Full report: https://github.com/${repo}/issues/${state.issue}` : "";
   if (!record) return [`## Synthe: ${title}`, "", summary, "", report, ""].join("\n");
   const cost = record.costUsd === null ? "unknown" : `$${record.costUsd.toFixed(2)}`;
   const tried = record.tried?.length ? record.tried.map((t) => `- ${t.summary} *${t.outcome}*`) : [];
+  const attacks = attackLine(record);
   return [
     `## Synthe round ${record.round}: ${OUTCOME[record.outcome].toLowerCase()}${record.pr ? ` (#${record.pr})` : ""}`, "",
     ...(record.plain ? [record.plain, ""] : []),
+    ...(attacks ? [attacks, ""] : []),
     ...(tried.length ? ["What Synthe tried:", ...tried, ""] : []),
     `Cost of this round: ${cost}. ${summary}`, "", report, "",
   ].join("\n");
@@ -149,6 +221,7 @@ export function renderReport(goal: Goal, state: State, now: Date = new Date()): 
     }
     lines.push("");
   }
+  lines.push(...noWinSection(goal, state));
   lines.push("### What to do next", "", ...nextSteps(goal, state).map((s) => `- ${s}`), "");
   if (state.rounds.length) {
     lines.push(
@@ -164,11 +237,12 @@ export function renderReport(goal: Goal, state: State, now: Date = new Date()): 
     `- Rounds: ${state.round} of up to ${goal.merge_rule.max_rounds}. Spent ${money(state)} of $${goal.budget.max_usd}.`,
     goal.share === "none" || !goal.share ? "- Sharing with Synthe: off." :
       goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL)
-        ? '- Sharing with Synthe: everything for Crimson Hacks (prompt and test cases until November 8), then numbers and what changed. Turn it off with "share": "none" in synthe.json.'
+        ? '- Sharing with Synthe: everything for Crimson Hacks (prompt and test cases until November 9), then numbers and what changed. Turn it off with "share": "none" in synthe.json.'
         : `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}. Turn it off with "share": "none" in synthe.json.`,
     `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
-    ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}. ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),
+    ...(state.rounds.some((r) => r.attacks) ? ["- Attacks: each round, the current prompt and the winning change also answer the frozen attack messages in `.synthe/attacks.jsonl`, and a change that fails one the current prompt passes isn't merged. Attacks are a basic check, not a security test."] : []),
+    ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}.${attackLine(r) ? ` ${attackLine(r)}` : ""} ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),
     "", "</details>", "",
     ...notTested(goal), "",
     "Only your prompt file can change. Was this useful? React 👍 or 👎 on this issue to tell us.",

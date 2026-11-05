@@ -1,8 +1,8 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { GOAL_FILE, parseGoal, parseScenarios } from "./core/goal.ts";
+import { ATTACKS_FILE, GOAL_FILE, parseAttacks, parseGoal, parseScenarios, type Attack } from "./core/goal.ts";
 import { readPrompt } from "./core/prompt.ts";
 import { sumCosts } from "./core/cost.ts";
-import { resumeIfScenariosChanged, stopReason } from "./core/state.ts";
+import { calibrationReadings, resumeIfScenariosChanged, stopReason } from "./core/state.ts";
 import { sha256 } from "./core/safety.ts";
 import { githubRepo, type Repo } from "./github/repo.ts";
 import { configuredModel, eventModels } from "./model/client.ts";
@@ -52,7 +52,9 @@ async function main() {
     const startSource = fullActive && beforeState?.round === 0 ? await repo.readFile(goal.prompt.path, branch) : null;
     const startPrompt = startSource === null || !beforeState ? null : readPrompt(startSource, goal, beforeState.prompt);
     const scenarios = startPrompt !== null ? await repo.readFile(goal.scenarios, branch) : null;
-    const record = await runDecide(goal, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json") });
+    const calibrationText = await repo.readFile(".synthe/calibration.json", branch);
+    const calibration = calibrationText === null ? null : calibrationReadings(calibrationText);
+    const record = await runDecide(goal, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json"), calibration });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     const state = await repo.readState();
     if (record && state.chainReady && state.round === record.round && state.round < goal.merge_rule.max_rounds && !state.stopped && !state.proposal && !state.pending) {
@@ -145,7 +147,20 @@ async function main() {
     if (!written) throw new Error("candidates are missing");
     const last = state.lastMerge;
     const prior = last && !last.reverted && last.mergedHash === sha256(prompt) ? last.priorPrompt : null;
-    const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior);
+    // The frozen attack set, when the repo has one. It is loaded here, in the score step, so attack text can
+    // never reach the write step or the writer.
+    const attacks: Attack[] = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync(ATTACKS_FILE, "utf8")) : [];
+    const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null);
+    // Keep the current prompt's fresh attack results for the next round. Saving them is an optimisation, so
+    // a failed save is noted and the round goes on; the next round just marks them again.
+    if (scored.attackCache) {
+      try {
+        state.attackCache = scored.attackCache;
+        await repo.writeState(state);
+      } catch (e) {
+        console.log(`Could not keep the attack results for reuse: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
     for (const line of explainScores(scored.scores, scenarios)) console.log(line);
     const { confirmed, dismissed, failed, excusedConfirmed } = scored.checks;

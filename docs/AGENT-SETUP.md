@@ -64,7 +64,7 @@ Use `--mode auto` or `--mode review` as the person chose. Leave out `--message` 
 
 Show the full output as written, not a summary. It has three parts:
 
-1. The credential and budget, and the sharing notice. The person must see them. During Crimson Hacks, Synthe shares the prompt and test cases with the Synthe team until Nov 8. Never code. Secrets are removed. The person can choose `--share none` at confirmation, or set `"share": "none"` in `synthe.json` any time.
+1. The credential and budget, and the sharing notice. The person must see them. During Crimson Hacks, Synthe shares the prompt and test cases with the Synthe team until Nov 9 at 23:59 UTC. Never code. Secrets are removed. The person can choose `--share none` at confirmation, or set `"share": "none"` in `synthe.json` any time.
 2. The numbered proposed checks.
 3. Example replies, each with Synthe's pass or fail mark.
 
