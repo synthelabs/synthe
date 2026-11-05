@@ -29162,7 +29162,7 @@ function nextSteps(goal, state) {
   \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`
   \`expected\` describes a good answer in a sentence. \`split\` is \`train\` (Synthe learns from it) or \`holdout\` (kept hidden to check its changes).`);
   }
-  if (state.stopped && state.round >= goal.merge_rule.max_rounds && !/^reached \d+ rounds$/.test(state.stopped) && steps.some((s) => s.includes("npx synthe restart")) && !steps.some((s) => s.includes("max_rounds"))) {
+  if (state.stopped && state.round >= goal.merge_rule.max_rounds && steps.some((s) => s.includes("npx synthe restart")) && !steps.some((s) => s.includes("max_rounds"))) {
     steps.push(`Synthe has also run all ${goal.merge_rule.max_rounds} rounds, so raise merge_rule.max_rounds in synthe.json and push it before you restart.`);
   }
   if (!state.stopped && !state.proposal && missing(last)) {

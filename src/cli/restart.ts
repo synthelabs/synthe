@@ -9,9 +9,11 @@ export function restartState(goal: Goal, state: State, scenariosHash: string | n
   const stopped = state.stopped;
   if (!stopped) return { state, note: "" };
   // Clearing a stop with no rounds left would only stop again at the next round, whatever had stopped it.
-  const noRoundsLeft = state.round >= goal.merge_rule.max_rounds && !/^reached \d+ rounds$/.test(stopped)
-    ? { why: `Synthe has also run all ${goal.merge_rule.max_rounds} rounds. Raise merge_rule.max_rounds in synthe.json, push it, then run \`npx synthe restart\` again; otherwise it would stop again straight away.` }
-    : null;
+  // That includes "reached N rounds" when the last round also failed on a key or code: fixing the code isn't enough.
+  const noRoundsLeft = state.round < goal.merge_rule.max_rounds ? null
+    : /^reached \d+ rounds$/.test(stopped)
+      ? { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` }
+      : { why: `Synthe has also run all ${goal.merge_rule.max_rounds} rounds. Raise merge_rule.max_rounds in synthe.json, push it, then run \`npx synthe restart\` again; otherwise it would stop again straight away.` };
   if (scenariosHash !== null) {
     const next = { ...state };
     if (resumeIfScenariosChanged(next, scenariosHash)) return noRoundsLeft ?? { state: next, note: "Your test cases changed, so it continues." };

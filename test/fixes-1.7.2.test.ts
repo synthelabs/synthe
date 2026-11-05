@@ -102,6 +102,15 @@ test("no stop is cleared into a run with no rounds left, whatever stopped it", (
     const more = restartState(goal({ merge_rule: { ...goal().merge_rule, max_rounds: 20 } }), state);
     assert.ok("state" in more && more.state.stopped === null, stopped);
   }
+  // Round 12 itself refused: the stop reads "reached 12 rounds", and fixing the code alone can't continue.
+  const lastRoundRefused: State = { ...budgetStop(12), stopped: "reached 12 rounds", spendUsd: 1, rounds: [round(10), round(11), refusedRound(12)] };
+  const refusedAtLimit = restartState(goal(), lastRoundRefused);
+  assert.ok("why" in refusedAtLimit && /raise merge_rule\.max_rounds/.test(refusedAtLimit.why));
+  const refusedReport = renderReport(goal(), lastRoundRefused);
+  assert.match(refusedReport, /gh secret set SYNTHE_TEAM_CODE/);
+  assert.match(refusedReport, /raise merge_rule\.max_rounds in synthe\.json and push it before you restart/);
+  const refusedRaised = restartState(goal({ merge_rule: { ...goal().merge_rule, max_rounds: 20 } }), lastRoundRefused);
+  assert.ok("state" in refusedRaised && refusedRaised.state.stopped === null, "with more rounds, fixing the code continues");
   const changed: State = { ...budgetStop(12), stopped: "3 rounds in a row found no winner", spendUsd: 1, scenariosHash: "old" };
   assert.ok("why" in restartState(goal(), changed, "new"), "new test cases don't help with no rounds left either");
   assert.ok("state" in restartState(goal(), { ...changed, round: 5 }, "new"));
