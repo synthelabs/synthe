@@ -2,10 +2,14 @@
 
 What the Synthe client (the `synthe` npm package and the workflows it installs in a team's repo) promises the Synthe services, and what it expects back. The services live in `synthelabs/synthe-share`. When a behaviour here changes, both repos change in the same release, and this file is updated in the same pull request.
 
-Two services:
+Services:
 
-- **Round events:** `POST https://synthe-share.vercel.app/api/round`
 - **Sponsored model credit:** `POST https://synthe-share.vercel.app/api/claude/v1/messages`
+- **Round events (private ingest):** `POST https://synthe-share.vercel.app/api/events`
+- **Diagnostics (private ingest):** `POST https://synthe-share.vercel.app/api/diagnostics`
+- **Round summaries (the older, numbers-only path, still live):** `POST https://synthe-share.vercel.app/api/round`
+
+The ingest endpoints and the team-credit mode are built on the synthe-share branches `crimson/team-enrollment` and `crimson/private-ingest`, stacked on PR #2. Rishab's copy of this contract lives on the ingest branch; when the two copies differ, that branch's copy wins until this one is reconciled against it.
 
 Each section ends with its build status, so nobody mistakes a plan for a shipped behaviour.
 
@@ -15,28 +19,30 @@ At an event, each team gets one team code (on their QR card at Crimson Hacks). T
 
 - **Asked once.** `npx synthe init` asks for the code during setup, with typed input hidden, the same way it asks for a key. A team with its own Anthropic key can skip it and never uses the proxy.
 - **Stored privately.** Init saves the code as the GitHub repo secret `SYNTHE_EVENT_CODE`, so workflow runs can use it. Local runs read the `SYNTHE_EVENT_CODE` environment variable. The code never goes in `synthe.json` or any other committed file, never in a round event, and is never printed in output or logs.
-- **Sent on every model call.** Every call made on event credit goes to the proxy with the header `x-synthe-event: <code>` and a placeholder API key (the proxy ignores `x-api-key`). Calls from the GitHub Action also send `Authorization: Bearer <OIDC token>` with audience `synthe-proxy`, and the service checks the token names this repo and its `.github/workflows/synthe.yml`. Local calls (init, `try`, `calibrate`) instead send `x-synthe-install: <UUID>`, one per install, so setup spend can be capped per install.
+- **Sent on every model call.** Every call made on event credit goes to the proxy with the header `x-synthe-team: <code>` and a placeholder API key (the proxy ignores `x-api-key`). (The first proxy build in synthe-share PR #2 used the header `x-synthe-event`; the team-enrollment branch replaces it with `x-synthe-team`, and the client follows the enrollment branch.) Organizers issue the codes; the server stores only a hash of each code. One ledger per team covers setup and rounds together, and every repo the team runs shares that one allowance. Calls from the GitHub Action also send `Authorization: Bearer <OIDC token>` with audience `synthe-proxy`, and the service checks the token names this repo and its `.github/workflows/synthe.yml`. Local calls (init, `try`, `calibrate`) instead send `x-synthe-install: <UUID>`, one per install, so setup spend can be capped per install.
 - **Limits the client respects.** Event credit covers only `claude-haiku-5-5` and `claude-sonnet-5-5`, at most 16000 output tokens per call. The client refuses any other model up front with a plain message naming the fix (use an allowed model, or `npx synthe key` to switch to the team's own key). All dollar caps live on the server; the client never guesses, shows, or works around them.
 - **Refusals.** A 402 or 403 with error type `synthe_credit` means the credit is used up or the event window has closed: the client shows the server's message word for word and does not retry. A 401 with type `synthe_proxy_auth` means the workflow's identity token was not accepted: the client prints the fix (run `npx synthe upgrade`, then `npx synthe restart`). A 503 shows the server's message. Nothing about a refusal is silent.
 
-*Status: built on both sides, awaiting coordinated merge: client in synthe PR #14, service in synthe-share PR #2. Neither merges alone.*
+*Status: the service side is built and tested offline on the enrollment branch (one ledger per team, `CREDIT_MODE` must be set explicitly; `CREDIT_MODE=owner` is the fallback that works with the client exactly as PR #14 ships it). The client's team-code wiring reuses PR #14 with the header renamed to `x-synthe-team`. Neither side merges alone.*
 
 ## 2. Round events
 
-So the team can see a round while it happens, and so a stuck round is visible to us, the round workflow sends events to `POST /api/round`.
+So the team can see a round while it happens, and so a stuck round is visible to us, the round workflow sends events to `POST /api/events`. The endpoint accepts only the round workflow's own GitHub token, and the server enforces the team's consent, the notice version and the collection cutoff on every event, whatever the client sends.
 
 - **Identity.** Every event carries a GitHub OIDC token with audience `synthe-share`. The service verifies the token names this repo and its `.github/workflows/synthe.yml`. The client never sends another repo's identity, and there is no shared secret for events.
-- **Stages.** One event per stage, each with the repo, the round number, the stage name, and the client version:
-  - `candidates`: after the write step. Candidate count and each candidate's title.
-  - `results`: after the score step. Per candidate: checks before and after where known, and the round's cost so far.
-  - `decision`: after the decide step. The outcome (`merged`, `proposed`, `skipped`, `stopped`), the checks before and after, the round cost, total spend, and the stop reason as a word from the fixed list. This event carries the same fields as the round record the client sends today, so the service can treat it as the round's record.
+- **What is sent.** One event per stage, each with the repo, the round number, the stage name, and the client version:
+  - `setup`: when init finishes. The goal, the checks, and the notice version the team saw.
+  - `candidates`: after the write step. Every candidate and its diff.
+  - `results`: after the score step. The case results per candidate, and the round's cost so far.
+  - `decision`: after the decide step. The outcome (`merged`, `proposed`, `skipped`, `stopped`), no-ops and failures included, the checks before and after, the round cost, total spend, and the stop reason as a word from the fixed list. A merged or proposed round also sends the final prompt.
   - `diagnostics`: see section 3.
+  The older `/api/round` summary post keeps working for teams on the numbers path; the ingest events are the fuller record for teams whose sharing level allows it.
 - **Gated by the team's sharing choice** (section 4). `candidates` and `results` carry titles and numbers only. Anything beyond numbers follows the team's level, at every stage, not just the last one.
 - **Scrubbed before sending.** Keys, tokens, emails and phone numbers are removed with the same patterns the round record uses today, on every field, at every stage.
 - **Size caps.** A whole event stays under 256 KB. At the `full` level, any one text field stays under 100 KB.
 - **Failure never blocks a round.** Each send has a 10 second timeout. A failed send prints one line in the step log (`Sharing skipped: ...`) and the round carries on. Events are best-effort: a missed stage event is not retried later, and the `decision` event stands on its own.
 
-*Status: the `decision` event is shipped (it is today's end-of-round post from the decide step). The `candidates` and `results` stage events are the follow-on client work.*
+*Status: the service side is built and tested offline on the ingest branch (120 tests, targeted mutations caught, review fixes in). The client's `/api/round` summary post is shipped; the `/api/events` sender is the follow-on client work, and without it the new endpoints receive nothing.*
 
 ## 3. Diagnostics
 
@@ -46,10 +52,10 @@ When a round fails, the error text sits in the team's workflow logs, where we ca
 - **Trigger.** It runs when the Synthe workflow finishes, whatever the result: success, failure, or cancelled. It can also be run by hand.
 - **What it collects.** The run's error artifacts (`write-error`, `score-error`, and the decide step's error file where present) and the job logs of the failed steps.
 - **Scrubbed before anything leaves.** The same patterns as section 2, applied to every line collected. The workflow holds no key and no team code, and it never sends repo files other than the error artifacts Synthe itself wrote.
-- **Where it goes.** The scrubbed bundle is uploaded as a workflow artifact named `synthe-diagnostics-<run id>`, kept 7 days. If the team's sharing level is not `none`, the workflow also posts a `diagnostics` event (section 2) with the run id, the result, and up to 4000 characters of the scrubbed error text.
+- **Where it goes.** The scrubbed bundle is uploaded as a workflow artifact named `synthe-diagnostics-<run id>`, kept 7 days. The workflow also posts the per-job logs to `POST /api/diagnostics`, which accepts only the diagnostics workflow's own GitHub token. The server scrubs the logs a second time before storing anything.
 - **Permissions.** `actions: read` and `contents: read`, nothing else. It does not check out or run the team's code. If diagnostics itself fails, nothing about the round changes, and no other step depends on it.
 
-*Status: specified here. The template and the init wiring are follow-on client work.*
+*Status: the endpoint is built and tested offline on the ingest branch (per-job logs, including from failed, cancelled and timed-out runs). The template and the init wiring are follow-on client work.*
 
 ## 4. Sharing levels and the notice
 
