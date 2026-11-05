@@ -187,7 +187,7 @@ test("an identical candidate isn't scored, and noise is measured", async () => {
   const { scores } = await runScore(goal(), "Old", [{ id: "c1", text: "Old" }], scenarios, m);
   assert.equal(scores.candidates.length, 0);
   const noise = await measureNoise(goal(), "Old", scenarios, fake());
-  assert.deepEqual([noise.wins, noise.losses, noise.ties], [0, 0, scenarios.length]);
+  assert.deepEqual([noise.wins, noise.losses, noise.ties], [0, 0, scenarios.filter((s) => s.split === "train").length]);
   assert.ok(noise.costUsd! > 0);
 });
 

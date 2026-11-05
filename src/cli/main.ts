@@ -7,7 +7,7 @@ import { newState, type State } from "../core/state.ts";
 import { sha256 } from "../core/safety.ts";
 import { headline } from "../loop/report.ts";
 import { anthropicModel, modelProblem } from "../model/client.ts";
-import { measureNoise } from "../loop/score.ts";
+import { explainNoise, measureNoise } from "../loop/score.ts";
 import { runLocalTry } from "./try-round.ts";
 import { init, type Io } from "./init.ts";
 import { calibrate } from "./calibrate.ts";
@@ -176,11 +176,9 @@ async function tryRound() {
   if (!local) return;
   const { goal, prompt, scenarios, model } = local;
   if (process.argv.includes("--noise")) {
-    console.log("Comparing your prompt with itself on every test case...");
+    console.log("Comparing independent replies from your prompt on training cases only...");
     const n = await measureNoise(goal, prompt, scenarios, model);
-    console.log(n.wins === null
-      ? "Some replies couldn't be judged, so this can't say how much the judge varies."
-      : `Your prompt against itself: better in ${n.wins} test cases, worse in ${n.losses}, the same in ${n.ties}. The prompts are identical, so any lean is just the judge varying. A real improvement has to beat that clearly.`);
+    for (const line of explainNoise(n)) console.log(line);
     console.log(`Cost: ${n.costUsd === null ? "unknown" : `$${n.costUsd.toFixed(2)}`}`);
     return;
   }
