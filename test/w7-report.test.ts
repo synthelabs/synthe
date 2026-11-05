@@ -71,7 +71,7 @@ test("a check calibration marks as disagreeing gets a rewrite ask, and only that
   assert.ok(!section.includes('Rewrite the check "Stays under three sentences"'));
 });
 
-test("a budget stop shows the section with the budget ask, and still no restart instruction", () => {
+test("a budget stop shows the section with the budget ask, and how to continue", () => {
   const state = stalled(
     [skipped(1, { failedChecks: { "Asks for the order number first": 2 } }), skipped(2), skipped(3)],
     { stopped: "budget of $3 is used" },
@@ -79,7 +79,8 @@ test("a budget stop shows the section with the budget ask, and still no restart 
   const report = renderReport(goal(), state);
   assert.match(report, /### Why there was no win/);
   assert.match(report, /Raise `budget\.max_usd` in `synthe\.json` if you want more rounds/);
-  assert.ok(!report.includes("npx synthe restart"), "a finished budget stop never tells the team to restart");
+  // restart resumes a budget stop once budget is available again (a fresh own-key budget or a raised max_usd).
+  assert.match(report, /npx synthe key.*raise budget\.max_usd[\s\S]*npx synthe restart/);
 });
 
 test("no failed-check data prints a short generic version", () => {

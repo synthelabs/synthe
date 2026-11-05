@@ -17,6 +17,15 @@ const WORKFLOW = "templates/synthe.yml";
 const TESTS = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
 
 const allMutations = [
+  ["round state loses a concurrent own-key budget", GITHUB, 'saved.ownKeyFromUsd !== undefined', 'false'],
+  ["conflicting state writes never retry", GITHUB, 'if (result.status === 409 && attempt < RETRIES) continue;', ''],
+  ["event: own key loses to credit", "src/model/client.ts", 'if (key?.trim()) return anthropicModel(key.trim());', 'if (false) return anthropicModel(key.trim());'],
+  ["event: credit is treated as busy", "src/loop/failure.ts", 'kind: "credit", message: e.message', 'kind: "busy", message: e.message'],
+  ["event: credit requests are retried", "src/model/client.ts", 'refusedHeaders.set("x-should-retry", "false");', 'refusedHeaders.set("x-should-retry", "true");'],
+  ["event: credit does not stop the chain", DECIDE, 'state.stopped = "credit";', 'state.stopped = null;'],
+  ["event: agent mode prompts", "src/cli/init.ts", 'if (!agent && (await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)', 'if ((await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)'],
+  ["event: codes are mistaken for keys", "src/cli/init.ts", 'const event = !key.startsWith("sk-ant-");', 'const event = key.startsWith("sk-ant-");'],
+  ["event: budget is not four dollars", "src/cli/init.ts", 'if (event) goal.budget = { max_usd: EVENT_BUDGET_USD };', 'if (event) goal.budget = { max_usd: 3 };'],
   ["history accepts unvalidated text", "src/core/candidate-history.ts", 'Object.keys(entry).sort().join(",") !== "fingerprint,scope"', 'false'],
   ["history ignores the goal", "src/core/candidate-history.ts", 'JSON.stringify([goal, prompt])', 'JSON.stringify([prompt])'],
   ["history ignores the current prompt", "src/core/candidate-history.ts", 'JSON.stringify([goal, prompt])', 'JSON.stringify([goal])'],
@@ -104,7 +113,7 @@ const allMutations = [
   ["an unclear merge answer is never read back", GITHUB, "if (back.ok && (await back.json()).merged === true) return { merged: true };", ""],
   ["a cut-off agent reply is unknown", "src/model/client.ts", "const cutOff = allowCutOff === true && res.stop_reason === \"max_tokens\" && text.length > 0;", "const cutOff = false;"],
   ["duplicate scenario ids allowed", "src/core/goal.ts", "if (lineOf.has(s.id)) throw", "if (false) throw"],
-  ["restart reopens a finished run", "src/cli/restart.ts", "if (isFinished(stopped) && !failedOut && !roundsRaised) {", "if (false) {"],
+  ["restart reopens a finished run", "src/cli/restart.ts", "if (isFinished(stopped) && (!failedOut || /^budget/.test(stopped)) && !roundsRaised && !budgetAvailable) {", "if (false) {"],
   ["restart spends after unknown cost", "src/cli/restart.ts", "if (state.spendUnknown) return", "if (false) return"],
   ["a busy outage retries without limit", DECIDE, "record.failure === \"busy\" && busyInARow <= BUSY_RETRIES", "record.failure === \"busy\""],
   ["a failed round still queues the next", DECIDE, "const finished = Boolean(input.scores && input.candidates && record.outcome !== \"failed\");", "const finished = true;"],
@@ -125,6 +134,11 @@ const allMutations = [
   ["setup's review shows held-back cases", "src/cli/calibrate.ts", "const cases = scenarios.filter((s) => s.split === \"train\").slice(0, SETUP_CASES);", "const cases = scenarios.slice(0, SETUP_CASES);"],
   ["calibrate trusts too little evidence", "src/cli/calibrate.ts", "} else if (r.applied < MIN_APPLIED) {", "} else if (false) {"],
   ["calibrate trusts checks nobody answered", "src/cli/calibrate.ts", "} else if (r.asked === 0) {", "} else if (false) {"],
+  ["key resets the own-key budget on every switch", "src/cli/key.ts", "if (state.ownKeyFromUsd !== undefined) {", "if (false) {"],
+  ["key takes ANTHROPIC_API_KEY without a terminal", "src/cli/key.ts", "if (!own && !terminal) {", "if (!own && !app && !terminal) {"],
+  ["a failed confirm's local files block a retry", "src/cli/init.ts", "      (await io.run(\"gh\", [\"api\", `repos/${slug}/contents/${path}", "      existsSync(join(root, path)) || (await io.run(\"gh\", [\"api\", `repos/${slug}/contents/${path}"],
+  ["budget stop keeps offering a fresh key budget", "src/loop/report.ts", "state.ownKeyFromUsd === undefined ? \"Run `npx synthe key`", "true ? \"Run `npx synthe key`"],
+  ["proxy sign-in failure reads as a bad key", "src/loop/report.ts", "end.plain === PROXY_AUTH_MESSAGE ? ", "false ? "],
   ["migrate's score drop threshold is inverted", "src/cli/migrate.ts", "if (judgeDrop > MAX_DROP)", "if (judgeDrop < MAX_DROP)"],
   ["migrate doesn't report cost", "src/cli/migrate.ts", "lines.push(...costSection(costBefore, costAfter));", ""],
   ["a guard drop of exactly the margin blocks the merge", RULE, "> goal.merge_rule.guard_margin", ">= goal.merge_rule.guard_margin"],
@@ -150,7 +164,7 @@ const allMutations = [
   ["noise unknown guard spread becomes zero", SCORE, "spread, margin: spread ?? 3", "spread: spread ?? 0, margin: spread ?? 0"],
   ["noise too few guard samples trusted", SCORE, " || train.length < 5", ""],
   ["noise probability ignores opposite direction", SCORE, "Math.min(1, 2 * signP(Math.max(split.wins, split.losses), Math.min(split.wins, split.losses)))", "split.p"],
-  ["init enables unmeasured guards by default", "src/cli/init.ts", "checks.length && (await yesNo(io, \"Enable experimental guards? Type y to opt in, or n to keep them off: \")) === true", "checks.length"],
+  ["init enables unmeasured guards by default", "src/cli/init.ts", "checks.length && !agent && (await yesNo(io, \"Enable experimental guards? Type y to opt in, or n to keep them off: \")) === true", "checks.length && !agent"],
   ["init accepts incomplete guard pairs", "src/cli/init.ts", "guards.length === checks.length && guards.length > 0", "guards.length > 0"],
   ["writer reads protected round reasons", WRITE, "`Round ${r.round}: ${r.outcome}.`", "`Round ${r.round}: ${r.outcome}. ${r.reasons.join(\" \")}`"],
   ["writer can target guard attack and evidence tests", WRITE, "|counter[_ -]checks?|guard checks?|attack cases?|evidence files?", ""],
@@ -197,7 +211,7 @@ for (const [name, file, from, to] of mutations) {
   process.once("SIGINT", restore);
   try {
     writeFileSync(file, original.replace(from, to));
-    const { status } = spawnSync("node", ["--test", ...TESTS], { stdio: "ignore", timeout: 60000 });
+    const { status } = spawnSync(process.execPath, [...process.execArgv, "--test", ...TESTS], { stdio: "ignore", timeout: 60000 });
     if (status === 0 || status === null) survived++;
     console.log(`${status === null ? "TIMED OUT" : status === 0 ? "SURVIVED " : "killed   "} ${name}`);
   } finally {

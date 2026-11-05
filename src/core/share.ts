@@ -88,6 +88,29 @@ export function sharePayload(goal: Goal, state: State, record: RoundRecord, vers
 }
 
 type OidcEnv = Partial<Pick<NodeJS.ProcessEnv, "ACTIONS_ID_TOKEN_REQUEST_URL" | "ACTIONS_ID_TOKEN_REQUEST_TOKEN">>;
+export const PROXY_AUTH_MESSAGE = "The Synthe proxy couldn't verify this GitHub run. Run `npx synthe upgrade`, commit the workflow, and try again.";
+const oidcCache = new Map<string, { token: string; expires: number; fetcher: typeof fetch }>();
+export function requireOidc(env: OidcEnv = process.env): void {
+  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) throw new Error(PROXY_AUTH_MESSAGE);
+}
+export async function oidcToken(audience: string, env: OidcEnv = process.env, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<string> {
+  requireOidc(env);
+  const cacheKey = JSON.stringify([audience, env.ACTIONS_ID_TOKEN_REQUEST_URL, env.ACTIONS_ID_TOKEN_REQUEST_TOKEN]);
+  const cached = oidcCache.get(cacheKey);
+  if (cached && cached.fetcher === fetcher && cached.expires - 60_000 > Date.now()) return cached.token;
+  const url = new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL!);
+  url.searchParams.set("audience", audience);
+  const response = await fetcher(url, { headers: { Authorization: `bearer ${env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` }, signal: signal ?? AbortSignal.timeout(10_000) });
+  if (!response.ok) throw new Error(`GitHub OIDC returned ${response.status}.`);
+  const token = (await response.json() as { value?: unknown }).value;
+  if (typeof token !== "string" || !token) throw new Error("GitHub OIDC returned no token.");
+  try {
+    const { exp } = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+    if (typeof exp === "number" && Number.isFinite(exp)) oidcCache.set(cacheKey, { token, expires: exp * 1000, fetcher });
+  } catch {}
+  return token;
+}
+
 export async function shareRound(payload: ReturnType<typeof sharePayload>, env: OidcEnv, fetcher: typeof fetch = fetch): Promise<string> {
   if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
     return "Sharing skipped: this workflow needs OIDC permission. Run `npx synthe upgrade`.";
@@ -98,15 +121,7 @@ export async function shareRound(payload: ReturnType<typeof sharePayload>, env: 
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => { controller.abort(); reject(new Error("timed out")); }, 10_000);
     });
-    const url = new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
-    url.searchParams.set("audience", "synthe-share");
-    const tokenResponse = await Promise.race([fetcher(url, {
-      headers: { Authorization: `bearer ${env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` },
-      signal: controller.signal,
-    }), timeout]);
-    if (!tokenResponse.ok) return `Sharing skipped: GitHub OIDC returned ${tokenResponse.status}.`;
-    const token = (await Promise.race([tokenResponse.json(), timeout]) as { value?: unknown }).value;
-    if (typeof token !== "string" || !token) return "Sharing skipped: GitHub OIDC returned no token.";
+    const token = await Promise.race([oidcToken("synthe-share", env, fetcher, controller.signal), timeout]);
     const response = await Promise.race([fetcher(ENDPOINT, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -115,6 +130,7 @@ export async function shareRound(payload: ReturnType<typeof sharePayload>, env: 
     }), timeout]);
     return response.ok ? `Shared round ${payload.round} with Synthe.` : `Sharing skipped: endpoint returned ${response.status}.`;
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("GitHub OIDC")) return `Sharing skipped: ${error.message}`;
     return `Sharing skipped: ${error instanceof Error && error.message === "timed out" ? "request timed out" : "request failed"}.`;
   } finally {
     if (timer) clearTimeout(timer);

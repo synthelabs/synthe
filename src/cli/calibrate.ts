@@ -139,7 +139,7 @@ export async function reviewReplies(io: CalibrateIo, model: Model, writer: strin
 
 // Setup's short version: a few replies with the team's current prompt, marked once, and up to 4 questions. Returns
 // the checks as the team left them, reworded where they disagreed.
-export async function reviewChecksAtSetup(io: CalibrateIo, goal: Goal, prompt: string, scenarios: Scenario[], model: Model) {
+export async function reviewChecksAtSetup(io: CalibrateIo, goal: Goal, prompt: string, scenarios: Scenario[], model: Model, agent = false) {
   const checks = [...(goal.checks ?? [])];
   const costs: (number | null)[] = [];
   const cases = scenarios.filter((s) => s.split === "train").slice(0, SETUP_CASES);
@@ -153,11 +153,17 @@ export async function reviewChecksAtSetup(io: CalibrateIo, goal: Goal, prompt: s
   });
   const open = checks.map((_, c) => marked.flatMap((m) => (m && m.verdicts[c].applies ? [{ input: m.s.input, reply: m.reply, c, passes: m.verdicts[c].passes }] : [])));
   const items = pick(open, SETUP_QUESTIONS);
-  if (items.length) {
+  if (agent) {
+    for (const sample of marked) {
+      if (!sample) continue;
+      io.say(`A user wrote: ${sample.s.input}\nYour agent replied: ${sample.reply}`);
+      sample.verdicts.forEach((verdict, index) => io.say(`  ${index + 1}. ${checks[index]}: ${verdict.applies ? verdict.passes ? "PASS" : "FAIL" : "NOT APPLICABLE"}`));
+    }
+  } else if (items.length) {
     io.say(`\nQuick check that Synthe marks these the way you mean: ${items.length} of your agent's replies. Say whether each passes, as you'd judge it. If you disagree with Synthe, you can fix the check's wording right there.\n`);
     await reviewReplies(io, model, goal.models.writer, checks, items, costs);
   }
-  return { checks, costUsd: sumCosts(costs) };
+  return { checks, costUsd: sumCosts(costs), examples: marked.filter((sample) => sample !== null) };
 }
 
 // Whether the number Synthe improves can be trusted: does the AI mark each check the same way twice, and the way the

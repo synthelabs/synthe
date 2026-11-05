@@ -308,15 +308,19 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     record.outcome = "failed";
     const error = input.error;
     if (error) record.failure = error.kind;
-    if (error?.kind === "busy") {
+    if (error?.kind === "credit") {
+      record.reasons.push(error.message);
+      record.plain = error.message;
+      state.stopped = "credit";
+      stall = false;
+    } else if (error?.kind === "busy") {
       // Overload or rate limits pass by themselves, so a busy hour mustn't use up the rounds allowed without a winner.
-      record.reasons.push(`Anthropic's API was busy during the ${error.step} step: ${error.message}`);
-      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
+      record.reasons.push(/Synthe's proxy|Credit is unavailable/.test(error.message) ? error.message : `Anthropic's API was busy during the ${error.step} step: ${error.message}`);
+      record.plain = /Synthe's proxy|Credit is unavailable/.test(error.message) ? error.message : "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
       stall = false;
     } else if (error?.kind === "key") {
       record.reasons.push(`the ${error.step} step's key was refused: ${error.message}`);
-      const cause = error.message.split(/(?<=\.) /)[0];
-      record.plain = `This round didn't finish. ${cause} Get a new key from the Synthe table, then run \`gh secret set SYNTHE_ANTHROPIC_KEY\` in your repo and paste the key when it asks.`;
+      record.plain = error.message.startsWith("The Synthe proxy") ? error.message : `This round didn't finish. ${error.message.split(/(?<=\.) /)[0]} Run \`npx synthe key\` to replace your Anthropic key.`;
     } else {
       record.reasons.push("the round did not finish; check the Actions log and the API key");
       record.plain = "This round didn't finish. If it keeps happening, check the Actions log and that your key still has credit.";

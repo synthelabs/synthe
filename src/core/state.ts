@@ -9,7 +9,7 @@ export interface RoundRecord {
   example?: { input: string; before: string; after: string }; title?: string; unverified?: string[];
   edits?: { find: string; replace: string }[];
   // Why a failed round's write or score step failed, when it said; the report's advice depends on it.
-  failure?: "busy" | "key" | "other";
+  failure?: "busy" | "key" | "credit" | "other";
   // The share of the team's checks passed before and after a merged or proposed change, as whole percentages.
   checks?: { before: number; after: number };
   // The same for the team's guards, when they set counter_checks.
@@ -33,6 +33,7 @@ export interface State {
   lastMerge: { pr: number; priorPrompt: string; mergedHash: string; reverted: boolean } | null;
   stalls: number;
   spendUsd: number;
+  ownKeyFromUsd?: number;
   spendUnknown: boolean;
   stopped: string | null;
   issue: number | null;
@@ -83,10 +84,14 @@ export const newState = (): State => ({
 export function stopReason(s: State, maxRounds: number, stallRounds: number, maxUsd: number): string | null {
   if (s.stopped) return s.stopped;
   if (s.spendUnknown) return "spend could not be measured";
-  if (s.spendUsd >= maxUsd) return `budget of $${maxUsd} is used`;
+  if (budgetSpend(s) >= maxUsd) return `budget of $${maxUsd} is used`;
   if (s.round >= maxRounds) return `reached ${maxRounds} rounds`;
   if (s.stalls >= stallRounds) return `${stallRounds} rounds in a row found no winner`;
   return null;
+}
+
+export function budgetSpend(state: State): number {
+  return state.spendUsd - (state.ownKeyFromUsd ?? 0);
 }
 
 // Running out of rounds, budget or ideas is a finished run. Anything else needs someone to act.

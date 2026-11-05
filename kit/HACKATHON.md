@@ -2,6 +2,8 @@
 
 Friday, November 6. Nothing here has been used or sent yet.
 
+Operators: see [no-spend readiness](OFFLINE-READINESS.md) before publishing or printing. The event flow is not yet in the published package, and the existing `v1.6.2` tag does not contain the pending event changes. Match the dollar amounts below to the final configured caps before distributing this kit.
+
 ## Intro slide
 
 **Synthe: your agent gets better while you sleep.**
@@ -12,16 +14,18 @@ Run one command before you leave tonight. Synthe rewrites your agent's system pr
 npx synthe init
 ```
 
-Free keys at the Synthe table. Stop it any time.
+Event code on the QR card. Stop it any time.
 
 Use this slide only after the overnight run works. Don't add results until we have real ones.
 
 ## QR card
 
+Using Claude Code, Cursor or Codex? Tell it: Set up Synthe in this repo. Run `npx synthe@latest guide` and follow it.
+
 **Synthe**
 Your AI agent's prompt gets better while you build everything else.
 
-1. Grab a key from the Synthe table ($3 of credit, on us).
+1. Use the event code on this QR card ($4 run budget, on us; no Anthropic key needed).
 2. In your repo, run `npx synthe@latest init`.
 3. Say what your agent should get better at, confirm the checks Synthe proposes to measure it, and choose: merge improvements into main automatically, or review each one. During Crimson Hacks, Synthe shares your prompt, test cases and how the run goes with us (never your code); turn it off with "share": "none" in synthe.json.
 4. After the run, open the report issue in your repo.
@@ -31,7 +35,7 @@ Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop a
 ## Table script
 
 - **What it changes:** only the system prompt, on your default branch.
-- **What it costs you:** nothing. Your key is capped at $3.
+- **What it costs you:** nothing with the event code. $4 of event credit per GitHub account (shared by all your repos); the proxy caps event spend.
 - **What it won't do:** run your code or touch anything else.
 - **How good is it?** It tests against simulated scenarios, so check the results yourself.
 - **Prompt in code?** It handles most inline strings. If not, move the prompt into a file.
@@ -40,21 +44,19 @@ Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop a
 
 Tell every team: automatic merges land on your default branch. If the repo deploys from it, each merge deploys. A team that doesn't want that can set `"merge_rule": { "mode": "propose" }` in `synthe.json`, and Synthe pauses for each winning pull request until they merge or close it. Repos that require reviews get this automatically.
 
-## Capped keys, Thursday November 5
+## Event credit, Thursday November 5
 
-Allow 30 to 45 minutes. It's manual, because the Spend Limits API isn't open to Console accounts.
+Teams receive event codes, not Anthropic keys. The proxy holds one key and caps spend.
 
-- [ ] Add credit: teams x $3, plus a margin
-- [ ] For each team, create a workspace named `crimson-01`, `crimson-02` and so on
-- [ ] Set that workspace's spend limit to $3
-- [ ] Create one key in it
-- [ ] Print each key on its own slip
-- [ ] Keep the list private, and make 5 spares
-- [ ] After the event, delete every key
+- [ ] Add credit and configure the proxy's event spend cap
+- [ ] Test an event code locally and in GitHub Actions with OIDC
+- [ ] Print the event code on the QR cards
+- [ ] Test the credit refusal and own-key switch before teams arrive
+- [ ] After the event, disable the event codes
 
 ## Traction to record
 
-- Teams that picked up a key
+- Teams that picked up an event code
 - Repos with at least one merge by Saturday morning
 - Average score change and real cost per team
 - Failures and their causes

@@ -1,0 +1,84 @@
+# Added by `npx synthe init`. Stop any time with `npx synthe stop`.
+name: Synthe
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [closed]
+  schedule:
+    # Hourly backup if a chained dispatch is missed. Init picks one minute away from the top of the hour.
+    - cron: "__MINUTE__ * * * *"
+concurrency:
+  # Ignore unrelated PR closes without letting them replace a pending chained round. Synthe's own setup and round
+  # pull requests share the group: merging setup starts round 1, closing a proposal resumes review mode.
+  group: ${{ (github.event_name == 'pull_request' && (github.event.pull_request.head.repo.full_name != github.repository || !(startsWith(github.event.pull_request.head.ref, 'synthe/round-') || github.event.pull_request.head.ref == 'synthe/setup'))) && format('synthe-ignored-{0}', github.run_id) || 'synthe' }}
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  write:
+    if: github.event_name != 'pull_request' || (github.event.pull_request.head.repo.full_name == github.repository && (startsWith(github.event.pull_request.head.ref, 'synthe/round-') || github.event.pull_request.head.ref == 'synthe/setup'))
+    runs-on: ubuntu-latest
+    # Two writer calls take a minute or two; the cap stops a hung call holding the "synthe" group for hours.
+    timeout-minutes: 15
+    # pull-requests: read lets it see when a team closes Synthe's proposal.
+    permissions: { contents: read, pull-requests: read }
+    outputs:
+      go: ${{ steps.write.outputs.go }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+      - id: write
+        uses: __ACTION__
+        with:
+          step: write
+          github-token: ${{ github.token }}
+          anthropic-api-key: ${{ secrets.SYNTHE_ANTHROPIC_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: steps.write.outputs.go == 'true'
+        with: { name: candidates, path: .synthe-out/candidates.json, include-hidden-files: true }
+      # Why this step failed, so the report can tell a busy API (retry on backup) from a key to replace.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: write-error, path: .synthe-out/error.json, include-hidden-files: true, if-no-files-found: ignore }
+  score:
+    needs: write
+    if: needs.write.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    # About 150 model calls, 6 at a time: a minute or two in live runs. The cap leaves room for the client's retries.
+    timeout-minutes: 15
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/download-artifact@v4
+        with: { name: candidates, path: .synthe-out }
+      - uses: __ACTION__
+        with:
+          step: score
+          github-token: ${{ github.token }}
+          anthropic-api-key: ${{ secrets.SYNTHE_ANTHROPIC_KEY }}
+      - uses: actions/upload-artifact@v4
+        with: { name: scores, path: .synthe-out/scores.json, include-hidden-files: true }
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: score-error, path: .synthe-out/error.json, include-hidden-files: true, if-no-files-found: ignore }
+  decide:
+    needs: [write, score]
+    # Wrapped in ${{ }}: in YAML a bare leading ! is a tag, which would silently drop the !cancelled() check.
+    if: ${{ !cancelled() && needs.write.result != 'skipped' && needs.write.outputs.go != 'false' }}
+    runs-on: ubuntu-latest
+    # Only GitHub calls, each retried for at most a minute when rate-limited.
+    timeout-minutes: 10
+    # The only job that can write. It holds no model key and never checks out or runs repo code.
+    permissions: { contents: write, pull-requests: write, issues: write, actions: write, id-token: write }
+    steps:
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: { path: .synthe-out, merge-multiple: true }
+      - uses: __ACTION__
+        with:
+          step: decide
+          github-token: ${{ github.token }}

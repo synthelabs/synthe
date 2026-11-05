@@ -1,0 +1,65 @@
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import { setupInstallId } from "../src/model/install.ts";
+
+test("setup identity survives concurrent processes and stays outside the repository", async (context) => {
+  const root = mkdtempSync(join(tmpdir(), "synthe-install-"));
+  context.after(() => rmSync(root, { recursive: true, force: true }));
+  const config = join(root, "config");
+  const repository = join(root, "repo");
+  mkdirSync(repository);
+  const program = `import { setupInstallId } from ${JSON.stringify(new URL("../src/model/install.ts", import.meta.url).href)}; console.log(setupInstallId());`;
+  const run = () => new Promise<string>((resolve, reject) => {
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", program], { cwd: repository, env: { XDG_CONFIG_HOME: config } });
+    let output = "";
+    let diagnostic = "";
+    child.stdout.on("data", (chunk) => { output += chunk; });
+    child.stderr.on("data", (chunk) => { diagnostic += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => code === 0 ? resolve(output.trim()) : reject(new Error(diagnostic)));
+  });
+  const identities = await Promise.all(Array.from({ length: 16 }, run));
+  assert.match(identities[0], /^[0-9a-f-]{36}$/);
+  assert.equal(new Set(identities).size, 1);
+  assert.equal(await run(), identities[0]);
+  assert.equal(setupInstallId({ XDG_CONFIG_HOME: config }), identities[0]);
+  assert.equal(readFileSync(join(config, "synthe/install-id"), "utf8").trim(), identities[0]);
+  assert.deepEqual(readdirSync(join(config, "synthe")), ["install-id"]);
+  assert.deepEqual(readdirSync(repository), []);
+  assert.equal(statSync(join(config, "synthe")).mode & 0o777, 0o700);
+  assert.equal(statSync(join(config, "synthe/install-id")).mode & 0o777, 0o600);
+});
+
+test("setup identity repairs permissions without renewing credit and refuses corrupt or linked IDs", (context) => {
+  const config = mkdtempSync(join(tmpdir(), "synthe-install-"));
+  context.after(() => rmSync(config, { recursive: true, force: true }));
+  const env = { XDG_CONFIG_HOME: config };
+  const identity = setupInstallId(env);
+  const directory = join(config, "synthe");
+  const path = join(directory, "install-id");
+  chmodSync(directory, 0o755);
+  chmodSync(path, 0o644);
+  assert.equal(setupInstallId(env), identity);
+  assert.equal(statSync(directory).mode & 0o777, 0o700);
+  assert.equal(statSync(path).mode & 0o777, 0o600);
+  writeFileSync(path, "invalid");
+  assert.throws(() => setupInstallId(env), /invalid.*not been reset/);
+  assert.equal(readFileSync(path, "utf8"), "invalid");
+  rmSync(path);
+  const target = join(config, "untouched");
+  writeFileSync(target, identity, { mode: 0o644 });
+  symlinkSync(target, path);
+  assert.throws(() => setupInstallId(env));
+  assert.equal(statSync(target).mode & 0o777, 0o644);
+  rmSync(path);
+  mkdirSync(path);
+  assert.throws(() => setupInstallId(env), /regular file/);
+  rmSync(directory, { recursive: true });
+  symlinkSync(config, directory);
+  assert.throws(() => setupInstallId(env), /symlink/);
+  assert.equal(existsSync(join(config, "install-id")), false);
+});
