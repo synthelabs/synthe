@@ -35,8 +35,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "esbuild src/cli/main.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/cli.js --banner:js='#!/usr/bin/env node' && esbuild src/action.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/action.mjs",
+    "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.ts",
+    "local": "node scripts/local-round.ts",
     "typecheck": "tsc --noEmit",
     "mutation": "node scripts/mutation-check.mjs",
     "simulate": "node scripts/simulate-gate.ts"

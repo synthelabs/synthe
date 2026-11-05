@@ -114,7 +114,7 @@ const reset = () => {
 };
 
 before(async () => {
-  execFileSync("npm", ["run", "-s", "build"]);
+  execFileSync(process.execPath, ["scripts/build.mjs"]);
   await Promise.all([github, anthropic].map((s) => new Promise<void>((r) => s.listen(0, "127.0.0.1", r))));
 });
 after(() => { github.close(); anthropic.close(); });

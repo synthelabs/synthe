@@ -1,0 +1,2 @@
+# LF everywhere, on every computer: the tests read files as text and the bundles ship as they are built.
+* text=auto eol=lf
