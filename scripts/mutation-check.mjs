@@ -14,7 +14,22 @@ const WORKFLOW = "templates/synthe.yml";
 // Every test file, so a new one is never left out of the check.
 const TESTS = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
 
-const mutations = [
+const allMutations = [
+  ["history accepts unvalidated text", "src/core/candidate-history.ts", 'Object.keys(entry).sort().join(",") !== "fingerprint,scope"', 'false'],
+  ["history ignores the goal", "src/core/candidate-history.ts", 'JSON.stringify([goal, prompt])', 'JSON.stringify([prompt])'],
+  ["history ignores the current prompt", "src/core/candidate-history.ts", 'JSON.stringify([goal, prompt])', 'JSON.stringify([goal])'],
+  ["history keeps unbounded candidates", "src/core/candidate-history.ts", '.slice(-MAX_CANDIDATE_MEMORY)', ''],
+  ["materially identical variants bypass history", "src/core/candidate-history.ts", 'text.normalize("NFKC").toLowerCase().match(/[\\p{L}\\p{N}]+/gu)?.join(" ") ?? ""', 'text'],
+  ["repeated candidates are scored again", WRITE, 'if (tried.has(fingerprint))', 'if (false)'],
+  ["same-round duplicate angles are scored", WRITE, '    tried.add(fingerprint);', ''],
+  ["format-only candidates are scored", WRITE, 'if (fingerprint === candidateFingerprint(prompt))', 'if (false)'],
+  ["exact no-op edits are accepted", WRITE, 'return text.trim() === prompt.trim() ?', 'return false ?'],
+  ["history leaks decision reasons to writer", WRITE, '${history}', '${history}\\n${state.rounds.map((round) => round.reasons.join(" ")).join(" ")}'],
+  ["local try forgets previous candidates", "src/cli/try-round.ts", 'state.candidateHistory = validateCandidateMemory(saved.history);', 'state.candidateHistory = [];'],
+  ["local try drops candidate writes", "src/cli/try-round.ts", 'written.candidates.map((candidate) => candidate.text)', '[]'],
+  ["local try accepts unknown history versions", "src/cli/try-round.ts", 'saved.version !== 1', 'false'],
+  ["local try overwrites another run lock", "src/cli/try-round.ts", 'openSync(lock, "wx", 0o600)', 'openSync(lock, "w", 0o600)'],
+  ["scheduled rounds forget rejected candidates", DECIDE, 'if (current !== null) state.candidateHistory =', 'if (false) state.candidateHistory ='],
   ["an absent share setting sends data", SHARE, 'goal.share === "numbers" || goal.share === "detail" || goal.share === "full"', 'goal.share !== "none"'],
   ["DO_NOT_TRACK is ignored", "src/cli/init.ts", '["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "")', 'false'],
   ["numbers-only sends text", SHARE, 'if (goal.share !== "detail" && goal.share !== "full") return payload;', 'if (goal.share === "none") return payload;'],
@@ -52,7 +67,7 @@ const mutations = [
   ["revert without a live prior challenge", DECIDE, " && scores.prior ? scores.prior : null", " ? scores.baselineTrain : null"],
   ["an edit lands where its text appears twice", WRITE, 'if (text.indexOf(e.find, at + 1) !== -1) return { problem: "an edit\'s text appears more than once" };', ""],
   ["any number of edits allowed", WRITE, "if (edits.length > MAX_EDITS) return", "if (false) return"],
-  ["spend saved only at the end", DECIDE, "  state.pending = { round, at: record.at, costUsd: input.costUsd };\n  await repo.writeState(state);", "  state.pending = { round, at: record.at, costUsd: input.costUsd };"],
+  ["spend saved only at the end", DECIDE, "  await repo.writeState(state);\n  let stall = true;", "  let stall = true;"],
   ["a merge recovered after a crash is forgotten", DECIDE, "state.lastMerge = { pr: pr.number, priorPrompt: p.land.priorPrompt, mergedHash: sha256(p.land.text), reverted: false };", ""],
   ["a rate limit stops the run", DECIDE, 'token: "GitHub refused the workflow\'s token",', 'token: "GitHub refused the workflow\'s token", rate_limited: "rate limited",'],
   ["every 403 means no permission", GITHUB, "isRateLimited(res.status, res.headers, text) ? \"rate_limited\"", "false ? \"rate_limited\""],
@@ -108,6 +123,14 @@ const mutations = [
   ["migrate doesn't report cost", "src/cli/migrate.ts", "lines.push(...costSection(costBefore, costAfter));", ""],
 ];
 
+const selectedFiles = process.argv.slice(2);
+const nameFilter = process.env.MUTATION_MATCH ? new RegExp(process.env.MUTATION_MATCH) : null;
+const mutations = allMutations.filter(([name, file]) => (selectedFiles.length === 0 || selectedFiles.includes(file)) && (!nameFilter || nameFilter.test(name)));
+if (!mutations.length) throw new Error("No mutations match the requested files");
+console.log(`Checking ${mutations.length} mutations${selectedFiles.length ? ` in ${selectedFiles.join(", ")}` : ""}`);
+const baseline = spawnSync("node", ["--test", ...TESTS], { stdio: "inherit", timeout: 60000 });
+if (baseline.status !== 0) throw new Error("Unmutated tests must pass before checking mutations");
+
 // Every mutated file as it was before the run. Restoring each mutation from its own copy isn't enough on its own: a
 // second run at the same time could restore a copy the first had mutated, leaving a break in the source. This check
 // caught exactly that once, after it had been committed.
@@ -122,8 +145,8 @@ for (const [name, file, from, to] of mutations) {
   try {
     writeFileSync(file, original.replace(from, to));
     const { status } = spawnSync("node", ["--test", ...TESTS], { stdio: "ignore", timeout: 60000 });
-    if (status === 0) survived++;
-    console.log(`${status === 0 ? "SURVIVED " : "killed   "} ${name}`);
+    if (status === 0 || status === null) survived++;
+    console.log(`${status === null ? "TIMED OUT" : status === 0 ? "SURVIVED " : "killed   "} ${name}`);
   } finally {
     restore();
     process.removeListener("SIGINT", restore);

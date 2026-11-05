@@ -8,6 +8,7 @@ import { ISSUE_TITLE, exampleText, notTested, renderReport } from "./report.ts";
 import type { Candidate } from "./write.ts";
 import type { Failure } from "./failure.ts";
 import { WIN } from "./score.ts";
+import { candidateScope, rememberCandidates } from "../core/candidate-history.ts";
 
 export const BUSY_RETRIES = 2;
 export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null }
@@ -184,6 +185,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   state.spendUsd += input.costUsd ?? 0;
   state.stalls = priorStalls + 1;
   state.pending = { round, at: record.at, costUsd: input.costUsd };
+  if (current !== null) state.candidateHistory = rememberCandidates(state.candidateHistory ?? [], candidateScope(goal, current), (input.candidates ?? []).filter((candidate) => typeof candidate.text === "string").map((candidate) => candidate.text));
   await repo.writeState(state);
   let stall = true;
 

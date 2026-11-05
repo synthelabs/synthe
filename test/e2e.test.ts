@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -307,6 +307,16 @@ test("a backup replacing a proposal-close run can resume review immediately", as
   writeFileSync(join(dir, "out.txt"), "");
   assert.equal((await step("write", join(dir, "out.txt"), "schedule")).code, 0);
   assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/);
+});
+
+test("status after manual stop overrides a still-running report headline", async () => {
+  reset();
+  const gh = join(dir, "gh");
+  writeFileSync(gh, `#!/bin/sh\ncase "$*" in\n*"repo view"*) echo 'o/r';;\n*"actions/workflows"*) echo disabled_manually;;\n*) echo '{"round":1,"rounds":[],"spendUsd":0.1}';;\nesac\n`);
+  chmodSync(gh, 0o700);
+  const output = execFileSync("node", [resolve("dist/cli.js"), "status"], { cwd: dir, env: { PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8" });
+  assert.match(output, /Stopped with npx synthe stop/);
+  assert.doesNotMatch(output, /Synthe is working|getting better|updates after each round/);
 });
 
 test("a closed PR starts a round only for the current same-repo Synthe proposal", async () => {

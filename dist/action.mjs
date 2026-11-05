@@ -28876,6 +28876,26 @@ function renderReport(goal, state, now = /* @__PURE__ */ new Date()) {
   return lines.join("\n");
 }
 
+// src/core/candidate-history.ts
+var MAX_CANDIDATE_MEMORY = 1e3;
+var HASH = /^[a-f0-9]{64}$/;
+function validateCandidateMemory(value) {
+  if (!Array.isArray(value) || value.length > MAX_CANDIDATE_MEMORY || value.some((entry) => !entry || Object.keys(entry).sort().join(",") !== "fingerprint,scope" || typeof entry.scope !== "string" || !HASH.test(entry.scope) || typeof entry.fingerprint !== "string" || !HASH.test(entry.fingerprint))) {
+    throw new Error("Candidate history is corrupt. Restore it or remove it explicitly before trying again.");
+  }
+  return value;
+}
+var candidateScope = (goal, prompt) => sha256(JSON.stringify([goal, prompt]));
+var candidateFingerprint = (text) => sha256(text.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "");
+function rememberCandidates(history, scope, texts) {
+  const unique = new Map(validateCandidateMemory(history).map((entry) => [`${entry.scope}:${entry.fingerprint}`, entry]));
+  for (const text of texts) {
+    const fingerprint = candidateFingerprint(text);
+    unique.set(`${scope}:${fingerprint}`, { scope, fingerprint });
+  }
+  return [...unique.values()].slice(-MAX_CANDIDATE_MEMORY);
+}
+
 // src/loop/write.ts
 var ANGLES = [
   "Fix what made the current prompt lose in the cases below.",
@@ -28952,12 +28972,14 @@ ${cases2.join("\n")}
 async function runWrite(goal, state, prompt, scenarios, model) {
   const train = scenarios.filter((s) => s.split === "train");
   const lessons = lessonText(state, prompt, train);
-  const tried = [...new Set(state.rounds.slice(-5).flatMap((r) => r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary)))];
-  const notAgain = tried.length ? `
+  const scope = candidateScope(goal, prompt);
+  const tried = new Set(validateCandidateMemory(state.candidateHistory ?? []).filter((entry) => entry.scope === scope).map((entry) => entry.fingerprint));
+  const history = tried.size ? `${tried.size} candidate texts were already attempted for this goal and prompt. Repeated text will be rejected before scoring. Try a different instruction.` : "None yet.";
+  const triedSummaries = [...new Set(state.rounds.slice(-5).flatMap((r) => r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary)))];
+  const notAgain = triedSummaries.length ? `
 Already tried in earlier rounds without winning; don't propose these again:
-${tried.map((t) => `- ${t}`).join("\n")}
+${triedSummaries.map((t) => `- ${t}`).join("\n")}
 ` : "";
-  const history = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}. ${r.reasons.join(" ")}`).join("\n") || "None yet.";
   const checks = goal.checks?.length ? `
 The team measures a good reply with these checks; a change wins by making replies pass more of them:
 ${goal.checks.map((c) => `- ${c}`).join("\n")}` : "";
@@ -28995,6 +29017,10 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
     const applied = applyEdits(prompt, r.value.edits, `${goal.objective}
 ${goal.policy ?? ""}`);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
+    const fingerprint = candidateFingerprint(applied.text);
+    if (fingerprint === candidateFingerprint(prompt)) return void rejected.push(`${id}: edits change only formatting or case`);
+    if (tried.has(fingerprint)) return void rejected.push(`${id}: materially identical candidate already tried for this goal and prompt`);
+    tried.add(fingerprint);
     candidates.push({
       id,
       text: applied.text,
@@ -29445,6 +29471,7 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
   state.spendUsd += input2.costUsd ?? 0;
   state.stalls = priorStalls + 1;
   state.pending = { round, at: record.at, costUsd: input2.costUsd };
+  if (current !== null) state.candidateHistory = rememberCandidates(state.candidateHistory ?? [], candidateScope(goal, current), (input2.candidates ?? []).filter((candidate) => typeof candidate.text === "string").map((candidate) => candidate.text));
   await repo.writeState(state);
   let stall = true;
   const land = async (text, kind, title, why) => {

@@ -55,9 +55,11 @@ The test cases are simulated single messages, not real users or full conversatio
 | `npx synthe status` | Show where it is |
 | `npx synthe stop` | Stop it. Nothing more runs or changes |
 | `npx synthe restart` | Start it again, after `stop` or once you've fixed what stopped it |
-| `npx synthe try` | Run one round on your machine, changing nothing (needs `ANTHROPIC_API_KEY`) |
+| `npx synthe try` | Run one round on your machine without changing your prompt (needs `ANTHROPIC_API_KEY`) |
 | `npx synthe try --noise` | Compare your prompt with itself to see how much the judge varies |
 | `npx synthe calibrate` | Check that your checks are marked the same way each time and the way you mean them, and reword any that aren't (needs `ANTHROPIC_API_KEY`) |
+
+Local `try` saves only candidate fingerprints in `.synthe-local/try-history.json`, not prompts, replies or test cases. It rejects repeated text (including case, spacing and punctuation variants) before scoring, both within a round and across runs with the same goal and prompt. It keeps the latest 1,000 fingerprints; differently worded versions of the same idea can still get through. Keep `.synthe-local/` out of version control. Remove the history file explicitly to start fresh; corrupt history stops the run instead of silently forgetting it. No prompt file is written. `try --noise` does not read or write this history.
 
 ## Change what it aims for
 
