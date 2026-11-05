@@ -74,4 +74,6 @@ export class MemoryRepo implements Repo {
   }
   async readState() { return structuredClone(this.state); }
   async writeState(s: State) { this.state = structuredClone(s); }
+  stateFiles = new Map<string, string>(); // files on the state branch other than state.json, such as evidence
+  async writeStateFile(path: string, content: string) { this.stateFiles.set(path, content); }
 }
