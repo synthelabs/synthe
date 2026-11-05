@@ -1,4 +1,5 @@
 import type { ScoreRow } from "./merge-rule.ts";
+import type { CandidateMemory } from "./candidate-history.ts";
 
 export interface RoundRecord {
   round: number; at: string; outcome: "merged" | "reverted" | "proposed" | "declined" | "skipped" | "failed";
@@ -11,11 +12,14 @@ export interface RoundRecord {
   failure?: "busy" | "key" | "other";
   // The share of the team's checks passed before and after a merged or proposed change, as whole percentages.
   checks?: { before: number; after: number };
+  // The same for the team's guards, when they set counter_checks.
+  guards?: { before: number; after: number };
 }
 
 export interface Landing { branch: string; kind: "merge" | "revert"; text: string; priorPrompt: string; propose?: boolean }
 
 export interface State {
+  candidateHistory?: CandidateMemory[];
   round: number;
   prompt: string | null; // tracked inline prompt text
   lastMerge: { pr: number; priorPrompt: string; mergedHash: string; reverted: boolean } | null;

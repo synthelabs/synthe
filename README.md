@@ -54,7 +54,7 @@ git restore --source origin/synthe/state --worktree -- .synthe/evidence
 npx synthe verify .synthe/evidence/round-3.json
 ```
 
-It prints `PASS` or `FAIL: <reason>`. It checks that the file still matches its own hash, that it follows the record before it, and that the recorded scores still give the recorded verdict when run through the merge rule again with your current `synthe.json` and test cases. It doesn't check the prompt itself against git history. If you change `synthe.json` or the test cases after a round, an old record can no longer be rechecked and fails.
+It prints `PASS` or `FAIL: <reason>`. It checks that the file still matches its own hash, that it follows the record before it, that the prompt in your repo at the commit the round was tested at matches the record's before-hash, and that the recorded scores still give the recorded verdict when run through the merge rule again with your current `synthe.json` and test cases; the recorded check and guard rates are recomputed from the per-case counts too. Records written before the tested commit was kept can't have their prompt checked, and the result says so. If you change `synthe.json` or the test cases after a round, an old record can no longer be rechecked and fails.
 
 **Limits:** tamper-evident, not signed. A person who can rewrite the repo can rewrite the record. Editing one record after the fact is caught, but someone who rewrites every later record too, or deletes the newest one, isn't.
 
@@ -71,16 +71,26 @@ The test cases are simulated single messages, not real users or full conversatio
 | `npx synthe status` | Show where it is |
 | `npx synthe stop` | Stop it. Nothing more runs or changes |
 | `npx synthe restart` | Start it again, after `stop` or once you've fixed what stopped it |
-| `npx synthe try` | Run one round on your machine, changing nothing (needs `ANTHROPIC_API_KEY`) |
+| `npx synthe try` | Run one round on your machine without changing your prompt (needs `ANTHROPIC_API_KEY`) |
 | `npx synthe try --noise` | Compare your prompt with itself to see how much the judge varies |
 | `npx synthe calibrate` | Check that your checks are marked the same way each time and the way you mean them, and reword any that aren't (needs `ANTHROPIC_API_KEY`) |
 | `npx synthe verify FILE` | Check one round's evidence record, for example `.synthe/evidence/round-3.json` |
 | `npx synthe undo N` | Open a pull request that puts back the prompt from before round N |
 
+Local `try` saves only candidate fingerprints in `.synthe-local/try-history.json`, not prompts, replies or test cases. It rejects repeated text (including case, spacing and punctuation variants) before scoring, both within a round and across runs with the same goal and prompt. It keeps the latest 1,000 fingerprints; differently worded versions of the same idea can still get through. Keep `.synthe-local/` out of version control. Remove the history file explicitly to start fresh; corrupt history stops the run instead of silently forgetting it. No prompt file is written. `try --noise` does not read or write this history.
+
 ## Change what it aims for
 
-- `synthe.json`: `checks` (up to 5 plain sentences, each something a good reply does, such as "Asks for the order number before anything else"; these decide every test case), `brief` (what your agent is for), `objective` (what to get better at), `guardrails` (rules it must never break), `policy` (your business rules, which setup copies from your prompt so the judge knows what's allowed), `budget`, and `"merge_rule": { "mode": "propose" }` to review every change.
+- `synthe.json`: `checks` (up to 5 plain sentences, each something a good reply does, such as "Asks for the order number before anything else"; these decide every test case), `counter_checks` (optional guards, up to 5 sentences, usually one per check, each catching a way to pass a check without really helping, such as "Still answers the question fully" for "Stays under three sentences"; a change that passes the guards clearly less often isn't merged, `merge_rule.guard_margin` sets how many points less is allowed, 3 by default. Guards are marked by the same kind of AI as checks. They reduce gaming but do not remove it.), `brief` (what your agent is for), `objective` (what to get better at), `guardrails` (rules it must never break), `policy` (your business rules, which setup copies from your prompt so the judge knows what's allowed), `budget`, and `"merge_rule": { "mode": "propose" }` to review every change.
 - `.synthe/scenarios.jsonl`: the test cases, one per line, such as `{"id": "s31", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}`. `split` is `train` (Synthe learns from it) or `holdout` (kept hidden to check its changes). After adding cases to a finished run, `npx synthe restart` starts it again.
+
+### Guard checks (experimental)
+
+Guards are off by default in `init`. Their live impact and added cost have not been measured. Setup asks whether you want to opt in before proposing them. You can also add `counter_checks` yourself. Old goal files work without this field and make no guard calls. A missing or malformed guard mark, or no applicable marks, blocks a guarded merge. Guards measure the share of applicable checks passed over matching training and hidden case IDs; they never choose which reply wins. The writer does not receive the guards, attacks or evidence files.
+
+`npx synthe try --noise` uses independent replies and independent marks from training cases only. Identical reply text is not compared against itself by the duel judge. Different replies are judged in both orders; disagreement is inconclusive unless the team's checks decide the case. The report shows the absolute guard pass-rate spread, or an inconclusive result with fallback `guard_margin: 3`. This is one sample, not a calibrated safety bound, and it never changes your settings or the merge thresholds. Zero observed spread does not establish steadiness.
+
+Default-on guards still need a live fixture reviewed by a person: block at least one gamed win, block no clearly good candidate over three rounds, and add at most 20% to round cost. Fake tests do not pass that gate. Guards use the same kind of AI as checks; they reduce gaming, not remove it.
 
 ## Removing it
 

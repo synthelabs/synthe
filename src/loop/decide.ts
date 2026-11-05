@@ -1,5 +1,5 @@
 import { parseScenarios, type Goal } from "../core/goal.ts";
-import { buildEvidence, evidenceFile, evidencePath, type EvidenceRecord } from "../core/evidence.ts";
+import { buildEvidence, evidenceFile, evidencePath, hashEvidence, type EvidenceRecord } from "../core/evidence.ts";
 import { STATE_BRANCH } from "../core/goal.ts";
 import { judgeRound, mean, type RoundScores, type ScoreRow } from "../core/merge-rule.ts";
 import { readPrompt, writePrompt } from "../core/prompt.ts";
@@ -10,6 +10,7 @@ import { ISSUE_TITLE, exampleText, notTested, renderReport } from "./report.ts";
 import type { Candidate } from "./write.ts";
 import type { Failure } from "./failure.ts";
 import { WIN } from "./score.ts";
+import { candidateScope, rememberCandidates } from "../core/candidate-history.ts";
 
 export const BUSY_RETRIES = 2;
 export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null }
@@ -186,6 +187,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   state.spendUsd += input.costUsd ?? 0;
   state.stalls = priorStalls + 1;
   state.pending = { round, at: record.at, costUsd: input.costUsd };
+  if (current !== null) state.candidateHistory = rememberCandidates(state.candidateHistory ?? [], candidateScope(goal, current), (input.candidates ?? []).filter((candidate) => typeof candidate.text === "string").map((candidate) => candidate.text));
   await repo.writeState(state);
   let stall = true;
 
@@ -334,10 +336,21 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       const m = mean(c.train) ?? -Infinity;
       return best === null || m > best.m ? { id: c.id, m } : best;
     }, null)?.id ?? null;
+    // Chain to the newest evidence record actually on the state branch, not only to the hash kept in
+    // state: if an earlier run wrote the file and then died before saving state, the chain still links.
+    let prevEvidenceHash = state.evidenceHash ?? null;
+    for (let k = round - 1; k >= 1; k--) {
+      try {
+        const text = await repo.readFile(evidencePath(k), STATE_BRANCH);
+        if (text === null) continue;
+        const rec = JSON.parse(text) as EvidenceRecord;
+        if (typeof rec.sha256 === "string" && hashEvidence(rec) === rec.sha256) { prevEvidenceHash = rec.sha256; break; }
+      } catch { /* keep looking at earlier rounds */ }
+    }
     const evidenceOf = (kind: EvidenceRecord["verdict"], candidateId: string | null, after: string, extra: { checks?: { before: number; after: number }; prior?: ScoreRow[] } = {}) =>
       (proposed: boolean) => buildEvidence({
         round, goal, promptBefore: current, promptAfter: after, verdict: kind === "merge" && proposed ? "propose" : kind,
-        verdictReasons: [...verdict.reasons], scores, candidateId, costUsd: input.costUsd, prevEvidenceHash: state.evidenceHash ?? null, ...extra,
+        verdictReasons: [...verdict.reasons], scores, candidateId, costUsd: input.costUsd, prevEvidenceHash, commit: head, ...extra,
       });
     record.tried = [
       ...input.candidates.map((c) => ({
@@ -370,7 +383,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
           if (unverified.length) record.unverified = unverified;
         }
         if (landed) {
-          Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...(verdict.checks ? { checks: verdict.checks } : {}) });
+          Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...(verdict.checks ? { checks: verdict.checks } : {}), ...(verdict.guards ? { guards: verdict.guards } : {}) });
           record.changed = chosen?.summary ?? "A change to the prompt";
           record.plain = verdict.plain;
           if (!landed.proposed) {

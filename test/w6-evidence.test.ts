@@ -54,7 +54,7 @@ test("a good evidence file passes", async () => {
   for (const n of [1, 2, 3]) assert.deepEqual(check(root, n).ok, true, JSON.stringify(check(root, n)));
   const lines: string[] = [];
   assert.equal(verify(join(root, evidencePath(3)), root, (l) => lines.push(l)), 0);
-  assert.deepEqual(lines, ["Note: prompt commit check requires a git checkout", "PASS"]);
+  assert.deepEqual(lines, ["Note: the prompt at the recorded commit wasn't checked: this record names no full commit id", "PASS"]);
 });
 
 test("a record holds hashes and ids, never prompt text or replies", async () => {
@@ -216,4 +216,90 @@ test("undo refuses what it can't do safely", async () => {
   assert.equal(await undo(deps, "3"), 1);
   assert.match(lines.pop()!, /doesn't match its hash/);
   assert.equal(repo.prs.length, 0);
+});
+
+test("edited guard and check numbers fail even with a regenerated hash", async () => {
+  const root = await threeRounds();
+  const g = read(root, 1);
+  assert.equal(g.guardsAfter, 100);
+  g.guardsAfter = 0;
+  write(root, 1, rehash(g));
+  assert.match((check(root, 1) as { reason: string }).reason, /guardsAfter doesn't match/);
+  const c = read(root, 1);
+  c.checksBefore = 42;
+  write(root, 1, rehash(c));
+  assert.equal(check(root, 1).ok, false);
+});
+
+test("an edited guardsBefore fails even with a regenerated hash", async () => {
+  const root = await threeRounds();
+  const r = read(root, 1);
+  assert.equal(typeof r.guardsBefore, "number");
+  r.guardsBefore = r.guardsBefore === 100 ? 0 : 100;
+  write(root, 1, rehash(r));
+  assert.match((check(root, 1) as { reason: string }).reason, /guardsBefore doesn't match/);
+});
+
+test("check rates are recomputed from the stored per-scenario counts", async () => {
+  const { buildEvidence } = await import("../src/core/evidence.ts");
+  const root = project();
+  const g = goal({ checks: ["Asks first"] });
+  const mk = (failed: number, applicable: number) => ({ failed, applicable });
+  const scores = scored("Old prompt.", 50, 50, 60, 55);
+  for (const r of [...scores.baselineTrain, ...scores.baselineHoldout]) Object.assign(r, mk(1, 2));
+  for (const r of [...scores.candidates[0].train, ...scores.candidates[0].holdout!]) Object.assign(r, mk(0, 2));
+  const { judgeRound } = await import("../src/core/merge-rule.ts");
+  const verdict = judgeRound(scores, g, null);
+  assert.equal(verdict.action, "merge");
+  const rec = buildEvidence({ round: 1, goal: g, promptBefore: "Old prompt.", promptAfter: "Better prompt 0.", verdict: "merge", verdictReasons: [...verdict.reasons], scores, candidateId: "c1", costUsd: 0.1, prevEvidenceHash: null, checks: { before: 50, after: 100 } });
+  write(root, 1, rec);
+  assert.equal(verifyEvidence(join(root, evidencePath(1)), root).ok, true, JSON.stringify(verifyEvidence(join(root, evidencePath(1)), root)));
+  rec.checksAfter = 90;
+  write(root, 1, rehash(rec));
+  assert.match((check(root, 1) as { reason: string }).reason, /checksAfter doesn't match/);
+});
+
+test("a record missing most of its scores fails, even with a regenerated hash", async () => {
+  const root = await threeRounds();
+  const r = read(root, 2);
+  r.scenarioScores = r.scenarioScores.slice(0, 5);
+  write(root, 2, rehash(r));
+  assert.match((check(root, 2) as { reason: string }).reason, /no scores for scenario/);
+});
+
+test("a merge verdict under review mode contradicts itself", async () => {
+  const root = await threeRounds();
+  const r = read(root, 1);
+  r.mergeMode = "propose";
+  write(root, 1, rehash(r));
+  assert.match((check(root, 1) as { reason: string }).reason, /review mode/);
+});
+
+test("a malformed record fails plainly instead of throwing", async () => {
+  const root = await threeRounds();
+  const r = read(root, 1);
+  (r as { scenarioScores: unknown }).scenarioScores = [null];
+  write(root, 1, rehash(r));
+  assert.match((check(root, 1) as { reason: string }).reason, /isn't a Synthe evidence file/);
+});
+
+test("the prompt at the recorded commit is checked when the record names one", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const root = project();
+  writeFileSync(join(root, "prompt.md"), "Old prompt.");
+  const git = (...args: string[]) => execFileSync("git", ["-C", root, "-c", "user.email=t@t", "-c", "user.name=t", ...args], { encoding: "utf8" });
+  git("init", "-q");
+  git("add", "-A");
+  git("commit", "-qm", "start");
+  const sha = git("rev-parse", "HEAD").trim();
+  const fresh = await threeRounds();
+  const r = read(fresh, 1);
+  r.commit = sha;
+  write(root, 1, rehash(r));
+  const v = verifyEvidence(join(root, evidencePath(1)), root);
+  assert.equal(v.ok, true, JSON.stringify(v));
+  assert.deepEqual((v as { notes: string[] }).notes, []);
+  r.promptHashBefore = sha256("A different prompt.");
+  write(root, 1, rehash(r));
+  assert.match((check(root, 1) as { reason: string }).reason, /prompt at the recorded commit doesn't match/);
 });

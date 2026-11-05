@@ -1,7 +1,9 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { GOAL_FILE, parseGoal, parseScenarios, type Goal } from "./goal.ts";
-import { judgeRound, type CandidateScore, type RoundScores, type ScoreRow, type Verdict } from "./merge-rule.ts";
+import { checkRate, judgeRound, type CandidateScore, type RoundScores, type ScoreRow, type Verdict } from "./merge-rule.ts";
+import { findPrompts } from "./prompt.ts";
 import { sha256 } from "./safety.ts";
 
 export const EVIDENCE_DIR = ".synthe/evidence";
@@ -12,6 +14,11 @@ export interface ScenarioScore {
   baselineScore: number | null;
   candidateScore: number | null;
   checkFailed?: number;
+  // The candidate's applicable-check count and the baseline's failed/applicable counts, so the record's
+  // checksBefore/checksAfter can be recomputed at verify time instead of trusted.
+  checkApplicable?: number;
+  baselineCheckFailed?: number;
+  baselineCheckApplicable?: number;
   guardFailed?: number;
   // Not in the first schema: whether the current prompt broke a guardrail here. Without it the merge rule's "never
   // add a break" test can't be rerun. Absent means unknown, as a null violation does everywhere else.
@@ -28,6 +35,12 @@ export interface EvidenceRecord {
   verdictReasons: string[];
   // The candidate whose scores are in scenarioScores. Null when there was none, and for a revert.
   candidateId: string | null;
+  // The commit the round was tested at, so verify can read the prompt there and check it against
+  // promptHashBefore. Null in records written before this was kept.
+  commit: string | null;
+  // The merge mode the round ran in. In review ("propose") mode Synthe never merges by itself, so a
+  // record claiming a merge under that mode contradicts itself. Absent in older records.
+  mergeMode?: "auto" | "propose";
   modelIds: { writer: string; runner: string; judge: string; checker: string };
   scenarioScores: ScenarioScore[];
   checksBefore: number | null;
@@ -75,6 +88,7 @@ export interface EvidenceParams {
   checks?: { before: number; after: number };
   costUsd: number | null;
   prevEvidenceHash: string | null;
+  commit?: string | null;
 }
 
 export function buildEvidence(p: EvidenceParams): EvidenceRecord {
@@ -92,6 +106,9 @@ export function buildEvidence(p: EvidenceParams): EvidenceRecord {
       baselineScore: b.score,
       candidateScore: c?.score ?? null,
       ...(typeof c?.failed === "number" ? { checkFailed: c.failed } : {}),
+      ...(typeof c?.applicable === "number" ? { checkApplicable: c.applicable } : {}),
+      ...(typeof b.failed === "number" ? { baselineCheckFailed: b.failed } : {}),
+      ...(typeof b.applicable === "number" ? { baselineCheckApplicable: b.applicable } : {}),
       ...(guard ? { guardFailed: guard.n } : {}),
       ...(baseGuard ? { baselineGuardFailed: baseGuard.n } : {}),
     };
@@ -105,6 +122,8 @@ export function buildEvidence(p: EvidenceParams): EvidenceRecord {
     verdict: p.verdict,
     verdictReasons: p.verdictReasons,
     candidateId: p.candidateId,
+    commit: p.commit ?? null,
+    mergeMode: p.goal.merge_rule.mode,
     modelIds: { ...p.goal.models },
     scenarioScores,
     checksBefore: p.checks?.before ?? null,
@@ -128,6 +147,11 @@ const roundOf = (name: string) => /^round-(\d+)\.json$/.exec(name)?.[1];
 export function recomputeProblem(r: EvidenceRecord, goal: Goal, splits: Map<string, "train" | "holdout">): string | null {
   const missing = r.scenarioScores.find((s) => !splits.has(s.id));
   if (missing) return `scenario ${missing.id} isn't in ${goal.scenarios}, so the verdict can't be rechecked`;
+  // The record must hold a row for every scenario: dropping rows and fixing the hash must not pass.
+  const present = new Set(r.scenarioScores.map((s) => s.id));
+  const dropped = [...splits.keys()].find((id) => !present.has(id));
+  if (dropped) return `the record has no scores for scenario ${dropped}, so it is incomplete and the verdict can't be rechecked`;
+  if (r.mergeMode === "propose" && r.verdict === "merge") return "the record says the round ran in review mode, where Synthe never merges by itself, but the verdict says it merged";
   const rowOf = (s: ScenarioScore, score: number | null, guard: number | undefined): ScoreRow => ({ id: s.id, score, violation: guard === undefined ? null : guard > 0 });
   const side = (split: "train" | "holdout", pick: (s: ScenarioScore) => ScoreRow) => r.scenarioScores.filter((s) => splits.get(s.id) === split).map(pick);
   const base = (s: ScenarioScore) => rowOf(s, s.baselineScore, s.baselineGuardFailed);
@@ -140,6 +164,32 @@ export function recomputeProblem(r: EvidenceRecord, goal: Goal, splits: Map<stri
     const holdout = side("holdout", cand);
     const c: CandidateScore = { id: r.candidateId, train: side("train", cand), ...(holdout.some((h) => h.score !== null) ? { holdout } : {}) };
     scores.candidates = [c];
+  }
+  // The stored guard and check rates are recomputed from the per-row counts, not trusted: an edit to the
+  // headline numbers (with the hash fixed) is caught here, the same way a flipped verdict is.
+  const guardRows = (pick: (s: ScenarioScore) => ScoreRow) => [...side("train", pick), ...side("holdout", pick)];
+  const guards = goal.guardrails.length;
+  if (guardRate(guardRows(base), guards) !== r.guardsBefore) return "the recorded guardsBefore doesn't match the recorded per-scenario guard results";
+  const expectedGuardsAfter = r.verdict === "revert" ? null : guardRate(scores.candidates.length ? guardRows(cand) : [], guards);
+  if (expectedGuardsAfter !== r.guardsAfter) return "the recorded guardsAfter doesn't match the recorded per-scenario guard results";
+  if (r.checksBefore !== null || r.checksAfter !== null) {
+    const rateOf = (rows: ScoreRow[], label: string) => {
+      if (rows.some((row) => typeof row.failed !== "number" || typeof row.applicable !== "number")) throw new Error(`the record doesn't store the per-scenario check counts needed to recheck its ${label}`);
+      return checkRate(rows);
+    };
+    try {
+      // The merge rule rates the baseline over the train rows plus the holdout rows the candidate was
+      // scored on, so the recheck uses those same rows.
+      const holdIds = new Set((scores.candidates[0]?.holdout ?? []).map((h) => h.id));
+      const baseCheck = (s: ScenarioScore): ScoreRow => ({ id: s.id, score: s.baselineScore, violation: null, failed: s.baselineCheckFailed, applicable: s.baselineCheckApplicable });
+      const candCheck = (s: ScenarioScore): ScoreRow => ({ id: s.id, score: s.candidateScore, violation: null, failed: s.checkFailed, applicable: s.checkApplicable });
+      const before = rateOf([...side("train", baseCheck), ...side("holdout", baseCheck).filter((row) => holdIds.has(row.id))], "checksBefore");
+      if (before !== r.checksBefore) return "the recorded checksBefore doesn't match the recorded per-scenario check results";
+      const after = rateOf(scores.candidates.length ? [...side("train", candCheck), ...side("holdout", candCheck).filter((row) => holdIds.has(row.id))] : [], "checksAfter");
+      if (r.verdict !== "revert" && after !== r.checksAfter) return "the recorded checksAfter doesn't match the recorded per-scenario check results";
+    } catch (e) {
+      return (e as Error).message;
+    }
   }
   const v: Verdict = judgeRound(scores, goal, replaced);
   const want = r.verdict === "propose" ? "merge" : r.verdict;
@@ -156,8 +206,14 @@ export function verifyEvidence(filePath: string, repoRoot: string): VerifyResult
   } catch (e) {
     return { ok: false, reason: `couldn't read ${filePath} as evidence: ${(e as Error).message}` };
   }
-  if (typeof r?.round !== "number" || typeof r.sha256 !== "string" || !Array.isArray(r.scenarioScores) || !Array.isArray(r.verdictReasons)) {
+  if (typeof r?.round !== "number" || typeof r.sha256 !== "string" || !Array.isArray(r.scenarioScores) || !Array.isArray(r.verdictReasons)
+    || r.scenarioScores.some((s) => s === null || typeof s !== "object" || typeof s.id !== "string")
+    || r.verdictReasons.some((x) => typeof x !== "string")) {
     return { ok: false, reason: `${filePath} isn't a Synthe evidence file` };
+  }
+  const named = roundOf(basename(filePath));
+  if (named !== undefined && Number(named) !== r.round) {
+    return { ok: false, reason: `the file is named round-${named}.json but the record inside says round ${r.round}` };
   }
 
   // 1. The file is what was written.
@@ -180,10 +236,7 @@ export function verifyEvidence(filePath: string, repoRoot: string): VerifyResult
     if (hashEvidence(prev) !== r.prevEvidenceHash) return { ok: false, reason: `the chain is broken: this record follows a different round-${prevRound}.json than the one next to it` };
   }
 
-  // 3. The prompt at that commit needs git history, which this command doesn't read.
-  const notes = ["Note: prompt commit check requires a git checkout"];
-
-  // 4. The recorded scores still give the recorded verdict.
+  // 3. The goal and test cases, needed for the prompt check and the verdict recheck.
   const goalPath = join(repoRoot, GOAL_FILE);
   let goal: Goal;
   let splits: Map<string, "train" | "holdout">;
@@ -193,6 +246,27 @@ export function verifyEvidence(filePath: string, repoRoot: string): VerifyResult
   } catch (e) {
     return { ok: false, reason: `couldn't read the goal and test cases in ${repoRoot} to recheck the verdict: ${(e as Error).message}` };
   }
+
+  // 4. The prompt at the commit the round was tested at matches the record's before-hash. Records that
+  // name no full commit id (written before the commit was kept, or by a test double) can't be checked
+  // this way; that is noted, not passed over silently.
+  const notes: string[] = [];
+  if (typeof r.commit === "string" && /^[0-9a-f]{40}$/.test(r.commit)) {
+    let atCommit: string;
+    try {
+      atCommit = execFileSync("git", ["-C", repoRoot, "show", `${r.commit}:${goal.prompt.path}`], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+    } catch {
+      return { ok: false, reason: `couldn't read ${goal.prompt.path} at the recorded commit ${r.commit.slice(0, 12)} in this checkout, so the prompt this record is about can't be checked` };
+    }
+    const prompts = goal.prompt.kind === "file" ? [atCommit] : findPrompts([{ path: goal.prompt.path, text: atCommit }]).flatMap((f) => (f.location.kind === "inline" ? [f.location.initial] : []));
+    if (!prompts.some((t) => sha256(t) === r.promptHashBefore)) {
+      return { ok: false, reason: "the prompt at the recorded commit doesn't match the record's promptHashBefore, so the record isn't about the change it claims" };
+    }
+  } else {
+    notes.push("Note: the prompt at the recorded commit wasn't checked: this record names no full commit id");
+  }
+
+  // 5. The recorded scores still give the recorded verdict.
   const problem = recomputeProblem(r, goal, splits);
   if (problem) return { ok: false, reason: problem };
   return { ok: true, notes };
