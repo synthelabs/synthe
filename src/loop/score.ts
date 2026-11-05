@@ -269,9 +269,13 @@ function currentRows(set: Scenario[], replies: Map<string, string | null>, duels
   });
 }
 
+// One round's attack results for the current prompt, kept by the caller across rounds: the key covers the
+// prompt text, the attack set and the checker model, so a hit means the marking would come out the same.
+export interface AttackCache { key: string; failed: string[] | null }
+
 // prior is the prompt the last merge replaced, when that merge is still live: it challenges the current prompt so a
 // merge that turned out worse can be reverted.
-export async function runScore(goal: Goal, baseline: string, candidates: Candidate[], scenarios: Scenario[], model: Model, prior: string | null = null, random: () => number = Math.random, attacks: Attack[] = []) {
+export async function runScore(goal: Goal, baseline: string, candidates: Candidate[], scenarios: Scenario[], model: Model, prior: string | null = null, random: () => number = Math.random, attacks: Attack[] = [], attackCache: AttackCache | null = null) {
   const { costs, challenge, repliesFor, confirmBreak, markAttacks, cutOffCount } = scorer(goal, model, random);
   const train = scenarios.filter((s) => s.split === "train");
   const holdout = scenarios.filter((s) => s.split === "holdout");
@@ -280,7 +284,7 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
   // Nothing to compare: don't pay for the current prompt's replies. Head to head, it is simply even.
   if (safe.length === 0 && !hasPrior) {
     const even = (set: Scenario[]) => set.map((x): ScoreRow => ({ id: x.id, score: EVEN, violation: null }));
-    return { scores: { baselineHash: sha256(baseline), baselineTrain: even(train), baselineHoldout: even(holdout), candidates: [] } as RoundScores, costUsd: 0, calls: 0, checks: { confirmed: 0, dismissed: 0, failed: 0, excusedConfirmed: 0 } };
+    return { scores: { baselineHash: sha256(baseline), baselineTrain: even(train), baselineHoldout: even(holdout), candidates: [] } as RoundScores, costUsd: 0, calls: 0, checks: { confirmed: 0, dismissed: 0, failed: 0, excusedConfirmed: 0 }, attackCache: undefined as AttackCache | undefined };
   }
 
   const trainReplies = await repliesFor(baseline, train);
@@ -311,10 +315,21 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
 
   // The frozen attacks run only for the current prompt and the candidate that already won on the learned-from
   // and held-back cases. Marking every candidate would add far more than a tenth of a round's model calls, and
-  // only the winner can merge, so only its attack results can change the decision.
+  // only the winner can merge, so only its attack results can change the decision. The current prompt's results
+  // are reused across rounds while the prompt, the attack set and the checker model are unchanged (the key
+  // below covers all three); the winner is always marked fresh, since its text is new.
+  let freshAttackCache: AttackCache | undefined;
   if (leader && attacks.length > 0) {
     const text = safe.find((c) => c.id === leader.id)!.text;
-    scores.attacks = { total: attacks.length, baselineFailed: await markAttacks(baseline, attacks), inputs: Object.fromEntries(attacks.map((a) => [a.id, a.input])) };
+    const key = sha256([sha256(baseline), sha256(JSON.stringify(attacks.map((a) => [a.id, a.input, a.must]))), goal.models.checker].join("\n"));
+    let baselineFailed: string[] | null;
+    if (attackCache && attackCache.key === key) {
+      baselineFailed = attackCache.failed;
+    } else {
+      baselineFailed = await markAttacks(baseline, attacks);
+      freshAttackCache = { key, failed: baselineFailed };
+    }
+    scores.attacks = { total: attacks.length, baselineFailed, inputs: Object.fromEntries(attacks.map((a) => [a.id, a.input])) };
     leader.attackFailed = await markAttacks(text, attacks);
   }
 
@@ -355,7 +370,7 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
   // Held-back replies are never kept, so nothing about those scenarios can reach a writer.
   for (const c of scores.candidates) if (c.holdout) c.holdout = c.holdout.map((r) => ({ ...r, reply: undefined }));
   if (cutOffCount() > 0) scores.cutOff = cutOffCount();
-  return { scores, costUsd: sumCosts(costs), calls: costs.length, checks };
+  return { scores, costUsd: sumCosts(costs), calls: costs.length, checks, attackCache: freshAttackCache };
 }
 
 // Pits the prompt against itself: two independent replies per scenario, judged head to head. Any lopsided split

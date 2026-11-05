@@ -44,6 +44,10 @@ export interface State {
   // report's rewrite ask reads this. The local calibrate command writes .synthe/calibration.json; the
   // decide step copies that file's readings here each round (see calibrationReadings).
   calibration?: { check: string; reading: string }[];
+  // The current prompt's frozen-attack results from the last round that marked them, with the key they were
+  // marked under (prompt, attack set and checker model). The score step reuses them while the key matches,
+  // so rounds where the prompt didn't change don't pay to re-mark the same attacks.
+  attackCache?: { key: string; failed: string[] | null };
   // Set while a decide step is acting, so the next one can tell it died partway and clean up after it.
   pending: { round: number; at: string; costUsd: number | null; land?: Landing } | null;
   // A pull request Synthe opened and left for a person to merge (propose mode, or a repo that requires review).
