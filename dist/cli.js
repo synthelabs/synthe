@@ -28485,6 +28485,8 @@ function judgeRound(scores, goal, replaced) {
 // src/core/share.ts
 var FULL_SHARE_UNTIL = "2026-11-09T23:59:00Z";
 var SHARE_NOTICE_VERSION = "crimson-2026-11-v1";
+var PROXY_REFUSED = "The Synthe proxy refused this request: ";
+var fromSyntheProxy = (text) => /Synthe's proxy|Synthe table/.test(text ?? "");
 var PROXY_AUTH_MESSAGE = "The Synthe proxy couldn't verify this GitHub run. Run `npx synthe upgrade`, commit the workflow, and try again.";
 var oidcCache = /* @__PURE__ */ new Map();
 function requireOidc(env = process.env) {
@@ -28517,6 +28519,8 @@ var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_roun
 var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
 var badKey = (r) => r?.outcome === "failed" && r.failure === "key";
 var busy = (r) => r?.outcome === "failed" && r.failure === "busy";
+var refusedCode = (r) => badKey(r) && Boolean(r.plain?.startsWith(PROXY_REFUSED));
+var CODE_FIX = "If the Synthe table gave you a new code, save it with `gh secret set SYNTHE_TEAM_CODE` (or `gh secret set SYNTHE_EVENT_CODE` for the event code), then run `npx synthe restart`.";
 function headline(goal, state, stoppedByTeam = false) {
   const merged = state.rounds.filter((r) => r.outcome === "merged").length;
   const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
@@ -28536,15 +28540,16 @@ function headline(goal, state, stoppedByTeam = false) {
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}${guardLine}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? /Synthe's proxy|Credit is unavailable/.test(last?.plain ?? "") ? ` ${last.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
+    const wait = busy(last) ? fromSyntheProxy(last?.plain) ? ` ${last.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
     return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}${guardLine}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && recent.every((r) => r.outcome === "failed")) {
     const end = recent.at(-1);
-    if (busy(end) && /Synthe's proxy|Credit is unavailable/.test(end.plain ?? "")) return { title: "Stopped: Synthe's proxy needs attention", summary: end.plain };
+    if (busy(end) && fromSyntheProxy(end.plain)) return { title: "Stopped: Synthe's proxy needs attention", summary: end.plain };
     if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain };
+    if (refusedCode(end)) return { title: "Stopped: the Synthe proxy refused this repo's code", summary: `${end.plain} ${CODE_FIX} ${spent}` };
     if (badKey(end)) return { title: end.plain === PROXY_AUTH_MESSAGE ? "Stopped: the Synthe proxy couldn't verify this run" : "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
     if (busy(end) && isFinished(state.stopped)) {
       return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
@@ -28700,7 +28705,7 @@ function proxyModel(eventCode, action = false, teamCode) {
     } catch (error) {
       const refused = error;
       if ((refused.status === 402 || refused.status === 403) && refused.error?.error?.type === "synthe_credit" && typeof refused.error.error.message === "string") throw new CreditError(refused.error.error.message);
-      if (refused.status === 403 && refused.error?.error?.type === "synthe_proxy_auth" && typeof refused.error.error.message === "string") throw new ProxyError(403, `The Synthe proxy refused this request: ${refused.error.error.message}`);
+      if (refused.status === 403 && refused.error?.error?.type === "synthe_proxy_auth" && typeof refused.error.error.message === "string") throw new ProxyError(403, `${PROXY_REFUSED}${refused.error.error.message}`);
       if (refused.status === 401) {
         if (refused.error?.error?.type === "synthe_proxy_auth") throw new ProxyError(401, PROXY_AUTH_MESSAGE);
         throw new CreditError("Synthe's sponsored Anthropic key was rejected. Ask at the Synthe table; your workflow does not need upgrading. Once the organizer fixes it, run `npx synthe restart`.");
@@ -29343,6 +29348,15 @@ async function runLocalTry(cwd, goal, prompt, scenarios, model) {
     closeSync2(descriptor);
     unlinkSync2(lock);
   }
+}
+
+// src/cli/local-credential.ts
+function localCredential(env) {
+  const own = env.SYNTHE_ANTHROPIC_KEY?.trim(), eventCode = env.SYNTHE_EVENT_CODE?.trim(), teamCode = env.SYNTHE_TEAM_CODE?.trim() || void 0, app = env.ANTHROPIC_API_KEY?.trim();
+  if (own) return { key: own, line: "Credential: your own key from SYNTHE_ANTHROPIC_KEY, charged to that Anthropic account." };
+  if (eventCode) return { eventCode, teamCode, line: teamCode ? "Credential: Crimson Hacks event credit, with your team code from SYNTHE_TEAM_CODE." : "Credential: Crimson Hacks event credit. SYNTHE_TEAM_CODE isn't set, so the Synthe proxy will ask for your team code." };
+  if (app) return { key: app, line: "Credential: the key in ANTHROPIC_API_KEY, charged to that Anthropic account. To use event credit instead, set SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE." };
+  return null;
 }
 
 // src/cli/init.ts
@@ -30320,9 +30334,10 @@ function restartState(goal, state, scenariosHash = null) {
   const failedOut = recent.length > 0 && recent.every((r) => r.outcome === "failed");
   const roundsRaised = /^reached \d+ rounds$/.test(stopped) && state.round < goal.merge_rule.max_rounds;
   const budgetAvailable = /^budget/.test(stopped) && budgetSpend(state) < goal.budget.max_usd;
+  if (budgetAvailable && state.round >= goal.merge_rule.max_rounds) return { why: `There's budget again, but Synthe has also run all ${goal.merge_rule.max_rounds} rounds. Raise merge_rule.max_rounds in synthe.json, push it, then run \`npx synthe restart\` again.` };
   if (isFinished(stopped) && (!failedOut || /^budget/.test(stopped)) && !roundsRaised && !budgetAvailable) {
     if (/no winner$/.test(stopped)) return { why: `The last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better. To keep going, add test cases your agent still gets wrong to ${goal.scenarios}, push them, then run \`npx synthe restart\` again.` };
-    if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget. ${state.ownKeyFromUsd === void 0 ? "Run `npx synthe key` for a fresh own-key budget, or raise" : "Raise"} budget.max_usd in synthe.json and push it, then run \`npx synthe restart\`.` };
+    if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget. ${state.ownKeyFromUsd === void 0 ? "Run `npx synthe key` for a fresh own-key budget, or raise" : "Raise"} budget.max_usd in synthe.json${state.round >= goal.merge_rule.max_rounds ? ` (and merge_rule.max_rounds: all ${goal.merge_rule.max_rounds} rounds have run)` : ""} and push it, then run \`npx synthe restart\`.` };
     return { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` };
   }
   return { state: { ...state, stopped: null, stalls: 0 }, note: stopped === "credit" ? "It had stopped on event credit." : `It had stopped because: ${stopped}.` };
@@ -30972,14 +30987,14 @@ async function undoRound() {
 }
 function localRun(command) {
   if (!setUpHere()) return null;
-  const key = process.env.SYNTHE_ANTHROPIC_KEY?.trim() || (process.env.SYNTHE_EVENT_CODE?.trim() ? void 0 : process.env.ANTHROPIC_API_KEY?.trim());
-  const eventCode = process.env.SYNTHE_EVENT_CODE;
-  if (!key && !eventCode) {
+  const credential = localCredential(process.env);
+  if (!credential) {
     console.log(`\`npx synthe ${command}\` runs on your computer, changing nothing, and needs an event code or your own Anthropic key.`);
     console.log("Set SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE, or SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY, in your environment, then run this again.");
     process.exitCode = 1;
     return null;
   }
+  const { key, eventCode, teamCode } = credential;
   const goal = parseGoal(readFileSync8(GOAL_FILE, "utf8"));
   if (!key && eventCode) eventModels(goal.models);
   const prompt = readPrompt(readFileSync8(goal.prompt.path, "utf8"), goal, null);
@@ -30988,7 +31003,7 @@ function localRun(command) {
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync8(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, process.env.SYNTHE_TEAM_CODE) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync8(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, teamCode) };
 }
 async function calibrateChecks() {
   const local = localRun("calibrate");
