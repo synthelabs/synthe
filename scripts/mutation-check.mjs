@@ -118,6 +118,8 @@ const mutations = [
   ["a failed confirm's local files block a retry", "src/cli/init.ts", "      (await io.run(\"gh\", [\"api\", `repos/${slug}/contents/${path}", "      existsSync(join(root, path)) || (await io.run(\"gh\", [\"api\", `repos/${slug}/contents/${path}"],
   ["budget stop keeps offering a fresh key budget", "src/loop/report.ts", "state.ownKeyFromUsd === undefined ? \"Run `npx synthe key`", "true ? \"Run `npx synthe key`"],
   ["proxy sign-in failure reads as a bad key", "src/loop/report.ts", "end.plain === PROXY_AUTH_MESSAGE ? ", "false ? "],
+  ["migrate's score drop threshold is inverted", "src/cli/migrate.ts", "if (judgeDrop > MAX_DROP)", "if (judgeDrop < MAX_DROP)"],
+  ["migrate doesn't report cost", "src/cli/migrate.ts", "lines.push(...costSection(costBefore, costAfter));", ""],
 ];
 
 // Every mutated file as it was before the run. Restoring each mutation from its own copy isn't enough on its own: a

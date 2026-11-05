@@ -12,13 +12,14 @@ import { measureNoise, runScore } from "../loop/score.ts";
 import { runWrite } from "../loop/write.ts";
 import { init, type Io } from "./init.ts";
 import { calibrate } from "./calibrate.ts";
+import { migrate } from "./migrate.ts";
 import { restartState } from "./restart.ts";
 import { stoppedLine } from "./stopped.ts";
 import { askSecret } from "./secret.ts";
 import { upgrade } from "./upgrade.ts";
 import { AgentSetupError, agentOptions } from "./agent.ts";
 import { setKey } from "./key.ts";
-import guide from "../../docs/AGENT-SETUP.md";
+import { guide } from "./guide.ts";
 
 const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
   const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -211,6 +212,7 @@ Then:
   npx synthe try      run one round on your computer, changing nothing (event code or own key)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
   npx synthe calibrate     check that your checks are marked steadily and the way you mean them (event code or own key)
+  npx synthe migrate --to <model>   compare your prompt on another model, changing nothing (needs ANTHROPIC_API_KEY; add --dry-run to spend nothing)
 
 More: https://github.com/synthelabs/synthe#readme`;
 
@@ -228,6 +230,7 @@ async function main() {
   else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
   else if (command === "calibrate") await calibrateChecks();
+  else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.ANTHROPIC_API_KEY });
   else console.log(HELP);
 }
 

@@ -28049,7 +28049,7 @@ var init_sdk = __esm({
 
 // src/cli/main.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync3, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "node:fs";
+import { existsSync as existsSync4, readFileSync as readFileSync5, writeFileSync as writeFileSync4 } from "node:fs";
 import { createInterface as createInterface3 } from "node:readline/promises";
 
 // src/core/goal.ts
@@ -28513,8 +28513,11 @@ function readInstallId(path4) {
 var PRICES = {
   "claude-haiku-5-5": { input: 0.1, output: 0.5 },
   "claude-sonnet-5-5": { input: 2, output: 10 },
-  "claude-opus-5-5": { input: 4, output: 20 }
+  "claude-opus-5-5": { input: 4, output: 20 },
+  // Teams still on Sonnet 4.5 need a price to see what moving off it (it retires 2026-11-30) would cost.
+  "claude-sonnet-4-5": { input: 3, output: 15 }
 };
+var knownModels = () => Object.keys(PRICES);
 function costUsd(model, usage) {
   const base = PRICES[model];
   if (!base || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
@@ -29054,6 +29057,14 @@ async function measureNoise(goal, prompt, scenarios, model) {
   const split = paired(rows, rows.map((r) => ({ ...r, score: r.score === null ? null : EVEN })));
   const ties = rows.filter((r) => r.score === TIE).length;
   return { wins: split?.wins ?? null, losses: split?.losses ?? null, ties, p: split?.p ?? null, costUsd: sumCosts(costs) };
+}
+async function compareRunners(goal, prompt, scenarios, from, to, model, random = Math.random) {
+  const on = (runner) => ({ ...goal, models: { ...goal.models, runner } });
+  const old = scorer(on(from), model, random);
+  const next = scorer(on(to), model, random);
+  const replies = await old.repliesFor(prompt, scenarios);
+  const duels = await next.challenge("migrate", prompt, scenarios, replies);
+  return { before: currentRows(scenarios, replies, [duels]), after: duels.map((d) => d.row) };
 }
 
 // src/cli/init.ts
@@ -29721,6 +29732,123 @@ Set up, but GitHub did not accept the first dispatch. Run \`gh workflow run synt
   return true;
 }
 
+// src/cli/migrate.ts
+import { existsSync as existsSync2, readFileSync as readFileSync3 } from "node:fs";
+import { join as join4 } from "node:path";
+var MAX_DROP = 5;
+function parseArgs(args) {
+  const out = { dryRun: false };
+  for (let i = 0; i < args.length; i++) {
+    const [flag, inline] = args[i].split(/=(.*)/s);
+    if (flag === "--dry-run") out.dryRun = true;
+    else if (flag === "--from" || flag === "--to") {
+      const value = inline ?? args[++i];
+      if (!value || value.startsWith("--")) return `${flag} needs a model name, like ${flag} claude-sonnet-5-5.`;
+      out[flag === "--from" ? "from" : "to"] = value;
+    } else return `Unknown option ${args[i]}. Use --to <model>, and optionally --from <model> and --dry-run.`;
+  }
+  return out;
+}
+function dryRunModel(goal) {
+  return {
+    async ask(a) {
+      const cost = costUsd(a.model, { input_tokens: 500, output_tokens: 300 });
+      if (!a.schema) return { text: `[dry run] a reply from ${a.model}`, costUsd: cost };
+      const props = a.schema.properties ?? {};
+      const checks = goal.checks?.filter((c) => c.trim()) ?? [];
+      const answer = "results" in props ? { results: checks.map((_, i) => ({ check: i + 1, applies: true, passes: true })) } : { better: "tie", a_guardrail_ok: true, b_guardrail_ok: true };
+      return { text: JSON.stringify(answer), costUsd: cost };
+    }
+  };
+}
+var money2 = (n) => n === null ? "unknown" : `$${n.toFixed(3)}`;
+var signed = (n, digits = 1) => `${n > 0 ? "+" : ""}${n.toFixed(digits)}`;
+function costSection(before, after) {
+  const change = before !== null && after !== null && before > 0 ? `${signed(100 * (after - before) / before, 0)}%` : "unknown";
+  return ["Cost per round (answering every test case once)", `  Before: ${money2(before)}  After: ${money2(after)}  Change: ${change}`, ""];
+}
+async function migrate(args, env) {
+  const say = env.say;
+  const fail = (text) => {
+    say(text);
+    return 1;
+  };
+  const parsed = parseArgs(args);
+  if (typeof parsed === "string") return fail(parsed);
+  if (!existsSync2(join4(env.cwd, GOAL_FILE))) return fail("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
+  const goal = parseGoal(readFileSync3(join4(env.cwd, GOAL_FILE), "utf8"));
+  const from = parsed.from ?? goal.models.writer;
+  const to = parsed.to;
+  if (!to) return fail("Say which model to try: npx synthe migrate --to <model>");
+  const known = knownModels();
+  const unknown = [from, to].find((m) => !known.includes(m));
+  if (unknown) return fail(`Synthe doesn't know the model "${unknown}", so it can't work out what it costs. Models it knows: ${known.join(", ")}.`);
+  if (from === to) return fail(`--from and --to are both ${to}. Pick two different models to compare.`);
+  const prompt = readPrompt(readFileSync3(join4(env.cwd, goal.prompt.path), "utf8"), goal, null);
+  if (prompt === null) return fail(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
+  const scenarios = parseScenarios(readFileSync3(join4(env.cwd, goal.scenarios), "utf8"));
+  let real = env.model;
+  if (!parsed.dryRun && !real) {
+    if (!env.apiKey) return fail("`npx synthe migrate` runs on your computer, changing nothing, and needs your Synthe key:\n  ANTHROPIC_API_KEY=your-key npx synthe migrate --to " + to + "\nTo see the layout without spending anything, add --dry-run.");
+    real = anthropicModel(env.apiKey);
+  }
+  const model = parsed.dryRun ? dryRunModel(goal) : real;
+  const costs = [];
+  const replyCosts = /* @__PURE__ */ new Map([[from, []], [to, []]]);
+  const metered = {
+    async ask(a) {
+      const r = await model.ask(a);
+      costs.push(r.costUsd);
+      if (!a.schema) replyCosts.get(a.model)?.push(r.costUsd);
+      return r;
+    }
+  };
+  const train = scenarios.filter((s) => s.split === "train").length;
+  say(`Migrating from ${from} to ${to}`);
+  say(`
+Scenarios: ${train} train + ${scenarios.length - train} holdout = ${scenarios.length} total`);
+  if (parsed.dryRun) say("Dry run: no model was called. Every reply ties and every check passes, so the scores below are placeholders; the costs are estimates from a fixed size of call.");
+  say(`Your current prompt answers each test case on both models. The judge and checks stay as configured (judge ${goal.models.judge}).
+`);
+  const { before, after } = await compareRunners(goal, prompt, scenarios, from, to, metered, env.random);
+  const judged = after.flatMap((a, i) => typeof a.score === "number" && typeof before[i].score === "number" ? [[before[i], a]] : []);
+  if (judged.length === 0) return fail("None of the test cases could be judged, so there's nothing to compare. Try again in a few minutes; if it keeps happening, open an issue at https://github.com/synthelabs/synthe/issues");
+  const avg = (rows) => rows.reduce((n, r) => n + r.score, 0) / rows.length;
+  const judgeBefore = avg(judged.map(([b]) => b)), judgeAfter = avg(judged.map(([, a]) => a));
+  const count = (score) => judged.filter(([, a]) => a.score === score).length;
+  const lines = [];
+  lines.push(`Test cases: better on ${to} in ${count(WIN)}, worse in ${count(LOSS)}, the same in ${count(TIE)}${judged.length < scenarios.length ? `. ${scenarios.length - judged.length} couldn't be judged and are left out` : ""}`, "");
+  lines.push("Judge score (all scenarios, head to head: 50 is even)", `  Before: ${judgeBefore.toFixed(1)}  After: ${judgeAfter.toFixed(1)}  Change: ${signed(judgeAfter - judgeBefore)}`, "");
+  let rateDrop = 0, rateChange = null;
+  if (goal.checks?.some((c) => c.trim())) {
+    const both = judged.filter(([b, a]) => [b, a].every((r) => typeof r.failed === "number" && typeof r.applicable === "number"));
+    const rateBefore = checkRate(both.map(([b]) => b)), rateAfter = checkRate(both.map(([, a]) => a));
+    if (rateBefore === null || rateAfter === null) lines.push("Check pass rate", "  Couldn't be measured: no check applied to these test cases, or the checker's answers were incomplete.", "");
+    else {
+      rateDrop = rateBefore - rateAfter;
+      rateChange = rateAfter - rateBefore;
+      lines.push("Check pass rate", `  Before: ${rateBefore}%  After: ${rateAfter}%  Change: ${signed(rateChange, 0)}pp`, "");
+    }
+  }
+  const costBefore = sumCosts(replyCosts.get(from)), costAfter = sumCosts(replyCosts.get(to));
+  lines.push(...costSection(costBefore, costAfter));
+  const judgeDrop = judgeBefore - judgeAfter;
+  const worse = [];
+  if (judgeDrop > MAX_DROP) worse.push(`judge score dropped more than ${MAX_DROP} points`);
+  if (rateDrop > MAX_DROP) worse.push(`check pass rate dropped more than ${MAX_DROP}pp`);
+  const cheaper = costBefore !== null && costAfter !== null && costAfter < costBefore;
+  const better = judgeAfter - judgeBefore > MAX_DROP || (rateChange ?? 0) > MAX_DROP;
+  if (parsed.dryRun) lines.push("Verdict: none from a dry run. Run again without --dry-run to compare real replies.");
+  else if (worse.length) lines.push(`Verdict: ${worse.join("; ")}. Review before switching.`);
+  else if (cheaper) lines.push(`Verdict: Looks good: ${better ? "better" : "similar"} quality, lower cost.`);
+  else lines.push(`Verdict: Review before switching. ${costBefore === null || costAfter === null ? "The cost couldn't be worked out." : "The new model doesn't cost less."}`);
+  lines.push("", "This is one run on each model, so small changes can be the judge varying. `npx synthe try --noise` shows how much it varies.");
+  const spent = sumCosts(costs);
+  lines.push(parsed.dryRun ? `Cost of this comparison: $0.00 (dry run). A real run would cost about ${money2(spent)}.` : `Cost of this comparison: ${money2(spent)}`);
+  say(lines.join("\n"));
+  return 0;
+}
+
 // src/cli/restart.ts
 function restartState(goal, state, scenariosHash = null) {
   const stopped = state.stopped;
@@ -29769,12 +29897,12 @@ async function askSecret(question, input = process.stdin, output = process.stdou
 }
 
 // src/cli/upgrade.ts
-import { existsSync as existsSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join4 } from "node:path";
+import { existsSync as existsSync3, readFileSync as readFileSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join5 } from "node:path";
 function upgrade(root, template2) {
-  const path4 = join4(root, WORKFLOW_FILE);
-  if (!existsSync2(path4)) throw new Error(`No ${WORKFLOW_FILE} found. Run \`npx synthe init\` first.`);
-  const before = readFileSync3(path4, "utf8");
+  const path4 = join5(root, WORKFLOW_FILE);
+  if (!existsSync3(path4)) throw new Error(`No ${WORKFLOW_FILE} found. Run \`npx synthe init\` first.`);
+  const before = readFileSync4(path4, "utf8");
   if (!before.includes("synthelabs/synthe@v1")) throw new Error(`${WORKFLOW_FILE} is not a Synthe workflow; left it unchanged.`);
   const cron = before.match(/cron:\s*["']?(\d+)(?:-59\/10)? \* \* \* \*/);
   const minute = cron ? Math.max(1, Number(cron[1])) : void 0;
@@ -29844,8 +29972,8 @@ async function setKey(io2, env = process.env, terminal = Boolean(process.stdin.i
   return true;
 }
 
-// docs/AGENT-SETUP.md
-var AGENT_SETUP_default = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand.\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n\n## 1. Prerequisites\n\n1. Check the repo is on GitHub and pushed: `git remote -v` and `git status`. If not, help the person push it first.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card. Or they can use their own Anthropic key (it starts with `sk-ant-`).\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nWith an own key, use `SYNTHE_ANTHROPIC_KEY=<key>` in place of `SYNTHE_EVENT_CODE=<code>`, here and in step 7.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, and the sharing notice. The person must see them. During Crimson Hacks, Synthe shares the prompt and test cases with the Synthe team until Nov 8. Never code. Secrets are removed. The person can choose `--share none` at confirmation, or set `"share": "none"` in `synthe.json` any time.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person:\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n\nFollow the `NEXT:` line that step 1 printed.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --confirm --keep-checks\n```\n\nAdd `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft\'s sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\n## 8. After setup\n\nTell the person:\n\n- Rounds start by themselves. They do not need to do anything.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n';
+// src/cli/guide.ts
+var guide = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand.\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n\n## 1. Prerequisites\n\n1. Check the repo is on GitHub and pushed: `git remote -v` and `git status`. If not, help the person push it first.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card. Or they can use their own Anthropic key (it starts with `sk-ant-`).\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nWith an own key, use `SYNTHE_ANTHROPIC_KEY=<key>` in place of `SYNTHE_EVENT_CODE=<code>`, here and in step 7.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, and the sharing notice. The person must see them. During Crimson Hacks, Synthe shares the prompt and test cases with the Synthe team until Nov 8. Never code. Secrets are removed. The person can choose `--share none` at confirmation, or set `"share": "none"` in `synthe.json` any time.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person:\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n\nFollow the `NEXT:` line that step 1 printed.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> npx synthe@latest init --agent --confirm --keep-checks\n```\n\nAdd `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft\'s sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\n## 8. After setup\n\nTell the person:\n\n- Rounds start by themselves. They do not need to do anything.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n';
 
 // src/cli/main.ts
 var run = (cmd, args, stdin) => new Promise((resolve2, reject) => {
@@ -29867,10 +29995,10 @@ async function ask(question) {
   rl.close();
   return answer;
 }
-var template = () => readFileSync4(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync5(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 function setUpHere() {
-  if (existsSync3(GOAL_FILE)) return true;
+  if (existsSync4(GOAL_FILE)) return true;
   console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
   process.exitCode = 1;
   return false;
@@ -29899,7 +30027,7 @@ async function status() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync4(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync5(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -29922,7 +30050,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync4(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync5(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -29932,7 +30060,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync3(goal.scenarios) ? sha256(readFileSync4(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync4(goal.scenarios) ? sha256(readFileSync5(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -29967,15 +30095,15 @@ function localRun(command) {
     process.exitCode = 1;
     return null;
   }
-  const goal = parseGoal(readFileSync4(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync5(GOAL_FILE, "utf8"));
   if (!key && eventCode) eventModels(goal.models);
-  const prompt = readPrompt(readFileSync4(goal.prompt.path, "utf8"), goal, null);
+  const prompt = readPrompt(readFileSync5(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync4(goal.scenarios, "utf8")), model: configuredModel(key, eventCode) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync5(goal.scenarios, "utf8")), model: configuredModel(key, eventCode) };
 }
 async function calibrateChecks() {
   const local = localRun("calibrate");
@@ -29983,7 +30111,7 @@ async function calibrateChecks() {
   const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model);
   if (!result) return;
   if (result.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync4(GOAL_FILE, "utf8"));
+    const saved = JSON.parse(readFileSync5(GOAL_FILE, "utf8"));
     writeFileSync4(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}
 `);
     console.log(`
@@ -30027,12 +30155,13 @@ Then:
   npx synthe try      run one round on your computer, changing nothing (event code or own key)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
   npx synthe calibrate     check that your checks are marked steadily and the way you mean them (event code or own key)
+  npx synthe migrate --to <model>   compare your prompt on another model, changing nothing (needs ANTHROPIC_API_KEY; add --dry-run to spend nothing)
 
 More: https://github.com/synthelabs/synthe#readme`;
 async function main() {
   const command = process.argv[2];
   if (command === "init") process.exitCode = await init(io, process.cwd(), void 0, void 0, process.env, agentOptions(process.argv.slice(3))) ? 0 : 1;
-  else if (command === "guide") console.log(AGENT_SETUP_default);
+  else if (command === "guide") console.log(guide);
   else if (command === "key") {
     if (!setUpHere()) return;
     process.exitCode = await setKey(io) ? 0 : 1;
@@ -30042,6 +30171,7 @@ async function main() {
   else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
   else if (command === "calibrate") await calibrateChecks();
+  else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.ANTHROPIC_API_KEY });
   else console.log(HELP);
 }
 main().catch((e) => {
