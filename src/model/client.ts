@@ -3,7 +3,7 @@ import { setupInstallId } from "./install.ts";
 import { costUsd } from "../core/cost.ts";
 import { oidcToken, PROXY_AUTH_MESSAGE } from "../core/share.ts";
 
-export const PROXY_URL = "https://synthe-share.vercel.app/api/claude";
+export const PROXY_URL = "https://synthe-crimson.vercel.app/api/claude";
 export class CreditError extends Error {}
 export class ProxyError extends Error {
   status: number;
