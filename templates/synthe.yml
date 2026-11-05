@@ -60,7 +60,9 @@ jobs:
         with: { name: score-error, path: .synthe-out/error.json, include-hidden-files: true, if-no-files-found: ignore }
   decide:
     needs: [write, score]
-    if: always() && needs.write.result != 'skipped' && needs.write.outputs.go != 'false'
+    # Runs after a failed write or score, so the round is recorded and the report says why. Not after a run someone
+    # cancelled: that isn't a round that found nothing, and it says nothing about the key.
+    if: ${{ !cancelled() && needs.write.result != 'skipped' && needs.write.outputs.go != 'false' }}
     runs-on: ubuntu-latest
     # Only GitHub calls, each retried for at most a minute when rate-limited.
     timeout-minutes: 10

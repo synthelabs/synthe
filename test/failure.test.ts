@@ -131,3 +131,10 @@ test("every job has a time limit, and write and score failures reach decide with
   // Decide downloads every artifact into .synthe-out, where action.ts loads error.json.
   assert.match(jobs.decide, /with: \{ path: \.synthe-out, merge-multiple: true \}/);
 });
+
+test("decide records a failed write or score, but a cancelled run isn't counted as a round", () => {
+  const template = readFileSync("templates/synthe.yml", "utf8");
+  const decide = template.split("\n  decide:\n")[1];
+  assert.match(decide, /\n    if: \$\{\{ !cancelled\(\) && needs\.write\.result != 'skipped' && needs\.write\.outputs\.go != 'false' \}\}\n/);
+  assert.doesNotMatch(template, /always\(\)/);
+});
