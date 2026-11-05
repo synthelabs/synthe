@@ -146,7 +146,17 @@ async function main() {
     // The frozen attack set, when the repo has one. It is loaded here, in the score step, so attack text can
     // never reach the write step or the writer.
     const attacks: Attack[] = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync(ATTACKS_FILE, "utf8")) : [];
-    const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks);
+    const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null);
+    // Keep the current prompt's fresh attack results for the next round. Saving them is an optimisation, so
+    // a failed save is noted and the round goes on; the next round just marks them again.
+    if (scored.attackCache) {
+      try {
+        state.attackCache = scored.attackCache;
+        await repo.writeState(state);
+      } catch (e) {
+        console.log(`Could not keep the attack results for reuse: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
     for (const line of explainScores(scored.scores, scenarios)) console.log(line);
     const { confirmed, dismissed, failed, excusedConfirmed } = scored.checks;

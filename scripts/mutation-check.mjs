@@ -89,6 +89,7 @@ const allMutations = [
   ["an edit may add talk of judging or scores", WRITE, "if (added.length > judgingWords(e.find, own).length) return", "if (false) return"],
   ["an edit may talk to the judge", WRITE, "if (talk.length > judgeTalk(e.find).length) return", "if (false) return"],
   ["calibration readings never reach state", "src/loop/decide.ts", "if (input.calibration) {", "if (false) {"],
+  ["the attack cache is ignored and the current prompt is re-marked every round", SCORE, "attackCache && attackCache.key === key", "false"],
   ["the judge never sees the business policy", SCORE, "goal.policy?.trim() ? `\\nBusiness policy", "false ? `\\nBusiness policy"],
   ["setup defaults an unclear merge answer to automatic", "src/cli/init.ts", "if (auto === null) { auto = false;", "if (auto === null) { auto = true;"],
   ["unknown cost merges", DECIDE, "input.costUsd === null", "false"],
