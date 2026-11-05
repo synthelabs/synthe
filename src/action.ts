@@ -13,6 +13,7 @@ import { roundSummary } from "./loop/report.ts";
 import { failureOf, type Failure } from "./loop/failure.ts";
 import { explainScores, runScore } from "./loop/score.ts";
 import { explainWrite, runWrite } from "./loop/write.ts";
+import { captureCancel, captureFailure, observeRoundStep, startEventsWorker } from "./core/events.ts";
 
 const OUT = ".synthe-out";
 // Only the hourly backup uses this gate. A queued chain round starts immediately.
@@ -35,6 +36,7 @@ async function stillWaiting(repo: Repo, branch: string): Promise<boolean> {
 
 async function main() {
   const step = input("step");
+  if (step === "cancel") return captureCancel();
   if (step !== "decide" && !(input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() && (input("event-code") || process.env.SYNTHE_EVENT_CODE)?.trim()) requireOidc();
   const repo = githubRepo(process.env.GITHUB_REPOSITORY!, input("github-token"), process.env.GITHUB_API_URL);
 
@@ -52,7 +54,7 @@ async function main() {
     const startSource = fullActive && beforeState?.round === 0 ? await repo.readFile(goal.prompt.path, branch) : null;
     const startPrompt = startSource === null || !beforeState ? null : readPrompt(startSource, goal, beforeState.prompt);
     const scenarios = startPrompt !== null ? await repo.readFile(goal.scenarios, branch) : null;
-    const record = await runDecide(goal, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json") });
+    const record = await observeRoundStep("decide", { candidates: written?.candidates }, () => runDecide(goal, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json") }));
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     const state = await repo.readState();
     if (record && state.chainReady && state.round === record.round && state.round < goal.merge_rule.max_rounds && !state.stopped && !state.proposal && !state.pending) {
@@ -135,7 +137,7 @@ async function main() {
   const model = configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE);
 
   if (step === "write") {
-    const written = await runWrite(goal, state, prompt, scenarios, model);
+    const written = await observeRoundStep("write", { prompt }, () => runWrite(goal, state, prompt, scenarios, model));
     console.log(`Wrote ${written.candidates.length} candidates for ${written.costUsd === null ? "an unknown cost" : `$${written.costUsd.toFixed(4)}`}`);
     for (const line of explainWrite(written)) console.log(line);
     save("candidates.json", written);
@@ -145,7 +147,7 @@ async function main() {
     if (!written) throw new Error("candidates are missing");
     const last = state.lastMerge;
     const prior = last && !last.reverted && last.mergedHash === sha256(prompt) ? last.priorPrompt : null;
-    const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior);
+    const scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior));
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
     for (const line of explainScores(scored.scores, scenarios)) console.log(line);
     const { confirmed, dismissed, failed, excusedConfirmed } = scored.checks;
@@ -156,7 +158,8 @@ async function main() {
   }
 }
 
-main().catch((e) => {
+if (!startEventsWorker()) main().catch((e) => {
+  captureFailure(input("step"), e);
   console.error(e);
   // The decide step reads this to tell a busy API (try again next hour) from a key a person has to replace.
   const step = input("step");
