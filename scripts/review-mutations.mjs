@@ -31,10 +31,23 @@ const mutations = [
   ["OIDC token cache is ignored", "src/core/share.ts", 'cached.expires - 60_000 > Date.now()', 'false'],
   ["proxy retries four times", "src/model/client.ts", 'maxRetries: 2, logLevel: "off"', 'maxRetries: 4, logLevel: "off"'],
   ["agent sees an interactive paste prompt", "src/cli/init.ts", 'if (!agent) io.say("\\nOptional:', 'io.say("\\nOptional:'],
+  ["setup identity renews on every process", "src/model/install.ts", 'return readInstallId(path);', 'return randomUUID();'],
+  ["proxy stops using the persisted identity", "src/model/client.ts", 'headers.set("x-synthe-install", setupInstallId());', 'headers.set("x-synthe-install", "fresh-process");'],
+  ["setup directory is world readable", "src/model/install.ts", 'chmodSync(directory, 0o700);', 'chmodSync(directory, 0o755);'],
+  ["setup ID permissions are not repaired", "src/model/install.ts", 'fchmodSync(descriptor, 0o600);', ''],
+  ["setup ID follows a symlink", "src/model/install.ts", 'constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK', 'constants.O_RDONLY | constants.O_NONBLOCK'],
+  ["corrupt setup ID is accepted", "src/model/install.ts", 'if (!/^[0-9a-f]', 'if (false && !/^[0-9a-f]'],
+  ["event notice promises credit without a warning", "src/cli/init.ts", 'local run budget (not a credit allowance). Event credit is limited by organizer-configured caps and shared availability; it can stop sooner.', 'event credit.'],
+  ["event completion hides shared caps", "src/cli/init.ts", ' This is not a credit allowance. Organizer-configured caps and shared event availability can stop it sooner.', ''],
+  ["event budget differs from printed ceiling", "src/cli/init.ts", 'if (event) goal.budget = { max_usd: EVENT_BUDGET_USD };', 'if (event) goal.budget = { max_usd: 3 };'],
+  ["own key loses to event credit", "src/model/client.ts", 'if (key?.trim()) return anthropicModel(key.trim());', 'if (false) return anthropicModel(key.trim());'],
+  ["credit refusals retry", "src/model/client.ts", 'refusedHeaders.set("x-should-retry", "false");', 'refusedHeaders.set("x-should-retry", "true");'],
+  ["credit refusals are treated as busy", "src/loop/failure.ts", 'kind: "credit", message: e.message', 'kind: "busy", message: e.message'],
+  ["credit refusals do not stop the chain", "src/loop/decide.ts", 'state.stopped = "credit";', 'state.stopped = null;'],
 ];
 
 const originals = new Map(mutations.map(([, path]) => [path, readFileSync(path, "utf8")]));
-const runTests = () => spawnSync(process.execPath, ["--test", "test/review.test.ts", "test/core.test.ts", "test/init.test.ts"], { encoding: "utf8", timeout: 60_000 });
+const runTests = () => spawnSync(process.execPath, ["--test", "test/review.test.ts", "test/core.test.ts", "test/init.test.ts", "test/install.test.ts", "test/proxy.test.ts"], { encoding: "utf8", timeout: 60_000 });
 const baseline = runTests();
 assert.equal(baseline.status, 0, `Regression baseline failed:\n${baseline.stdout}\n${baseline.stderr}`);
 let killed = 0;

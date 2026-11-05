@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { configuredModel, CreditError, eventModels, modelProblem, PROXY_URL, proxyModel } from "../src/model/client.ts";
 import { failureOf } from "../src/loop/failure.ts";
 import { runDecide } from "../src/loop/decide.ts";
@@ -38,6 +41,9 @@ test("proxy sends local install IDs, fresh Action OIDC, bounded requests, and ow
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const previous = { ...process.env };
   context.after(() => { process.env = previous; });
+  const config = mkdtempSync(join(tmpdir(), "synthe-proxy-config-"));
+  context.after(() => rmSync(config, { recursive: true, force: true }));
+  process.env.XDG_CONFIG_HOME = config;
   process.env.SYNTHE_PROXY_URL = `${base}/api/claude`;
   process.env.ANTHROPIC_BASE_URL = base;
   process.env.ACTIONS_ID_TOKEN_REQUEST_URL = `${base}/oidc?existing=1`;
@@ -53,7 +59,9 @@ test("proxy sends local install IDs, fresh Action OIDC, bounded requests, and ow
   assert.equal(received[0].headers["x-synthe-event"], "crimson");
   assert.match(received[0].headers["x-synthe-install"], /^[0-9a-f-]{36}$/);
   assert.equal(received[0].headers["x-synthe-install"], received[1].headers["x-synthe-install"]);
+  assert.equal(received[0].headers["x-synthe-install"], readFileSync(join(config, "synthe/install-id"), "utf8").trim());
   assert.equal(received[0].headers.authorization, undefined);
+  process.env.XDG_CONFIG_HOME = join(config, "not-used-by-actions");
   const action = proxyModel("crimson", true);
   await action.ask(ask);
   await action.ask({ ...ask, model: "claude-sonnet-5-5", maxTokens: 16000 });
@@ -65,6 +73,8 @@ test("proxy sends local install IDs, fresh Action OIDC, bounded requests, and ow
   assert.equal(received[4].headers.authorization, "Bearer sk-ant-own");
   assert.equal(received[4].headers["x-synthe-event"], undefined);
   assert.equal(received[4].path, "/v1/messages");
+  assert.equal(existsSync(process.env.XDG_CONFIG_HOME), false);
+  process.env.XDG_CONFIG_HOME = config;
   assert.equal(tokens, 2);
   for (const { body } of received) {
     assert.ok(body.max_tokens <= 16000);

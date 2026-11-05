@@ -56,7 +56,10 @@ test("review: event credential beats the app key in interactive and both agent s
     const env = { SYNTHE_EVENT_CODE: "crimson" };
     assert.equal(await init(io, root, undefined, "sk-ant-app", env, agent ? prepare : undefined), true);
     assert.ok(calls.every((call) => call.proxy && call.key === "crimson"));
-    assert.equal(said.includes("Credential: Crimson Hacks event code, $4 budget."), true);
+    assert.match(said.join("\n"), /Credential: Crimson Hacks event code, \$4 local run budget \(not a credit allowance\)/);
+    assert.match(said.join("\n"), /organizer-configured caps and shared availability; it can stop sooner/);
+    assert.doesNotMatch(said.join("\n"), /\$4 of event credit|gets \$4/);
+    if (!agent) assert.match(said.join("\n"), /This is not a credit allowance\. Organizer-configured caps and shared event availability can stop it sooner/);
     assert.doesNotMatch(said.join("\n"), agent ? /Optional: paste up to 5 messages|Press Enter/ : /never matches/);
     if (agent) {
       assert.match(AGENT_NEXT, /Tell the person which credential and budget/);
@@ -340,18 +343,21 @@ test("review: OIDC JWT is cached until sixty seconds before expiry, scoped to au
 
 test("review: proxy 401/503/429 stay distinct, preserve advice, and proxy retries only twice", async (context) => {
   let status = 401;
-  let proxyAuth = true;
+  let proxyAuth: boolean | undefined = true;
   let requests = 0;
   const server = createServer((request, response) => {
     requests++;
     request.resume();
     response.writeHead(status, { "content-type": "application/json", "retry-after-ms": "1", "x-should-retry": status === 500 ? "true" : "false" });
-    response.end(JSON.stringify({ type: "error", error: { type: status === 401 ? proxyAuth ? "synthe_proxy_auth" : "authentication_error" : status === 429 ? "rate_limit_error" : "api_error", message: status === 503 ? "Credit is unavailable. Ask at the Synthe table." : "refused" } }));
+    response.end(JSON.stringify({ type: "error", error: { type: status === 401 ? proxyAuth === undefined ? undefined : proxyAuth ? "synthe_proxy_auth" : "authentication_error" : status === 429 ? "rate_limit_error" : "api_error", message: status === 503 ? "Credit is unavailable. Ask at the Synthe table." : "refused" } }));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => server.close());
   const previous = { ...process.env };
   context.after(() => { process.env = previous; });
+  const config = mkdtempSync(join(tmpdir(), "synthe-review-config-"));
+  context.after(() => rmSync(config, { recursive: true, force: true }));
+  process.env.XDG_CONFIG_HOME = config;
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   process.env.SYNTHE_PROXY_URL = base;
   process.env.ANTHROPIC_BASE_URL = base;
@@ -375,16 +381,18 @@ test("review: proxy 401/503/429 stay distinct, preserve advice, and proxy retrie
     if (kind === "busy") assert.equal(repo.state.chainReady, true);
   }
   status = 401;
-  proxyAuth = false;
-  requests = 0;
-  await assert.rejects(proxyModel("private-event-code").ask(cheap), (error) => {
-    assert.ok(error instanceof CreditError);
-    assert.equal(failureOf("write", error).kind, "credit");
-    assert.match(error.message, /sponsored Anthropic key was rejected.*Synthe table/);
-    assert.doesNotMatch(error.message, /synthe upgrade|workflow-upgrade|rotate/);
-    return true;
-  });
-  assert.equal(requests, 1);
+  for (const kind of [false, undefined]) {
+    proxyAuth = kind;
+    requests = 0;
+    await assert.rejects(proxyModel("private-event-code").ask(cheap), (error) => {
+      assert.ok(error instanceof CreditError);
+      assert.equal(failureOf("write", error).kind, "credit");
+      assert.match(error.message, /sponsored Anthropic key was rejected.*Synthe table/);
+      assert.doesNotMatch(error.message, /synthe upgrade|workflow-upgrade|rotate/);
+      return true;
+    });
+    assert.equal(requests, 1);
+  }
   status = 500;
   requests = 0;
   await assert.rejects(proxyModel("private-event-code").ask(cheap));

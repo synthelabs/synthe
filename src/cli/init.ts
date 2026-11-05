@@ -16,7 +16,7 @@ export const DRAFT_FILE = ".synthe/setup-draft.json";
 export const EVENT_BUDGET_USD = 4;
 export const AGENT_NEXT = "NEXT: Tell the person which credential and budget will be used. Show all of this to the person, including the sharing notice, proposed checks and calibration examples. Ask which checks to keep or reword and whether the marks look right. The person can choose `--share none`. Then run `npx synthe init --agent --confirm --check \"final sentence\"`, repeating `--check` for each final check, or use `--keep-checks` if they keep the proposed checks.";
 const SETUP_BRANCH = "synthe/setup";
-const SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds and $3 of credit. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
+const SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds with a local run budget of $3. Available provider or event credit can stop it sooner; this budget is not a credit allowance. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
 
 export interface Io {
   say(text: string): void;
@@ -251,7 +251,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   }
   const event = !key.startsWith("sk-ant-");
   const credentialName = event ? "Crimson Hacks event code" : key === env.SYNTHE_ANTHROPIC_KEY?.trim() ? "your own key from SYNTHE_ANTHROPIC_KEY" : key === envKey?.trim() ? "your own key from ANTHROPIC_API_KEY" : "your own Anthropic key";
-  io.say(`Credential: ${credentialName}, $${event ? EVENT_BUDGET_USD : 3} budget${event ? "." : " on your Anthropic account."}`);
+  io.say(`Credential: ${credentialName}, $${event ? EVENT_BUDGET_USD : 3} ${event ? "local run budget (not a credit allowance). Event credit is limited by organizer-configured caps and shared availability; it can stop sooner." : "budget on your Anthropic account."}`);
 
   const tracked = repoTextFiles(await io.run("git", ["ls-files"]), root);
   const prompts = findPrompts(tracked);
@@ -421,7 +421,7 @@ async function finishSetup(io: Io, root: string, slug: string, branch: string, g
   }
   // Forks start with Actions turned off, and then nothing would ever run, however long the team waits.
   const actionsOff = !started && !setupPr && (await io.run("gh", ["api", `repos/${slug}/actions/permissions`, "--jq", ".enabled"]).then((o) => o.trim() === "false", () => false));
-  const limits = `Completed rounds start back to back, up to ${goal.merge_rule.max_rounds} rounds and $${goal.budget.max_usd} of ${event ? "event credit" : "your key's credit"}. A 12-round session usually takes about half an hour.`;
+  const limits = `Completed rounds start back to back, up to ${goal.merge_rule.max_rounds} rounds with a $${goal.budget.max_usd} local run budget.${event ? " This is not a credit allowance. Organizer-configured caps and shared event availability can stop it sooner." : " Your Anthropic account must have enough credit."} A 12-round session usually takes about half an hour.`;
   io.say(started ? `\nSynthe is running: GitHub accepted the first dispatch. The first round takes a few minutes. ${limits}`
     : setupPr ? `\nSet up, waiting for you to merge ${setupPr}. Merging it starts the first round. ${limits}`
     : actionsOff ? `\nSet up, but GitHub Actions is turned off for this repo, so Synthe can't run yet. Turn it on at https://github.com/${slug}/settings/actions, then start the first round with \`gh workflow run synthe.yml\`. ${limits}`

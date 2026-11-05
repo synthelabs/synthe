@@ -1,10 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { randomUUID } from "node:crypto";
+import { setupInstallId } from "./install.ts";
 import { costUsd } from "../core/cost.ts";
 import { oidcToken, PROXY_AUTH_MESSAGE } from "../core/share.ts";
 
 export const PROXY_URL = "https://synthe-share.vercel.app/api/claude";
-const install = randomUUID();
 export class CreditError extends Error {}
 export class ProxyError extends Error {
   status: number;
@@ -24,7 +23,7 @@ export function proxyModel(eventCode: string, action = false): Model {
       headers.set("x-synthe-event", eventCode);
       headers.set("x-api-key", "synthe-proxy");
       if (action) headers.set("Authorization", `Bearer ${await oidcToken("synthe-proxy")}`);
-      else { headers.delete("Authorization"); headers.set("x-synthe-install", install); }
+      else { headers.delete("Authorization"); headers.set("x-synthe-install", setupInstallId()); }
       const response = await fetch(url, { ...init, headers });
       if (response.status === 402 || response.status === 403) {
         const body = await response.clone().json().catch(() => null) as { error?: { type?: string; message?: string } } | null;

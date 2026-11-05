@@ -121,7 +121,7 @@ test("init shows what it inferred and what happens next, in plain words", async 
   assert.match(text, /Rules it must never break:\n    - Never lie/);
   assert.match(text, /Your business policy, copied from your prompt \(1 line\), starting: "Returns within 30 days of delivery\."/);
   assert.match(text, /Added to o\/r \(committed and pushed\): synthe\.json, \.synthe\/scenarios\.jsonl and \.github\/workflows\/synthe\.yml\. Saved your key as the repo secret SYNTHE_ANTHROPIC_KEY\./);
-  assert.match(text, /up to 12 rounds and \$3 of your key's credit/);
+  assert.match(text, /up to 12 rounds with a \$3 local run budget/);
   assert.match(text, /A 12-round session usually takes about half an hour/);
   assert.match(text, /Automatic merging: on\. Changes go into o\/r as soon as they win\./);
   assert.match(text, /During Crimson Hacks \(until November 8\), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases/);

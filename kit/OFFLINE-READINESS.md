@@ -36,26 +36,21 @@ The tests use injected models, command stubs and loopback HTTP servers. They exe
 - From the proxy checkout, run `npm run smoke:ledger` and `npm test`. These use fake upstream responses and in-memory production Lua, not real model calls.
 - Do not run `init`, `try`, `calibrate`, `key`, `go-live.sh` or dispatch an installed workflow against real credentials during this no-spend pass. Even key validation can call the model.
 
-## Smaller-budget configuration draft
+## Caps require founder confirmation
 
-The owner reports about $42 in API credit. That is not permission to spend it, and it is not a verified dedicated workspace balance. The original $200 plan is not required for preparation.
+No available balance or allocation is verified by this client-only pass. The draft $2 account cap from Rishab's review and the earlier $4 claim are not founder-confirmed entitlements. Do not use either as production configuration. A founder must confirm `EVENT_TOTAL_USD`, `SETUP_TOTAL_USD`, `PER_ACCOUNT_USD` and `SETUP_PER_INSTALL_USD` against the dedicated workspace's actual balance and reservation headroom. The setup pool is part of the event pool, not extra credit. No proxy files, configuration or balances were read or changed here.
 
-One possible later event allocation is below; **not applied**:
-
-```
-EVENT_TOTAL_USD=30
-SETUP_TOTAL_USD=5
-PER_ACCOUNT_USD=4
-SETUP_PER_INSTALL_USD=0.25
-```
-
-The $5 setup pool is included in the $30 event pool, not added to it. Nominally this leaves $12 of the reported balance unallocated, before any pending/other charges. Recheck available credit, set a dedicated workspace limit, and choose limits explicitly before enabling credit. Reservation headroom can refuse a request even when some credit remains. The setup allowance may need tuning after a separately authorized live test. Match all participant-facing dollar amounts to the chosen caps before printing; the current kit promises $4 per account. No configuration or participant allowance changes were made in this pass.
+The existing `EVENT_BUDGET_USD = 4` in `src/cli/init.ts` remains only the default local `budget.max_usd` run ceiling, shared by the draft and printed setup notice. It is not a promise of $4 of sponsored credit. The CLI, setup PR body, README and agent guide now state that organizer-configured caps and shared availability may stop the run earlier. Publish a fixed credit allowance only after founders confirm the server caps and the client has a verified source for that allowance.
 
 ## Rishab review follow-up
 
 Review follow-up: PR #14 review started from `73a48c650e5d4d18616e8bdd1ef6bbd210ede496` and proxy PR #2 from `2aabfb1de03c86760a6a2ea9cf26655f28a061a9`. The release-audit table above is the initial snapshot, not the current branch heads. Client package metadata is now `1.6.3`; the existing `v1.6.2` tag is not moved. Deploy the reviewed proxy before publishing the client so local OIDC refusals carry `error.type=synthe_proxy_auth`; forwarded upstream Anthropic 401s instead pause sponsored credit and direct teams to the organizer, not a workflow upgrade.
 
-The install UUID is generated per CLI process, not per team. Starting another process obtains another allowance and can drain the shared setup pool. The per-install limit is only a process-level guardrail, not a durable participant allowance or abuse boundary. The client and draft allocation retain a $4 GitHub-account allowance shared across that account's repos; no live limits have changed. Proxy PR #2 now requires all four caps explicitly and refuses credit when any cap is missing or invalid; the draft values are not defaults. Its review follow-up is `c722bc24cf73a099bdb058724b89c1c2e811091f`.
+The earlier per-process UUID behavior is replaced: local `init`, `try` and `calibrate` reuse `$XDG_CONFIG_HOME/synthe/install-id` (or `~/.config/synthe/install-id`). A fully written, fsynced 0600 UUID file is published with an atomic hard link; concurrent first launches reuse the winner. The private directory is 0700. Invalid IDs and linked files fail rather than silently resetting the allowance. Actions continue to use GitHub OIDC, never a local install ID. Clearing config or using another machine can still bypass an installation identity: authenticated participant identity, shared-pool accounting, atomic reservations and fail-closed server caps remain server-side requirements, not fixed by this PR.
+
+Remaining server contract: return `error.type=synthe_proxy_auth` only for event-code/OIDC authentication refusals, preserve a distinct upstream authentication error for organizer-key failures, and use `synthe_credit` for cap refusals without retries. This client recognizes that contract and does not suggest upgrading a workflow for an untyped/upstream 401. The proxy's current implementation/deployment was not inspected or changed in this pass; do not mark cross-repo requirements resolved. Redis verification, cap selection and any live OIDC/Anthropic test still need founder approval.
+
+This pass starts from client head `01c23e74d79499067ca82dbf96c5c286e09471f3`, which already includes the explicit agent-credential, auth classification, draft ignore, commit-scope and README key corrections. Earlier release audit and validation tables are historical snapshots, not current heads or deployment evidence. Keep the inherited package version `1.6.3` unchanged here; the founder plans release `1.7.0` later. No bump, tag, publish, merge or deployment is part of settling these comments.
 
 The first successful `npx synthe key` records a fresh budget offset for either an event-credit or an existing own-key install. Later replacements cannot reset it. Concurrent round-state writes preserve an already recorded offset and retry conflicting writes with fresh state metadata.
 
