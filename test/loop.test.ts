@@ -165,7 +165,7 @@ const fake = (over: Partial<Record<string, string | null>> = {}): Model & { seen
 test("the writer never sees held-back scenarios", async () => {
   const m = fake();
   const out = await runWrite(goal(), newState(), "Old", scenarios, m);
-  assert.equal(out.candidates.length, 2);
+  assert.equal(out.candidates.length, 1);
   assert.ok(m.seen.every((a) => !a.user.includes("HOLDOUT-SECRET")));
   assert.ok(Math.abs(out.costUsd! - 0.02) < 1e-9);
 });

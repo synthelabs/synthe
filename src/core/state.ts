@@ -1,4 +1,5 @@
 import type { ScoreRow } from "./merge-rule.ts";
+import type { CandidateMemory } from "./candidate-history.ts";
 
 export interface RoundRecord {
   round: number; at: string; outcome: "merged" | "reverted" | "proposed" | "declined" | "skipped" | "failed";
@@ -16,6 +17,7 @@ export interface RoundRecord {
 export interface Landing { branch: string; kind: "merge" | "revert"; text: string; priorPrompt: string; propose?: boolean }
 
 export interface State {
+  candidateHistory?: CandidateMemory[];
   round: number;
   prompt: string | null; // tracked inline prompt text
   lastMerge: { pr: number; priorPrompt: string; mergedHash: string; reverted: boolean } | null;

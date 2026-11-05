@@ -2,6 +2,7 @@ import type { Goal, Scenario } from "../core/goal.ts";
 import type { State } from "../core/state.ts";
 import { sumCosts } from "../core/cost.ts";
 import { sha256 } from "../core/safety.ts";
+import { candidateFingerprint, candidateScope, validateCandidateMemory } from "../core/candidate-history.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
 
 export interface Candidate { id: string; text: string; summary?: string; title?: string; edits?: Edit[] }
@@ -95,10 +96,13 @@ export async function runWrite(goal: Goal, state: State, prompt: string, scenari
   // Held-back scenarios stay out of this: the writer must never see what it is finally judged on.
   const train = scenarios.filter((s) => s.split === "train");
   const lessons = lessonText(state, prompt, train);
+  const scope = candidateScope(goal, prompt);
+  const tried = new Set(validateCandidateMemory(state.candidateHistory ?? []).filter((entry) => entry.scope === scope).map((entry) => entry.fingerprint));
+  const history = tried.size ? `${tried.size} candidate texts were already attempted for this goal and prompt. Repeated text will be rejected before scoring. Try a different instruction.` : "None yet.";
   // Ideas from recent rounds that didn't win, so each round tries something new instead of paying for a repeat.
-  const tried = [...new Set(state.rounds.slice(-5).flatMap((r) => (r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary))))];
-  const notAgain = tried.length ? `\nAlready tried in earlier rounds without winning; don't propose these again:\n${tried.map((t) => `- ${t}`).join("\n")}\n` : "";
-  const history = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}. ${r.reasons.join(" ")}`).join("\n") || "None yet.";
+  // These are the writer's own one-line summaries of its earlier edits, never candidate texts or customer data.
+  const triedSummaries = [...new Set(state.rounds.slice(-5).flatMap((r) => (r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary))))];
+  const notAgain = triedSummaries.length ? `\nAlready tried in earlier rounds without winning; don't propose these again:\n${triedSummaries.map((t) => `- ${t}`).join("\n")}\n` : "";
   // The team's checks decide each test case, so the writer aims at them directly.
   const checks = goal.checks?.length ? `\nThe team measures a good reply with these checks; a change wins by making replies pass more of them:\n${goal.checks.map((c) => `- ${c}`).join("\n")}` : "";
   const quoteRule = goal.prompt.kind === "inline"
@@ -131,6 +135,10 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
     const applied = applyEdits(prompt, r.value.edits, `${goal.objective}\n${goal.policy ?? ""}`);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
+    const fingerprint = candidateFingerprint(applied.text);
+    if (fingerprint === candidateFingerprint(prompt)) return void rejected.push(`${id}: edits change only formatting or case`);
+    if (tried.has(fingerprint)) return void rejected.push(`${id}: materially identical candidate already tried for this goal and prompt`);
+    tried.add(fingerprint);
     candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : undefined,
       title: typeof r.value.title === "string" && r.value.title.trim() ? r.value.title.trim().replace(/\.$/, "").slice(0, 60) : undefined, edits: r.value.edits });
   });

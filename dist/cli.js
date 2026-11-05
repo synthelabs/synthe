@@ -28049,7 +28049,7 @@ var init_sdk = __esm({
 
 // src/cli/main.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync3, readFileSync as readFileSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { existsSync as existsSync3, readFileSync as readFileSync5, writeFileSync as writeFileSync4 } from "node:fs";
 import { createInterface as createInterface3 } from "node:readline/promises";
 
 // src/core/goal.ts
@@ -28112,156 +28112,6 @@ function parseScenarios(text) {
   }
   if (rows.filter((s) => s.split === "train").length < 5) throw new Error("scenarios need at least 5 train rows");
   return rows;
-}
-
-// src/core/merge-rule.ts
-function checkRate(rows) {
-  if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
-  const applicable = rows.reduce((n, r) => n + r.applicable, 0);
-  return applicable === 0 ? null : Math.round(100 * (applicable - rows.reduce((n, r) => n + r.failed, 0)) / applicable);
-}
-var cases = (n) => `${n} case${n === 1 ? "" : "s"}`;
-function tally(rows, current) {
-  const split = paired(rows, current);
-  return split ? { w: split.wins, l: split.losses, t: rows.length - split.wins - split.losses } : null;
-}
-function trainingNote(c, current, goal) {
-  const t = tally(c.train, current);
-  if (mean(c.train) === null || !t) return "Some replies couldn't be judged, so it wasn't used.";
-  if (mean(c.train) < mean(current) + goal.merge_rule.min_improvement) {
-    return `Not clearly better: better in ${cases(t.w)}, worse in ${t.l}, the same in ${t.t}.`;
-  }
-  return `Not clearly better: better in ${cases(t.w)} and worse in ${t.l}, which could be luck.`;
-}
-function mean(rows) {
-  if (rows.length === 0 || rows.some((r) => r.score === null || !Number.isFinite(r.score))) return null;
-  return rows.reduce((sum, r) => sum + r.score, 0) / rows.length;
-}
-function signP(wins, losses) {
-  const n = wins + losses;
-  if (n === 0) return 1;
-  let tail = 0;
-  let ways = 1;
-  for (let i = 0; i <= losses; i++) {
-    tail += ways;
-    ways = ways * (n - i) / (i + 1);
-  }
-  return Math.min(1, tail / 2 ** n);
-}
-function paired(after, before) {
-  const scores = new Map(before.map((r) => [r.id, r.score]));
-  if (after.length === 0 || after.length !== before.length || new Set(after.map((r) => r.id)).size !== after.length) return null;
-  let wins = 0;
-  let losses = 0;
-  for (const r of after) {
-    const other = scores.get(r.id);
-    if (typeof other !== "number" || !Number.isFinite(other) || typeof r.score !== "number" || !Number.isFinite(r.score)) return null;
-    if (r.score > other) wins++;
-    else if (r.score < other) losses++;
-  }
-  return { wins, losses, p: signP(wins, losses) };
-}
-var addedBreaks = (rows, current) => {
-  const before = new Map(current.map((r) => [r.id, r.violation]));
-  return rows.filter((r) => r.violation === null || r.violation === true && before.get(r.id) !== true).length;
-};
-var breaks = (rows) => rows.filter((r) => r.violation === true).length;
-function trainingProblem(c, baselineTrain, goal) {
-  const { min_improvement, max_p } = goal.merge_rule;
-  const before = mean(baselineTrain);
-  if (before === null) return "baseline score unknown";
-  const after = mean(c.train);
-  if (after === null) return `${c.id}: training score unknown`;
-  if (after < before + min_improvement) return `${c.id}: judge score ${after.toFixed(1)}, needs ${(before + min_improvement).toFixed(1)} (${before.toFixed(0)} is even)`;
-  const split = paired(c.train, baselineTrain);
-  if (split === null) return `${c.id}: test cases could not be compared`;
-  if (split.p > max_p) return `${c.id}: better in ${split.wins} and worse in ${split.losses} test cases, which could be luck`;
-  return null;
-}
-function judgeRound(scores, goal, replaced) {
-  const { min_improvement, noise_margin, max_p } = goal.merge_rule;
-  const before = mean(scores.baselineTrain);
-  const beforeHoldout = mean(scores.baselineHoldout);
-  if (before === null || beforeHoldout === null) return { action: "skip", reasons: ["baseline score unknown"], notes: {} };
-  if (replaced !== null) {
-    const now = [...scores.baselineTrain, ...scores.baselineHoldout];
-    const was = mean(replaced);
-    const is = mean(now);
-    const worse = paired(replaced, now);
-    if (was !== null && is !== null && worse !== null && is < was - noise_margin && worse.p <= max_p) {
-      return {
-        action: "revert",
-        notes: {},
-        reasons: [`the prompt it replaced now wins, judge score ${was.toFixed(1)} to ${is.toFixed(1)}: better in ${worse.wins} test cases, worse in ${worse.losses}`],
-        plain: `The prompt from before the last change now does better (better in ${cases(worse.wins)}, worse in ${worse.losses}), so Synthe put it back.`
-      };
-    }
-  }
-  const reasons = [];
-  const notes = {};
-  let best = null;
-  for (const c of scores.candidates) {
-    const problem = trainingProblem(c, scores.baselineTrain, goal);
-    if (problem) {
-      reasons.push(problem);
-      notes[c.id] = trainingNote(c, scores.baselineTrain, goal);
-      continue;
-    }
-    const after = mean(c.train);
-    const split = paired(c.train, scores.baselineTrain);
-    if (!c.holdout) {
-      reasons.push(`${c.id}: not tried on the hidden test cases`);
-      notes[c.id] = "Also looked better, but another change did better still.";
-      continue;
-    }
-    const held = mean(c.holdout);
-    const heldSplit = tally(c.holdout, scores.baselineHoldout);
-    if (held === null || !heldSplit) {
-      reasons.push(`${c.id}: hidden test cases couldn't be judged`);
-      notes[c.id] = "Couldn't be checked on the hidden test cases, so it wasn't used.";
-      continue;
-    }
-    if (held < beforeHoldout + min_improvement) {
-      reasons.push(`${c.id}: judge score ${held.toFixed(1)} on the hidden test cases, needs ${(beforeHoldout + min_improvement).toFixed(1)}`);
-      notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
-      continue;
-    }
-    const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
-    if (added > 0) {
-      reasons.push(`${c.id}: breaks a rule where the current prompt follows it, or couldn't be checked`);
-      notes[c.id] = `Broke one of your rules in ${cases(added)} where your current prompt follows it, so it wasn't used.`;
-      continue;
-    }
-    const stillBroken = breaks(c.train) + breaks(c.holdout);
-    const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id)));
-    notes[c.id] = "Also looked better, but another change did better still.";
-    if (best === null || after > best.after) {
-      const currentHeld = scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id));
-      const rateBefore = checkRate([...scores.baselineTrain, ...currentHeld]);
-      const rateAfter = checkRate([...c.train, ...c.holdout]);
-      const rates = rateBefore !== null && rateAfter !== null ? { before: rateBefore, after: rateAfter } : void 0;
-      const lead = rates ? `Your checks passed ${rates.after}% of the time, up from ${rates.before}%. ` : "";
-      const rules = wasBroken > 0 ? stillBroken > 0 ? ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in ${stillBroken}.` : ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in none.` : " It follows your rules in every test case.";
-      best = {
-        action: "merge",
-        candidateId: c.id,
-        before,
-        after,
-        heldBefore: beforeHoldout,
-        heldAfter: held,
-        wins: split.wins,
-        losses: split.losses,
-        heldWins: heldSplit.w,
-        heldLosses: heldSplit.l,
-        notes,
-        ...rates ? { checks: rates } : {},
-        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}`,
-        reasons: [`judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
-      };
-    }
-  }
-  if (best) best.notes[best.candidateId] = "Merged.";
-  return best ?? { action: "skip", reasons: reasons.length ? reasons : ["no candidates"], notes };
 }
 
 // src/core/prompt.ts
@@ -28499,6 +28349,176 @@ function modelProblem(e) {
   return null;
 }
 
+// src/core/merge-rule.ts
+function checkRate(rows) {
+  if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
+  const applicable = rows.reduce((n, r) => n + r.applicable, 0);
+  return applicable === 0 ? null : Math.round(100 * (applicable - rows.reduce((n, r) => n + r.failed, 0)) / applicable);
+}
+var cases = (n) => `${n} case${n === 1 ? "" : "s"}`;
+function tally(rows, current) {
+  const split = paired(rows, current);
+  return split ? { w: split.wins, l: split.losses, t: rows.length - split.wins - split.losses } : null;
+}
+function trainingNote(c, current, goal) {
+  const t = tally(c.train, current);
+  if (mean(c.train) === null || !t) return "Some replies couldn't be judged, so it wasn't used.";
+  if (mean(c.train) < mean(current) + goal.merge_rule.min_improvement) {
+    return `Not clearly better: better in ${cases(t.w)}, worse in ${t.l}, the same in ${t.t}.`;
+  }
+  return `Not clearly better: better in ${cases(t.w)} and worse in ${t.l}, which could be luck.`;
+}
+function mean(rows) {
+  if (rows.length === 0 || rows.some((r) => r.score === null || !Number.isFinite(r.score))) return null;
+  return rows.reduce((sum, r) => sum + r.score, 0) / rows.length;
+}
+function signP(wins, losses) {
+  const n = wins + losses;
+  if (n === 0) return 1;
+  let tail = 0;
+  let ways = 1;
+  for (let i = 0; i <= losses; i++) {
+    tail += ways;
+    ways = ways * (n - i) / (i + 1);
+  }
+  return Math.min(1, tail / 2 ** n);
+}
+function paired(after, before) {
+  const scores = new Map(before.map((r) => [r.id, r.score]));
+  if (after.length === 0 || after.length !== before.length || new Set(after.map((r) => r.id)).size !== after.length) return null;
+  let wins = 0;
+  let losses = 0;
+  for (const r of after) {
+    const other = scores.get(r.id);
+    if (typeof other !== "number" || !Number.isFinite(other) || typeof r.score !== "number" || !Number.isFinite(r.score)) return null;
+    if (r.score > other) wins++;
+    else if (r.score < other) losses++;
+  }
+  return { wins, losses, p: signP(wins, losses) };
+}
+var addedBreaks = (rows, current) => {
+  const before = new Map(current.map((r) => [r.id, r.violation]));
+  return rows.filter((r) => r.violation === null || r.violation === true && before.get(r.id) !== true).length;
+};
+var breaks = (rows) => rows.filter((r) => r.violation === true).length;
+function trainingProblem(c, baselineTrain, goal) {
+  const { min_improvement, max_p } = goal.merge_rule;
+  const before = mean(baselineTrain);
+  if (before === null) return "baseline score unknown";
+  const after = mean(c.train);
+  if (after === null) return `${c.id}: training score unknown`;
+  if (after < before + min_improvement) return `${c.id}: judge score ${after.toFixed(1)}, needs ${(before + min_improvement).toFixed(1)} (${before.toFixed(0)} is even)`;
+  const split = paired(c.train, baselineTrain);
+  if (split === null) return `${c.id}: test cases could not be compared`;
+  if (split.p > max_p) return `${c.id}: better in ${split.wins} and worse in ${split.losses} test cases, which could be luck`;
+  return null;
+}
+function judgeRound(scores, goal, replaced) {
+  const { min_improvement, noise_margin, max_p } = goal.merge_rule;
+  const before = mean(scores.baselineTrain);
+  const beforeHoldout = mean(scores.baselineHoldout);
+  if (before === null || beforeHoldout === null) return { action: "skip", reasons: ["baseline score unknown"], notes: {} };
+  if (replaced !== null) {
+    const now = [...scores.baselineTrain, ...scores.baselineHoldout];
+    const was = mean(replaced);
+    const is = mean(now);
+    const worse = paired(replaced, now);
+    if (was !== null && is !== null && worse !== null && is < was - noise_margin && worse.p <= max_p) {
+      return {
+        action: "revert",
+        notes: {},
+        reasons: [`the prompt it replaced now wins, judge score ${was.toFixed(1)} to ${is.toFixed(1)}: better in ${worse.wins} test cases, worse in ${worse.losses}`],
+        plain: `The prompt from before the last change now does better (better in ${cases(worse.wins)}, worse in ${worse.losses}), so Synthe put it back.`
+      };
+    }
+  }
+  const reasons = [];
+  const notes = {};
+  let best = null;
+  for (const c of scores.candidates) {
+    const problem = trainingProblem(c, scores.baselineTrain, goal);
+    if (problem) {
+      reasons.push(problem);
+      notes[c.id] = trainingNote(c, scores.baselineTrain, goal);
+      continue;
+    }
+    const after = mean(c.train);
+    const split = paired(c.train, scores.baselineTrain);
+    if (!c.holdout) {
+      reasons.push(`${c.id}: not tried on the hidden test cases`);
+      notes[c.id] = "Also looked better, but another change did better still.";
+      continue;
+    }
+    const held = mean(c.holdout);
+    const heldSplit = tally(c.holdout, scores.baselineHoldout);
+    if (held === null || !heldSplit) {
+      reasons.push(`${c.id}: hidden test cases couldn't be judged`);
+      notes[c.id] = "Couldn't be checked on the hidden test cases, so it wasn't used.";
+      continue;
+    }
+    if (held < beforeHoldout + min_improvement) {
+      reasons.push(`${c.id}: judge score ${held.toFixed(1)} on the hidden test cases, needs ${(beforeHoldout + min_improvement).toFixed(1)}`);
+      notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
+      continue;
+    }
+    const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
+    if (added > 0) {
+      reasons.push(`${c.id}: breaks a rule where the current prompt follows it, or couldn't be checked`);
+      notes[c.id] = `Broke one of your rules in ${cases(added)} where your current prompt follows it, so it wasn't used.`;
+      continue;
+    }
+    const stillBroken = breaks(c.train) + breaks(c.holdout);
+    const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id)));
+    notes[c.id] = "Also looked better, but another change did better still.";
+    if (best === null || after > best.after) {
+      const currentHeld = scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id));
+      const rateBefore = checkRate([...scores.baselineTrain, ...currentHeld]);
+      const rateAfter = checkRate([...c.train, ...c.holdout]);
+      const rates = rateBefore !== null && rateAfter !== null ? { before: rateBefore, after: rateAfter } : void 0;
+      const lead = rates ? `Your checks passed ${rates.after}% of the time, up from ${rates.before}%. ` : "";
+      const rules = wasBroken > 0 ? stillBroken > 0 ? ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in ${stillBroken}.` : ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in none.` : " It follows your rules in every test case.";
+      best = {
+        action: "merge",
+        candidateId: c.id,
+        before,
+        after,
+        heldBefore: beforeHoldout,
+        heldAfter: held,
+        wins: split.wins,
+        losses: split.losses,
+        heldWins: heldSplit.w,
+        heldLosses: heldSplit.l,
+        notes,
+        ...rates ? { checks: rates } : {},
+        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}`,
+        reasons: [`judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
+      };
+    }
+  }
+  if (best) best.notes[best.candidateId] = "Merged.";
+  return best ?? { action: "skip", reasons: reasons.length ? reasons : ["no candidates"], notes };
+}
+
+// src/core/candidate-history.ts
+var MAX_CANDIDATE_MEMORY = 1e3;
+var HASH = /^[a-f0-9]{64}$/;
+function validateCandidateMemory(value) {
+  if (!Array.isArray(value) || value.length > MAX_CANDIDATE_MEMORY || value.some((entry) => !entry || Object.keys(entry).sort().join(",") !== "fingerprint,scope" || typeof entry.scope !== "string" || !HASH.test(entry.scope) || typeof entry.fingerprint !== "string" || !HASH.test(entry.fingerprint))) {
+    throw new Error("Candidate history is corrupt. Restore it or remove it explicitly before trying again.");
+  }
+  return value;
+}
+var candidateScope = (goal, prompt) => sha256(JSON.stringify([goal, prompt]));
+var candidateFingerprint = (text) => sha256(text.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "");
+function rememberCandidates(history, scope, texts) {
+  const unique = new Map(validateCandidateMemory(history).map((entry) => [`${entry.scope}:${entry.fingerprint}`, entry]));
+  for (const text of texts) {
+    const fingerprint = candidateFingerprint(text);
+    unique.set(`${scope}:${fingerprint}`, { scope, fingerprint });
+  }
+  return [...unique.values()].slice(-MAX_CANDIDATE_MEMORY);
+}
+
 // src/loop/write.ts
 var ANGLES = [
   "Fix what made the current prompt lose in the cases below.",
@@ -28575,12 +28595,14 @@ ${cases2.join("\n")}
 async function runWrite(goal, state, prompt, scenarios, model) {
   const train = scenarios.filter((s) => s.split === "train");
   const lessons = lessonText(state, prompt, train);
-  const tried = [...new Set(state.rounds.slice(-5).flatMap((r) => r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary)))];
-  const notAgain = tried.length ? `
+  const scope = candidateScope(goal, prompt);
+  const tried = new Set(validateCandidateMemory(state.candidateHistory ?? []).filter((entry) => entry.scope === scope).map((entry) => entry.fingerprint));
+  const history = tried.size ? `${tried.size} candidate texts were already attempted for this goal and prompt. Repeated text will be rejected before scoring. Try a different instruction.` : "None yet.";
+  const triedSummaries = [...new Set(state.rounds.slice(-5).flatMap((r) => r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary)))];
+  const notAgain = triedSummaries.length ? `
 Already tried in earlier rounds without winning; don't propose these again:
-${tried.map((t) => `- ${t}`).join("\n")}
+${triedSummaries.map((t) => `- ${t}`).join("\n")}
 ` : "";
-  const history = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}. ${r.reasons.join(" ")}`).join("\n") || "None yet.";
   const checks = goal.checks?.length ? `
 The team measures a good reply with these checks; a change wins by making replies pass more of them:
 ${goal.checks.map((c) => `- ${c}`).join("\n")}` : "";
@@ -28618,6 +28640,10 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
     const applied = applyEdits(prompt, r.value.edits, `${goal.objective}
 ${goal.policy ?? ""}`);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
+    const fingerprint = candidateFingerprint(applied.text);
+    if (fingerprint === candidateFingerprint(prompt)) return void rejected.push(`${id}: edits change only formatting or case`);
+    if (tried.has(fingerprint)) return void rejected.push(`${id}: materially identical candidate already tried for this goal and prompt`);
+    tried.add(fingerprint);
     candidates.push({
       id,
       text: applied.text,
@@ -28906,9 +28932,63 @@ async function compareRunners(goal, prompt, scenarios, from, to, model, random =
   return { before: currentRows(scenarios, replies, [duels]), after: duels.map((d) => d.row) };
 }
 
-// src/cli/init.ts
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+// src/cli/try-round.ts
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
+async function runLocalTry(cwd, goal, prompt, scenarios, model) {
+  const directory = join2(cwd, ".synthe-local");
+  mkdirSync(directory, { recursive: true });
+  const path4 = join2(directory, "try-history.json");
+  const lock = `${path4}.lock`;
+  let descriptor;
+  try {
+    descriptor = openSync(lock, "wx", 384);
+  } catch (error) {
+    if (error.code === "EEXIST") throw new Error("Another local try holds the history lock. If it crashed, remove .synthe-local/try-history.json.lock before retrying.");
+    throw error;
+  }
+  try {
+    const state = newState();
+    let raw;
+    try {
+      raw = readFileSync(path4, "utf8");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    if (raw !== void 0) {
+      try {
+        const saved = JSON.parse(raw);
+        if (saved.version !== 1 || Object.keys(saved).sort().join(",") !== "history,version") throw new Error("schema");
+        state.candidateHistory = validateCandidateMemory(saved.history);
+      } catch {
+        throw new Error("Local candidate history is corrupt. Restore .synthe-local/try-history.json or remove it explicitly before trying again.");
+      }
+    }
+    const written = await runWrite(goal, state, prompt, scenarios, model);
+    const history = rememberCandidates(state.candidateHistory ?? [], candidateScope(goal, prompt), written.candidates.map((candidate) => candidate.text));
+    const temporary = `${path4}.${process.pid}.tmp`;
+    try {
+      writeFileSync(temporary, `${JSON.stringify({ version: 1, history }, null, 2)}
+`, { mode: 384 });
+      renameSync(temporary, path4);
+    } finally {
+      try {
+        unlinkSync(temporary);
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
+    const { scores, costUsd: costUsd2 } = await runScore(goal, prompt, written.candidates, scenarios, model);
+    return { written, costUsd: costUsd2, verdict: judgeRound(scores, goal, null) };
+  } finally {
+    closeSync(descriptor);
+    unlinkSync(lock);
+  }
+}
+
+// src/cli/init.ts
+import { mkdirSync as mkdirSync2, readFileSync as readFileSync2, statSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { join as join3 } from "node:path";
 
 // src/cli/calibrate.ts
 var CASES = 20;
@@ -29173,8 +29253,8 @@ function renderWorkflow(template2, random = Math.random, chosenMinute) {
 function repoTextFiles(listing, root) {
   return listing.split("\n").filter(Boolean).flatMap((path4) => {
     try {
-      const full = join2(root, path4);
-      return statSync(full).size < 2e5 ? [{ path: path4, text: readFileSync(full, "utf8") }] : [];
+      const full = join3(root, path4);
+      return statSync(full).size < 2e5 ? [{ path: path4, text: readFileSync2(full, "utf8") }] : [];
     } catch {
       return [];
     }
@@ -29264,7 +29344,7 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
     io2.say(refused);
     return false;
   }
-  const promptText = location.kind === "inline" ? location.initial : readFileSync(join2(root, location.path), "utf8");
+  const promptText = location.kind === "inline" ? location.initial : readFileSync2(join3(root, location.path), "utf8");
   if (promptText.length > MAX_PROMPT_CHARS) {
     io2.say(`Your prompt is ${promptText.length.toLocaleString("en-US")} characters, and Synthe works on prompts up to ${MAX_PROMPT_CHARS.toLocaleString("en-US")}. Shorten it, for example by moving reference material such as a menu or FAQ into a separate file your agent loads, then run \`npx synthe init\` again.`);
     return false;
@@ -29334,13 +29414,13 @@ Reading your prompt${context2.names.length ? ` and ${context2.names.join(" and "
   const goal = buildGoal(location, objective, guardrails, policy, brief, checks);
   goal.share = share;
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
-  mkdirSync(join2(root, ".synthe"), { recursive: true });
-  mkdirSync(join2(root, ".github/workflows"), { recursive: true });
-  writeFileSync(join2(root, GOAL_FILE), `${JSON.stringify(goal, null, 2)}
+  mkdirSync2(join3(root, ".synthe"), { recursive: true });
+  mkdirSync2(join3(root, ".github/workflows"), { recursive: true });
+  writeFileSync2(join3(root, GOAL_FILE), `${JSON.stringify(goal, null, 2)}
 `);
-  writeFileSync(join2(root, SCENARIOS_FILE), `${rows.map((r) => JSON.stringify(r)).join("\n")}
+  writeFileSync2(join3(root, SCENARIOS_FILE), `${rows.map((r) => JSON.stringify(r)).join("\n")}
 `);
-  writeFileSync(join2(root, WORKFLOW_FILE), renderWorkflow(io2.template()));
+  writeFileSync2(join3(root, WORKFLOW_FILE), renderWorkflow(io2.template()));
   await io2.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
   try {
     await io2.run("gh", [
@@ -29402,8 +29482,8 @@ Set up, but GitHub did not accept the first dispatch. Run \`gh workflow run synt
 }
 
 // src/cli/migrate.ts
-import { existsSync, readFileSync as readFileSync2 } from "node:fs";
-import { join as join3 } from "node:path";
+import { existsSync, readFileSync as readFileSync3 } from "node:fs";
+import { join as join4 } from "node:path";
 var MAX_DROP = 5;
 function parseArgs(args) {
   const out = { dryRun: false };
@@ -29444,8 +29524,8 @@ async function migrate(args, env) {
   };
   const parsed = parseArgs(args);
   if (typeof parsed === "string") return fail(parsed);
-  if (!existsSync(join3(env.cwd, GOAL_FILE))) return fail("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
-  const goal = parseGoal(readFileSync2(join3(env.cwd, GOAL_FILE), "utf8"));
+  if (!existsSync(join4(env.cwd, GOAL_FILE))) return fail("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
+  const goal = parseGoal(readFileSync3(join4(env.cwd, GOAL_FILE), "utf8"));
   const from = parsed.from ?? goal.models.writer;
   const to = parsed.to;
   if (!to) return fail("Say which model to try: npx synthe migrate --to <model>");
@@ -29453,9 +29533,9 @@ async function migrate(args, env) {
   const unknown = [from, to].find((m) => !known.includes(m));
   if (unknown) return fail(`Synthe doesn't know the model "${unknown}", so it can't work out what it costs. Models it knows: ${known.join(", ")}.`);
   if (from === to) return fail(`--from and --to are both ${to}. Pick two different models to compare.`);
-  const prompt = readPrompt(readFileSync2(join3(env.cwd, goal.prompt.path), "utf8"), goal, null);
+  const prompt = readPrompt(readFileSync3(join4(env.cwd, goal.prompt.path), "utf8"), goal, null);
   if (prompt === null) return fail(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
-  const scenarios = parseScenarios(readFileSync2(join3(env.cwd, goal.scenarios), "utf8"));
+  const scenarios = parseScenarios(readFileSync3(join4(env.cwd, goal.scenarios), "utf8"));
   let real = env.model;
   if (!parsed.dryRun && !real) {
     if (!env.apiKey) return fail("`npx synthe migrate` runs on your computer, changing nothing, and needs your Synthe key:\n  ANTHROPIC_API_KEY=your-key npx synthe migrate --to " + to + "\nTo see the layout without spending anything, add --dry-run.");
@@ -29565,18 +29645,18 @@ async function askSecret(question, input = process.stdin, output = process.stdou
 }
 
 // src/cli/upgrade.ts
-import { existsSync as existsSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join4 } from "node:path";
+import { existsSync as existsSync2, readFileSync as readFileSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join5 } from "node:path";
 function upgrade(root, template2) {
-  const path4 = join4(root, WORKFLOW_FILE);
+  const path4 = join5(root, WORKFLOW_FILE);
   if (!existsSync2(path4)) throw new Error(`No ${WORKFLOW_FILE} found. Run \`npx synthe init\` first.`);
-  const before = readFileSync3(path4, "utf8");
+  const before = readFileSync4(path4, "utf8");
   if (!before.includes("synthelabs/synthe@v1")) throw new Error(`${WORKFLOW_FILE} is not a Synthe workflow; left it unchanged.`);
   const cron = before.match(/cron:\s*["']?(\d+)(?:-59\/10)? \* \* \* \*/);
   const minute = cron ? Math.max(1, Number(cron[1])) : void 0;
   const after = renderWorkflow(template2, Math.random, minute);
   if (after === before) return `${WORKFLOW_FILE} is already up to date. No files changed.`;
-  writeFileSync2(path4, after);
+  writeFileSync3(path4, after);
   return `Updated ${WORKFLOW_FILE}: rounds now chain immediately, a cancelled run no longer counts as a round, and sharing (if you turned it on) can prove which repo sent it; kept backup minute ${minute ?? "random"}. No other files changed. Commit and push this workflow file to activate it.`;
 }
 
@@ -29592,6 +29672,8 @@ var run = (cmd, args, stdin) => new Promise((resolve2, reject) => {
   });
   child.on("error", reject);
   child.on("close", (code) => code === 0 ? resolve2(out) : reject(new Error(err || `${cmd} failed`)));
+  child.stdin.on("error", () => {
+  });
   child.stdin.end(stdin ?? "");
 });
 async function ask(question) {
@@ -29600,7 +29682,7 @@ async function ask(question) {
   rl.close();
   return answer;
 }
-var template = () => readFileSync4(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync5(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 function setUpHere() {
   if (existsSync3(GOAL_FILE)) return true;
@@ -29632,7 +29714,7 @@ async function status() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync4(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync5(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -29655,7 +29737,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync4(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync5(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -29665,7 +29747,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync3(goal.scenarios) ? sha256(readFileSync4(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync3(goal.scenarios) ? sha256(readFileSync5(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -29699,14 +29781,14 @@ function localRun(command) {
     process.exitCode = 1;
     return null;
   }
-  const goal = parseGoal(readFileSync4(GOAL_FILE, "utf8"));
-  const prompt = readPrompt(readFileSync4(goal.prompt.path, "utf8"), goal, null);
+  const goal = parseGoal(readFileSync5(GOAL_FILE, "utf8"));
+  const prompt = readPrompt(readFileSync5(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync4(goal.scenarios, "utf8")), model: anthropicModel(key) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync5(goal.scenarios, "utf8")), model: anthropicModel(key) };
 }
 async function calibrateChecks() {
   const local = localRun("calibrate");
@@ -29714,8 +29796,8 @@ async function calibrateChecks() {
   const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model);
   if (!result) return;
   if (result.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync4(GOAL_FILE, "utf8"));
-    writeFileSync3(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}
+    const saved = JSON.parse(readFileSync5(GOAL_FILE, "utf8"));
+    writeFileSync4(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}
 `);
     console.log(`
 Saved your reworded checks in ${GOAL_FILE}. Push them so Synthe's next round uses them:`);
@@ -29734,10 +29816,8 @@ async function tryRound() {
     console.log(`Cost: ${n.costUsd === null ? "unknown" : `$${n.costUsd.toFixed(2)}`}`);
     return;
   }
-  console.log("Trying one round on your computer. This takes a few minutes and changes nothing in your repo...");
-  const written = await runWrite(goal, newState(), prompt, scenarios, model);
-  const { scores, costUsd: costUsd2 } = await runScore(goal, prompt, written.candidates, scenarios, model);
-  const verdict = judgeRound(scores, goal, null);
+  console.log("Trying one round on your computer. Your prompt stays unchanged; candidate fingerprints are saved in .synthe-local/try-history.json...");
+  const { written, costUsd: costUsd2, verdict } = await runLocalTry(process.cwd(), goal, prompt, scenarios, model);
   for (const c of written.candidates) console.log(`- ${c.title ?? c.summary ?? c.id}: ${verdict.notes[c.id] ?? "not tested"}`);
   for (const r of written.rejected ?? []) console.log(`- An edit that couldn't be applied: ${r.replace(/^candidate-\d+: /, "")}`);
   console.log(verdict.action === "merge" ? `In a real run, Synthe would merge this. ${verdict.plain}` : "In a real run, nothing would change this round.");
@@ -29753,7 +29833,7 @@ Then:
   npx synthe upgrade  update only the installed workflow for chained rounds
   npx synthe stop     stop it; nothing more runs or changes
   npx synthe restart  start it again, after stop or once you've fixed what stopped it
-  npx synthe try      run one round on your computer, changing nothing (needs ANTHROPIC_API_KEY)
+  npx synthe try      run one round on your computer without changing your prompt (needs ANTHROPIC_API_KEY)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
   npx synthe calibrate     check that your checks are marked steadily and the way you mean them (needs ANTHROPIC_API_KEY)
   npx synthe migrate --to <model>   compare your prompt on another model, changing nothing (needs ANTHROPIC_API_KEY; add --dry-run to spend nothing)

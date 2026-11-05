@@ -2,14 +2,13 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { GOAL_FILE, STATE_BRANCH, parseGoal, parseScenarios } from "../core/goal.ts";
-import { judgeRound } from "../core/merge-rule.ts";
 import { readPrompt } from "../core/prompt.ts";
 import { newState, type State } from "../core/state.ts";
 import { sha256 } from "../core/safety.ts";
 import { headline } from "../loop/report.ts";
 import { anthropicModel, modelProblem } from "../model/client.ts";
-import { measureNoise, runScore } from "../loop/score.ts";
-import { runWrite } from "../loop/write.ts";
+import { measureNoise } from "../loop/score.ts";
+import { runLocalTry } from "./try-round.ts";
 import { init, type Io } from "./init.ts";
 import { calibrate } from "./calibrate.ts";
 import { migrate } from "./migrate.ts";
@@ -25,6 +24,9 @@ const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
   child.stderr.on("data", (d) => { err += d; });
   child.on("error", reject);
   child.on("close", (code) => (code === 0 ? resolve(out) : reject(new Error(err || `${cmd} failed`))));
+  // A command that exits without reading its stdin (a stub `gh`, a fast failure) closes the pipe first;
+  // without this, that surfaces as an unhandled EPIPE and crashes the CLI instead of reporting the failure.
+  child.stdin.on("error", () => {});
   child.stdin.end(stdin ?? "");
 });
 
@@ -168,7 +170,7 @@ async function calibrateChecks() {
   if (result.results.some((r) => r.verdict !== "trustworthy")) process.exitCode = 1;
 }
 
-// Runs one round on this computer and changes nothing, so a team can see what Synthe would do.
+// Runs one round on this computer without changing the prompt, so a team can see what Synthe would do.
 async function tryRound() {
   const local = localRun("try");
   if (!local) return;
@@ -182,10 +184,8 @@ async function tryRound() {
     console.log(`Cost: ${n.costUsd === null ? "unknown" : `$${n.costUsd.toFixed(2)}`}`);
     return;
   }
-  console.log("Trying one round on your computer. This takes a few minutes and changes nothing in your repo...");
-  const written = await runWrite(goal, newState(), prompt, scenarios, model);
-  const { scores, costUsd } = await runScore(goal, prompt, written.candidates, scenarios, model);
-  const verdict = judgeRound(scores, goal, null);
+  console.log("Trying one round on your computer. Your prompt stays unchanged; candidate fingerprints are saved in .synthe-local/try-history.json...");
+  const { written, costUsd, verdict } = await runLocalTry(process.cwd(), goal, prompt, scenarios, model);
   for (const c of written.candidates) console.log(`- ${c.title ?? c.summary ?? c.id}: ${verdict.notes[c.id] ?? "not tested"}`);
   for (const r of written.rejected ?? []) console.log(`- An edit that couldn't be applied: ${r.replace(/^candidate-\d+: /, "")}`);
   console.log(verdict.action === "merge" ? `In a real run, Synthe would merge this. ${verdict.plain}` : "In a real run, nothing would change this round.");
@@ -202,7 +202,7 @@ Then:
   npx synthe upgrade  update only the installed workflow for chained rounds
   npx synthe stop     stop it; nothing more runs or changes
   npx synthe restart  start it again, after stop or once you've fixed what stopped it
-  npx synthe try      run one round on your computer, changing nothing (needs ANTHROPIC_API_KEY)
+  npx synthe try      run one round on your computer without changing your prompt (needs ANTHROPIC_API_KEY)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
   npx synthe calibrate     check that your checks are marked steadily and the way you mean them (needs ANTHROPIC_API_KEY)
   npx synthe migrate --to <model>   compare your prompt on another model, changing nothing (needs ANTHROPIC_API_KEY; add --dry-run to spend nothing)
