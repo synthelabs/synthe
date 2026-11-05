@@ -91,7 +91,7 @@ Ask each team at the table. It should take 3 minutes. Write down their words.
 | Sharing choice (nothing, numbers, detail, or Crimson Hacks full) | The `share` setting in synthe.json |
 | Rounds run, merges, checks passed (start and end) | Shared numbers in synthelabs/synthe-runs |
 | Goal, checks, edits, one example message and its replies | Private synthelabs/synthe-feedback, for detail and full sharing |
-| Prompt at start, train and holdout test cases, final prompt | Private synthelabs/synthe-feedback, for full sharing before November 8 at 23:59 UTC |
+| Prompt at start, train and holdout test cases, final prompt | Private synthelabs/synthe-feedback, for full sharing before November 9 at 23:59 UTC |
 | Real cost | Key spend in the Console, plus shared numbers |
 | Time to first round, where they got stuck | Our table notes |
 | Merge mode chosen and whether they merged PRs | Check-in answer 1, plus our table notes |
