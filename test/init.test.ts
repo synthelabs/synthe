@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ACTION, CRIMSON_ACTION, init, type Io } from "../src/cli/init.ts";
+import { ACTION, CRIMSON_ACTION, init, RAW, type Io } from "../src/cli/init.ts";
 import { upgrade } from "../src/cli/upgrade.ts";
 import { DIAGNOSTICS_FILE } from "../src/cli/workflows.ts";
 import { parseGoal, parseScenarios } from "../src/core/goal.ts";
@@ -41,6 +41,7 @@ const fakeIo = (dir: string, failing: string[] = [], answers: Record<string, str
     async run(cmd, args, stdin) {
       ran.push({ cmd, args, stdin });
       if (failing.some((f) => args.join(" ").includes(f))) throw new Error("no");
+      if (args.includes(RAW)) return readFileSync(join(dir, decodeURIComponent(args.at(-1)!.split("/contents/")[1].split("?")[0])), "utf8");
       if (cmd === "git" && args[0] !== "ls-files") return "";
       if (cmd === "git") return execFileSync("git", args, { cwd: dir, encoding: "utf8" });
       return "o/r\n";
@@ -700,4 +701,82 @@ test("a code refused during calibration or confirmation leaves setup files and s
     assert.equal(existsSync(join(dir, ".synthe/scenarios.jsonl")), false);
     assert.ok(!ran.some((call) => ["secret", "commit", "push"].includes(call.args[0])));
   }
+});
+
+// The rounds run on the prompt as GitHub has it. A team that edited prompt.md and didn't push (or pushed elsewhere) once
+// got test cases and checks written for one prompt while every round tried to improve another.
+const remotePrompt = (io: Io, answer: () => string, reads: string[][] = []) => {
+  const run = io.run;
+  io.run = async (cmd, args, stdin) => (args.includes(RAW) ? (reads.push(args), answer()) : run(cmd, args, stdin));
+};
+
+test("setup refuses, before spending on test cases, when the prompt here isn't the prompt on GitHub", async () => {
+  const cases: [() => string, RegExp][] = [
+    [() => "An older prompt that was never updated on GitHub.", /prompt\.md on this machine isn't the same as on GitHub \(o\/r\)\. .*`git push`/],
+    [() => { throw new Error("gh: Not Found (HTTP 404)"); }, /prompt\.md isn't on GitHub \(o\/r\) yet.*`git push`/],
+    [() => { throw new Error("connect ETIMEDOUT"); }, /couldn't read prompt\.md from GitHub \(o\/r\)/],
+  ];
+  for (const agent of [false, true]) {
+    for (const [answer, message] of cases) {
+      const dir = repoDir(PROMPT);
+      const { io, ran, said } = fakeIo(dir);
+      const asks: Ask[] = [];
+      io.model = io.proxy = () => ({ async ask(ask: Ask) { asks.push(ask); return { text: ask.schema ? scenarioReply : "OK", costUsd: 0.01 }; } });
+      remotePrompt(io, answer);
+      const options = agent ? agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Be clear", "--mode", "auto"]) : undefined;
+      const env = agent ? { SYNTHE_EVENT_CODE: "event", SYNTHE_TEAM_CODE: TEAM } : {};
+      assert.equal(await init(io, dir, undefined, "", env, options), false);
+      assert.match(said.join("\n"), message);
+      assert.ok(said.at(-1)!.endsWith("Nothing changed."));
+      assert.ok(!asks.some((ask) => ask.schema), "no test cases or checks were generated");
+      assert.ok(!ran.some((call) => ["secret", "add", "commit", "push", "workflow"].includes(call.args[0])));
+      for (const file of ["synthe.json", DRAFT_FILE, ".synthe/scenarios.jsonl"]) assert.equal(existsSync(join(dir, file)), false);
+    }
+  }
+});
+
+test("setup reads the prompt from GitHub's default branch and accepts it when only line endings differ", async () => {
+  const dir = repoDir(PROMPT);
+  const { io } = fakeIo(dir);
+  const reads: string[][] = [];
+  remotePrompt(io, () => PROMPT + "\r\n", reads);
+  assert.equal(await init(io, dir), true);
+  assert.deepEqual(reads, [["api", "-H", RAW, "repos/o/r/contents/prompt.md?ref=o%2Fr"]]);
+});
+
+test("agent confirmation refuses when the prompt on GitHub no longer matches the drafted one", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, ran, said } = fakeIo(dir);
+  const calls: Ask[] = [];
+  io.proxy = () => setupModel(calls);
+  let remote = PROMPT;
+  remotePrompt(io, () => remote);
+  const env = { SYNTHE_EVENT_CODE: "event", SYNTHE_TEAM_CODE: TEAM };
+  assert.equal(await init(io, dir, undefined, "", env, agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Be clear", "--mode", "auto"])), true);
+  remote = "Someone pushed a different prompt after the draft.";
+  assert.equal(await init(io, dir, undefined, "", env, agentOptions(["--agent", "--confirm", "--keep-checks"])), false);
+  assert.match(said.at(-1)!, /prompt\.md on this machine isn't the same as on GitHub/);
+  assert.ok(existsSync(join(dir, DRAFT_FILE)), "the draft is kept so the team can confirm after pushing");
+  assert.ok(!ran.some((call) => ["secret", "add", "commit", "push", "workflow"].includes(call.args[0])));
+  remote = PROMPT;
+  assert.equal(await init(io, dir, undefined, "", env, agentOptions(["--agent", "--confirm", "--keep-checks"])), true);
+});
+
+test("confirmation catches a prompt edit made while the draft was being generated", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, said } = fakeIo(dir);
+  let remote = PROMPT;
+  remotePrompt(io, () => remote);
+  const model = setupModel([]);
+  io.proxy = () => ({
+    async ask(ask) {
+      remote = "A new prompt pushed during drafting.";
+      writeFileSync(join(dir, "prompt.md"), remote);
+      return model.ask(ask);
+    },
+  });
+  const env = { SYNTHE_EVENT_CODE: "event", SYNTHE_TEAM_CODE: TEAM };
+  assert.equal(await init(io, dir, undefined, "", env, agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Be clear", "--mode", "auto"])), true);
+  assert.equal(await init(io, dir, undefined, "", env, agentOptions(["--agent", "--confirm", "--keep-checks"])), false);
+  assert.match(said.at(-1)!, /Your prompt changed since step 1/);
 });

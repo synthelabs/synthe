@@ -375,6 +375,26 @@ async function whyGitHubFails(io: Io): Promise<string> {
   return "Run this inside your project's folder, after pushing it to GitHub (you need admin access to the repo).";
 }
 
+// Rounds run in GitHub Actions on the prompt as it is on GitHub, but setup writes the test cases and checks from the
+// file on this machine. If the two differ (an edit not committed, or a commit not pushed), every round would improve a
+// prompt the team never meant, against test cases written for another one. So setup refuses until they match.
+export const RAW = "Accept: application/vnd.github.raw";
+async function promptNotOnGitHub(io: Io, slug: string, branch: string, path: string, local: string): Promise<string | null> {
+  const ref = branch === "your default branch" ? "" : `?ref=${encodeURIComponent(branch)}`;
+  const where = branch === "your default branch" ? "GitHub" : `GitHub (${branch})`;
+  const push = "Commit the prompt and get it onto GitHub's default branch with `git push` or a pull request, then retry the same setup command. Nothing changed.";
+  let remote: string;
+  try {
+    remote = await io.run("gh", ["api", "-H", RAW, `repos/${slug}/contents/${path.split("/").map(encodeURIComponent).join("/")}${ref}`]);
+  } catch (error) {
+    if (/404|not found/i.test(error instanceof Error ? error.message : String(error))) return `${path} isn't on ${where} yet, and Synthe's rounds run on the version there. ${push}`;
+    return `Synthe couldn't read ${path} from ${where} to check it matches this machine. Check your connection and retry the same setup command. Nothing changed.`;
+  }
+  const same = (text: string) => text.replace(/\r\n/g, "\n").trimEnd();
+  return same(remote) === same(local) ? null
+    : `${path} on this machine isn't the same as on ${where}. Synthe's rounds run on the version on GitHub, so its tests would be written for one prompt while it improves another. ${push}`;
+}
+
 export async function init(io: Io, root: string, now = () => new Date(), envKey = process.env.ANTHROPIC_API_KEY, env: Partial<Record<"DO_NOT_TRACK" | "SYNTHE_TELEMETRY" | "SYNTHE_EVENT_CODE" | "SYNTHE_ANTHROPIC_KEY" | "SYNTHE_TEAM_CODE", string>> = process.env, agent?: AgentOptions) {
   if (agent) {
     try { await io.run("gh", ["--version"]); await io.run("gh", ["auth", "status"]); } catch {
@@ -418,6 +438,8 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
       io.say("Your prompt changed since step 1. Run `npx synthe init --agent` with the same prompt, objective and mode to draft again, then review the new checks before confirming. Nothing changed.");
       return false;
     }
+    const unpushed = await promptNotOnGitHub(io, slug, branch, draft.goal.prompt.path, source);
+    if (unpushed) { io.say(unpushed); return false; }
     const credential = setupCredential(env, envKey, true);
     if (!credential) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY (agent setup never uses ANTHROPIC_API_KEY)");
     if (draft.event !== !credential.startsWith("sk-ant-")) askPerson("--confirm (use the same credential type as step 1)");
@@ -474,8 +496,11 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   }
   const refused = promptPathProblem(location.path);
   if (refused) { io.say(refused); return false; }
+  const source = tracked.find((file) => file.path === location.path)?.text ?? readFileSync(join(root, location.path), "utf8");
+  const unpushed = await promptNotOnGitHub(io, slug, branch, location.path, source);
+  if (unpushed) { io.say(unpushed); return false; }
 
-  const promptText = location.kind === "inline" ? location.initial : readFileSync(join(root, location.path), "utf8");
+  const promptText = location.kind === "inline" ? location.initial : source;
   // Every change to a longer prompt would be refused by the safety check, so the run could only spend and stall.
   if (promptText.length > MAX_PROMPT_CHARS) {
     if (agent) askPerson("--prompt (too long)");
@@ -602,7 +627,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   if (agent) {
     ignoreDraft(root);
     mkdirSync(join(root, ".synthe"), { recursive: true });
-    const draft: SetupDraft = { version: 1, slug, branch, goal, rows, attacks, event, tracking: Boolean(enrollment), sourceHash: sha256(readFileSync(join(root, location.path), "utf8")), examples };
+    const draft: SetupDraft = { version: 1, slug, branch, goal, rows, attacks, event, tracking: Boolean(enrollment), sourceHash: sha256(source), examples };
     writeFileSync(join(root, DRAFT_FILE), `${JSON.stringify(draft, null, 2)}\n`, { mode: 0o600 });
     io.say(AGENT_NEXT);
     return true;
