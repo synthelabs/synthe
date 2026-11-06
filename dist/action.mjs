@@ -30470,7 +30470,7 @@ ${goal.policy ?? ""}`);
 // package.json
 var package_default = {
   name: "synthe",
-  version: "1.8.1",
+  version: "1.8.2",
   description: "Your AI agent's system prompt gets better on its own: Synthe tests small changes and merges only the clear wins.",
   keywords: [
     "ai",
@@ -30509,6 +30509,7 @@ var package_default = {
     test: "node --test test/*.test.ts",
     typecheck: "tsc --noEmit",
     prepublishOnly: "node scripts/check-release-tag.mjs",
+    version: "node scripts/version-pins.mjs && npm run build",
     mutation: "node scripts/mutation-check.mjs",
     simulate: "node scripts/simulate-gate.ts"
   },
