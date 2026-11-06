@@ -27,7 +27,7 @@ Your AI agent's prompt gets better while you build everything else.
 
 1. Have the event code from the QR card and the team code from the Synthe table ready. The $4 run budget can use event credit.
 2. In your repo, run `npx --yes github:synthelabs/synthe#v1.8.3 init`.
-3. Say what your agent should get better at, confirm the checks Synthe proposes, and choose whether to merge improvements automatically or review each one. Crimson requires workflow tracking even with your own Anthropic key. Your optional research-sharing settings control prompt, test case, and other research data.
+3. Say what your agent should get better at, confirm the checks Synthe proposes, and choose whether to merge improvements automatically or review each one. Crimson requires workflow tracking even with your own Anthropic key. By default, Synthe also shares research data about your run, including your prompt and test cases through November 9 at 23:59 UTC.
 4. After the run, open the report issue in your repo.
 
 Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop any time: `npx synthe stop`

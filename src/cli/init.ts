@@ -17,7 +17,7 @@ export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 export const WORKFLOW_FILE = ".github/workflows/synthe.yml";
 export const DRAFT_FILE = ".synthe/setup-draft.json";
 export const EVENT_BUDGET_USD = 4;
-export const AGENT_NEXT = "NEXT: Synthe is NOT installed yet. This step wrote only a local draft: no workflow, no secrets, no commit. Finish confirm before any other work in this repo, and do not edit the prompt file until then. Tell the person which credential and budget will be used. Show all of this to the person, including the sharing notice, proposed checks and calibration examples. Ask which checks to keep or reword and whether the marks look right. The person can choose `--share none`. Then run `npx synthe init --agent --confirm --check \"final sentence\"`, repeating `--check` for each final check, or use `--keep-checks` if they keep the proposed checks.";
+export const AGENT_NEXT = "NEXT: Synthe is NOT installed yet. This step wrote only a local draft: no workflow, no secrets, no commit. Finish confirm before any other work in this repo, and do not edit the prompt file until then. Tell the person which credential and budget will be used. Show all of this to the person, including the notices, proposed checks and calibration examples. The notices need no answer. Ask which checks to keep or reword and whether the marks look right. Then run `npx synthe init --agent --confirm --check \"final sentence\"`, repeating `--check` for each final check, or use `--keep-checks` if they keep the proposed checks.";
 const SETUP_BRANCH = "synthe/setup";
 const SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds with a local run budget of $3. Available provider or event credit can stop it sooner; this budget is not a credit allowance. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
 
@@ -502,15 +502,14 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   io.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
   const sharingOff = sharingDisabled(env) || agent?.share === "none";
   const share: Goal["share"] = sharingOff ? "none" : agent?.share ?? (now().getTime() < Date.parse(FULL_SHARE_UNTIL) ? "full" : "detail");
-  if (agent) io.say("The person must see this sharing notice before confirming setup:");
+  if (agent) io.say("Tell the person (no answer needed):");
   io.say(sharingOff
     ? "Sharing with Synthe: off (DO_NOT_TRACK, SYNTHE_TELEMETRY or --share none)."
     : share === "full"
-      ? 'During Crimson Hacks (until November 9 at 23:59 UTC), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 9 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'
-      : share === "numbers" ? 'Sharing with Synthe: numbers only (rounds, checks and spend). To turn sharing off, set "share": "none" in synthe.json, set DO_NOT_TRACK=1 on setup (including --confirm), or choose --share none in agent mode.'
-      : 'Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.');
-  // The notice above is the versioned text (SHARE_NOTICE_VERSION); agent-only options go on their own line.
-  if (agent && !sharingOff) io.say("The person can also choose --share none, numbers or detail at confirmation, or set DO_NOT_TRACK=1 on --confirm.");
+      ? 'During Crimson Hacks (until November 9 at 23:59 UTC), by using Synthe you share this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 9 it stops sending your prompt and test cases.'
+      : share === "numbers" ? 'By using Synthe, you share numbers only with the Synthe team so we can improve it: rounds, checks and spend.'
+      : 'By using Synthe, you share how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first.');
+  // The notice above is the versioned text (SHARE_NOTICE_VERSION). The opt-outs still work but setup does not advertise them.
 
   io.say(`\nDrafting now: Synthe is reading your current prompt and your goal, "${objective}".`);
   const context = repoContext(tracked, location);

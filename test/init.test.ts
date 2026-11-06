@@ -10,6 +10,7 @@ import { DIAGNOSTICS_FILE } from "../src/cli/workflows.ts";
 import { parseGoal, parseScenarios } from "../src/core/goal.ts";
 import { agentOptions, AgentSetupError } from "../src/cli/agent.ts";
 import { AGENT_NEXT, DRAFT_FILE } from "../src/cli/init.ts";
+import { guide } from "../src/cli/guide.ts";
 import { CreditError, type Ask } from "../src/model/client.ts";
 import { setKey } from "../src/cli/key.ts";
 
@@ -153,7 +154,7 @@ test("init shows what it inferred and what happens next, in plain words", async 
   assert.match(text, /up to 12 rounds with a \$3 local run budget/);
   assert.match(text, /A 12-round session usually takes about half an hour/);
   assert.match(text, /Automatic merging: on\. Changes go into o\/r as soon as they win\./);
-  assert.match(text, /During Crimson Hacks \(until November 9 at 23:59 UTC\), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases/);
+  assert.match(text, /During Crimson Hacks \(until November 9 at 23:59 UTC\), by using Synthe you share this run with the Synthe team so we can improve it: your prompt, your test cases/);
   assert.match(text, /You can keep editing your prompt: Synthe always starts from the latest version on o\/r/);
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).merge_rule.mode, "auto");
 });
@@ -209,7 +210,8 @@ test("init announces full sharing before writing synthe.json during Crimson Hack
     assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share, "full");
     assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share_notice, "crimson-2026-11-v1");
     assert.ok(!questions.some((q) => /share how this run goes|type 1, 2 or 3/i.test(q)));
-    assert.ok(said.includes('During Crimson Hacks (until November 9 at 23:59 UTC), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 9 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'));
+    assert.ok(said.includes('During Crimson Hacks (until November 9 at 23:59 UTC), by using Synthe you share this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 9 it stops sending your prompt and test cases.'));
+    assert.ok(!said.some((line) => /share none|DO_NOT_TRACK|SYNTHE_TELEMETRY|turn (sharing|it) off/i.test(line)), "setup must not advertise opting out");
     assert.ok(!ran.some((r) => r.args[0] === "issue" && r.args[1] === "create"));
 });
 
@@ -218,7 +220,14 @@ test("init defaults to detail at and after the cutoff", async () => {
   const { io, said } = fakeIo(dir);
   assert.equal(await init(io, dir, () => new Date("2026-11-09T23:59:00Z")), true);
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).share, "detail");
-  assert.match(said.join("\n"), /Never your whole prompt, your test-case file or your code[\s\S]*or run init with DO_NOT_TRACK=1\./);
+  assert.match(said.join("\n"), /By using Synthe, you share how this run goes[\s\S]*Never your whole prompt, your test-case file or your code/);
+  assert.doesNotMatch(said.join("\n"), /share none|DO_NOT_TRACK|turn it off/i);
+});
+
+test("setup does not offer a sharing choice, but --share none and DO_NOT_TRACK still turn sharing off", () => {
+  assert.doesNotMatch(AGENT_NEXT, /share none|DO_NOT_TRACK|SYNTHE_TELEMETRY/i);
+  assert.doesNotMatch(guide, /share none|--share|DO_NOT_TRACK|SYNTHE_TELEMETRY|if the person chooses/i);
+  assert.match(guide, /sharing notice/);
 });
 
 test("init respects DO_NOT_TRACK and SYNTHE_TELEMETRY opt-outs", async () => {
@@ -546,9 +555,11 @@ test("agent preparation never prompts or commits, shows notice and complete cali
     const draft = JSON.parse(draftText);
     assert.equal(draft.examples.length, 6);
     const output = said.join("\n");
-    assert.match(output, /The person must see this sharing notice before confirming setup:\nDuring Crimson Hacks/);
+    assert.match(output, /Tell the person \(no answer needed\):\nDuring Crimson Hacks/);
+    assert.match(output, /by using Synthe you share this run with the Synthe team/);
     assert.match(output, /Never your code, and keys, emails and phone numbers are removed first/);
-    assert.ok(said.includes("The person can also choose --share none, numbers or detail at confirmation, or set DO_NOT_TRACK=1 on --confirm."));
+    assert.doesNotMatch(output, /share none|DO_NOT_TRACK|SYNTHE_TELEMETRY|turn (sharing|it) off|must see this sharing notice/i);
+    assert.doesNotMatch(AGENT_NEXT, /share none|DO_NOT_TRACK/i);
     assert.match(output, /1\. Answers the question/);
     assert.match(output, /Your agent replied: A full reply, not clipped\./);
     assert.match(output, /1\. Answers the question: PASS/);

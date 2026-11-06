@@ -67,7 +67,7 @@ Use `--mode auto` or `--mode review` as the person chose. Leave out `--message` 
 
 Show the full output as written, not a summary. It has three parts:
 
-1. The credential and budget, and both notices. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. The separate research-sharing settings control the prompt, test cases, and other research data. The person can set `--share none` at confirmation or `"share": "none"` in `synthe.json` later.
+1. The credential and budget, the sharing notice, and the Crimson workflow notice for enrolled teams. Show the notices as information. They need no answer. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. Separate research-sharing settings control the prompt, test cases, and other research data.
 2. The numbered proposed checks.
 3. Example replies, each with Synthe's pass or fail mark.
 
@@ -93,7 +93,7 @@ If the person accepted every proposed check as it is, run this instead:
 SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.3 init --agent --confirm --keep-checks
 ```
 
-Add `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft's sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don't confirm twice.
+Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don't confirm twice.
 
 Confirm succeeded only if it printed `Added to <branch>` or opened an "Add Synthe" pull request. If it printed anything else, show the person the message, follow it, and do not go to step 8. If it opened a pull request, Synthe starts only after that pull request is merged: tell the person.
 
