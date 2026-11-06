@@ -28532,10 +28532,54 @@ function displaySeries(points) {
   }
   return out;
 }
+var BLOCKS = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588";
+function sparkline(points) {
+  return displaySeries(points).map((p) => BLOCKS[Math.min(7, Math.max(0, Math.floor(p.pct / 100 * 8)))]).join("");
+}
+var fmtPct = (n) => Number.isInteger(n) ? `${n}` : n.toFixed(1);
+var money = (r) => typeof r.costUsd === "number" ? ` \xB7 $${r.costUsd.toFixed(2)}` : "";
+function roundLines(r) {
+  if (r.outcome === "merged") {
+    const lines2 = [`Round ${r.round} \xB7 merged${money(r)}`];
+    if (r.changed) lines2.push(`  What changed: ${r.changed}`);
+    if (r.examplePair) {
+      lines2.push(`  Example, on: "${r.examplePair.input}"`);
+      lines2.push(`    Before: "${r.examplePair.beforeReply}"`);
+      lines2.push(`    After: "${r.examplePair.afterReply}"`);
+      if (r.examplePair.improvedChecks.length) lines2.push(`    Now passes: ${r.examplePair.improvedChecks.join(", ")}`);
+    }
+    if (typeof r.scorePct === "number") lines2.push(`  Score this round: ${fmtPct(r.scorePct)}%`);
+    return lines2;
+  }
+  if (r.outcome === "proposed") return [`Round ${r.round} \xB7 proposed${money(r)}`, ...r.plain ? [`  ${r.plain}`] : []];
+  if (r.outcome === "reverted") return [`Round ${r.round} \xB7 reverted${money(r)}`, ...r.plain ? [`  ${r.plain}`] : []];
+  if (r.outcome === "declined") return [`Round ${r.round} \xB7 declined${money(r)}`, "  The change was closed without merging, so nothing changed."];
+  if (r.outcome === "failed") return [`Round ${r.round} \xB7 didn't finish${money(r)}`, ...r.plain ? [`  ${r.plain}`] : ["  The round didn't finish, so nothing changed."]];
+  const lines = [`Round ${r.round} \xB7 no change${money(r)}`];
+  if (r.tried?.length) lines.push(`  Tried ${r.tried.length} ${r.tried.length === 1 ? "change" : "changes"}, but none was clearly better, so nothing merged.`);
+  else if (r.plain) lines.push(`  ${r.plain}`);
+  else lines.push("  Nothing was clearly better, so nothing merged.");
+  if (typeof r.scorePct === "number") lines.push(`  Score this round: ${fmtPct(r.scorePct)}%`);
+  return lines;
+}
+function renderDeltaBlock(goal, state, maxRounds = 3) {
+  const series = scoreSeries(state);
+  const measured = displaySeries(series).filter((p) => p.measured);
+  const lines = [];
+  if (measured.length === 1) {
+    lines.push(`Your prompt scores ${fmtPct(measured[0].pct)}% (checks passed on test cases Synthe never trains on)`);
+    lines.push(`Score by round: ${sparkline(series)}`);
+  } else if (measured.length > 1) {
+    lines.push(`Your prompt: ${fmtPct(measured[0].pct)}% \u2192 ${fmtPct(measured.at(-1).pct)}% (checks passed on test cases Synthe never trains on)`);
+    lines.push(`Score by round: ${sparkline(series)}`);
+  }
+  for (const r of state.rounds.slice(-Math.max(0, maxRounds)).reverse()) lines.push(...roundLines(r));
+  return lines.join("\n");
+}
 
 // src/loop/report.ts
 var ISSUE_TITLE = "Synthe: prompt report";
-var money = (state) => state.spendUnknown ? `over $${budgetSpend(state).toFixed(2)}` : `$${budgetSpend(state).toFixed(2)}`;
+var money2 = (state) => state.spendUnknown ? `over $${budgetSpend(state).toFixed(2)}` : `$${budgetSpend(state).toFixed(2)}`;
 var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")} back to back`;
 var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
@@ -28572,7 +28616,7 @@ function headlineBase(goal, state, stoppedByTeam = false) {
   const gain = rated.length ? `Your checks now pass ${rated.at(-1).checks.after}% of the time, up from ${rated[0].checks.before}%. ` : "";
   const guarded = state.rounds.filter((r) => r.outcome === "merged" && r.guards);
   const guardLine = guarded.length ? `${guardSentence({ before: guarded[0].guards.before, after: guarded.at(-1).guards.after })} ` : "";
-  const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;
+  const spent = `It has spent ${money2(state)} of $${goal.budget.max_usd}.`;
   if (state.proposal) {
     return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
   }
@@ -28597,12 +28641,12 @@ function headlineBase(goal, state, stoppedByTeam = false) {
     if (refusedCode(end)) return { title: "Stopped: the Synthe proxy refused this repo's code", summary: `${end.plain} ${CODE_FIX} ${spent}` };
     if (badKey(end)) return { title: end.plain === PROXY_AUTH_MESSAGE ? "Stopped: the Synthe proxy couldn't verify this run" : "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
     if (busy(end) && isFinished(state.stopped)) {
-      return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
+      return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
     }
     if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, run `npx synthe key`." };
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
-  return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
+  return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
 }
 
 // src/model/client.ts
@@ -30481,11 +30525,11 @@ function dryRunModel(goal) {
     }
   };
 }
-var money2 = (n) => n === null ? "unknown" : `$${n.toFixed(3)}`;
+var money3 = (n) => n === null ? "unknown" : `$${n.toFixed(3)}`;
 var signed = (n, digits = 1) => `${n > 0 ? "+" : ""}${n.toFixed(digits)}`;
 function costSection(before, after) {
   const change = before !== null && after !== null && before > 0 ? `${signed(100 * (after - before) / before, 0)}%` : "unknown";
-  return ["Cost per round (answering every test case once)", `  Before: ${money2(before)}  After: ${money2(after)}  Change: ${change}`, ""];
+  return ["Cost per round (answering every test case once)", `  Before: ${money3(before)}  After: ${money3(after)}  Change: ${change}`, ""];
 }
 async function migrate(args, env) {
   const say = env.say;
@@ -30564,7 +30608,7 @@ Scenarios: ${train} train + ${scenarios.length - train} holdout = ${scenarios.le
   else lines.push(`Verdict: Review before switching. ${costBefore === null || costAfter === null ? "The cost couldn't be worked out." : "The new model doesn't cost less."}`);
   lines.push("", "This is one run on each model, so small changes can be the judge varying. `npx synthe try --noise` shows how much it varies.");
   const spent = sumCosts(costs);
-  lines.push(parsed.dryRun ? `Cost of this comparison: $0.00 (dry run). A real run would cost about ${money2(spent)}.` : `Cost of this comparison: ${money2(spent)}`);
+  lines.push(parsed.dryRun ? `Cost of this comparison: $0.00 (dry run). A real run would cost about ${money3(spent)}.` : `Cost of this comparison: ${money3(spent)}`);
   say(lines.join("\n"));
   return 0;
 }
@@ -30602,6 +30646,12 @@ async function stoppedLine(run2, slug) {
   } catch {
     return null;
   }
+}
+
+// src/cli/changes.ts
+var NO_ROUNDS_YET = "No rounds have run yet. The score graph will appear after the first round.";
+function changesText(goal, state) {
+  return state.rounds.length ? renderDeltaBlock(goal, state) : NO_ROUNDS_YET;
 }
 
 // src/cli/secret.ts
@@ -30701,7 +30751,7 @@ async function setKey(io2, env = process.env, terminal = Boolean(process.stdin.i
 }
 
 // src/cli/guide.ts
-var guide = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand.\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n\n## 1. Prerequisites\n\n1. Check the repo is on GitHub and pushed: `git remote -v` and `git status`. If not, help the person push it first.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the Synthe table. Enrolled teams need both codes for workflow tracking, even if they use their own Anthropic key. A setup outside the event can use its own Anthropic key alone.\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nTo use an own key during Crimson, add `SYNTHE_ANTHROPIC_KEY=<key>` alongside both event codes, here and in step 7. Outside Crimson, use the own key alone.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, and both notices. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. The separate research-sharing settings control the prompt, test cases, and other research data. The person can set `--share none` at confirmation or `"share": "none"` in `synthe.json` later.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person:\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n- If step 1 said some checks can\'t both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can\'t raise that score.\n\nFollow the `NEXT:` line with the tagged command in step 7.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent --confirm --keep-checks\n```\n\nAdd `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft\'s sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\n## 8. After setup\n\nTell the person:\n\n- Rounds start by themselves. They do not need to do anything.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n';
+var guide = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand.\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n\n## 1. Prerequisites\n\n1. Check the repo is on GitHub and pushed: `git remote -v` and `git status`. If not, help the person push it first.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the Synthe table. Enrolled teams need both codes for workflow tracking, even if they use their own Anthropic key. A setup outside the event can use its own Anthropic key alone.\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nTo use an own key during Crimson, add `SYNTHE_ANTHROPIC_KEY=<key>` alongside both event codes, here and in step 7. Outside Crimson, use the own key alone.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, and both notices. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. The separate research-sharing settings control the prompt, test cases, and other research data. The person can set `--share none` at confirmation or `"share": "none"` in `synthe.json` later.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person:\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n- If step 1 said some checks can\'t both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can\'t raise that score.\n\nFollow the `NEXT:` line with the tagged command in step 7.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent --confirm --keep-checks\n```\n\nAdd `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft\'s sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\n## 8. After setup\n\nTell the person:\n\n- Rounds start by themselves. They do not need to do anything.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Tell the person: \'Ask me "what did Synthe do?" at any time and I will show you what changed.\'\n- When the person asks what Synthe did or what changed, run `npx synthe changes` and show its output word for word before adding any commentary of your own.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe changes\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `changes` shows what Synthe changed in the latest rounds and how the prompt\'s score moved.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n';
 
 // src/core/evidence.ts
 import { execFileSync } from "node:child_process";
@@ -31178,6 +31228,21 @@ async function status() {
   console.log(goal.merge_rule.mode === "propose" ? "Mode: review." : "Mode: automatic merging.");
   if (s.issue) console.log(`Full report: https://github.com/${slug}/issues/${s.issue}`);
 }
+async function changes() {
+  if (!setUpHere()) return;
+  const slug = await repoSlug();
+  if (!slug) return;
+  let raw;
+  try {
+    raw = await run("gh", ["api", `repos/${slug}/contents/state.json?ref=${encodeURIComponent(STATE_BRANCH)}`, "-H", "Accept: application/vnd.github.raw+json"]);
+  } catch {
+    console.log(NO_ROUNDS_YET);
+    return;
+  }
+  const s = { ...newState(), ...JSON.parse(raw) };
+  const goal = parseGoal(readFileSync9(GOAL_FILE, "utf8"));
+  console.log(changesText(goal, s));
+}
 async function stop() {
   if (!setUpHere()) return;
   try {
@@ -31303,6 +31368,7 @@ Start here, inside your project's folder:
 
 Then:
   npx synthe status   where it is and what it changed
+  npx synthe changes  what it changed, and how the score moved
   npx synthe upgrade  update only the installed workflow for chained rounds
   npx synthe upgrade --event  install Crimson tracking in an existing event repo
   npx synthe verify FILE   check a round's evidence record (.synthe/evidence/round-N.json)
@@ -31326,6 +31392,7 @@ async function main() {
   } else if (command === "upgrade") console.log(upgrade(process.cwd(), template(), process.argv.includes("--event")));
   else if (command === "stop") await stop();
   else if (command === "status") await status();
+  else if (command === "changes") await changes();
   else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
   else if (command === "verify") process.exitCode = verify(process.argv[3], process.cwd());
