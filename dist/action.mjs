@@ -30508,6 +30508,7 @@ var package_default = {
     build: "esbuild src/cli/main.ts --bundle --loader:.md=text --platform=node --format=esm --target=node20 --outfile=dist/cli.js --banner:js='#!/usr/bin/env node' && esbuild src/action.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/action.mjs",
     test: "node --test test/*.test.ts",
     typecheck: "tsc --noEmit",
+    prepublishOnly: "node scripts/check-release-tag.mjs",
     mutation: "node scripts/mutation-check.mjs",
     simulate: "node scripts/simulate-gate.ts"
   },

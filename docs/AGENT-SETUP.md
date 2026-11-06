@@ -10,6 +10,9 @@ You are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have 
 - Never edit `synthe.json`, `.synthe/` or the workflow file by hand.
 - If a command fails, show the person the exact message and follow what it says.
 - Do not retry setup more than once without asking the person.
+- Setup is two commands: draft (step 5) and confirm (step 7). Synthe is not installed until confirm succeeds. The draft writes only a local file: no workflow, no secrets, no commit. Finish confirm before you do any other work in this repo.
+- If the person asks for something else before confirm (for example "implement it" or a change to their code), tell them: "Synthe is not installed yet. One more command finishes it." Finish confirm first, then do what they asked.
+- Do not edit the prompt file between draft and confirm. Confirm refuses a prompt that changed, and nothing is installed.
 
 ## 1. Prerequisites
 
@@ -74,7 +77,7 @@ Then ask the person:
 - Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.
 - If step 1 said some checks can't both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can't raise that score.
 
-Follow the `NEXT:` line with the tagged command in step 7.
+Follow the `NEXT:` line with the tagged command in step 7. Do not start other work until step 7 succeeds.
 
 ## 7. Step 2: confirm
 
@@ -92,9 +95,11 @@ SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelab
 
 Add `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft's sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don't confirm twice.
 
+Confirm succeeded only if it printed `Added to <branch>` or opened an "Add Synthe" pull request. If it printed anything else, show the person the message, follow it, and do not go to step 8. If it opened a pull request, Synthe starts only after that pull request is merged: tell the person.
+
 ## 8. After setup
 
-Tell the person:
+Do this step only after confirm succeeded. Tell the person:
 
 - Rounds start by themselves. They do not need to do anything.
 - To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo's Actions tab.
