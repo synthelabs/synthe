@@ -51,34 +51,35 @@ export function holdoutScorePct(rows: ScoreRow[]): number | null {
 
 const truncReply = (t: string) => (t.length > 300 ? t.slice(0, 300) : t);
 
-// One held-back case a merged change visibly fixed, for the round record's examplePair. Cases are
-// ranked by how many fewer checks the winning reply failed than the current prompt's; a case is only
-// used when the flipped checks are known exactly, which needs the winning reply to have failed nothing
-// (its failed checks aren't named in the scores, only counted) and both replies to still be in the
-// scores. Held-back replies usually aren't kept (see runScore), so this normally finds nothing, and
-// the record simply carries no pair rather than an invented one.
+// One practice (learning) case a merged change visibly fixed, for the round record's examplePair. The
+// pair comes from the learning cases, not the held-back ones: runScore keeps no held-back replies, on
+// purpose, so nothing about those cases can reach a writer, while the learning rows keep both replies
+// and name the checks the current prompt's reply failed. The winning reply's failed checks are only
+// counted, not named, so a case is used only when the flipped checks are known exactly: the winning
+// row names the checks it still fails, or it failed none. Cases are ranked by how many of the current
+// prompt's failed checks the winning reply passes (ties: the first case). When no case qualifies, the
+// record simply carries no pair rather than an invented one.
 function pickExamplePair(scores: RoundScores, candidateId: string, scenarioText: string | null): RoundRecord["examplePair"] {
   const winner = scores.candidates.find((c) => c.id === candidateId);
-  if (!winner?.holdout || !scenarioText) return undefined;
+  if (!winner || !scenarioText) return undefined;
   let rows: { id: string; input: string; split: string }[] = [];
   try { rows = parseScenarios(scenarioText); } catch { return undefined; }
-  const current = new Map(scores.baselineHoldout.map((r) => [r.id, r]));
-  const ranked = winner.holdout
-    .flatMap((row) => {
-      const before = current.get(row.id);
-      if (!before || typeof before.failed !== "number" || typeof row.failed !== "number") return [];
-      const flips = before.failed - row.failed;
-      return flips > 0 ? [{ row, before, flips }] : [];
-    })
-    .sort((a, b) => b.flips - a.flips);
-  for (const { row, before } of ranked) {
-    if (row.failed !== 0 || !before.failedChecks?.length) continue;
+  const current = new Map(scores.baselineTrain.map((r) => [r.id, r]));
+  let best: RoundRecord["examplePair"];
+  for (const row of winner.train) {
+    const before = current.get(row.id);
+    if (!before?.failedChecks?.length) continue;
     if (typeof before.reply !== "string" || typeof row.reply !== "string") continue;
-    const scenario = rows.find((s) => s.id === row.id && s.split === "holdout");
+    if (typeof before.failed !== "number" || typeof row.failed !== "number" || row.failed >= before.failed) continue;
+    const stillFailed = Array.isArray(row.failedChecks) ? row.failedChecks : row.failed === 0 ? [] : null;
+    if (!stillFailed) continue; // which checks flipped isn't known exactly, so this case can't be named honestly
+    const flipped = before.failedChecks.filter((name) => !stillFailed.includes(name));
+    if (!flipped.length || (best && flipped.length <= best.improvedChecks.length)) continue;
+    const scenario = rows.find((s) => s.id === row.id && s.split === "train");
     if (!scenario) continue;
-    return { input: clipText(scenario.input, 200), beforeReply: truncReply(before.reply), afterReply: truncReply(row.reply), improvedChecks: [...before.failedChecks] };
+    best = { input: clipText(scenario.input, 200), beforeReply: truncReply(before.reply), afterReply: truncReply(row.reply), improvedChecks: flipped };
   }
-  return undefined;
+  return best;
 }
 
 // Details a change adds that a business would have to really offer: amounts, percentages, time limits, web
@@ -507,7 +508,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
 
   if (scores) {
     // The round's place in the score series, from the held-back marks the score step already made: the
-    // current prompt's check-pass share, and, when a change landed, one held-back case it visibly fixed.
+    // current prompt's check-pass share, and, when a change landed, one practice case it visibly fixed.
     if (judged) {
       record.scorePct = holdoutScorePct(scores.baselineHoldout);
       if (winnerId) {

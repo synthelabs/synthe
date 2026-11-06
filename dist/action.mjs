@@ -29953,28 +29953,29 @@ function holdoutScorePct(rows) {
 var truncReply = (t) => t.length > 300 ? t.slice(0, 300) : t;
 function pickExamplePair(scores, candidateId, scenarioText) {
   const winner = scores.candidates.find((c) => c.id === candidateId);
-  if (!winner?.holdout || !scenarioText) return void 0;
+  if (!winner || !scenarioText) return void 0;
   let rows = [];
   try {
     rows = parseScenarios(scenarioText);
   } catch {
     return void 0;
   }
-  const current = new Map(scores.baselineHoldout.map((r) => [r.id, r]));
-  const ranked = winner.holdout.flatMap((row) => {
+  const current = new Map(scores.baselineTrain.map((r) => [r.id, r]));
+  let best;
+  for (const row of winner.train) {
     const before = current.get(row.id);
-    if (!before || typeof before.failed !== "number" || typeof row.failed !== "number") return [];
-    const flips = before.failed - row.failed;
-    return flips > 0 ? [{ row, before, flips }] : [];
-  }).sort((a, b) => b.flips - a.flips);
-  for (const { row, before } of ranked) {
-    if (row.failed !== 0 || !before.failedChecks?.length) continue;
+    if (!before?.failedChecks?.length) continue;
     if (typeof before.reply !== "string" || typeof row.reply !== "string") continue;
-    const scenario = rows.find((s) => s.id === row.id && s.split === "holdout");
+    if (typeof before.failed !== "number" || typeof row.failed !== "number" || row.failed >= before.failed) continue;
+    const stillFailed = Array.isArray(row.failedChecks) ? row.failedChecks : row.failed === 0 ? [] : null;
+    if (!stillFailed) continue;
+    const flipped = before.failedChecks.filter((name) => !stillFailed.includes(name));
+    if (!flipped.length || best && flipped.length <= best.improvedChecks.length) continue;
+    const scenario = rows.find((s) => s.id === row.id && s.split === "train");
     if (!scenario) continue;
-    return { input: clipText(scenario.input, 200), beforeReply: truncReply(before.reply), afterReply: truncReply(row.reply), improvedChecks: [...before.failedChecks] };
+    best = { input: clipText(scenario.input, 200), beforeReply: truncReply(before.reply), afterReply: truncReply(row.reply), improvedChecks: flipped };
   }
-  return void 0;
+  return best;
 }
 var DETAIL = /\$\s?\d[\d,]*(?:\.\d+)?|\b\d+(?:\.\d+)?\s?%|\b\d+[- ]?(?:days?|hours?|weeks?|months?|years?)\b|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\b(?:https?:\/\/)?[\w-]+(?:\.[\w-]+)*\.(?:com|org|net|io|co|ai|app|shop|store)(?:\/[\w\-/]*)?/gi;
 function newDetails(edits, known) {

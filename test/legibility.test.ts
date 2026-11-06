@@ -91,7 +91,7 @@ test("renderDeltaBlock leads with the movement and shows merged and no-change ro
   assert.ok(block.indexOf("Round 2") < block.indexOf("Round 1"), "newest round first");
   assert.ok(block.includes("Round 2 · merged · $0.04"));
   assert.ok(block.includes("  What changed: Adds the order number to every reply"));
-  assert.ok(block.includes('  Example, on: "Where is my parcel?"'));
+  assert.ok(block.includes('  Example from a practice case, on: "Where is my parcel?"'));
   assert.ok(block.includes('    Before: "It is on its way."'));
   assert.ok(block.includes('    After: "Order 1234 is on its way."'));
   assert.ok(block.includes("    Now passes: States the order number"));
@@ -132,8 +132,9 @@ test("a judged round records its holdout score, saves the chart, and the report 
   const repo = new MemoryRepo("Old prompt.");
   (repo as Repo).slug = "acme/widgets";
   repo.files.set("s.jsonl", scenarioText(["h0", "h1", "h2"]));
-  // The incumbent passes 3 of 6 applicable held-back checks. No replies on the held-back rows, exactly
-  // as runScore leaves them, so no example pair may be invented from them.
+  // The incumbent passes 3 of 6 applicable held-back checks. The learning rows name no failed checks
+  // and the held-back rows keep no replies, exactly as runScore leaves them, so no example pair may
+  // be invented.
   const scores: RoundScores = {
     baselineHash: sha256("Old prompt."),
     baselineTrain: trainSide(50, 1),
@@ -157,37 +158,73 @@ test("a judged round records its holdout score, saves the chart, and the report 
   assert.ok(repo.issue.includes("https://raw.githubusercontent.com/acme/widgets/synthe/state/score.svg?v=1"));
 });
 
-test("a merged round records an example pair when the scores genuinely carry both held-back replies", async () => {
+test("a merged round records an example pair from the practice cases, whose rows carry both replies", async () => {
   const g = goal({ checks: CHECKS });
   const repo = new MemoryRepo("Old prompt.");
   repo.files.set("s.jsonl", scenarioText(["h0", "h1"]));
   const longAfter = `Order 9 is on its way. ${"x".repeat(400)}`;
+  const trainRow = (i: number, over: Partial<ScoreRow>): ScoreRow => ({ id: `t${i}`, score: 50, violation: false, reply: "a reply", applicable: 2, failed: 0, ...over });
   const scores: RoundScores = {
     baselineHash: sha256("Old prompt."),
-    baselineTrain: trainSide(50, 1),
+    baselineTrain: Array.from({ length: 20 }, (_, i) => trainRow(i, {})),
+    // The held-back rows keep no replies, exactly as runScore leaves them; the pair must not need them.
     baselineHoldout: [
-      { id: "h0", score: 50, violation: false, applicable: 2, failed: 2, failedChecks: [...CHECKS], reply: "It is on its way." },
-      { id: "h1", score: 50, violation: false, applicable: 2, failed: 1, failedChecks: [CHECKS[1]], reply: "No idea." },
+      { id: "h0", score: 50, violation: false, applicable: 2, failed: 2, failedChecks: [...CHECKS] },
+      { id: "h1", score: 50, violation: false, applicable: 2, failed: 1, failedChecks: [CHECKS[1]] },
     ],
     candidates: [{
       id: "c1",
-      train: trainSide(100, 0),
-      holdout: [
-        { id: "h0", score: 100, violation: false, applicable: 2, failed: 0, reply: longAfter },
-        { id: "h1", score: 100, violation: false, applicable: 2, failed: 0, reply: "Order 9 is on its way." },
-      ],
+      train: Array.from({ length: 20 }, (_, i) => trainRow(i, { score: 100 })),
+      holdout: ["h0", "h1"].map((id) => ({ id, score: 100, violation: false, applicable: 2, failed: 0 })),
     }],
   };
+  // On t0 the old reply fails both checks and the new one fails none; on t1 the new reply still fails
+  // one named check, so only one check flipped there.
+  Object.assign(scores.baselineTrain[0], { failed: 2, failedChecks: [...CHECKS], reply: "It is on its way." });
+  Object.assign(scores.baselineTrain[1], { failed: 2, failedChecks: [...CHECKS], reply: "No idea." });
+  Object.assign(scores.candidates[0].train[0], { failed: 0, reply: longAfter });
+  Object.assign(scores.candidates[0].train[1], { failed: 1, failedChecks: [CHECKS[1]], reply: "Order 9 is on its way." });
   const record = await runDecide(g, repo, { candidates: [{ id: "c1", text: "Better prompt.", summary: "States the order number" }], scores, costUsd: 0.1 });
   assert.equal(record?.outcome, "merged");
   assert.equal(record?.scorePct, 25); // 1 of 4 applicable held-back checks passed
-  // h0 wins: two checks flipped there, one at h1. The winning reply is truncated to 300 characters.
+  // t0 wins: two checks flipped there, one at t1. The winning reply is truncated to 300 characters.
   assert.deepEqual(record?.examplePair, {
-    input: "holdout question 0",
+    input: "train question 0",
     beforeReply: "It is on its way.",
     afterReply: longAfter.slice(0, 300),
     improvedChecks: [...CHECKS],
   });
+  // The rendered block labels the pair as the practice case it is.
+  const block = renderDeltaBlock(g, { ...newState(), round: 1, rounds: [record!] });
+  assert.ok(block.includes('  Example from a practice case, on: "train question 0"'));
+  assert.ok(block.includes("    Now passes: States the order number, Offers a refund when asked"));
+});
+
+test("a merged round whose practice cases show no flipped check records no pair, even if held-back replies exist", async () => {
+  const g = goal({ checks: CHECKS });
+  const repo = new MemoryRepo("Old prompt.");
+  repo.files.set("s.jsonl", scenarioText(["h0"]));
+  const trainRow = (i: number, over: Partial<ScoreRow>): ScoreRow => ({ id: `t${i}`, score: 50, violation: false, reply: "a reply", applicable: 2, failed: 0, ...over });
+  const scores: RoundScores = {
+    baselineHash: sha256("Old prompt."),
+    baselineTrain: Array.from({ length: 20 }, (_, i) => trainRow(i, {})),
+    // Held-back rows carrying both replies and a clear flip, as the old selection used. They must be
+    // ignored: held-back replies are never kept in production, and the pair comes from practice cases.
+    baselineHoldout: [
+      { id: "h0", score: 50, violation: false, applicable: 2, failed: 2, failedChecks: [...CHECKS], reply: "It is on its way." },
+    ],
+    candidates: [{
+      id: "c1",
+      train: Array.from({ length: 20 }, (_, i) => trainRow(i, { score: 100 })),
+      holdout: [{ id: "h0", score: 100, violation: false, applicable: 2, failed: 0, reply: "Order 9 is on its way." }],
+    }],
+  };
+  // The one practice case where the old reply failed a check: the new reply fails the same check.
+  Object.assign(scores.baselineTrain[0], { failed: 1, failedChecks: [CHECKS[0]], reply: "It is on its way." });
+  Object.assign(scores.candidates[0].train[0], { failed: 1, failedChecks: [CHECKS[0]], reply: "It is on its way, truly." });
+  const record = await runDecide(g, repo, { candidates: [{ id: "c1", text: "Better prompt.", summary: "States the order number" }], scores, costUsd: 0.1 });
+  assert.equal(record?.outcome, "merged");
+  assert.equal(record?.examplePair, undefined);
 });
 
 test("a round whose held-back replies were never marked records no score and saves no chart", async () => {

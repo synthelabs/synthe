@@ -102,7 +102,7 @@ function roundLines(r: RoundRecord): string[] {
     const lines = [`Round ${r.round} · merged${money(r)}`];
     if (r.changed) lines.push(`  What changed: ${r.changed}`);
     if (r.examplePair) {
-      lines.push(`  Example, on: "${r.examplePair.input}"`);
+      lines.push(`  Example from a practice case, on: "${r.examplePair.input}"`);
       lines.push(`    Before: "${r.examplePair.beforeReply}"`);
       lines.push(`    After: "${r.examplePair.afterReply}"`);
       if (r.examplePair.improvedChecks.length) lines.push(`    Now passes: ${r.examplePair.improvedChecks.join(", ")}`);

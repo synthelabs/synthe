@@ -7,9 +7,10 @@ export interface RoundRecord {
   // For the team, in plain words: what the round did, what changed if anything, and what happened to each idea.
   plain?: string; changed?: string; tried?: { summary: string; outcome: string }[];
   example?: { input: string; before: string; after: string }; title?: string; unverified?: string[];
-  // One held-back case a merged change visibly fixed: both replies, and the checks the old reply failed
-  // that the new one passes. Set only when the score step kept both replies and the flipped checks are
-  // known exactly; held-back replies usually aren't kept, so this is often unset.
+  // One practice (learning) case a merged change visibly fixed: both replies, and the checks the old
+  // reply failed that the new one passes. Drawn from the learning cases, whose replies are kept; the
+  // held-back cases never supply it, because their replies are not kept. Set only when the flipped
+  // checks are known exactly, so this is sometimes unset.
   examplePair?: { input: string; beforeReply: string; afterReply: string; improvedChecks: string[] };
   edits?: { find: string; replace: string }[];
   // Why a failed round's write or score step failed, when it said; the report's advice depends on it.
