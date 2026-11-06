@@ -364,6 +364,10 @@ function ignoreDraft(root: string): void {
   if (!current.split(/\r?\n/).includes(`/${DRAFT_FILE}`)) writeFileSync(path, `${current}${current && !current.endsWith("\n") ? "\n" : ""}/${DRAFT_FILE}\n`);
 }
 
+const NOT_ADMIN = new Set(["READ", "TRIAGE", "WRITE", "MAINTAIN"]);
+export const notAdmin = (slug: string, access: string) =>
+  `Only an admin of ${slug} can set up Synthe: setup saves repo secrets and changes an Actions setting. Your GitHub account has ${access.toLowerCase()} access. Ask the repo's owner to run setup, or to make you an admin (Settings, then Collaborators), then run this again. Nothing was changed.`;
+
 // Says exactly what's missing, so a team can fix it in one step.
 async function whyGitHubFails(io: Io): Promise<string> {
   try { await io.run("gh", ["--version"]); } catch {
@@ -407,6 +411,14 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     slug = (await io.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
   } catch {
     io.say(await whyGitHubFails(io));
+    return false;
+  }
+  // Setup saves repo secrets and changes an Actions setting, which only admins may do. On a team, the person at the
+  // keyboard is often a collaborator with write access: say so before the draft spends anything, not after.
+  // Only a clear non-admin answer stops here; if GitHub can't say, setup goes on and the later steps report it.
+  const access = (await io.run("gh", ["repo", "view", "--json", "viewerPermission", "--jq", ".viewerPermission"]).catch(() => "")).trim();
+  if (NOT_ADMIN.has(access)) {
+    io.say(notAdmin(slug, access));
     return false;
   }
   let branch = "your default branch";
