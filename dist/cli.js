@@ -29789,7 +29789,7 @@ function previousDiagnostics(root) {
 // package.json
 var package_default = {
   name: "synthe",
-  version: "1.8.0",
+  version: "1.8.1",
   description: "Your AI agent's system prompt gets better on its own: Synthe tests small changes and merges only the clear wins.",
   keywords: [
     "ai",
