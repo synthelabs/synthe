@@ -490,20 +490,27 @@ test("local try and calibrate print credit refusals, exit nonzero and leave ever
   }
 });
 
-test("the score step keeps the prompt's held-back score in state, and decide records it", async () => {
+// On GitHub the score job's token can only read the repo, so a state write there fails with 403 (seen live on
+// Nov 6). The score step hands its caches to decide in scores.json, and decide keeps them.
+test("the held-back score reaches state through the decide step, never a write from the score step", async () => {
   reset();
   const goal = JSON.parse(readFileSync(join(dir, "synthe.json"), "utf8"));
   goal.checks = ["Uses the store policy"];
   writeFileSync(join(dir, "synthe.json"), JSON.stringify(goal));
   files.set("main:synthe.json", JSON.stringify(goal));
   for (const s of ["write", "score"]) {
+    const before = files.get("synthe/state:state.json");
     const r = await step(s);
     assert.equal(r.code, 0, r.log);
+    if (s === "score") {
+      assert.equal(files.get("synthe/state:state.json"), before, "the score step writes no state");
+      assert.doesNotMatch(r.log, /Could not keep/);
+    }
   }
-  const kept = JSON.parse(files.get("synthe/state:state.json")!).scoreCache;
-  assert.ok(kept && typeof kept.key === "string" && kept.pct === 0, JSON.stringify(kept)); // the vague prompt fails the check
   const r = await step("decide");
   assert.equal(r.code, 0, r.log);
-  assert.equal(JSON.parse(files.get("synthe/state:state.json")!).rounds.at(-1).scorePct, 0);
+  const state = JSON.parse(files.get("synthe/state:state.json")!);
+  assert.ok(state.scoreCache && typeof state.scoreCache.key === "string" && state.scoreCache.pct === 0, JSON.stringify(state.scoreCache)); // the vague prompt fails the check
+  assert.equal(state.rounds.at(-1).scorePct, 0);
 });
 
