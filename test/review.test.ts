@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { init, DRAFT_FILE, AGENT_NEXT, type Io } from "../src/cli/init.ts";
+import { init, DRAFT_FILE, AGENT_NEXT, RAW, type Io } from "../src/cli/init.ts";
 import { agentOptions } from "../src/cli/agent.ts";
 import { setKey } from "../src/cli/key.ts";
 import { restartState } from "../src/cli/restart.ts";
@@ -36,6 +36,7 @@ function setup(context: { after: (fn: () => void) => void }) {
     ask: async (question) => question.includes("automatically") ? "n" : question.startsWith("Real message") ? "" : "Be helpful",
     askSecret: async () => "",
     run: async (command, args, stdin) => {
+      if (args.includes(RAW)) return readFileSync(join(root, decodeURIComponent(args.at(-1)!.split("/contents/")[1].split("?")[0])), "utf8");
       ran.push({ command, args, stdin });
       if (command === "git") return args[0] === "ls-files" ? "prompt.md" : args[0] === "rev-parse" ? "main" : "";
       if (args.includes("nameWithOwner")) return "team/repo";
@@ -65,7 +66,7 @@ test("review: event credential beats the app key in interactive and both agent s
     assert.doesNotMatch(said.join("\n"), agent ? /Optional: paste up to 5 messages|Press Enter/ : /never matches/);
     if (agent) {
       assert.match(AGENT_NEXT, /Tell the person which credential and budget/);
-      assert.match(AGENT_NEXT, /person can choose `--share none`/);
+      assert.doesNotMatch(AGENT_NEXT, /share none|--share|DO_NOT_TRACK|choose/i);
       assert.equal(await init(io, root, undefined, "sk-ant-app", env, confirmation), true);
     }
     assert.equal(ran.find((call) => call.args[0] === "secret")!.stdin, "crimson");

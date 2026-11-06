@@ -4,6 +4,8 @@ Synthe is an open-source tool that improves an AI agent's system prompt automati
 
 You are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.
 
+Most teams set this up at the Synthe workshop, an hour or two into the hackathon, with their agent only partly built. That is fine: Synthe improves the prompt as it is now, and the team keeps building while it runs.
+
 ## Rules
 
 - Never invent the goal, the checks or the mode. Ask the person.
@@ -16,7 +18,7 @@ You are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have 
 
 ## 1. Prerequisites
 
-1. Check the repo is on GitHub and pushed: `git remote -v` and `git status`. If not, help the person push it first.
+1. Use `git remote -v` and `git status` to check that the repo is on GitHub and pushed. Commit and push the agent's prompt file too. Setup checks that it matches the copy on GitHub's default branch before drafting.
 2. Check the GitHub CLI:
 
 ```
@@ -24,6 +26,15 @@ gh auth status
 ```
 
 3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.
+
+4. Be on the default branch (usually `main`) and run `git pull`, so teammates' latest pushes are in. Setup refuses to run on another branch.
+5. Check that this person can set up Synthe in this repo:
+
+```
+gh repo view --json viewerPermission --jq .viewerPermission
+```
+
+It must print `ADMIN`. Setup saves repo secrets, which only admins can do. If it prints anything else, stop: the repo's owner must run setup, or make this person an admin (Settings, then Collaborators). Setup also stops by itself in that case, before it spends anything.
 
 ## 2. Credit
 
@@ -67,7 +78,7 @@ Use `--mode auto` or `--mode review` as the person chose. Leave out `--message` 
 
 Show the full output as written, not a summary. It has three parts:
 
-1. The credential and budget, and both notices. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. The separate research-sharing settings control the prompt, test cases, and other research data. The person can set `--share none` at confirmation or `"share": "none"` in `synthe.json` later.
+1. The credential and budget, the sharing notice, and the Crimson workflow notice for enrolled teams. Show the notices as information. They need no answer. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. Separate research-sharing settings control the prompt, test cases, and other research data.
 2. The numbered proposed checks.
 3. Example replies, each with Synthe's pass or fail mark.
 
@@ -93,15 +104,16 @@ If the person accepted every proposed check as it is, run this instead:
 SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.3 init --agent --confirm --keep-checks
 ```
 
-Add `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft's sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don't confirm twice.
+Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don't confirm twice.
 
-Confirm succeeded only if it printed `Added to <branch>` or opened an "Add Synthe" pull request. If it printed anything else, show the person the message, follow it, and do not go to step 8. If it opened a pull request, Synthe starts only after that pull request is merged: tell the person.
+Confirm succeeded only if it printed `Added to <branch>` or opened an "Add Synthe" pull request. If it printed anything else, show the person the message, follow it, and do not go to step 8. If it opened a pull request (usually because a teammate pushed to the default branch during setup), Synthe starts only after that pull request is merged. Ask the person to merge it now.
 
 ## 8. After setup
 
 Do this step only after confirm succeeded. Tell the person:
 
-- Rounds start by themselves. They do not need to do anything.
+- Rounds start by themselves. They do not need to do anything. A run is up to 12 rounds, usually about 30 minutes, and then it stops by itself.
+- In auto mode, Synthe commits its improvements to the prompt file on the default branch. Everyone on the team should run `git pull` before they edit the prompt or push, so their work and Synthe's don't collide. Synthe always starts each round from the latest prompt on the default branch, so the team can keep changing it.
 - To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo's Actions tab.
 - Tell the person: 'Ask me "what did Synthe do?" at any time and I will show you what changed.'
 - When the person asks what Synthe did or what changed, run `npx synthe changes` and show its output word for word before adding any commentary of your own.

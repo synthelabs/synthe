@@ -17,7 +17,7 @@ export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 export const WORKFLOW_FILE = ".github/workflows/synthe.yml";
 export const DRAFT_FILE = ".synthe/setup-draft.json";
 export const EVENT_BUDGET_USD = 4;
-export const AGENT_NEXT = "NEXT: Synthe is NOT installed yet. This step wrote only a local draft: no workflow, no secrets, no commit. Finish confirm before any other work in this repo, and do not edit the prompt file until then. Tell the person which credential and budget will be used. Show all of this to the person, including the sharing notice, proposed checks and calibration examples. Ask which checks to keep or reword and whether the marks look right. The person can choose `--share none`. Then run `npx synthe init --agent --confirm --check \"final sentence\"`, repeating `--check` for each final check, or use `--keep-checks` if they keep the proposed checks.";
+export const AGENT_NEXT = "NEXT: Synthe is NOT installed yet. This step wrote only a local draft: no workflow, no secrets, no commit. Finish confirm before any other work in this repo, and do not edit the prompt file until then. Tell the person which credential and budget will be used. Show all of this to the person, including the notices, proposed checks and calibration examples. The notices need no answer. Ask which checks to keep or reword and whether the marks look right. Then run `npx synthe init --agent --confirm --check \"final sentence\"`, repeating `--check` for each final check, or use `--keep-checks` if they keep the proposed checks.";
 const SETUP_BRANCH = "synthe/setup";
 const SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds with a local run budget of $3. Available provider or event credit can stop it sooner; this budget is not a credit allowance. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
 
@@ -364,6 +364,10 @@ function ignoreDraft(root: string): void {
   if (!current.split(/\r?\n/).includes(`/${DRAFT_FILE}`)) writeFileSync(path, `${current}${current && !current.endsWith("\n") ? "\n" : ""}/${DRAFT_FILE}\n`);
 }
 
+const NOT_ADMIN = new Set(["READ", "TRIAGE", "WRITE", "MAINTAIN"]);
+export const notAdmin = (slug: string, access: string) =>
+  `Only an admin of ${slug} can set up Synthe: setup saves repo secrets and changes an Actions setting. Your GitHub account has ${access.toLowerCase()} access. Ask the repo's owner to run setup, or to make you an admin (Settings, then Collaborators), then run this again. Nothing was changed.`;
+
 // Says exactly what's missing, so a team can fix it in one step.
 async function whyGitHubFails(io: Io): Promise<string> {
   try { await io.run("gh", ["--version"]); } catch {
@@ -373,6 +377,26 @@ async function whyGitHubFails(io: Io): Promise<string> {
     return "Sign in to the GitHub CLI first: run `gh auth login`, then run `npx synthe init` again.";
   }
   return "Run this inside your project's folder, after pushing it to GitHub (you need admin access to the repo).";
+}
+
+// Rounds run in GitHub Actions on the prompt as it is on GitHub, but setup writes the test cases and checks from the
+// file on this machine. If the two differ (an edit not committed, or a commit not pushed), every round would improve a
+// prompt the team never meant, against test cases written for another one. So setup refuses until they match.
+export const RAW = "Accept: application/vnd.github.raw";
+async function promptNotOnGitHub(io: Io, slug: string, branch: string, path: string, local: string): Promise<string | null> {
+  const ref = branch === "your default branch" ? "" : `?ref=${encodeURIComponent(branch)}`;
+  const where = branch === "your default branch" ? "GitHub" : `GitHub (${branch})`;
+  const push = "Commit the prompt and get it onto GitHub's default branch with `git push` or a pull request, then retry the same setup command. Nothing changed.";
+  let remote: string;
+  try {
+    remote = await io.run("gh", ["api", "-H", RAW, `repos/${slug}/contents/${path.split("/").map(encodeURIComponent).join("/")}${ref}`]);
+  } catch (error) {
+    if (/404|not found/i.test(error instanceof Error ? error.message : String(error))) return `${path} isn't on ${where} yet, and Synthe's rounds run on the version there. ${push}`;
+    return `Synthe couldn't read ${path} from ${where} to check it matches this machine. Check your connection and retry the same setup command. Nothing changed.`;
+  }
+  const same = (text: string) => text.replace(/\r\n/g, "\n").trimEnd();
+  return same(remote) === same(local) ? null
+    : `${path} on this machine isn't the same as on ${where}. Synthe's rounds run on the version on GitHub, so its tests would be written for one prompt while it improves another. ${push}`;
 }
 
 export async function init(io: Io, root: string, now = () => new Date(), envKey = process.env.ANTHROPIC_API_KEY, env: Partial<Record<"DO_NOT_TRACK" | "SYNTHE_TELEMETRY" | "SYNTHE_EVENT_CODE" | "SYNTHE_ANTHROPIC_KEY" | "SYNTHE_TEAM_CODE", string>> = process.env, agent?: AgentOptions) {
@@ -387,6 +411,14 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     slug = (await io.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
   } catch {
     io.say(await whyGitHubFails(io));
+    return false;
+  }
+  // Setup saves repo secrets and changes an Actions setting, which only admins may do. On a team, the person at the
+  // keyboard is often a collaborator with write access: say so before the draft spends anything, not after.
+  // Only a clear non-admin answer stops here; if GitHub can't say, setup goes on and the later steps report it.
+  const access = (await io.run("gh", ["repo", "view", "--json", "viewerPermission", "--jq", ".viewerPermission"]).catch(() => "")).trim();
+  if (NOT_ADMIN.has(access)) {
+    io.say(notAdmin(slug, access));
     return false;
   }
   let branch = "your default branch";
@@ -418,6 +450,8 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
       io.say("Your prompt changed since step 1. Run `npx synthe init --agent` with the same prompt, objective and mode to draft again, then review the new checks before confirming. Nothing changed.");
       return false;
     }
+    const unpushed = await promptNotOnGitHub(io, slug, branch, draft.goal.prompt.path, source);
+    if (unpushed) { io.say(unpushed); return false; }
     const credential = setupCredential(env, envKey, true);
     if (!credential) askPerson("SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY (agent setup never uses ANTHROPIC_API_KEY)");
     if (draft.event !== !credential.startsWith("sk-ant-")) askPerson("--confirm (use the same credential type as step 1)");
@@ -474,8 +508,11 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   }
   const refused = promptPathProblem(location.path);
   if (refused) { io.say(refused); return false; }
+  const source = tracked.find((file) => file.path === location.path)?.text ?? readFileSync(join(root, location.path), "utf8");
+  const unpushed = await promptNotOnGitHub(io, slug, branch, location.path, source);
+  if (unpushed) { io.say(unpushed); return false; }
 
-  const promptText = location.kind === "inline" ? location.initial : readFileSync(join(root, location.path), "utf8");
+  const promptText = location.kind === "inline" ? location.initial : source;
   // Every change to a longer prompt would be refused by the safety check, so the run could only spend and stall.
   if (promptText.length > MAX_PROMPT_CHARS) {
     if (agent) askPerson("--prompt (too long)");
@@ -502,15 +539,14 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   io.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");
   const sharingOff = sharingDisabled(env) || agent?.share === "none";
   const share: Goal["share"] = sharingOff ? "none" : agent?.share ?? (now().getTime() < Date.parse(FULL_SHARE_UNTIL) ? "full" : "detail");
-  if (agent) io.say("The person must see this sharing notice before confirming setup:");
+  if (agent) io.say("Tell the person (no answer needed):");
   io.say(sharingOff
     ? "Sharing with Synthe: off (DO_NOT_TRACK, SYNTHE_TELEMETRY or --share none)."
     : share === "full"
-      ? 'During Crimson Hacks (until November 9 at 23:59 UTC), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 9 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.'
-      : share === "numbers" ? 'Sharing with Synthe: numbers only (rounds, checks and spend). To turn sharing off, set "share": "none" in synthe.json, set DO_NOT_TRACK=1 on setup (including --confirm), or choose --share none in agent mode.'
-      : 'Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.');
-  // The notice above is the versioned text (SHARE_NOTICE_VERSION); agent-only options go on their own line.
-  if (agent && !sharingOff) io.say("The person can also choose --share none, numbers or detail at confirmation, or set DO_NOT_TRACK=1 on --confirm.");
+      ? 'During Crimson Hacks (until November 9 at 23:59 UTC), by using Synthe you share this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe\'s prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 9 it stops sending your prompt and test cases.'
+      : share === "numbers" ? 'By using Synthe, you share numbers only with the Synthe team so we can improve it: rounds, checks and spend.'
+      : 'By using Synthe, you share how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first.');
+  // The notice above is the versioned text (SHARE_NOTICE_VERSION). The opt-outs still work but setup does not advertise them.
 
   io.say(`\nDrafting now: Synthe is reading your current prompt and your goal, "${objective}".`);
   const context = repoContext(tracked, location);
@@ -602,7 +638,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   if (agent) {
     ignoreDraft(root);
     mkdirSync(join(root, ".synthe"), { recursive: true });
-    const draft: SetupDraft = { version: 1, slug, branch, goal, rows, attacks, event, tracking: Boolean(enrollment), sourceHash: sha256(readFileSync(join(root, location.path), "utf8")), examples };
+    const draft: SetupDraft = { version: 1, slug, branch, goal, rows, attacks, event, tracking: Boolean(enrollment), sourceHash: sha256(source), examples };
     writeFileSync(join(root, DRAFT_FILE), `${JSON.stringify(draft, null, 2)}\n`, { mode: 0o600 });
     io.say(AGENT_NEXT);
     return true;
