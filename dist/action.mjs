@@ -29227,10 +29227,12 @@ function bestStep(state) {
   return best ? `The biggest single step was round ${best.round}: ${fmtScore(best.from)}% to ${fmtScore(best.to)}%.` : null;
 }
 function headline(goal, state, stoppedByTeam = false) {
-  const base = headlineBase(goal, state, stoppedByTeam);
   const move = scoreMovement(state);
+  const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
+  const lastChange = Math.max(0, ...state.rounds.filter((r) => r.outcome === "merged" || r.outcome === "reverted").map((r) => r.round));
+  const gain = !move && measured.length !== 1 ? "plain" : measured.some((p) => p.round > lastChange) ? "none" : "practice";
+  const base = headlineBase(goal, state, stoppedByTeam, gain);
   if (!move) {
-    const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
     if (measured.length === 1) {
       const lead2 = `Your prompt scores ${fmtScore(measured[0].pct)}% (checks passed on test cases Synthe never trains on).`;
       return { title: base.title, summary: `${lead2} ${base.summary}` };
@@ -29241,10 +29243,11 @@ function headline(goal, state, stoppedByTeam = false) {
   const step = state.stopped ? bestStep(state) : null;
   return { title: base.title, summary: `${lead}${step ? ` ${step}` : ""} ${base.summary}` };
 }
-function headlineBase(goal, state, stoppedByTeam = false) {
+function headlineBase(goal, state, stoppedByTeam = false, mode = "plain") {
   const merged = state.rounds.filter((r) => r.outcome === "merged").length;
   const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
-  const gain = rated.length ? `Your checks now pass ${rated.at(-1).checks.after}% of the time, up from ${rated[0].checks.before}%. ` : "";
+  const rates = rated.length ? `${rated.at(-1).checks.after}% of the time, up from ${rated[0].checks.before}%. ` : "";
+  const gain = !rates || mode === "none" ? "" : mode === "practice" ? `On the practice cases Synthe learns from, your checks now pass ${rates}` : `Your checks now pass ${rates}`;
   const guarded = state.rounds.filter((r) => r.outcome === "merged" && r.guards);
   const guardLine = guarded.length ? `${guardSentence({ before: guarded[0].guards.before, after: guarded.at(-1).guards.after })} ` : "";
   const spent = `It has spent ${money2(state)} of $${goal.budget.max_usd}.`;
@@ -30470,7 +30473,7 @@ ${goal.policy ?? ""}`);
 // package.json
 var package_default = {
   name: "synthe",
-  version: "1.8.2",
+  version: "1.8.3",
   description: "Your AI agent's system prompt gets better on its own: Synthe tests small changes and merges only the clear wins.",
   keywords: [
     "ai",
