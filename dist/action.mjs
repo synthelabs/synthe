@@ -30256,7 +30256,7 @@ ${goal.policy ?? ""}`);
 var package_default = {
   name: "synthe",
   version: "1.7.4",
-  description: "Your AI agent's system prompt gets better while you sleep: Synthe tests small changes overnight and merges only the clear wins.",
+  description: "Your AI agent's system prompt gets better on its own: Synthe tests small changes and merges only the clear wins.",
   keywords: [
     "ai",
     "agent",

@@ -72,6 +72,7 @@ Then ask the person:
 
 - Which checks to keep, drop or reword?
 - Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.
+- If step 1 said some checks can't both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can't raise that score.
 
 Follow the `NEXT:` line that step 1 printed.
 
