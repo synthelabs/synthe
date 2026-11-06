@@ -11,7 +11,7 @@ import { runWrite } from "../src/loop/write.ts";
 import { runDecide } from "../src/loop/decide.ts";
 import { newState } from "../src/core/state.ts";
 import { attackLine, renderReport, roundSummary } from "../src/loop/report.ts";
-import { init, proposeAttacks, type Io } from "../src/cli/init.ts";
+import { init, proposeAttacks, RAW, type Io } from "../src/cli/init.ts";
 import type { Ask, Model } from "../src/model/client.ts";
 import { MemoryRepo, goal, scored, scenarios } from "./helpers.ts";
 
@@ -287,6 +287,7 @@ function attackSetup(attacksReply: () => string | null) {
       },
     }),
     async run(cmd, args) {
+      if (args.includes(RAW)) return readFileSync(join(dir, decodeURIComponent(args.at(-1)!.split("/contents/")[1].split("?")[0])), "utf8");
       if (cmd === "git" && args[0] === "ls-files") return execFileSync("git", args, { cwd: dir, encoding: "utf8" });
       return cmd === "git" ? "" : "o/r\n";
     },

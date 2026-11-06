@@ -16,7 +16,7 @@ You are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have 
 
 ## 1. Prerequisites
 
-1. Check the repo is on GitHub and pushed: `git remote -v` and `git status`. If not, help the person push it first.
+1. Use `git remote -v` and `git status` to check that the repo is on GitHub and pushed. Commit and push the agent's prompt file too. Setup checks that it matches the copy on GitHub's default branch before drafting.
 2. Check the GitHub CLI:
 
 ```

@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { init, proposeGuards, type Io } from "../src/cli/init.ts";
+import { init, proposeGuards, RAW, type Io } from "../src/cli/init.ts";
 import { DEFAULTS, parseGoal, type Scenario } from "../src/core/goal.ts";
 import { guardRate, judgeRound, type RoundScores, type ScoreRow } from "../src/core/merge-rule.ts";
 import { sha256 } from "../src/core/safety.ts";
@@ -244,6 +244,7 @@ function setup(answers: Record<string, string> = {}, guardsReply: () => string |
       },
     }),
     async run(cmd, args) {
+      if (args.includes(RAW)) return readFileSync(join(dir, decodeURIComponent(args.at(-1)!.split("/contents/")[1].split("?")[0])), "utf8");
       if (cmd === "git" && args[0] === "ls-files") return execFileSync("git", args, { cwd: dir, encoding: "utf8" });
       return cmd === "git" ? "" : "o/r\n";
     },
