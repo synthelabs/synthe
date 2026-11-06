@@ -660,6 +660,25 @@ test("agent confirmation rejects stale drafts before changing files or storing s
   assert.ok(!ran.some((call) => ["secret", "commit", "push"].includes(call.args[0])));
 });
 
+test("init narrates what it is doing while setup runs", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, said } = fakeIo(dir);
+  assert.equal(await init(io, dir), true);
+  // Drafting: the prompt and goal are read, then the cases are written with the run's real counts
+  // (the stub model returns 30 cases, which split 20 to learn from and 10 held back).
+  assert.match(said.join("\n"), /Drafting now: Synthe is reading your current prompt and your goal, "Answer returns correctly"\./);
+  assert.ok(said.includes("Writing 30 test cases: 20 Synthe can learn from, 10 held back to check its work."));
+  assert.ok(said.some((line) => line.startsWith("Drafting the checks:")));
+  // Confirmation on the own-key path: the workflow file is added, the key is saved as a secret, the
+  // files are committed, and the first round is queued. No event or team codes exist on this path,
+  // so no line claims they were saved.
+  assert.ok(said.includes("Adding the hourly workflow file, .github/workflows/synthe.yml, so Synthe runs on its own."));
+  assert.ok(said.includes("Saving your key as the repo secret SYNTHE_ANTHROPIC_KEY."));
+  assert.ok(!said.some((line) => line.includes("SYNTHE_EVENT_CODE")));
+  assert.ok(said.includes("Committing the setup files to your repo."));
+  assert.ok(said.includes("Queueing the first round now."));
+});
+
 test("a code refused during calibration or confirmation leaves setup files and secrets untouched", async () => {
   for (const duringConfirmation of [false, true]) {
     const dir = repoDir(PROMPT);

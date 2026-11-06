@@ -6,6 +6,7 @@ import { sha256 } from "../src/core/safety.ts";
 import type { Repo } from "../src/github/repo.ts";
 import { holdoutScorePct, runDecide } from "../src/loop/decide.ts";
 import { displaySeries, renderDeltaBlock, renderScoreSvg, scoreSeries, sparkline } from "../src/loop/delta.ts";
+import { DEFAULTS } from "../src/core/goal.ts";
 import { MemoryRepo, goal, scored } from "./helpers.ts";
 
 const CHECKS = ["States the order number", "Offers a refund when asked"];
@@ -197,4 +198,48 @@ test("a round whose held-back replies were never marked records no score and sav
   assert.equal(record?.scorePct, null);
   assert.ok(!repo.stateFiles.has("score.svg"));
   assert.ok(!repo.issue.includes("score.svg"));
+});
+
+// The incumbent passes 3 of 6 applicable held-back checks, so the round's score is 50.
+const markedScores = (): RoundScores => ({
+  baselineHash: sha256("Old prompt."),
+  baselineTrain: trainSide(50, 1),
+  baselineHoldout: [
+    { id: "h0", score: 50, violation: false, applicable: 2, failed: 2, failedChecks: [...CHECKS] },
+    { id: "h1", score: 50, violation: false, applicable: 2, failed: 1, failedChecks: [CHECKS[1]] },
+    { id: "h2", score: 50, violation: false, applicable: 2, failed: 0 },
+  ],
+  candidates: [{
+    id: "c1",
+    train: trainSide(100, 0),
+    holdout: ["h0", "h1", "h2"].map((id) => ({ id, score: 100, violation: false, applicable: 2, failed: 0 })),
+  }],
+});
+
+test("a merged round's pull request body ends with the delta block, including the round itself", async () => {
+  const g = goal({ checks: CHECKS });
+  const repo = new MemoryRepo("Old prompt.");
+  repo.files.set("s.jsonl", scenarioText(["h0", "h1", "h2"]));
+  const record = await runDecide(g, repo, { candidates: [{ id: "c1", text: "Better prompt.", summary: "States the order number" }], scores: markedScores(), costUsd: 0.1 });
+  assert.equal(record?.outcome, "merged");
+  const body = repo.prs[0].body;
+  // The body is what GitHub puts in the squash merge commit, so the block has to be in it, after
+  // everything the body already said.
+  assert.ok(body.includes("Your prompt scores 50% (checks passed on test cases Synthe never trains on)"));
+  assert.ok(body.includes("Score by round: "));
+  assert.ok(body.includes("Round 1 · merged · $0.10"));
+  assert.ok(body.includes("  What changed: States the order number"));
+  assert.ok(body.includes("  Score this round: 50%"));
+  assert.ok(body.indexOf("Your prompt scores 50%") > body.indexOf("What this did not test"), "the block is appended after the existing body");
+});
+
+test("a proposed round's pull request body carries the delta block, labelled as a proposal", async () => {
+  const g = goal({ checks: CHECKS, merge_rule: { ...DEFAULTS.merge_rule, mode: "propose" } });
+  const repo = new MemoryRepo("Old prompt.");
+  repo.files.set("s.jsonl", scenarioText(["h0", "h1", "h2"]));
+  const record = await runDecide(g, repo, { candidates: [{ id: "c1", text: "Better prompt.", summary: "States the order number" }], scores: markedScores(), costUsd: 0.1 });
+  assert.equal(record?.outcome, "proposed");
+  const body = repo.prs[0].body;
+  assert.ok(body.includes("Your prompt scores 50% (checks passed on test cases Synthe never trains on)"));
+  assert.ok(body.includes("Round 1 · proposed · $0.10"));
 });

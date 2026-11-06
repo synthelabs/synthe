@@ -7,7 +7,7 @@ import { candidateProblem, promptPathProblem, sha256 } from "../core/safety.ts";
 import { resumeIfScenariosChanged, stopReason, type Landing, type RoundRecord, type State } from "../core/state.ts";
 import { Refusal, type MergeProblem, type Repo } from "../github/repo.ts";
 import { ISSUE_TITLE, exampleText, notTested, renderReport } from "./report.ts";
-import { displaySeries, renderScoreSvg, scoreSeries } from "./delta.ts";
+import { displaySeries, renderDeltaBlock, renderScoreSvg, scoreSeries } from "./delta.ts";
 import type { Candidate } from "./write.ts";
 import type { Failure } from "./failure.ts";
 import { WIN } from "./score.ts";
@@ -280,7 +280,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
 
   // Opens the pull request, then merges it (auto mode) or leaves it for a person (propose mode, or a repo whose
   // branch rules require a review). Returns the pull request and whether it was only proposed, or null.
-  type Why = { changed: string; plain: string; technical: string; diff?: string[]; example?: Example; unverified?: string[]; evidence?: (proposed: boolean) => EvidenceRecord };
+  type Why = { changed: string; plain: string; technical: string; diff?: string[]; example?: Example; unverified?: string[]; evidence?: (proposed: boolean) => EvidenceRecord; delta?: (proposed: boolean) => string };
   const land = async (text: string, kind: "merge" | "revert", title: string, why: Why): Promise<{ pr: number; proposed: boolean } | null> => {
     const branch = `synthe/round-${round}`;
     const landing: Landing = { branch, kind, text, priorPrompt: current!, propose: merge_rule.mode === "propose" };
@@ -318,6 +318,9 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       "Tested on simulated messages only. It can't tell you how real users will react.",
       `<details><summary>Fingerprints of what was tested</summary>\n\n${receiptFor(proposed)}\n\nThe judge's numbers: ${why.technical}\n\n</details>`,
       `<details><summary>What this did not test</summary>\n\n${notTested(goal).slice(1).join("\n")}\n\n</details>`,
+      // Last, where it survives the squash merge into the commit message: the score's movement and this
+      // round in plain words, so the change explains itself even to someone who never opens the report.
+      ...(why.delta ? [why.delta(proposed)] : []),
     ].join("\n\n");
     const body = bodyFor(Boolean(landing.propose));
     let pr: number;
@@ -462,10 +465,15 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       } else {
         const changed = chosen?.summary ?? "A change to the prompt";
         const example = pickExample(scores, verdict.candidateId, scenarioText);
+        const pair = pickExamplePair(scores, verdict.candidateId, scenarioText);
         const unverified = newDetails(chosen?.edits, `${current}\n${goal.policy ?? ""}`);
         const name = chosen?.title ?? (changed.length > 60 ? `${changed.slice(0, 57)}...` : changed);
         const landed = await land(text!, "merge", `Synthe: ${name}`,
-          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified, evidence: evidenceOf("merge", verdict.candidateId, text!, { checks: verdict.checks }) });
+          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified, evidence: evidenceOf("merge", verdict.candidateId, text!, { checks: verdict.checks }),
+            // The round's record only joins state.rounds at the end of the round, with its score
+            // recorded there too, so the block is rendered from a state carrying this round's record
+            // with the same score and pair that are about to be recorded on it.
+            delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "merged", changed, plain: verdict.plain, scorePct: holdoutScorePct(scores.baselineHoldout), ...(pair ? { examplePair: pair } : {}) }] }) });
         if (landed) {
           if (example) record.example = example;
           if (chosen?.title) record.title = chosen.title;
@@ -492,7 +500,8 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       }
     } else if (verdict.action === "revert") {
       const prior = state.lastMerge!.priorPrompt;
-      const landed = await land(prior, "revert", "Synthe: undo the last prompt change", { changed: "Puts back the prompt from before Synthe's last change.", plain: verdict.plain, technical: verdict.reasons.join(" "), evidence: evidenceOf("revert", null, prior, { prior: replaced! }) });
+      const landed = await land(prior, "revert", "Synthe: undo the last prompt change", { changed: "Puts back the prompt from before Synthe's last change.", plain: verdict.plain, technical: verdict.reasons.join(" "), evidence: evidenceOf("revert", null, prior, { prior: replaced! }),
+        delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "reverted", changed: "Put back the prompt from before the last change", plain: verdict.plain, scorePct: holdoutScorePct(scores.baselineHoldout) }] }) });
       if (landed) {
         Object.assign(record, { outcome: landed.proposed ? "proposed" : "reverted", pr: landed.pr });
         record.changed = "Put back the prompt from before the last change";

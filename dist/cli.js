@@ -30276,11 +30276,16 @@ When Synthe finds a clearly better prompt, it can merge it into ${branch} by its
   if (agent) io2.say("The person must see this sharing notice before confirming setup:");
   io2.say(sharingOff ? "Sharing with Synthe: off (DO_NOT_TRACK, SYNTHE_TELEMETRY or --share none)." : share === "full" ? `During Crimson Hacks (until November 9 at 23:59 UTC), Synthe shares this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe's prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 9 it stops sending your prompt and test cases. To turn sharing off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.` : share === "numbers" ? 'Sharing with Synthe: numbers only (rounds, checks and spend). To turn sharing off, set "share": "none" in synthe.json, set DO_NOT_TRACK=1 on setup (including --confirm), or choose --share none in agent mode.' : `Synthe shares how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first. To turn it off, set "share": "none" in synthe.json (any time), or run init with DO_NOT_TRACK=1.`);
   if (agent && !sharingOff) io2.say("The person can also choose --share none, numbers or detail at confirmation, or set DO_NOT_TRACK=1 on --confirm.");
+  io2.say(`
+Drafting now: Synthe is reading your current prompt and your goal, "${objective}".`);
   const context2 = repoContext(tracked, location);
   io2.say(`
 Reading your prompt${context2.names.length ? ` and ${context2.names.join(" and ")}` : ""}, and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
   const generated = await generateScenarios(model, objective, promptText, context2.text, seeds);
   const { guardrails, policy, brief, rows } = generated;
+  const learnFrom = rows.filter((r) => r.split === "train").length;
+  io2.say(`Writing ${rows.length} test cases: ${learnFrom} Synthe can learn from, ${rows.length - learnFrom} held back to check its work.`);
+  io2.say("Drafting the checks: plain sentences about a single reply that Synthe will mark every test reply against.");
   if (brief) io2.say(`Done. What Synthe understands your agent is for: ${brief}`);
   io2.say(`${brief ? "" : "Done. "}Synthe will check your agent's replies against:`);
   io2.say("  Rules it must never break:");
@@ -30308,6 +30313,7 @@ Reading your prompt${context2.names.length ? ` and ${context2.names.join(" and "
       else io2.say("No checks typed, so Synthe keeps its suggestions.");
     }
     checks = await reviewConflicts(io2, model, brief, checks, Boolean(agent));
+    io2.say("\nMarking a few example replies against your checks, so the scoring is calibrated before the first round.");
     const review = await reviewChecksAtSetup(io2, buildGoal(location, objective, guardrails, policy, brief, checks), promptText, rows, model, Boolean(agent));
     checks = review.checks;
     examples = review.examples;
@@ -30381,11 +30387,16 @@ async function finishSetup(io2, root, slug, branch, goal, rows, attacks, key, en
 `);
   if (attacks) writeFileSync4(join6(root, ATTACKS_FILE), `${attacks.map((a) => JSON.stringify(a)).join("\n")}
 `);
+  io2.say(`Adding the hourly workflow file, ${WORKFLOW_FILE}, so Synthe runs on its own.`);
   writeFileSync4(join6(root, WORKFLOW_FILE), renderWorkflow(io2.template(), Math.random, void 0, Boolean(enrollment)));
   if (enrollment) writeFileSync4(join6(root, DIAGNOSTICS_FILE), renderCrimsonDiagnostics(CRIMSON_ACTION));
   ignoreDraft(root);
-  if (!event) await io2.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
+  if (!event) {
+    io2.say("Saving your key as the repo secret SYNTHE_ANTHROPIC_KEY.");
+    await io2.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
+  }
   if (enrollment) {
+    io2.say("Saving your event code and team code as the repo secrets SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE.");
     await io2.run("gh", ["secret", "set", "SYNTHE_EVENT_CODE", "--repo", slug], enrollment.code);
     await io2.run("gh", ["secret", "set", "SYNTHE_TEAM_CODE", "--repo", slug], enrollment.team);
   }
@@ -30404,6 +30415,7 @@ async function finishSetup(io2, root, slug, branch, goal, rows, attacks, key, en
     io2.say(`Turn on "Allow GitHub Actions to create and approve pull requests" at https://github.com/${slug}/settings/actions`);
   }
   const files = [GOAL_FILE, SCENARIOS_FILE, ...attacks ? [ATTACKS_FILE] : [], WORKFLOW_FILE, ...enrollment ? [DIAGNOSTICS_FILE] : []];
+  io2.say("Committing the setup files to your repo.");
   await io2.run("git", ["add", ...files]);
   await io2.run("git", ["commit", "-m", "Add Synthe", "--", ...files]);
   let setupPr = null;
@@ -30429,6 +30441,7 @@ GitHub refused the push to ${branch}, and Synthe couldn't open a pull request in
 ${branch} only takes changes through pull requests, so Synthe opened one with its files: ${setupPr}`);
     io2.say(`Merge it to start Synthe, then run \`git pull\`. ${saved}`);
   }
+  if (!setupPr) io2.say("Queueing the first round now.");
   let started = false;
   for (let i = 0; i < 5 && !started && !setupPr; i++) {
     try {
