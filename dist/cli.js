@@ -28049,7 +28049,7 @@ var init_sdk = __esm({
 
 // src/cli/main.ts
 import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync7, readFileSync as readFileSync8, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync7, readFileSync as readFileSync9, writeFileSync as writeFileSync6 } from "node:fs";
 import { createInterface as createInterface3 } from "node:readline/promises";
 
 // src/core/goal.ts
@@ -29360,8 +29360,8 @@ function localCredential(env) {
 }
 
 // src/cli/init.ts
-import { existsSync as existsSync2, mkdirSync as mkdirSync4, readFileSync as readFileSync3, rmSync, statSync, writeFileSync as writeFileSync4 } from "node:fs";
-import { join as join5 } from "node:path";
+import { existsSync as existsSync2, mkdirSync as mkdirSync4, readFileSync as readFileSync4, rmSync, statSync, writeFileSync as writeFileSync4 } from "node:fs";
+import { join as join6 } from "node:path";
 
 // src/cli/agent.ts
 var AgentSetupError = class extends Error {
@@ -29639,8 +29639,112 @@ All ${checks.length} checks can be trusted, so the number in Synthe's report mea
   return { results, checks, costUsd: costUsd2, report };
 }
 
+// src/cli/workflows.ts
+import { lstatSync as lstatSync2, readFileSync as readFileSync3 } from "node:fs";
+import { join as join5 } from "node:path";
+var DIAGNOSTICS_FILE = ".github/workflows/synthe-diagnostics.yml";
+var DIAGNOSTICS_HEADER = "# Synthe Crimson event completion workflow.";
+var CRIMSON_NOTICE = "Crimson Hacks requires workflow tracking for enrolled teams, even when your own key pays for model calls. The organizers receive the repository name and ID, workflow run ID and attempt, start and finish times, and the workflow-reported outcome. Your sharing settings still control prompt, test case, and other research data.";
+var receiptInputs = `        uses: __ACTION__
+        with:
+          github-token: \${{ github.token }}
+          event-code: \${{ secrets.SYNTHE_EVENT_CODE }}
+          team-code: \${{ secrets.SYNTHE_TEAM_CODE }}`;
+function renderCrimsonPreflight(template2, enabled) {
+  const step = (rerun = false) => `      - name: Record Crimson run start
+        id: crimson_receipt
+${rerun ? "        if: github.run_attempt != '1'\n" : ""}${receiptInputs}
+          step: receipt-start
+`;
+  const decideGate = "needs.write.outputs.go != 'false'";
+  return template2.replaceAll("\r\n", "\n").replace("      # __CRIMSON_PREFLIGHT__\n", enabled ? step() : "").replaceAll("      # __CRIMSON_RERUN_PREFLIGHT__\n", enabled ? step(true) : "").replace("      # __CRIMSON_WRITE_OUTPUT__\n", enabled ? "      receipt: ${{ steps.crimson_receipt.outcome }}\n" : "").replace(decideGate, enabled ? decideGate + " && needs.write.outputs.receipt == 'success'" : decideGate);
+}
+function renderCrimsonDiagnostics(action) {
+  return `${DIAGNOSTICS_HEADER}
+name: Synthe Crimson completion
+on:
+  workflow_run:
+    workflows: [Synthe]
+    types: [completed]
+permissions: {}
+jobs:
+  record:
+    if: github.event.workflow_run.head_repository.id == github.event.repository.id
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: { id-token: write }
+    steps:
+      - name: Record Crimson run completion
+${receiptInputs.replace("__ACTION__", action)}
+          step: receipt-finish
+`;
+}
+function previousDiagnostics(root) {
+  const path4 = join5(root, DIAGNOSTICS_FILE);
+  const info = lstatSync2(path4, { throwIfNoEntry: false });
+  if (!info) return null;
+  const before = info.isFile() ? readFileSync3(path4, "utf8") : "";
+  if (before.split(/\r?\n/, 1)[0] !== DIAGNOSTICS_HEADER) {
+    throw new Error(`${DIAGNOSTICS_FILE} already exists. Move that file before enabling Crimson tracking.`);
+  }
+  return before;
+}
+
+// package.json
+var package_default = {
+  name: "synthe",
+  version: "1.7.5",
+  description: "Your AI agent's system prompt gets better on its own: Synthe tests small changes and merges only the clear wins.",
+  keywords: [
+    "ai",
+    "agent",
+    "llm",
+    "prompt",
+    "prompt-optimization",
+    "github-actions",
+    "evals",
+    "claude"
+  ],
+  homepage: "https://github.com/synthelabs/synthe#readme",
+  repository: {
+    type: "git",
+    url: "git+https://github.com/synthelabs/synthe.git"
+  },
+  bugs: {
+    url: "https://github.com/synthelabs/synthe/issues"
+  },
+  type: "module",
+  license: "Apache-2.0",
+  bin: {
+    synthe: "dist/cli.js"
+  },
+  files: [
+    "dist/cli.js",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  engines: {
+    node: ">=20"
+  },
+  scripts: {
+    build: "esbuild src/cli/main.ts --bundle --loader:.md=text --platform=node --format=esm --target=node20 --outfile=dist/cli.js --banner:js='#!/usr/bin/env node' && esbuild src/action.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/action.mjs",
+    test: "node --test test/*.test.ts",
+    typecheck: "tsc --noEmit",
+    mutation: "node scripts/mutation-check.mjs",
+    simulate: "node scripts/simulate-gate.ts"
+  },
+  devDependencies: {
+    "@anthropic-ai/sdk": "1.3.0",
+    esbuild: "0.28.2",
+    typescript: "7.0.2",
+    "@types/node": "26.6.6"
+  }
+};
+
 // src/cli/init.ts
 var ACTION = "synthelabs/synthe@v1";
+var CRIMSON_ACTION = `synthelabs/synthe@v${package_default.version}`;
 var SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 var WORKFLOW_FILE = ".github/workflows/synthe.yml";
 var DRAFT_FILE = ".synthe/setup-draft.json";
@@ -29835,15 +29939,15 @@ function repoContext(files, location) {
   return { names: picked.map((f) => f.path), text: picked.map((f) => `--- ${f.path}
 ${redactSecrets(f.text)}`).join("\n\n") };
 }
-function renderWorkflow(template2, random = Math.random, chosenMinute) {
+function renderWorkflow(template2, random = Math.random, chosenMinute, event = false) {
   const minute = chosenMinute ?? Math.min(59, 1 + Math.floor(random() * 59));
-  return template2.replaceAll("__ACTION__", ACTION).replaceAll("__MINUTE__", String(minute));
+  return renderCrimsonPreflight(template2, event).replaceAll("__ACTION__", event ? CRIMSON_ACTION : ACTION).replaceAll("__MINUTE__", String(minute));
 }
 function repoTextFiles(listing, root) {
   return listing.split("\n").filter(Boolean).flatMap((path4) => {
     try {
-      const full = join5(root, path4);
-      return statSync(full).size < 2e5 ? [{ path: path4, text: readFileSync3(full, "utf8") }] : [];
+      const full = join6(root, path4);
+      return statSync(full).size < 2e5 ? [{ path: path4, text: readFileSync4(full, "utf8") }] : [];
     } catch {
       return [];
     }
@@ -29945,9 +30049,16 @@ function sharingDisabled(env) {
 function setupCredential(env, appKey, agent = false) {
   return env.SYNTHE_ANTHROPIC_KEY?.trim() || env.SYNTHE_EVENT_CODE?.trim() || (agent ? void 0 : appKey?.trim());
 }
+function explicitEnrollment(env) {
+  const code = env.SYNTHE_EVENT_CODE?.trim();
+  const team = normalizeTeamCode(env.SYNTHE_TEAM_CODE ?? "");
+  if (!code || !team) return void 0;
+  if (!TEAM_CODE.test(team)) askPerson("SYNTHE_TEAM_CODE (the team code from the card, crim-xxxx-xxxx-xxxx-xxxx)");
+  return { code, team };
+}
 function ignoreDraft(root) {
-  const path4 = join5(root, ".gitignore");
-  const current = existsSync2(path4) ? readFileSync3(path4, "utf8") : "";
+  const path4 = join6(root, ".gitignore");
+  const current = existsSync2(path4) ? readFileSync4(path4, "utf8") : "";
   if (!current.split(/\r?\n/).includes(`/${DRAFT_FILE}`)) writeFileSync4(path4, `${current}${current && !current.endsWith("\n") ? "\n" : ""}/${DRAFT_FILE}
 `);
 }
@@ -30007,12 +30118,12 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
     let draft;
     let source;
     try {
-      draft = JSON.parse(readFileSync3(join5(root, DRAFT_FILE), "utf8"));
+      draft = JSON.parse(readFileSync4(join6(root, DRAFT_FILE), "utf8"));
       draft.goal = parseGoal(JSON.stringify(draft.goal));
       draft.rows = parseScenarios(draft.rows.map((row) => JSON.stringify(row)).join("\n"));
       draft.attacks = draft.attacks?.length ? parseAttacks(draft.attacks.map((attack) => JSON.stringify(attack)).join("\n")) : null;
       if (promptPathProblem(draft.goal.prompt.path)) askPerson("--confirm");
-      source = readFileSync3(join5(root, draft.goal.prompt.path), "utf8");
+      source = readFileSync4(join6(root, draft.goal.prompt.path), "utf8");
       if (draft.version !== 1 || draft.slug !== slug || draft.branch !== branch || !draft.rows.length || typeof draft.event !== "boolean") askPerson("--confirm");
     } catch {
       askPerson("--confirm (run step 1 again)");
@@ -30029,11 +30140,15 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
     if (sharingDisabled(env)) draft.goal.share = "none";
     if (draft.goal.share === "none") delete draft.goal.share_notice;
     else draft.goal.share_notice = SHARE_NOTICE_VERSION;
-    const team2 = draft.event ? agentTeam(env) : void 0;
+    const enrollment2 = draft.event ? { code: credential, team: agentTeam(env) } : explicitEnrollment(env);
+    if (draft.tracking !== void 0 && draft.tracking !== Boolean(enrollment2)) {
+      askPerson("--confirm (use the same event enrollment as step 1)");
+    }
     if (draft.event) eventModels(draft.goal.models);
-    if (draft.event) await credentialModel(io2, credential, team2).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
-    const finished = await finishSetup(io2, root, slug, branch, draft.goal, draft.rows, draft.attacks, credential, draft.event, team2);
-    if (finished) rmSync(join5(root, DRAFT_FILE), { force: true });
+    if (enrollment2) io2.say(CRIMSON_NOTICE);
+    if (draft.event) await credentialModel(io2, credential, enrollment2?.team).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
+    const finished = await finishSetup(io2, root, slug, branch, draft.goal, draft.rows, draft.attacks, credential, enrollment2);
+    if (finished) rmSync(join6(root, DRAFT_FILE), { force: true });
     return finished;
   }
   if (!agent) io2.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.
@@ -30047,8 +30162,10 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
     return false;
   }
   const event = !key.startsWith("sk-ant-");
+  const enrollment = event && team ? { code: key, team } : explicitEnrollment(env);
   const credentialName = event ? "Crimson Hacks event code" : key === env.SYNTHE_ANTHROPIC_KEY?.trim() ? "your own key from SYNTHE_ANTHROPIC_KEY" : key === envKey?.trim() ? "your own key from ANTHROPIC_API_KEY" : "your own Anthropic key";
   io2.say(`Credential: ${credentialName}, $${event ? EVENT_BUDGET_USD : 3} ${event ? "local run budget (not a credit allowance). Event credit is limited by organizer-configured caps and shared availability; it can stop sooner." : "budget on your Anthropic account."}`);
+  if (enrollment) io2.say(CRIMSON_NOTICE);
   const tracked = repoTextFiles(await io2.run("git", ["ls-files"]), root);
   const prompts = findPrompts(tracked);
   let location;
@@ -30079,7 +30196,7 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
     io2.say(refused);
     return false;
   }
-  const promptText = location.kind === "inline" ? location.initial : readFileSync3(join5(root, location.path), "utf8");
+  const promptText = location.kind === "inline" ? location.initial : readFileSync4(join6(root, location.path), "utf8");
   if (promptText.length > MAX_PROMPT_CHARS) {
     if (agent) askPerson("--prompt (too long)");
     io2.say(`Your prompt is ${promptText.length.toLocaleString("en-US")} characters, and Synthe works on prompts up to ${MAX_PROMPT_CHARS.toLocaleString("en-US")}. Shorten it, for example by moving reference material such as a menu or FAQ into a separate file your agent loads, then run \`npx synthe init\` again.`);
@@ -30194,31 +30311,39 @@ Synthe couldn't write attack messages this time, so it will run without them. Yo
   if (!auto) goal.merge_rule = { ...goal.merge_rule, mode: "propose" };
   if (agent) {
     ignoreDraft(root);
-    mkdirSync4(join5(root, ".synthe"), { recursive: true });
-    const draft = { version: 1, slug, branch, goal, rows, attacks, event, sourceHash: sha256(readFileSync3(join5(root, location.path), "utf8")), examples };
-    writeFileSync4(join5(root, DRAFT_FILE), `${JSON.stringify(draft, null, 2)}
+    mkdirSync4(join6(root, ".synthe"), { recursive: true });
+    const draft = { version: 1, slug, branch, goal, rows, attacks, event, tracking: Boolean(enrollment), sourceHash: sha256(readFileSync4(join6(root, location.path), "utf8")), examples };
+    writeFileSync4(join6(root, DRAFT_FILE), `${JSON.stringify(draft, null, 2)}
 `, { mode: 384 });
     io2.say(AGENT_NEXT);
     return true;
   }
-  return finishSetup(io2, root, slug, branch, goal, rows, attacks, key, event, team);
+  return finishSetup(io2, root, slug, branch, goal, rows, attacks, key, enrollment);
 }
-async function finishSetup(io2, root, slug, branch, goal, rows, attacks, key, event, team) {
+async function finishSetup(io2, root, slug, branch, goal, rows, attacks, key, enrollment) {
   const auto = goal.merge_rule.mode === "auto";
-  const secret = event ? "SYNTHE_EVENT_CODE" : "SYNTHE_ANTHROPIC_KEY";
-  const saved = event && team ? "Saved your event code and team code as the repo secrets SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE." : `Saved your ${event ? "event code" : "key"} as the repo secret ${secret}.`;
-  mkdirSync4(join5(root, ".synthe"), { recursive: true });
-  mkdirSync4(join5(root, ".github/workflows"), { recursive: true });
-  writeFileSync4(join5(root, GOAL_FILE), `${JSON.stringify(goal, null, 2)}
+  const event = !key.startsWith("sk-ant-");
+  const saved = [
+    ...event ? [] : ["Saved your key as the repo secret SYNTHE_ANTHROPIC_KEY."],
+    ...enrollment ? ["Saved your event code and team code as the repo secrets SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE."] : []
+  ].join(" ");
+  if (enrollment) previousDiagnostics(root);
+  mkdirSync4(join6(root, ".synthe"), { recursive: true });
+  mkdirSync4(join6(root, ".github/workflows"), { recursive: true });
+  writeFileSync4(join6(root, GOAL_FILE), `${JSON.stringify(goal, null, 2)}
 `);
-  writeFileSync4(join5(root, SCENARIOS_FILE), `${rows.map((r) => JSON.stringify(r)).join("\n")}
+  writeFileSync4(join6(root, SCENARIOS_FILE), `${rows.map((r) => JSON.stringify(r)).join("\n")}
 `);
-  if (attacks) writeFileSync4(join5(root, ATTACKS_FILE), `${attacks.map((a) => JSON.stringify(a)).join("\n")}
+  if (attacks) writeFileSync4(join6(root, ATTACKS_FILE), `${attacks.map((a) => JSON.stringify(a)).join("\n")}
 `);
-  writeFileSync4(join5(root, WORKFLOW_FILE), renderWorkflow(io2.template()));
+  writeFileSync4(join6(root, WORKFLOW_FILE), renderWorkflow(io2.template(), Math.random, void 0, Boolean(enrollment)));
+  if (enrollment) writeFileSync4(join6(root, DIAGNOSTICS_FILE), renderCrimsonDiagnostics(CRIMSON_ACTION));
   ignoreDraft(root);
-  await io2.run("gh", ["secret", "set", secret, "--repo", slug], key);
-  if (event && team) await io2.run("gh", ["secret", "set", "SYNTHE_TEAM_CODE", "--repo", slug], team);
+  if (!event) await io2.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
+  if (enrollment) {
+    await io2.run("gh", ["secret", "set", "SYNTHE_EVENT_CODE", "--repo", slug], enrollment.code);
+    await io2.run("gh", ["secret", "set", "SYNTHE_TEAM_CODE", "--repo", slug], enrollment.team);
+  }
   try {
     await io2.run("gh", [
       "api",
@@ -30233,18 +30358,21 @@ async function finishSetup(io2, root, slug, branch, goal, rows, attacks, key, ev
   } catch {
     io2.say(`Turn on "Allow GitHub Actions to create and approve pull requests" at https://github.com/${slug}/settings/actions`);
   }
-  const files = attacks ? [GOAL_FILE, SCENARIOS_FILE, ATTACKS_FILE, WORKFLOW_FILE] : [GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE];
+  const files = [GOAL_FILE, SCENARIOS_FILE, ...attacks ? [ATTACKS_FILE] : [], WORKFLOW_FILE, ...enrollment ? [DIAGNOSTICS_FILE] : []];
   await io2.run("git", ["add", ...files]);
   await io2.run("git", ["commit", "-m", "Add Synthe", "--", ...files]);
   let setupPr = null;
   try {
     await io2.run("git", ["push"]);
     io2.say(`
-Added to ${branch} (committed and pushed): ${GOAL_FILE}, ${SCENARIOS_FILE}${attacks ? `, ${ATTACKS_FILE}` : ""} and ${WORKFLOW_FILE}. ${saved}`);
+Added to ${branch} (committed and pushed): ${files.slice(0, -1).join(", ")} and ${files.at(-1)}. ${saved}`);
   } catch {
     try {
       await io2.run("git", ["push", "--force", "origin", `HEAD:refs/heads/${SETUP_BRANCH}`]);
-      setupPr = (await io2.run("gh", ["pr", "create", "--repo", slug, "--base", branch, "--head", SETUP_BRANCH, "--title", "Add Synthe", "--body", SETUP_PR_BODY.replace("$3", `$${goal.budget.max_usd}`)])).trim();
+      const prBody = SETUP_PR_BODY.replace("$3", `$${goal.budget.max_usd}`);
+      setupPr = (await io2.run("gh", ["pr", "create", "--repo", slug, "--base", branch, "--head", SETUP_BRANCH, "--title", "Add Synthe", "--body", enrollment ? `${prBody}
+
+Adds \`${DIAGNOSTICS_FILE}\` for Crimson. ${CRIMSON_NOTICE}` : prBody])).trim();
       await io2.run("git", ["reset", "--keep", "HEAD~1"]).catch(() => void 0);
     } catch (e) {
       io2.say(`
@@ -30280,8 +30408,8 @@ Set up, but GitHub did not accept the first dispatch. Run \`gh workflow run synt
 }
 
 // src/cli/migrate.ts
-import { existsSync as existsSync3, readFileSync as readFileSync4 } from "node:fs";
-import { join as join6 } from "node:path";
+import { existsSync as existsSync3, readFileSync as readFileSync5 } from "node:fs";
+import { join as join7 } from "node:path";
 var MAX_DROP = 5;
 function parseArgs(args) {
   const out = { dryRun: false };
@@ -30322,8 +30450,8 @@ async function migrate(args, env) {
   };
   const parsed = parseArgs(args);
   if (typeof parsed === "string") return fail(parsed);
-  if (!existsSync3(join6(env.cwd, GOAL_FILE))) return fail("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
-  const goal = parseGoal(readFileSync4(join6(env.cwd, GOAL_FILE), "utf8"));
+  if (!existsSync3(join7(env.cwd, GOAL_FILE))) return fail("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
+  const goal = parseGoal(readFileSync5(join7(env.cwd, GOAL_FILE), "utf8"));
   const from = parsed.from ?? goal.models.writer;
   const to = parsed.to;
   if (!to) return fail("Say which model to try: npx synthe migrate --to <model>");
@@ -30331,9 +30459,9 @@ async function migrate(args, env) {
   const unknown = [from, to].find((m) => !known.includes(m));
   if (unknown) return fail(`Synthe doesn't know the model "${unknown}", so it can't work out what it costs. Models it knows: ${known.join(", ")}.`);
   if (from === to) return fail(`--from and --to are both ${to}. Pick two different models to compare.`);
-  const prompt = readPrompt(readFileSync4(join6(env.cwd, goal.prompt.path), "utf8"), goal, null);
+  const prompt = readPrompt(readFileSync5(join7(env.cwd, goal.prompt.path), "utf8"), goal, null);
   if (prompt === null) return fail(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
-  const scenarios = parseScenarios(readFileSync4(join6(env.cwd, goal.scenarios), "utf8"));
+  const scenarios = parseScenarios(readFileSync5(join7(env.cwd, goal.scenarios), "utf8"));
   let real = env.model;
   if (!parsed.dryRun && !real) {
     if (!env.apiKey) return fail("`npx synthe migrate` runs on your computer, changing nothing, and needs your Synthe key:\n  ANTHROPIC_API_KEY=your-key npx synthe migrate --to " + to + "\nTo see the layout without spending anything, add --dry-run.");
@@ -30447,18 +30575,23 @@ async function askSecret(question, input = process.stdin, output = process.stdou
 }
 
 // src/cli/upgrade.ts
-import { existsSync as existsSync4, readFileSync as readFileSync5, writeFileSync as writeFileSync5 } from "node:fs";
-import { join as join7 } from "node:path";
-function upgrade(root, template2) {
-  const path4 = join7(root, WORKFLOW_FILE);
+import { existsSync as existsSync4, readFileSync as readFileSync6, writeFileSync as writeFileSync5 } from "node:fs";
+import { join as join8 } from "node:path";
+function upgrade(root, template2, enroll = false) {
+  const path4 = join8(root, WORKFLOW_FILE);
   if (!existsSync4(path4)) throw new Error(`No ${WORKFLOW_FILE} found. Run \`npx synthe init\` first.`);
-  const before = readFileSync5(path4, "utf8");
-  if (!before.includes("synthelabs/synthe@v1")) throw new Error(`${WORKFLOW_FILE} is not a Synthe workflow; left it unchanged.`);
+  const before = readFileSync6(path4, "utf8");
+  if (!before.includes(ACTION)) throw new Error(`${WORKFLOW_FILE} is not a Synthe workflow; left it unchanged.`);
   const cron = before.match(/cron:\s*["']?(\d+)(?:-59\/10)? \* \* \* \*/);
   const minute = cron ? Math.max(1, Number(cron[1])) : void 0;
-  const after = renderWorkflow(template2, Math.random, minute);
-  if (after === before) return `${WORKFLOW_FILE} is already up to date. No files changed.`;
-  writeFileSync5(path4, after);
+  const event = enroll || before.includes("step: receipt-start");
+  const after = renderWorkflow(template2, Math.random, minute, event);
+  const diagnostics = event ? renderCrimsonDiagnostics(CRIMSON_ACTION) : null;
+  const diagnosticsChanged = diagnostics !== null && previousDiagnostics(root) !== diagnostics;
+  if (after === before && !diagnosticsChanged) return `${WORKFLOW_FILE} is already up to date. No files changed.`;
+  if (diagnosticsChanged) writeFileSync5(join8(root, DIAGNOSTICS_FILE), diagnostics);
+  if (after !== before) writeFileSync5(path4, after);
+  if (event) return `Updated the Crimson workflows. ${CRIMSON_NOTICE} Commit ${WORKFLOW_FILE} and ${DIAGNOSTICS_FILE}, then push both to the default branch. Set both event and team secrets before starting a round.`;
   return `Updated ${WORKFLOW_FILE}: rounds now chain immediately, a cancelled run no longer counts as a round, sharing (if you turned it on) can prove which repo sent it, and event credit works through the Synthe proxy; kept backup minute ${minute ?? "random"}. No other files changed. Commit and push this workflow file to activate it.`;
 }
 
@@ -30523,12 +30656,12 @@ async function setKey(io2, env = process.env, terminal = Boolean(process.stdin.i
 }
 
 // src/cli/guide.ts
-var guide = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand.\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n\n## 1. Prerequisites\n\n1. Check the repo is on GitHub and pushed: `git remote -v` and `git status`. If not, help the person push it first.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the card the Synthe table gave their team (it starts with `crim-`). Event credit needs both. Or they can use their own Anthropic key (it starts with `sk-ant-`) and skip both codes.\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nWith an own key, use `SYNTHE_ANTHROPIC_KEY=<key>` in place of `SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code>`, here and in step 7.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, and the sharing notice. The person must see them. During Crimson Hacks, Synthe shares the prompt and test cases with the Synthe team until Nov 9 at 23:59 UTC. Never code. Secrets are removed. The person can choose `--share none` at confirmation, or set `"share": "none"` in `synthe.json` any time.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person:\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n- If step 1 said some checks can\'t both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can\'t raise that score.\n\nFollow the `NEXT:` line that step 1 printed.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --confirm --keep-checks\n```\n\nAdd `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft\'s sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\n## 8. After setup\n\nTell the person:\n\n- Rounds start by themselves. They do not need to do anything.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n';
+var guide = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand.\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n\n## 1. Prerequisites\n\n1. Check the repo is on GitHub and pushed: `git remote -v` and `git status`. If not, help the person push it first.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the Synthe table. Enrolled teams need both codes for workflow tracking, even if they use their own Anthropic key. A setup outside the event can use its own Anthropic key alone.\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nTo use an own key during Crimson, add `SYNTHE_ANTHROPIC_KEY=<key>` alongside both event codes, here and in step 7. Outside Crimson, use the own key alone.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, and both notices. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. The separate research-sharing settings control the prompt, test cases, and other research data. The person can set `--share none` at confirmation or `"share": "none"` in `synthe.json` later.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person:\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n- If step 1 said some checks can\'t both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can\'t raise that score.\n\nFollow the `NEXT:` line with the tagged command in step 7.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent --confirm --keep-checks\n```\n\nAdd `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft\'s sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\n## 8. After setup\n\nTell the person:\n\n- Rounds start by themselves. They do not need to do anything.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n';
 
 // src/core/evidence.ts
 import { execFileSync } from "node:child_process";
-import { existsSync as existsSync5, readdirSync, readFileSync as readFileSync6 } from "node:fs";
-import { basename, dirname as dirname2, join as join8 } from "node:path";
+import { existsSync as existsSync5, readdirSync, readFileSync as readFileSync7 } from "node:fs";
+import { basename, dirname as dirname2, join as join9 } from "node:path";
 var EVIDENCE_DIR = ".synthe/evidence";
 var evidencePath = (round) => `${EVIDENCE_DIR}/round-${round}.json`;
 function sortKeys(value) {
@@ -30598,7 +30731,7 @@ function recomputeProblem(r, goal, splits) {
 function verifyEvidence(filePath, repoRoot) {
   let r;
   try {
-    r = JSON.parse(readFileSync6(filePath, "utf8"));
+    r = JSON.parse(readFileSync7(filePath, "utf8"));
   } catch (e) {
     return { ok: false, reason: `couldn't read ${filePath} as evidence: ${e.message}` };
   }
@@ -30621,19 +30754,19 @@ function verifyEvidence(filePath, repoRoot) {
   } else {
     let prev;
     try {
-      prev = JSON.parse(readFileSync6(join8(dir, `round-${prevRound}.json`), "utf8"));
+      prev = JSON.parse(readFileSync7(join9(dir, `round-${prevRound}.json`), "utf8"));
     } catch {
       return { ok: false, reason: `round-${prevRound}.json can't be read` };
     }
     if (r.prevEvidenceHash === null) return { ok: false, reason: `round-${prevRound}.json exists, but this record says it follows nothing` };
     if (hashEvidence(prev) !== r.prevEvidenceHash) return { ok: false, reason: `the chain is broken: this record follows a different round-${prevRound}.json than the one next to it` };
   }
-  const goalPath = join8(repoRoot, GOAL_FILE);
+  const goalPath = join9(repoRoot, GOAL_FILE);
   let goal;
   let splits;
   try {
-    goal = parseGoal(readFileSync6(goalPath, "utf8"));
-    splits = new Map(parseScenarios(readFileSync6(join8(repoRoot, goal.scenarios), "utf8")).map((s) => [s.id, s.split]));
+    goal = parseGoal(readFileSync7(goalPath, "utf8"));
+    splits = new Map(parseScenarios(readFileSync7(join9(repoRoot, goal.scenarios), "utf8")).map((s) => [s.id, s.split]));
   } catch (e) {
     return { ok: false, reason: `couldn't read the goal and test cases in ${repoRoot} to recheck the verdict: ${e.message}` };
   }
@@ -30674,8 +30807,8 @@ function verify(file, root, say = console.log) {
 }
 
 // src/cli/undo.ts
-import { existsSync as existsSync6, readFileSync as readFileSync7 } from "node:fs";
-import { join as join9 } from "node:path";
+import { existsSync as existsSync6, readFileSync as readFileSync8 } from "node:fs";
+import { join as join10 } from "node:path";
 var undoBranch = (round) => `synthe/undo-round-${round}`;
 function promptWithHash(source, goal, hash) {
   if (goal.prompt.kind === "file") return sha256(source) === hash ? source : null;
@@ -30689,8 +30822,8 @@ async function undo(d, roundArg) {
     say("Say which round to undo, for example: npx synthe undo 3");
     return 1;
   }
-  const local = join9(d.root, evidencePath(round));
-  const text = existsSync6(local) ? readFileSync7(local, "utf8") : await repo.readFile(evidencePath(round), STATE_BRANCH);
+  const local = join10(d.root, evidencePath(round));
+  const text = existsSync6(local) ? readFileSync8(local, "utf8") : await repo.readFile(evidencePath(round), STATE_BRANCH);
   if (text === null) {
     say(`No evidence for round ${round}. Rounds that changed nothing or didn't finish have none; check the number against \`npx synthe status\`.`);
     return 1;
@@ -30960,7 +31093,7 @@ async function ask(question) {
   rl.close();
   return answer;
 }
-var template = () => readFileSync8(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync9(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 function setUpHere() {
   if (existsSync7(GOAL_FILE)) return true;
@@ -30992,7 +31125,7 @@ async function status() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync8(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync9(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -31015,7 +31148,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync8(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync9(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -31025,7 +31158,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync7(goal.scenarios) ? sha256(readFileSync8(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync7(goal.scenarios) ? sha256(readFileSync9(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -31054,7 +31187,7 @@ async function undoRound() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync8(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync9(GOAL_FILE, "utf8"));
   const token = (await run("gh", ["auth", "token"])).trim();
   const history = async (path4) => {
     const shas = (await run("git", ["log", "--format=%H", "--", path4])).split("\n").filter(Boolean);
@@ -31073,15 +31206,15 @@ function localRun(command) {
   }
   const { key, eventCode, teamCode } = credential;
   console.log(credential.line);
-  const goal = parseGoal(readFileSync8(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync9(GOAL_FILE, "utf8"));
   if (!key && eventCode) eventModels(goal.models);
-  const prompt = readPrompt(readFileSync8(goal.prompt.path, "utf8"), goal, null);
+  const prompt = readPrompt(readFileSync9(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync8(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, teamCode) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync9(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, teamCode) };
 }
 async function calibrateChecks() {
   const local = localRun("calibrate");
@@ -31089,7 +31222,7 @@ async function calibrateChecks() {
   const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result) return;
   if (result.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync8(GOAL_FILE, "utf8"));
+    const saved = JSON.parse(readFileSync9(GOAL_FILE, "utf8"));
     writeFileSync6(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}
 `);
     console.log(`
@@ -31125,6 +31258,7 @@ Start here, inside your project's folder:
 Then:
   npx synthe status   where it is and what it changed
   npx synthe upgrade  update only the installed workflow for chained rounds
+  npx synthe upgrade --event  install Crimson tracking in an existing event repo
   npx synthe verify FILE   check a round's evidence record (.synthe/evidence/round-N.json)
   npx synthe undo N   open a pull request that puts back the prompt from before round N
   npx synthe stop     stop it; nothing more runs or changes
@@ -31143,7 +31277,7 @@ async function main() {
   else if (command === "key") {
     if (!setUpHere()) return;
     process.exitCode = await setKey(io) ? 0 : 1;
-  } else if (command === "upgrade") console.log(upgrade(process.cwd(), template()));
+  } else if (command === "upgrade") console.log(upgrade(process.cwd(), template(), process.argv.includes("--event")));
   else if (command === "stop") await stop();
   else if (command === "status") await status();
   else if (command === "restart") await restart();

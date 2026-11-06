@@ -24,11 +24,11 @@ gh auth status
 
 ## 2. Credit
 
-1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the card the Synthe table gave their team (it starts with `crim-`). Event credit needs both. Or they can use their own Anthropic key (it starts with `sk-ant-`) and skip both codes.
+1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the Synthe table. Enrolled teams need both codes for workflow tracking, even if they use their own Anthropic key. A setup outside the event can use its own Anthropic key alone.
 2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person's own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):
 
 ```
-SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent ...
+SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent ...
 ```
 
 3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.
@@ -53,10 +53,10 @@ Agent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SY
 Run this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.
 
 ```
-SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"
+SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"
 ```
 
-With an own key, use `SYNTHE_ANTHROPIC_KEY=<key>` in place of `SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code>`, here and in step 7.
+To use an own key during Crimson, add `SYNTHE_ANTHROPIC_KEY=<key>` alongside both event codes, here and in step 7. Outside Crimson, use the own key alone.
 
 Use `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.
 
@@ -64,7 +64,7 @@ Use `--mode auto` or `--mode review` as the person chose. Leave out `--message` 
 
 Show the full output as written, not a summary. It has three parts:
 
-1. The credential and budget, and the sharing notice. The person must see them. During Crimson Hacks, Synthe shares the prompt and test cases with the Synthe team until Nov 9 at 23:59 UTC. Never code. Secrets are removed. The person can choose `--share none` at confirmation, or set `"share": "none"` in `synthe.json` any time.
+1. The credential and budget, and both notices. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. The separate research-sharing settings control the prompt, test cases, and other research data. The person can set `--share none` at confirmation or `"share": "none"` in `synthe.json` later.
 2. The numbered proposed checks.
 3. Example replies, each with Synthe's pass or fail mark.
 
@@ -74,20 +74,20 @@ Then ask the person:
 - Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.
 - If step 1 said some checks can't both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can't raise that score.
 
-Follow the `NEXT:` line that step 1 printed.
+Follow the `NEXT:` line with the tagged command in step 7.
 
 ## 7. Step 2: confirm
 
 Run this with one `--check` per check the person kept, using their final wording:
 
 ```
-SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --confirm --check "<final sentence>" --check "<final sentence>"
+SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent --confirm --check "<final sentence>" --check "<final sentence>"
 ```
 
 If the person accepted every proposed check as it is, run this instead:
 
 ```
-SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --confirm --keep-checks
+SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.7.5 init --agent --confirm --keep-checks
 ```
 
 Add `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft's sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don't confirm twice.

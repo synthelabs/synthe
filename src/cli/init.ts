@@ -8,8 +8,11 @@ import { askJson, eventModels, modelProblem, normalizeTeamCode, ProxyError, prox
 import { askPerson, type AgentOptions } from "./agent.ts";
 import { reviewChecksAtSetup } from "./calibrate.ts";
 import { FULL_SHARE_UNTIL, SHARE_NOTICE_VERSION } from "../core/share.ts";
+import { CRIMSON_NOTICE, DIAGNOSTICS_FILE, previousDiagnostics, renderCrimsonDiagnostics, renderCrimsonPreflight } from "./workflows.ts";
+import packageJson from "../../package.json" with { type: "json" };
 
 export const ACTION = "synthelabs/synthe@v1";
+export const CRIMSON_ACTION = `synthelabs/synthe@v${packageJson.version}`;
 export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 export const WORKFLOW_FILE = ".github/workflows/synthe.yml";
 export const DRAFT_FILE = ".synthe/setup-draft.json";
@@ -228,9 +231,9 @@ export function repoContext(files: { path: string; text: string }[], location: P
 }
 
 // Spread hourly backup runs across minutes 1 through 59. The chain has no wait.
-export function renderWorkflow(template: string, random: () => number = Math.random, chosenMinute?: number): string {
+export function renderWorkflow(template: string, random: () => number = Math.random, chosenMinute?: number, event = false): string {
   const minute = chosenMinute ?? Math.min(59, 1 + Math.floor(random() * 59));
-  return template.replaceAll("__ACTION__", ACTION).replaceAll("__MINUTE__", String(minute));
+  return renderCrimsonPreflight(template, event).replaceAll("__ACTION__", event ? CRIMSON_ACTION : ACTION).replaceAll("__MINUTE__", String(minute));
 }
 
 function repoTextFiles(listing: string, root: string) {
@@ -345,6 +348,16 @@ export function setupCredential(env: NodeJS.ProcessEnv, appKey?: string, agent =
   return env.SYNTHE_ANTHROPIC_KEY?.trim() || env.SYNTHE_EVENT_CODE?.trim() || (agent ? undefined : appKey?.trim());
 }
 
+interface EventEnrollment { code: string; team: string }
+
+function explicitEnrollment(env: NodeJS.ProcessEnv): EventEnrollment | undefined {
+  const code = env.SYNTHE_EVENT_CODE?.trim();
+  const team = normalizeTeamCode(env.SYNTHE_TEAM_CODE ?? "");
+  if (!code || !team) return undefined;
+  if (!TEAM_CODE.test(team)) askPerson("SYNTHE_TEAM_CODE (the team code from the card, crim-xxxx-xxxx-xxxx-xxxx)");
+  return { code, team };
+}
+
 function ignoreDraft(root: string): void {
   const path = join(root, ".gitignore");
   const current = existsSync(path) ? readFileSync(path, "utf8") : "";
@@ -413,10 +426,14 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     if (sharingDisabled(env)) draft.goal.share = "none";
     if (draft.goal.share === "none") delete draft.goal.share_notice;
     else draft.goal.share_notice = SHARE_NOTICE_VERSION;
-    const team = draft.event ? agentTeam(env) : undefined;
+    const enrollment = draft.event ? { code: credential, team: agentTeam(env) } : explicitEnrollment(env);
+    if (draft.tracking !== undefined && draft.tracking !== Boolean(enrollment)) {
+      askPerson("--confirm (use the same event enrollment as step 1)");
+    }
     if (draft.event) eventModels(draft.goal.models);
-    if (draft.event) await credentialModel(io, credential, team).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
-    const finished = await finishSetup(io, root, slug, branch, draft.goal, draft.rows, draft.attacks, credential, draft.event, team);
+    if (enrollment) io.say(CRIMSON_NOTICE);
+    if (draft.event) await credentialModel(io, credential, enrollment?.team).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });
+    const finished = await finishSetup(io, root, slug, branch, draft.goal, draft.rows, draft.attacks, credential, enrollment);
     if (finished) rmSync(join(root, DRAFT_FILE), { force: true });
     return finished;
   }
@@ -431,8 +448,10 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     io.say("Nothing in your repo was changed. Run `npx synthe init` again when you have a working event code or key."); return false;
   }
   const event = !key.startsWith("sk-ant-");
+  const enrollment = event && team ? { code: key, team } : explicitEnrollment(env);
   const credentialName = event ? "Crimson Hacks event code" : key === env.SYNTHE_ANTHROPIC_KEY?.trim() ? "your own key from SYNTHE_ANTHROPIC_KEY" : key === envKey?.trim() ? "your own key from ANTHROPIC_API_KEY" : "your own Anthropic key";
   io.say(`Credential: ${credentialName}, $${event ? EVENT_BUDGET_USD : 3} ${event ? "local run budget (not a credit allowance). Event credit is limited by organizer-configured caps and shared availability; it can stop sooner." : "budget on your Anthropic account."}`);
+  if (enrollment) io.say(CRIMSON_NOTICE);
 
   const tracked = repoTextFiles(await io.run("git", ["ls-files"]), root);
   const prompts = findPrompts(tracked);
@@ -578,31 +597,39 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   if (agent) {
     ignoreDraft(root);
     mkdirSync(join(root, ".synthe"), { recursive: true });
-    const draft: SetupDraft = { version: 1, slug, branch, goal, rows, attacks, event, sourceHash: sha256(readFileSync(join(root, location.path), "utf8")), examples };
+    const draft: SetupDraft = { version: 1, slug, branch, goal, rows, attacks, event, tracking: Boolean(enrollment), sourceHash: sha256(readFileSync(join(root, location.path), "utf8")), examples };
     writeFileSync(join(root, DRAFT_FILE), `${JSON.stringify(draft, null, 2)}\n`, { mode: 0o600 });
     io.say(AGENT_NEXT);
     return true;
   }
-  return finishSetup(io, root, slug, branch, goal, rows, attacks, key, event, team);
+  return finishSetup(io, root, slug, branch, goal, rows, attacks, key, enrollment);
 }
 
-interface SetupDraft { version: number; slug: string; branch: string; goal: Goal; rows: Scenario[]; attacks: Attack[] | null; event: boolean; sourceHash: string; examples: unknown[] }
+interface SetupDraft { version: number; slug: string; branch: string; goal: Goal; rows: Scenario[]; attacks: Attack[] | null; event: boolean; tracking?: boolean; sourceHash: string; examples: unknown[] }
 
-async function finishSetup(io: Io, root: string, slug: string, branch: string, goal: Goal, rows: Scenario[], attacks: Attack[] | null, key: string, event: boolean, team?: string) {
+async function finishSetup(io: Io, root: string, slug: string, branch: string, goal: Goal, rows: Scenario[], attacks: Attack[] | null, key: string, enrollment?: EventEnrollment) {
   const auto = goal.merge_rule.mode === "auto";
-  const secret = event ? "SYNTHE_EVENT_CODE" : "SYNTHE_ANTHROPIC_KEY";
-  const saved = event && team ? "Saved your event code and team code as the repo secrets SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE." : `Saved your ${event ? "event code" : "key"} as the repo secret ${secret}.`;
+  const event = !key.startsWith("sk-ant-");
+  const saved = [
+    ...(event ? [] : ["Saved your key as the repo secret SYNTHE_ANTHROPIC_KEY."]),
+    ...(enrollment ? ["Saved your event code and team code as the repo secrets SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE."] : []),
+  ].join(" ");
 
+  if (enrollment) previousDiagnostics(root);
   mkdirSync(join(root, ".synthe"), { recursive: true });
   mkdirSync(join(root, ".github/workflows"), { recursive: true });
   writeFileSync(join(root, GOAL_FILE), `${JSON.stringify(goal, null, 2)}\n`);
   writeFileSync(join(root, SCENARIOS_FILE), `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`);
   if (attacks) writeFileSync(join(root, ATTACKS_FILE), `${attacks.map((a) => JSON.stringify(a)).join("\n")}\n`);
-  writeFileSync(join(root, WORKFLOW_FILE), renderWorkflow(io.template()));
+  writeFileSync(join(root, WORKFLOW_FILE), renderWorkflow(io.template(), Math.random, undefined, Boolean(enrollment)));
+  if (enrollment) writeFileSync(join(root, DIAGNOSTICS_FILE), renderCrimsonDiagnostics(CRIMSON_ACTION));
   ignoreDraft(root);
 
-  await io.run("gh", ["secret", "set", secret, "--repo", slug], key);
-  if (event && team) await io.run("gh", ["secret", "set", "SYNTHE_TEAM_CODE", "--repo", slug], team);
+  if (!event) await io.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
+  if (enrollment) {
+    await io.run("gh", ["secret", "set", "SYNTHE_EVENT_CODE", "--repo", slug], enrollment.code);
+    await io.run("gh", ["secret", "set", "SYNTHE_TEAM_CODE", "--repo", slug], enrollment.team);
+  }
   try {
     await io.run("gh", ["api", "-X", "PUT", `repos/${slug}/actions/permissions/workflow`,
       "-f", "default_workflow_permissions=read", "-F", "can_approve_pull_request_reviews=true"]);
@@ -610,18 +637,19 @@ async function finishSetup(io: Io, root: string, slug: string, branch: string, g
     io.say(`Turn on "Allow GitHub Actions to create and approve pull requests" at https://github.com/${slug}/settings/actions`);
   }
 
-  const files = attacks ? [GOAL_FILE, SCENARIOS_FILE, ATTACKS_FILE, WORKFLOW_FILE] : [GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE];
+  const files = [GOAL_FILE, SCENARIOS_FILE, ...(attacks ? [ATTACKS_FILE] : []), WORKFLOW_FILE, ...(enrollment ? [DIAGNOSTICS_FILE] : [])];
   await io.run("git", ["add", ...files]);
   await io.run("git", ["commit", "-m", "Add Synthe", "--", ...files]);
   // A protected branch, or one that moved on since the last pull, refuses the push. A pull request works either way.
   let setupPr: string | null = null;
   try {
     await io.run("git", ["push"]);
-    io.say(`\nAdded to ${branch} (committed and pushed): ${GOAL_FILE}, ${SCENARIOS_FILE}${attacks ? `, ${ATTACKS_FILE}` : ""} and ${WORKFLOW_FILE}. ${saved}`);
+    io.say(`\nAdded to ${branch} (committed and pushed): ${files.slice(0, -1).join(", ")} and ${files.at(-1)}. ${saved}`);
   } catch {
     try {
       await io.run("git", ["push", "--force", "origin", `HEAD:refs/heads/${SETUP_BRANCH}`]);
-      setupPr = (await io.run("gh", ["pr", "create", "--repo", slug, "--base", branch, "--head", SETUP_BRANCH, "--title", "Add Synthe", "--body", SETUP_PR_BODY.replace("$3", `$${goal.budget.max_usd}`)])).trim();
+      const prBody = SETUP_PR_BODY.replace("$3", `$${goal.budget.max_usd}`);
+      setupPr = (await io.run("gh", ["pr", "create", "--repo", slug, "--base", branch, "--head", SETUP_BRANCH, "--title", "Add Synthe", "--body", enrollment ? `${prBody}\n\nAdds \`${DIAGNOSTICS_FILE}\` for Crimson. ${CRIMSON_NOTICE}` : prBody])).trim();
       // The pull request holds the files now. Without its own copy of the commit, this branch can simply `git pull`
       // after a squash merge instead of hitting "divergent branches". --keep leaves the team's uncommitted work alone.
       await io.run("git", ["reset", "--keep", "HEAD~1"]).catch(() => undefined);

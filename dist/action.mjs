@@ -28047,7 +28047,7 @@ var init_sdk = __esm({
 });
 
 // src/action.ts
-import { appendFileSync, existsSync, mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync2 } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync as mkdirSync2, readFileSync as readFileSync4, writeFileSync as writeFileSync2 } from "node:fs";
 
 // src/core/goal.ts
 var STATE_BRANCH = "synthe/state";
@@ -30255,7 +30255,7 @@ ${goal.policy ?? ""}`);
 // package.json
 var package_default = {
   name: "synthe",
-  version: "1.7.4",
+  version: "1.7.5",
   description: "Your AI agent's system prompt gets better on its own: Synthe tests small changes and merges only the clear wins.",
   keywords: [
     "ai",
@@ -30555,6 +30555,71 @@ function startEventsWorker() {
   return true;
 }
 
+// src/core/receipts.ts
+import { readFileSync as readFileSync3 } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
+var ENDPOINT2 = "https://synthe-crimson.vercel.app/api/collect/receipt";
+var AUDIENCE = "synthe-receipts";
+var EVENT_ENDS = Date.parse("2026-11-08T23:59:00Z");
+var CONCLUSIONS = /* @__PURE__ */ new Set(["success", "failure", "cancelled", "skipped", "timed_out", "neutral", "action_required", "stale", "startup_failure"]);
+function finishReceipt(eventPath, repositoryId) {
+  let event;
+  try {
+    if (!eventPath) throw new Error();
+    event = JSON.parse(readFileSync3(eventPath, "utf8"));
+  } catch {
+    throw new Error("GitHub did not provide the completed Synthe run. Rerun this collector from Actions.");
+  }
+  const run = event?.workflow_run;
+  if (event?.action !== "completed" || run?.status !== "completed" || !repositoryId || String(event.repository?.id) !== repositoryId || String(run?.repository?.id) !== repositoryId || String(run?.head_repository?.id) !== repositoryId || typeof run?.path !== "string" || run.path.split("@", 1)[0] !== ".github/workflows/synthe.yml") return null;
+  const startedAt = Date.parse(run.run_started_at ?? run.created_at ?? "");
+  if (startedAt >= EVENT_ENDS) return null;
+  if (!Number.isSafeInteger(run.id) || run.id < 1 || !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1 || run.run_attempt > 9999 || !CONCLUSIONS.has(run.conclusion)) {
+    throw new Error("GitHub did not provide a run ID, attempt and conclusion. Rerun this collector from Actions.");
+  }
+  return { kind: "finish", run_id: String(run.id), attempt: String(run.run_attempt), conclusion: run.conclusion };
+}
+async function deliverReceipt(step, eventCode, teamCode, options = {}) {
+  const { env = process.env, fetcher = fetch, sleep: sleep2 = delay, now = Date.now } = options;
+  if (step === "receipt-start" && now() >= EVENT_ENDS) return false;
+  if (step === "receipt-finish" && env.GITHUB_EVENT_NAME !== "workflow_run") return false;
+  const receipt = step === "receipt-start" ? { kind: "start" } : finishReceipt(env.GITHUB_EVENT_PATH, env.GITHUB_REPOSITORY_ID);
+  if (!receipt) return false;
+  if (!eventCode.trim() || !teamCode.trim()) {
+    throw new Error("Crimson tracking needs both repository secrets, SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE. Add them in GitHub Actions settings, then rerun.");
+  }
+  requireOidc(env);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await sleep2(attempt * 1e3);
+    let status;
+    try {
+      const signal = AbortSignal.timeout(1e4);
+      const token = await oidcToken(AUDIENCE, env, fetcher, signal);
+      const response = await fetcher(ENDPOINT2, {
+        method: "POST",
+        redirect: "error",
+        signal,
+        headers: { Authorization: `Bearer ${token}`, "content-type": "application/json", "x-synthe-event": eventCode.trim(), "x-synthe-team": teamCode.trim() },
+        body: JSON.stringify(receipt)
+      });
+      if (response.ok) {
+        const ack = await response.json();
+        if (ack && typeof ack === "object" && "ok" in ack && ack.ok === true) return true;
+      } else {
+        status = response.status;
+        await response.body?.cancel();
+      }
+    } catch {
+    }
+    if (status === 401) throw new Error("Crimson tracking couldn't verify this GitHub workflow. Commit the files from `npx synthe upgrade --event` and rerun.");
+    if (status === 403) throw new Error("Crimson tracking refused this team or repository. Check the event and team codes with the organizer, then rerun.");
+    if (status !== void 0 && status !== 409 && status !== 429 && status < 500) {
+      throw new Error(`Crimson tracking refused this receipt (HTTP ${status}). Ask the organizer before rerunning.`);
+    }
+  }
+  throw new Error("Crimson tracking didn't acknowledge this run after three attempts. Rerun from Actions or ask the organizer.");
+}
+
 // src/action.ts
 var OUT = ".synthe-out";
 var ROUND_GAP_MS = 50 * 6e4;
@@ -30567,7 +30632,7 @@ var save = (name, value) => {
   mkdirSync2(OUT, { recursive: true });
   writeFileSync2(`${OUT}/${name}`, JSON.stringify(value));
 };
-var load = (name) => existsSync(`${OUT}/${name}`) ? JSON.parse(readFileSync3(`${OUT}/${name}`, "utf8")) : null;
+var load = (name) => existsSync(`${OUT}/${name}`) ? JSON.parse(readFileSync4(`${OUT}/${name}`, "utf8")) : null;
 async function stillWaiting(repo, branch) {
   try {
     const pr = await repo.findPr(branch);
@@ -30578,6 +30643,11 @@ async function stillWaiting(repo, branch) {
 }
 async function main() {
   const step = input("step");
+  if (step === "receipt-start" || step === "receipt-finish") {
+    const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"));
+    console.log(acknowledged ? "Crimson tracking acknowledged this run." : "Crimson tracking does not apply to this run.");
+    return;
+  }
   if (step === "cancel") return captureCancel();
   if (step !== "decide" && !(input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() && (input("event-code") || process.env.SYNTHE_EVENT_CODE)?.trim()) requireOidc();
   const repo = githubRepo(process.env.GITHUB_REPOSITORY, input("github-token"), process.env.GITHUB_API_URL);
@@ -30627,10 +30697,10 @@ async function main() {
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(goal2, await repo.readState(), record, process.env.GITHUB_REPOSITORY));
     return;
   }
-  const goal = parseGoal(readFileSync3(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync4(GOAL_FILE, "utf8"));
   const state = await repo.readState();
   if (step === "write" && process.env.GITHUB_EVENT_NAME === "pull_request") {
-    const event = JSON.parse(readFileSync3(process.env.GITHUB_EVENT_PATH, "utf8"));
+    const event = JSON.parse(readFileSync4(process.env.GITHUB_EVENT_PATH, "utf8"));
     const pr = event.pull_request;
     const own = pr?.head?.repo?.full_name === process.env.GITHUB_REPOSITORY;
     const sameProposal = state.proposal && pr.number === state.proposal.pr && pr.head.ref === state.proposal.branch;
@@ -30647,7 +30717,7 @@ async function main() {
     setOutput("go", "check");
     return;
   }
-  if (existsSync(goal.scenarios)) resumeIfScenariosChanged(state, sha256(readFileSync3(goal.scenarios, "utf8")));
+  if (existsSync(goal.scenarios)) resumeIfScenariosChanged(state, sha256(readFileSync4(goal.scenarios, "utf8")));
   const stop = stopReason(state, goal.merge_rule.max_rounds, goal.merge_rule.stall_rounds, goal.budget.max_usd);
   if (stop) {
     console.log(`Stopped: ${stop}`);
@@ -30661,9 +30731,9 @@ async function main() {
     setOutput("go", "false");
     return;
   }
-  const prompt = readPrompt(readFileSync3(goal.prompt.path, "utf8"), goal, state.prompt);
+  const prompt = readPrompt(readFileSync4(goal.prompt.path, "utf8"), goal, state.prompt);
   if (prompt === null) throw new Error(`could not find the prompt in ${goal.prompt.path}`);
-  const scenarios = parseScenarios(readFileSync3(goal.scenarios, "utf8"));
+  const scenarios = parseScenarios(readFileSync4(goal.scenarios, "utf8"));
   const key = input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY;
   const eventCode = input("event-code") || process.env.SYNTHE_EVENT_CODE;
   if (!key && eventCode) eventModels(goal.models);
@@ -30679,7 +30749,7 @@ async function main() {
     if (!written) throw new Error("candidates are missing");
     const last2 = state.lastMerge;
     const prior = last2 && !last2.reverted && last2.mergedHash === sha256(prompt) ? last2.priorPrompt : null;
-    const attacks = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync3(ATTACKS_FILE, "utf8")) : [];
+    const attacks = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync4(ATTACKS_FILE, "utf8")) : [];
     const scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null));
     if (scored.attackCache) {
       try {
@@ -30699,9 +30769,13 @@ async function main() {
   }
 }
 if (!startEventsWorker()) main().catch((e) => {
+  const step = input("step");
+  if (step === "receipt-start" || step === "receipt-finish") {
+    console.log(`::error title=Crimson tracking::${e.message}`);
+    process.exit(1);
+  }
   captureFailure(input("step"), e);
   console.error(e);
-  const step = input("step");
   if (step === "write" || step === "score") {
     try {
       const failure = failureOf(step, e);

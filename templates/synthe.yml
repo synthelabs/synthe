@@ -23,7 +23,9 @@ jobs:
     permissions: { contents: read, pull-requests: read, id-token: write }
     outputs:
       go: ${{ steps.write.outputs.go }}
+      # __CRIMSON_WRITE_OUTPUT__
     steps:
+      # __CRIMSON_PREFLIGHT__
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -54,6 +56,7 @@ jobs:
     timeout-minutes: 15
     permissions: { contents: read, id-token: write }
     steps:
+      # __CRIMSON_RERUN_PREFLIGHT__
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -85,6 +88,7 @@ jobs:
     # The only job that can write. It holds no model key and never checks out or runs repo code.
     permissions: { contents: write, pull-requests: write, issues: write, actions: write, id-token: write }
     steps:
+      # __CRIMSON_RERUN_PREFLIGHT__
       - uses: actions/download-artifact@v4
         continue-on-error: true
         with: { path: .synthe-out, merge-multiple: true }
