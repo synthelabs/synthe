@@ -99,5 +99,5 @@ Practice the explanations without entering credentials or starting runs:
 - Workflow authentication failure: update the Synthe workflow; do not blame or rotate a valid Anthropic key.
 - Sponsored upstream key rejected: ask the organizer to repair the sponsored key, then restart; do not upgrade the team's workflow to fix an organizer credential.
 - App deploys from the default branch: choose review mode; automatic merges can trigger that deployment.
-- Sharing: show the full notice and the opt-out before confirming. Never present event credit as requiring sharing.
+- Sharing: show the research-sharing notice as information. For enrolled teams, also show the required Crimson workflow tracking notice. Event credit and research-sharing settings are separate.
 - Stop: explain `npx synthe stop`; do not execute it against a participant repo as a rehearsal.
