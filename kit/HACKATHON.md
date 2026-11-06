@@ -28,7 +28,7 @@ The Synthe session is a workshop 1 to 2 hours in, not at the start: by then team
 
 **After**
 
-- A run is up to 12 rounds, usually about 30 minutes. Teams keep building meanwhile. In auto mode Synthe commits to the prompt file on `main`, so everyone runs `git pull` before editing the prompt or pushing.
+- A run is up to 12 rounds and up to about 30 minutes; it stops sooner, often within 5 to 10 minutes, when nothing beats the team's prompt. Teams keep building meanwhile. In auto mode Synthe commits to the prompt file on `main`, so everyone runs `git pull` before editing the prompt or pushing.
 - Ask "what did Synthe do?" in the coding agent at any time; it runs `npx synthe changes`.
 - Known limits: many teams starting at once can hit model rate limits. The proxy retries twice, then the round fails and counts toward a stop. A run that stops because nothing was clearly better restarts only after new test cases are added.
 
@@ -36,7 +36,7 @@ The Synthe session is a workshop 1 to 2 hours in, not at the start: by then team
 
 **Synthe: your agent's prompt gets better while you keep building.**
 
-Set it up now, in about 10 minutes. Synthe rewrites your agent's system prompt, tests each version, and merges only what wins. A run usually takes about half an hour. Open the report to see what changed.
+Set it up now, in about 10 minutes. Synthe rewrites your agent's system prompt, tests each version, and merges only what wins. A run takes up to about half an hour. Open the report to see what changed.
 
 ```
 npx --yes github:synthelabs/synthe#v1.8.4 init

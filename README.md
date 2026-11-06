@@ -44,7 +44,7 @@ For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.8.4 init`.
 3. A change is kept only if its replies are better in clearly more cases than they're worse (more than luck would explain), better again on test cases it never saw, and it breaks none of your rules where your old prompt followed them.
 4. If a kept change later turns out worse than the prompt it replaced, Synthe puts the old one back.
 
-It runs at most 12 rounds, usually finishing a full session in about half an hour. It stops sooner when 3 rounds in a row find nothing better, or when it has used its run budget. If Anthropic's API is busy, it tries again right away, up to twice. Event-credit refusals stop immediately without retries; the report shows what to do. Once you've fixed the cause, `npx synthe restart` continues it. (An hourly scheduled run is a backup, but GitHub often skips scheduled runs, so don't rely on it.) Review mode pauses until the team merges or closes Synthe's pull request.
+It runs at most 12 rounds, a session of up to about half an hour. It stops sooner when 3 rounds in a row find nothing better, or when it has used its run budget. If Anthropic's API is busy, it tries again right away, up to twice. Event-credit refusals stop immediately without retries; the report shows what to do. Once you've fixed the cause, `npx synthe restart` continues it. (An hourly scheduled run is a backup, but GitHub often skips scheduled runs, so don't rely on it.) Review mode pauses until the team merges or closes Synthe's pull request.
 
 ## While it runs
 

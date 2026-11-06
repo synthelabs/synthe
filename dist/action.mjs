@@ -29318,7 +29318,7 @@ function nextSteps(goal, state) {
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");
   }
-  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete the `SYNTHE_ANTHROPIC_KEY`, `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE` secrets in your repo's settings.");
+  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete whichever of the `SYNTHE_ANTHROPIC_KEY`, `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE` secrets your repo has, in its settings.");
   return steps;
 }
 var TRIED_GROUPS = ["not clearly better", "did not hold on the hidden test cases", "broke a rule or a guard"];
@@ -29836,7 +29836,12 @@ Does this reply clearly break one of the guardrails? The business policy and the
     });
     return unknown ? null : failed.sort();
   };
-  return { costs, challenge, repliesFor, confirmBreak, markAttacks, cutOffCount: () => cutOff };
+  const measure2 = (set, replies) => pool(set, CONCURRENCY, async (s) => {
+    const text = replies.get(s.id) ?? null;
+    const currentChecks = text === null ? null : await checkReply(s, text, "checks", "first");
+    return { row: { id: s.id, score: EVEN, violation: null }, currentViolation: null, currentChecks };
+  });
+  return { costs, challenge, repliesFor, confirmBreak, markAttacks, measure: measure2, cutOffCount: () => cutOff };
 }
 function currentRows(set, replies, duels) {
   return set.map((s, i) => {
@@ -29856,7 +29861,7 @@ function currentRows(set, replies, duels) {
   });
 }
 async function runScore(goal, baseline, candidates, scenarios, model, prior = null, random = Math.random, attacks = [], attackCache = null) {
-  const { costs, challenge, repliesFor, confirmBreak, markAttacks, cutOffCount } = scorer(goal, model, random);
+  const { costs, challenge, repliesFor, confirmBreak, markAttacks, measure: measure2, cutOffCount } = scorer(goal, model, random);
   const train = scenarios.filter((s) => s.split === "train");
   const holdout = scenarios.filter((s) => s.split === "holdout");
   const safe = candidates.filter((c) => candidateProblem(c.text, goal.prompt) === null && c.text.trim() !== baseline.trim());
@@ -29883,6 +29888,8 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
     const duels = await challenge(leader.id, text, holdout, await holdReplies());
     holdDuels.push(duels);
     leader.holdout = duels.map((d) => d.row);
+  } else if (!hasPrior && holdout.length > 0 && (goal.checks?.some((c) => c.trim()) ?? false)) {
+    holdDuels.push(await measure2(holdout, await holdReplies()));
   }
   let freshAttackCache;
   if (leader && attacks.length > 0) {
@@ -30804,11 +30811,15 @@ function finishReceipt(eventPath, repositoryId) {
   }
   return { kind: "finish", run_id: String(run.id), attempt: String(run.run_attempt), conclusion: run.conclusion };
 }
+function endReceipt(conclusion) {
+  return CONCLUSIONS.has(conclusion) ? { kind: "end", conclusion } : null;
+}
 async function deliverReceipt(step, eventCode, teamCode, options = {}) {
   const { env = process.env, fetcher = fetch, sleep: sleep2 = delay, now = Date.now } = options;
   if (step === "receipt-start" && now() >= EVENT_ENDS) return false;
+  if (step === "receipt-end" && (env.GITHUB_EVENT_NAME === "workflow_run" || now() >= EVENT_ENDS + 2 * 24 * 36e5)) return false;
   if (step === "receipt-finish" && env.GITHUB_EVENT_NAME !== "workflow_run") return false;
-  const receipt = step === "receipt-start" ? { kind: "start" } : finishReceipt(env.GITHUB_EVENT_PATH, env.GITHUB_REPOSITORY_ID);
+  const receipt = step === "receipt-start" ? { kind: "start" } : step === "receipt-end" ? endReceipt(options.conclusion ?? "") : finishReceipt(env.GITHUB_EVENT_PATH, env.GITHUB_REPOSITORY_ID);
   if (!receipt) return false;
   if (!eventCode.trim() || !teamCode.trim()) {
     throw new Error("Crimson tracking needs both repository secrets, SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE. Add them in GitHub Actions settings, then rerun.");
@@ -30868,6 +30879,15 @@ async function stillWaiting(repo, branch) {
 }
 async function main() {
   const step = input("step");
+  if (step === "receipt-end") {
+    try {
+      const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"), { conclusion: input("conclusion") });
+      console.log(acknowledged ? "Crimson tracking recorded this run's end." : "Crimson tracking does not apply to this run's end.");
+    } catch (e) {
+      console.log(`::warning title=Crimson tracking::This run's end wasn't recorded. ${e.message}`);
+    }
+    return;
+  }
   if (step === "receipt-start" || step === "receipt-finish") {
     const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"));
     console.log(acknowledged ? "Crimson tracking acknowledged this run." : "Crimson tracking does not apply to this run.");

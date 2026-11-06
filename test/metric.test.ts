@@ -115,3 +115,31 @@ test("synthe.json checks must be a short list of sentences", () => {
   assert.throws(() => parseGoal(JSON.stringify({ ...base, checks: Array(6).fill("x") })), /up to 5/);
   assert.throws(() => parseGoal(JSON.stringify({ ...base, checks: [""] })), /checks must be a list/);
 });
+
+// A real run on Nov 6 found nothing better in three rounds, so the held-back cases were never run and the prompt's
+// score was never recorded: no headline, no graph. The current prompt is now marked there on its own.
+test("when no change passes the learned-from cases, the current prompt is still scored on the held-back cases", async () => {
+  const m = model({ newFails: 1 }); // New fails the same checks as Old and the judge prefers Old: nothing passes training
+  const { scores } = await runScore(withChecks(), "Old", [{ id: "c1", text: "New" }], cases, m);
+  assert.equal(scores.candidates[0].holdout, undefined, "no candidate is judged on the held-back cases");
+  assert.ok(scores.baselineHoldout.every((r) => r.applicable === 2 && r.failed === 1 && r.score === 50 && r.reply === undefined));
+  const { holdoutScorePct } = await import("../src/loop/decide.ts");
+  assert.equal(holdoutScorePct(scores.baselineHoldout), 50);
+  const held = m.asks.filter((a) => a.user.includes("my parcel"));
+  assert.equal(held.filter((a) => a.system === "Old").length, 10, "one current-prompt reply per held-back case");
+  assert.equal(held.filter((a) => JSON.stringify(a.schema ?? {}).includes('"results"')).length, 10, "one check call per held-back case");
+  assert.ok(!held.some((a) => a.system === "New" || JSON.stringify(a.schema ?? {}).includes('"better"')), "nothing is judged or run for a challenger there");
+  // The decision is unchanged, and the skipped round now records the score.
+  const repo = new MemoryRepo("Old");
+  repo.files.set("s.jsonl", cases.map((c) => JSON.stringify(c)).join("\n"));
+  const record = await runDecide(withChecks(), repo, { candidates: [{ id: "c1", text: "New", summary: "s" }], scores, costUsd: 0.05 });
+  assert.equal(record?.outcome, "skipped");
+  assert.equal(record?.scorePct, 50);
+  assert.match(repo.issue, /Your prompt scores 50% \(checks passed on test cases Synthe never trains on\)/);
+});
+
+test("without checks, a round with no winner still spends nothing on the held-back cases", async () => {
+  const m = model({ newFails: 1 });
+  await runScore(goal({ scenarios: "s.jsonl" }), "Old", [{ id: "c1", text: "New" }], cases, m);
+  assert.ok(!m.asks.some((a) => a.user.includes("my parcel")));
+});

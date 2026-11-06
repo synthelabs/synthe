@@ -118,3 +118,35 @@ test("event workflow gates write and reruns, while the completion workflow only 
   assert.match(collector, /permissions: \{ id-token: write \}/);
   assert.doesNotMatch(collector, /checkout|download-artifact|\brun:|ANTHROPIC/);
 });
+
+// GitHub never starts the completion workflow for rounds chained with GITHUB_TOKEN (a real run on Nov 6: rounds 2
+// and 3 had no finish). The event workflow's own last job reports the end, and can never fail the run.
+test("the event workflow ends with a job that reports the run's end, whatever happened, without failing the run", () => {
+  const template = readFileSync("templates/synthe.yml", "utf8");
+  const standard = renderWorkflow(template, undefined, 17);
+  const event = renderWorkflow(template, undefined, 17, true);
+  assert.doesNotMatch(standard, /^  end:$|receipt-end/m, "only enrolled event installs report ends");
+  const end = event.split(/^  end:$/m)[1];
+  assert.ok(end, "the event workflow has an end job");
+  assert.ok(event.trimEnd().endsWith(end.trimEnd()), "it is the last job");
+  assert.match(end, /^    needs: \[write, score, decide\]$/m);
+  assert.match(end, /^    if: \$\{\{ always\(\) && needs\.write\.result != 'skipped' \}\}$/m, "runs after failures and cancels, never for ignored pull requests");
+  assert.match(end, /^    continue-on-error: true$/m);
+  assert.match(end, /^    permissions: \{ id-token: write \}$/m);
+  assert.doesNotMatch(end, /checkout|download-artifact|ANTHROPIC|contents:/);
+  assert.ok(end.includes(`uses: ${CRIMSON_ACTION}`));
+  assert.match(end, /step: receipt-end\n          conclusion: \$\{\{ contains\(needs\.\*\.result, 'failure'\) && 'failure' \|\| contains\(needs\.\*\.result, 'cancelled'\) && 'cancelled' \|\| 'success' \}\}/);
+  assert.match(end, /event-code: \$\{\{ secrets\.SYNTHE_EVENT_CODE \}\}\n          team-code: \$\{\{ secrets\.SYNTHE_TEAM_CODE \}\}/);
+});
+
+test("an end receipt sends only the outcome, from the Synthe workflow, inside the completion window", async () => {
+  const env = { ...oidc, GITHUB_EVENT_NAME: "workflow_dispatch" };
+  const ok = transport([() => Response.json({ ok: true })]);
+  assert.equal(await deliverReceipt("receipt-end", "fixture-event", "fixture-team", { env, fetcher: ok.fetcher, now: afterCutoff, conclusion: "failure" }), true, "an end can arrive after starts close");
+  assert.deepEqual(ok.bodies, [{ kind: "end", conclusion: "failure" }]);
+  const none = transport([]);
+  assert.equal(await deliverReceipt("receipt-end", "fixture-event", "fixture-team", { env, fetcher: none.fetcher, now: beforeCutoff, conclusion: "great" }), false);
+  assert.equal(await deliverReceipt("receipt-end", "fixture-event", "fixture-team", { env: { ...env, GITHUB_EVENT_NAME: "workflow_run" }, fetcher: none.fetcher, now: beforeCutoff, conclusion: "success" }), false, "the completion workflow sends finish, not end");
+  assert.equal(await deliverReceipt("receipt-end", "fixture-event", "fixture-team", { env, fetcher: none.fetcher, now: () => afterCutoff() + 2 * 24 * 3600_000, conclusion: "success" }), false);
+  assert.deepEqual(none.bodies, []);
+});

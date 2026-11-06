@@ -2,11 +2,12 @@ name: Synthe
 description: Improves an agent's system prompt against simulated scenarios and merges what wins.
 branding: { icon: trending-up, color: blue }
 inputs:
-  step: { description: "write, score, decide, cancel, receipt-start or receipt-finish", required: true }
+  step: { description: "write, score, decide, cancel, receipt-start, receipt-end or receipt-finish", required: true }
   github-token: { description: Token for this job, required: true }
   anthropic-api-key: { description: "Model key, used by write and score only", required: false, default: "" }
   event-code: { description: "Event code for Crimson tracking and event credit", required: false, default: "" }
   team-code: { description: "Team code from the event organizers, sent with the event code", required: false, default: "" }
+  conclusion: { description: "receipt-end only: the run's outcome (success, failure or cancelled)", required: false, default: "" }
 outputs:
   go: { description: "true when a round should run" }
 runs:

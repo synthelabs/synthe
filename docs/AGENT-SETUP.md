@@ -9,7 +9,7 @@ Most teams set this up at the Synthe workshop, an hour or two into the hackathon
 ## Rules
 
 - Never invent the goal, the checks or the mode. Ask the person.
-- Never edit `synthe.json`, `.synthe/` or the workflow file by hand.
+- Never edit `synthe.json`, `.synthe/` or the workflow file by hand. One exception: after a run stops because nothing was clearly better, if the person wants it to keep going, you may add test cases to `.synthe/scenarios.jsonl` with them (see step 8).
 - If a command fails, show the person the exact message and follow what it says.
 - Do not retry setup more than once without asking the person.
 - Setup is two commands: draft (step 5) and confirm (step 7). Synthe is not installed until confirm succeeds. The draft writes only a local file: no workflow, no secrets, no commit. Finish confirm before you do any other work in this repo.
@@ -51,8 +51,9 @@ Agent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SY
 
 ## 3. Find the system prompt
 
-1. Search the code for the agent's system prompt. It is a `.md` or `.txt` file, or a string in code.
+1. Search the code for the agent's system prompt. It is a `.md` or `.txt` file, or a string in code, that the app sends to an AI model.
 2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.
+3. If you find no prompt because the app doesn't call an AI model yet (for example its logic is written as rules), stop here. Tell the person: "Synthe improves the prompt your app sends to an AI model. Your app doesn't call one yet, so there is nothing for Synthe to improve. Once your app uses an AI prompt, run setup again." Do not write a new prompt only so that Synthe has one to improve: the app would never use the changes. Connecting the app to an AI model is separate work; offer to help with it if the person asks.
 
 ## 4. Ask the person (never guess any of these)
 
@@ -82,7 +83,7 @@ Show the full output as written, not a summary. It has three parts:
 2. The numbered proposed checks.
 3. Example replies, each with Synthe's pass or fail mark.
 
-Then ask the person:
+Then ask the person. If they chose auto mode, say first: "Auto mode is set. One last step before Synthe starts: approve the checks it will score replies with. This is not a merge approval; after this, improvements merge by themselves."
 
 - Which checks to keep, drop or reword?
 - Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.
@@ -112,10 +113,11 @@ Confirm succeeded only if it printed `Added to <branch>` or opened an "Add Synth
 
 Do this step only after confirm succeeded. Tell the person:
 
-- Rounds start by themselves. They do not need to do anything. A run is up to 12 rounds, usually about 30 minutes, and then it stops by itself.
+- Rounds start by themselves. They do not need to do anything. A run is up to 12 rounds and takes up to about 30 minutes. It stops sooner, often within 5 to 10 minutes, when 3 rounds in a row find nothing clearly better than the current prompt. Either way it stops by itself.
 - In auto mode, Synthe commits its improvements to the prompt file on the default branch. Everyone on the team should run `git pull` before they edit the prompt or push, so their work and Synthe's don't collide. Synthe always starts each round from the latest prompt on the default branch, so the team can keep changing it.
 - To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo's Actions tab.
 - Tell the person: 'Ask me "what did Synthe do?" at any time and I will show you what changed.'
+- If the run stopped because nothing was clearly better and the person wants it to keep going: with them, write 3 to 5 new test cases their agent still gets wrong, show them, add each as one line to `.synthe/scenarios.jsonl` in the format the report shows (most with `"split": "train"`, about one in four `"holdout"`), commit and push, then run `npx synthe restart`. Change nothing else in `.synthe/`.
 - When the person asks what Synthe did or what changed, run `npx synthe changes` and show its output word for word before adding any commentary of your own.
 - Useful commands:
 

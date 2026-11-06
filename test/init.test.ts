@@ -146,14 +146,14 @@ test("init shows what it inferred and what happens next, in plain words", async 
   const { io, said } = fakeIo(dir);
   await init(io, dir, () => new Date(2026, 10, 6, 23, 0));
   const text = said.join("\n");
-  assert.match(text, /Synthe will improve your agent's system prompt in o\/r, in a run of about half an hour\. It tests new versions .* puts the clear winners into o\/r, or into pull requests/);
+  assert.match(text, /Synthe will improve your agent's system prompt in o\/r, in a run of up to about half an hour\. It tests new versions .* puts the clear winners into o\/r, or into pull requests/);
   assert.match(text, /it can merge it into o\/r by itself\. If o\/r deploys your app, each change goes live/);
   assert.match(text, /writing 30 test cases: 20 Synthe learns from and 10 it keeps hidden to check its changes/);
   assert.match(text, /Rules it must never break:\n    - Never lie/);
   assert.match(text, /Your business policy, copied from your prompt \(1 line\), starting: "Returns within 30 days of delivery\."/);
   assert.match(text, /Added to o\/r \(committed and pushed\): synthe\.json, \.synthe\/scenarios\.jsonl and \.github\/workflows\/synthe\.yml\. Saved your key as the repo secret SYNTHE_ANTHROPIC_KEY\./);
   assert.match(text, /up to 12 rounds with a \$3 local run budget/);
-  assert.match(text, /A 12-round session usually takes about half an hour/);
+  assert.match(text, /A 12-round session takes up to about half an hour; a run stops sooner when 3 rounds in a row find nothing clearly better/);
   assert.match(text, /Automatic merging: on\. Changes go into o\/r as soon as they win\./);
   assert.match(text, /During Crimson Hacks \(until November 9 at 23:59 UTC\), by using Synthe you share this run with the Synthe team so we can improve it: your prompt, your test cases/);
   assert.match(text, /You can keep editing your prompt: Synthe always starts from the latest version on o\/r/);

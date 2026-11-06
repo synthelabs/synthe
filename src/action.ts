@@ -37,6 +37,16 @@ async function stillWaiting(repo: Repo, branch: string): Promise<boolean> {
 
 async function main() {
   const step = input("step");
+  if (step === "receipt-end") {
+    // Only bookkeeping for the organizers: never fail a team's run over it, and never print the reason's details.
+    try {
+      const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"), { conclusion: input("conclusion") });
+      console.log(acknowledged ? "Crimson tracking recorded this run's end." : "Crimson tracking does not apply to this run's end.");
+    } catch (e) {
+      console.log(`::warning title=Crimson tracking::This run's end wasn't recorded. ${(e as Error).message}`);
+    }
+    return;
+  }
   if (step === "receipt-start" || step === "receipt-finish") {
     const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"));
     console.log(acknowledged ? "Crimson tracking acknowledged this run." : "Crimson tracking does not apply to this run.");
