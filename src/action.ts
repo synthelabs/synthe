@@ -38,7 +38,7 @@ async function stillWaiting(repo: Repo, branch: string): Promise<boolean> {
 async function main() {
   const step = input("step");
   if (step === "receipt-start" || step === "receipt-finish") {
-    const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"));
+    const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"), { conclusion: input("conclusion") });
     console.log(acknowledged ? "Crimson tracking acknowledged this run." : "Crimson tracking does not apply to this run.");
     return;
   }

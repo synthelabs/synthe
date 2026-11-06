@@ -30794,6 +30794,8 @@ var ENDPOINT2 = "https://synthe-crimson.vercel.app/api/collect/receipt";
 var AUDIENCE = "synthe-receipts";
 var EVENT_ENDS = Date.parse("2026-11-08T23:59:00Z");
 var CONCLUSIONS = /* @__PURE__ */ new Set(["success", "failure", "cancelled", "skipped", "timed_out", "neutral", "action_required", "stale", "startup_failure"]);
+var OWN_FINISH_ENDS = EVENT_ENDS + 36e5;
+var OWN_CONCLUSIONS = /* @__PURE__ */ new Set(["success", "failure", "cancelled"]);
 function finishReceipt(eventPath, repositoryId) {
   let event;
   try {
@@ -30814,8 +30816,12 @@ function finishReceipt(eventPath, repositoryId) {
 async function deliverReceipt(step, eventCode, teamCode, options = {}) {
   const { env = process.env, fetcher = fetch, sleep: sleep2 = delay, now = Date.now } = options;
   if (step === "receipt-start" && now() >= EVENT_ENDS) return false;
-  if (step === "receipt-finish" && env.GITHUB_EVENT_NAME !== "workflow_run") return false;
-  const receipt = step === "receipt-start" ? { kind: "start" } : finishReceipt(env.GITHUB_EVENT_PATH, env.GITHUB_REPOSITORY_ID);
+  const own = step === "receipt-finish" && env.GITHUB_EVENT_NAME !== "workflow_run";
+  if (own && now() >= OWN_FINISH_ENDS) return false;
+  if (own && !OWN_CONCLUSIONS.has(options.conclusion ?? "")) {
+    throw new Error("Crimson tracking couldn't tell how this run ended. Commit the files from `npx synthe upgrade --event` and rerun.");
+  }
+  const receipt = step === "receipt-start" ? { kind: "start" } : own ? { kind: "finish", conclusion: options.conclusion } : finishReceipt(env.GITHUB_EVENT_PATH, env.GITHUB_REPOSITORY_ID);
   if (!receipt) return false;
   if (!eventCode.trim() || !teamCode.trim()) {
     throw new Error("Crimson tracking needs both repository secrets, SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE. Add them in GitHub Actions settings, then rerun.");
@@ -30876,7 +30882,7 @@ async function stillWaiting(repo, branch) {
 async function main() {
   const step = input("step");
   if (step === "receipt-start" || step === "receipt-finish") {
-    const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"));
+    const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"), { conclusion: input("conclusion") });
     console.log(acknowledged ? "Crimson tracking acknowledged this run." : "Crimson tracking does not apply to this run.");
     return;
   }

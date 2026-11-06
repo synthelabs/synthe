@@ -187,6 +187,15 @@ const allMutations = [
   ["decide forgets the round's check failure counts", DECIDE, "for (const check of row.failedChecks ?? []) failed[check] = (failed[check] ?? 0) + 1;", ""],
   ["attack subset test inverted", RULE, "const newAttacks = mine.filter((id) => !baselineFailed.has(id));", "const newAttacks = mine.filter((id) => baselineFailed.has(id));"],
   ["an unknown attack result passes", RULE, "if (baseFailed === null || !Array.isArray(mine)) {", "if (false) {"],
+  ["crimson: chained rounds send no finish", "src/core/receipts.ts", 'const own = step === "receipt-finish" && env.GITHUB_EVENT_NAME !== "workflow_run";\n  if (own && now() >= OWN_FINISH_ENDS) return false;', 'const own = step === "receipt-finish" && env.GITHUB_EVENT_NAME !== "workflow_run";\n  if (own) return false;'],
+  ["crimson: own finish sends any conclusion", "src/core/receipts.ts", 'if (own && !OWN_CONCLUSIONS.has(options.conclusion ?? "")) {', 'if (false) {'],
+  ["crimson: own finish never expires", "src/core/receipts.ts", 'if (own && now() >= OWN_FINISH_ENDS) return false;', ''],
+  ["crimson: own finish claims a run ID", "src/core/receipts.ts", 'own ? { kind: "finish", conclusion: options.conclusion! }', 'own ? { kind: "finish", run_id: "1", attempt: "1", conclusion: options.conclusion! }'],
+  ["crimson: action drops the conclusion", "src/action.ts", ', { conclusion: input("conclusion") });', ');'],
+  ["crimson: finish job can fail the round", "src/cli/workflows.ts", "    continue-on-error: true\n    permissions: { id-token: write }", "    permissions: { id-token: write }"],
+  ["crimson: finish job skipped after a failure", "src/cli/workflows.ts", "if: \\${{ always() && needs.write.result != 'skipped' }}", "if: \\${{ needs.write.result != 'skipped' }}"],
+  ["crimson: failure reported as success", "src/cli/workflows.ts", "contains(needs.*.result, 'failure') && 'failure' || 'success'", "'success'"],
+  ["crimson: standard workflow gets a finish job", "src/cli/workflows.ts", '.replace("  # __CRIMSON_FINISH__\\n", enabled ? finishJob : "");', '.replace("  # __CRIMSON_FINISH__\\n", finishJob);'],
   ["attacks leaked into the writer input", SCORE, "const train = scenarios.filter((s) => s.split === \"train\");\n  const holdout", "const train = [...scenarios, ...attacks.map((a) => ({ id: a.id, input: a.input, expected: a.must, split: \"train\" as const }))].filter((s) => s.split === \"train\");\n  const holdout"],
 ];
 
