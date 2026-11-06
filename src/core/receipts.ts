@@ -43,17 +43,11 @@ export function finishReceipt(eventPath: string | undefined, repositoryId: strin
   return { kind: "finish", run_id: String(run.id), attempt: String(run.run_attempt), conclusion: run.conclusion };
 }
 
-// The Synthe workflow's own last job: its run ID and attempt come from the signed token, so only the outcome is sent.
-export function endReceipt(conclusion: string): { kind: "end"; conclusion: string } | null {
-  return CONCLUSIONS.has(conclusion) ? { kind: "end", conclusion } : null;
-}
-
-export async function deliverReceipt(step: "receipt-start" | "receipt-end" | "receipt-finish", eventCode: string, teamCode: string, options: DeliveryOptions & { conclusion?: string } = {}): Promise<boolean> {
+export async function deliverReceipt(step: "receipt-start" | "receipt-finish", eventCode: string, teamCode: string, options: DeliveryOptions = {}): Promise<boolean> {
   const { env = process.env, fetcher = fetch, sleep = delay, now = Date.now } = options;
   if (step === "receipt-start" && now() >= EVENT_ENDS) return false;
-  if (step === "receipt-end" && (env.GITHUB_EVENT_NAME === "workflow_run" || now() >= EVENT_ENDS + 2 * 24 * 3600_000)) return false;
   if (step === "receipt-finish" && env.GITHUB_EVENT_NAME !== "workflow_run") return false;
-  const receipt = step === "receipt-start" ? { kind: "start" } : step === "receipt-end" ? endReceipt(options.conclusion ?? "") : finishReceipt(env.GITHUB_EVENT_PATH, env.GITHUB_REPOSITORY_ID);
+  const receipt = step === "receipt-start" ? { kind: "start" } : finishReceipt(env.GITHUB_EVENT_PATH, env.GITHUB_REPOSITORY_ID);
   if (!receipt) return false;
   if (!eventCode.trim() || !teamCode.trim()) {
     throw new Error("Crimson tracking needs both repository secrets, SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE. Add them in GitHub Actions settings, then rerun.");

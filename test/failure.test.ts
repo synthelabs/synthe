@@ -165,13 +165,3 @@ test("a proxy that can't verify the run is reported as a workflow problem, not a
   assert.match(repo.issue, /## Stopped: the Synthe proxy couldn't verify this run/);
   assert.doesNotMatch(repo.issue, /your Synthe key stopped working/);
 });
-
-// The end receipt is the organizers' bookkeeping: a missing secret or a refused receipt only warns.
-test("a receipt-end step that can't be recorded warns and still exits 0", () => {
-  const dir = mkdtempSync(join(tmpdir(), "synthe-failure-"));
-  const env = { ...process.env, INPUT_STEP: "receipt-end", INPUT_CONCLUSION: "success", "INPUT_EVENT-CODE": "", "INPUT_TEAM-CODE": "", GITHUB_EVENT_NAME: "workflow_dispatch", GITHUB_REPOSITORY: "team/agent", GITHUB_API_URL: "http://127.0.0.1:9" };
-  const run = spawnSync(process.execPath, [join(import.meta.dirname, "../src/action.ts")], { cwd: dir, env, encoding: "utf8" });
-  assert.equal(run.status, 0, run.stdout + run.stderr);
-  assert.match(run.stdout, /::warning title=Crimson tracking::This run's end wasn't recorded\. Crimson tracking needs both repository secrets/);
-  assert.doesNotMatch(run.stdout + run.stderr, /::error/);
-});

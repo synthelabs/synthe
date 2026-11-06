@@ -23,26 +23,8 @@ ${rerun ? "        if: github.run_attempt != '1'\n" : ""}${receiptInputs}
     .replace("      # __CRIMSON_PREFLIGHT__\n", enabled ? step() : "")
     .replaceAll("      # __CRIMSON_RERUN_PREFLIGHT__\n", enabled ? step(true) : "")
     .replace("      # __CRIMSON_WRITE_OUTPUT__\n", enabled ? "      receipt: ${{ steps.crimson_receipt.outcome }}\n" : "")
-    .replace(decideGate, enabled ? decideGate + " && needs.write.outputs.receipt == 'success'" : decideGate)
-    .replace("  # __CRIMSON_END__\n", enabled ? END_JOB : "");
+    .replace(decideGate, enabled ? decideGate + " && needs.write.outputs.receipt == 'success'" : decideGate);
 }
-
-// GitHub never starts the completion workflow (on: workflow_run) for runs started with GITHUB_TOKEN, and the round
-// chain starts every round after a team's first that way. So the run reports its own end, from its last job. The job
-// may fail without failing the run, and the Action only warns when the receipt isn't acknowledged.
-const END_JOB = `  end:
-    needs: [write, score, decide]
-    if: \${{ always() && needs.write.result != 'skipped' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    continue-on-error: true
-    permissions: { id-token: write }
-    steps:
-      - name: Record Crimson run end
-${receiptInputs}
-          step: receipt-end
-          conclusion: \${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
-`;
 
 export function renderCrimsonDiagnostics(action: string): string {
   return `${DIAGNOSTICS_HEADER}

@@ -30811,15 +30811,11 @@ function finishReceipt(eventPath, repositoryId) {
   }
   return { kind: "finish", run_id: String(run.id), attempt: String(run.run_attempt), conclusion: run.conclusion };
 }
-function endReceipt(conclusion) {
-  return CONCLUSIONS.has(conclusion) ? { kind: "end", conclusion } : null;
-}
 async function deliverReceipt(step, eventCode, teamCode, options = {}) {
   const { env = process.env, fetcher = fetch, sleep: sleep2 = delay, now = Date.now } = options;
   if (step === "receipt-start" && now() >= EVENT_ENDS) return false;
-  if (step === "receipt-end" && (env.GITHUB_EVENT_NAME === "workflow_run" || now() >= EVENT_ENDS + 2 * 24 * 36e5)) return false;
   if (step === "receipt-finish" && env.GITHUB_EVENT_NAME !== "workflow_run") return false;
-  const receipt = step === "receipt-start" ? { kind: "start" } : step === "receipt-end" ? endReceipt(options.conclusion ?? "") : finishReceipt(env.GITHUB_EVENT_PATH, env.GITHUB_REPOSITORY_ID);
+  const receipt = step === "receipt-start" ? { kind: "start" } : finishReceipt(env.GITHUB_EVENT_PATH, env.GITHUB_REPOSITORY_ID);
   if (!receipt) return false;
   if (!eventCode.trim() || !teamCode.trim()) {
     throw new Error("Crimson tracking needs both repository secrets, SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE. Add them in GitHub Actions settings, then rerun.");
@@ -30879,15 +30875,6 @@ async function stillWaiting(repo, branch) {
 }
 async function main() {
   const step = input("step");
-  if (step === "receipt-end") {
-    try {
-      const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"), { conclusion: input("conclusion") });
-      console.log(acknowledged ? "Crimson tracking recorded this run's end." : "Crimson tracking does not apply to this run's end.");
-    } catch (e) {
-      console.log(`::warning title=Crimson tracking::This run's end wasn't recorded. ${e.message}`);
-    }
-    return;
-  }
   if (step === "receipt-start" || step === "receipt-finish") {
     const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"));
     console.log(acknowledged ? "Crimson tracking acknowledged this run." : "Crimson tracking does not apply to this run.");

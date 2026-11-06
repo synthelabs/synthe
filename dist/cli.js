@@ -29768,21 +29768,8 @@ ${rerun ? "        if: github.run_attempt != '1'\n" : ""}${receiptInputs}
           step: receipt-start
 `;
   const decideGate = "needs.write.outputs.go != 'false'";
-  return template2.replaceAll("\r\n", "\n").replace("      # __CRIMSON_PREFLIGHT__\n", enabled ? step() : "").replaceAll("      # __CRIMSON_RERUN_PREFLIGHT__\n", enabled ? step(true) : "").replace("      # __CRIMSON_WRITE_OUTPUT__\n", enabled ? "      receipt: ${{ steps.crimson_receipt.outcome }}\n" : "").replace(decideGate, enabled ? decideGate + " && needs.write.outputs.receipt == 'success'" : decideGate).replace("  # __CRIMSON_END__\n", enabled ? END_JOB : "");
+  return template2.replaceAll("\r\n", "\n").replace("      # __CRIMSON_PREFLIGHT__\n", enabled ? step() : "").replaceAll("      # __CRIMSON_RERUN_PREFLIGHT__\n", enabled ? step(true) : "").replace("      # __CRIMSON_WRITE_OUTPUT__\n", enabled ? "      receipt: ${{ steps.crimson_receipt.outcome }}\n" : "").replace(decideGate, enabled ? decideGate + " && needs.write.outputs.receipt == 'success'" : decideGate);
 }
-var END_JOB = `  end:
-    needs: [write, score, decide]
-    if: \${{ always() && needs.write.result != 'skipped' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    continue-on-error: true
-    permissions: { id-token: write }
-    steps:
-      - name: Record Crimson run end
-${receiptInputs}
-          step: receipt-end
-          conclusion: \${{ contains(needs.*.result, 'failure') && 'failure' || contains(needs.*.result, 'cancelled') && 'cancelled' || 'success' }}
-`;
 function renderCrimsonDiagnostics(action) {
   return `${DIAGNOSTICS_HEADER}
 name: Synthe Crimson completion
