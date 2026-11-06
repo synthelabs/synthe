@@ -187,6 +187,8 @@ const allMutations = [
   ["decide forgets the round's check failure counts", DECIDE, "for (const check of row.failedChecks ?? []) failed[check] = (failed[check] ?? 0) + 1;", ""],
   ["attack subset test inverted", RULE, "const newAttacks = mine.filter((id) => !baselineFailed.has(id));", "const newAttacks = mine.filter((id) => baselineFailed.has(id));"],
   ["an unknown attack result passes", RULE, "if (baseFailed === null || !Array.isArray(mine)) {", "if (false) {"],
+  ["a step exits before its events are sent", "src/core/events.ts", "  const child = worker;\n  if (!child) return;\n  let timer", "  const child = worker;\n  if (child) return;\n  let timer"],
+  ["a silent events server holds a step open", "src/core/events.ts", "await Promise.race([sent, new Promise<void>((done) => { timer = setTimeout(done, timeoutMs); })]);", "await sent;"],
   ["attacks leaked into the writer input", SCORE, "const train = scenarios.filter((s) => s.split === \"train\");\n  const holdout", "const train = [...scenarios, ...attacks.map((a) => ({ id: a.id, input: a.input, expected: a.must, split: \"train\" as const }))].filter((s) => s.split === \"train\");\n  const holdout"],
 ];
 

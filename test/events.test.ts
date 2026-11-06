@@ -208,7 +208,7 @@ async function observerFixture(context: TestContext, server: Awaited<ReturnType<
   context.after(() => rmSync(dir, { recursive: true, force: true }));
   const fixture = join(dir, "action.mjs");
   writeFileSync(fixture, `
-import { startEventsWorker, observeRoundStep, captureFailure, captureCancel, EVENTS_ENDPOINT } from ${JSON.stringify(pathToFileURL(resolve("src/core/events.ts")).href)};
+import { startEventsWorker, observeRoundStep, captureFailure, captureCancel, flushEvents, EVENTS_ENDPOINT } from ${JSON.stringify(pathToFileURL(resolve("src/core/events.ts")).href)};
 const realFetch = globalThis.fetch;
 globalThis.fetch = (url, init) => realFetch(String(url) === EVENTS_ENDPOINT ? process.env.TEST_BASE + '/api/events' : url, init);
 if (!startEventsWorker()) {
@@ -216,16 +216,17 @@ if (!startEventsWorker()) {
   const mode = process.env.TEST_MODE;
   if (mode === 'signal') {
     await observeRoundStep('write', {}, () => new Promise(() => { setInterval(() => {}, 1000); process.stdout.write('ready'); }));
-  } else if (mode === 'failure') { captureFailure('write', new Error('runner-token secret')); process.exitCode = 1; }
+  } else if (mode === 'failure') { captureFailure('write', new Error('runner-token secret')); await flushEvents(Number(process.env.TEST_FLUSH_MS)); process.exitCode = 1; }
   else if (mode === 'cancel') captureCancel();
   else {
     await observeRoundStep('write', { prompt: 'old' }, async () => ({ candidates: [candidate], rejected: ['candidate-2: invalid edit'], costUsd: 0 }));
     await observeRoundStep('score', {}, async () => ({ scores: { baselineTrain: [{ id: 's1', score: 50, violation: false, reply: 'before' }], baselineHoldout: [{ id: 'h1', score: 50, violation: false }], candidates: [{ id: candidate.id, train: [{ id: 's1', score: 100, violation: false, reply: 'after' }], holdout: [{ id: 'h1', score: 100, violation: false }] }] } }));
     await observeRoundStep('decide', { candidates: [candidate] }, async () => ({ round: 1, outcome: 'merged', reasons: ['passed'], costUsd: 0.1, pr: 7, edits: candidate.edits }));
+    await flushEvents();
   }
 }
 `);
-  const child = spawn(process.execPath, [fixture], { env: { PATH: process.env.PATH, ...server.env, TEST_BASE: server.base, TEST_MODE: mode }, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [fixture], { env: { PATH: process.env.PATH, ...server.env, TEST_BASE: server.base, TEST_MODE: mode, TEST_FLUSH_MS: "300" }, stdio: ["ignore", "pipe", "pipe"] });
   let log = "";
   child.stderr.on("data", (d) => { log += d; });
   const closed = new Promise<number | null>((done) => child.on("exit", (code) => done(code)));
@@ -237,7 +238,7 @@ if (!startEventsWorker()) {
 test("step observers emit all boundaries without changing results, retaining holdout isolation", async (context) => {
   const server = await fakeServer(context);
   await observerFixture(context, server);
-  await waitFor(() => server.received.flatMap((r) => r.body.events).some((e) => e.kind === "round_end"));
+  // Flushed before exit: the candidate and the writer's rejection captured last in the write step are both there.
   const events = server.received.flatMap((r) => r.body.events);
   assert.deepEqual(events.map((e) => e.kind), ["round_start", "candidate", "candidate", "case_result", "case_result", "decision", "round_end"]);
   const held = events.find((e) => e.data.split === "holdout");
@@ -247,13 +248,13 @@ test("step observers emit all boundaries without changing results, retaining hol
   assert.equal(events.find((e) => e.kind === "round_end").data.pr, 7);
 });
 
-test("background retries cannot delay action exit, and failure/cancellation are best effort events", async (context) => {
+test("a server that never answers delays a step's exit only by the flush bound, and failure/cancellation are best effort events", async (context) => {
   const server = await fakeServer(context);
   const release = server.hold();
   context.after(release);
   const start = Date.now();
   await observerFixture(context, server, "failure");
-  assert.ok(Date.now() - start < 2500, "round waited for sharing retry");
+  assert.ok(Date.now() - start < 2500, "the step waited past its flush bound");
   await waitFor(() => server.received.some((r) => r.body.events.some((e: RoundEvent) => e.kind === "failure")));
   assert.doesNotMatch(server.received[0].raw, /runner-token/);
   release();
@@ -264,19 +265,47 @@ test("background retries cannot delay action exit, and failure/cancellation are 
   }
 });
 
-test("the shipped action bundle starts its worker and shares a cancellation without running models", async (context) => {
-  const server = await fakeServer(context);
+// Runs the shipped bundle as a workflow step would. Actions kills a job's leftover processes as soon as its last step
+// ends, so what matters is what the server had when this process exited, not what arrives afterwards.
+async function runBundle(context: TestContext, server: Awaited<ReturnType<typeof fakeServer>>, step: string) {
   const dir = mkdtempSync(join(tmpdir(), "synthe-event-bundle-"));
   context.after(() => rmSync(dir, { recursive: true, force: true }));
   const preload = join(dir, "loopback.mjs");
   writeFileSync(preload, `const realFetch = globalThis.fetch; globalThis.fetch = (url, init) => realFetch(String(url) === ${JSON.stringify(EVENTS_ENDPOINT)} ? process.env.TEST_BASE + '/api/events' : url, init);`);
   const child = spawn(process.execPath, [resolve("dist/action.mjs")], { cwd: dir, env: {
-    PATH: process.env.PATH, ...server.env, TEST_BASE: server.base, INPUT_STEP: "cancel", NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
+    PATH: process.env.PATH, ...server.env, TEST_BASE: server.base, INPUT_STEP: step, NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
   }, stdio: ["ignore", "pipe", "pipe"] });
   let log = "";
+  child.stdout.on("data", (chunk) => { log += chunk; });
   child.stderr.on("data", (chunk) => { log += chunk; });
-  assert.equal(await new Promise((done) => child.on("exit", done)), 0, log);
-  await waitFor(() => server.received.length > 0);
-  assert.equal(server.received[0].body.events[0].kind, "cancel");
+  const code = await new Promise((done) => child.on("exit", done));
+  return { code, log, atExit: server.received.flatMap((r) => r.body.events as RoundEvent[]) };
+}
+
+test("the shipped action bundle starts its worker and shares a cancellation without running models", async (context) => {
+  const server = await fakeServer(context);
+  const { code, log, atExit } = await runBundle(context, server, "cancel");
+  assert.equal(code, 0, log);
+  assert.deepEqual(atExit.map((e) => e.kind), ["cancel"], "the step exited before its event was sent");
   assert.equal(server.received[0].headers.authorization, "Bearer events-bearer");
+});
+
+test("a step waits for a slow events server before it exits", async (context) => {
+  const server = await fakeServer(context);
+  const release = server.hold();
+  context.after(release);
+  const start = Date.now();
+  setTimeout(release, 400);
+  const { code, log, atExit } = await runBundle(context, server, "cancel");
+  assert.equal(code, 0, log);
+  assert.equal(atExit.length, 1);
+  assert.ok(Date.now() - start >= 400, "the step exited while its upload was still waiting for an answer");
+});
+
+test("a failed step sends its failure event before it exits", async (context) => {
+  const server = await fakeServer(context);
+  // No synthe.json in the bundle's folder, so the write step fails before any model call.
+  const { code, log, atExit } = await runBundle(context, server, "write");
+  assert.equal(code, 1, log);
+  assert.deepEqual(atExit.map((e) => e.kind), ["failure"], log);
 });

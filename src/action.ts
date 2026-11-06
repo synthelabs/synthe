@@ -13,7 +13,7 @@ import { roundSummary } from "./loop/report.ts";
 import { failureOf, type Failure } from "./loop/failure.ts";
 import { explainScores, runScore } from "./loop/score.ts";
 import { explainWrite, runWrite } from "./loop/write.ts";
-import { captureCancel, captureFailure, observeRoundStep, startEventsWorker } from "./core/events.ts";
+import { captureCancel, captureFailure, flushEvents, observeRoundStep, startEventsWorker } from "./core/events.ts";
 
 const OUT = ".synthe-out";
 // Only the hourly backup uses this gate. A queued chain round starts immediately.
@@ -173,7 +173,7 @@ async function main() {
   }
 }
 
-if (!startEventsWorker()) main().catch((e) => {
+if (!startEventsWorker()) main().then(() => flushEvents(), async (e) => {
   captureFailure(input("step"), e);
   console.error(e);
   // The decide step reads this to tell a busy API (try again next hour) from a key a person has to replace.
@@ -187,5 +187,6 @@ if (!startEventsWorker()) main().catch((e) => {
       console.log(`::error title=Synthe::${failure.message.replace(/\r?\n/g, " ")}`);
     } catch (saveError) { console.error(saveError); }
   }
+  await flushEvents();
   process.exit(1);
 });
