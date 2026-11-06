@@ -65,7 +65,7 @@ test("review: event credential beats the app key in interactive and both agent s
     assert.doesNotMatch(said.join("\n"), agent ? /Optional: paste up to 5 messages|Press Enter/ : /never matches/);
     if (agent) {
       assert.match(AGENT_NEXT, /Tell the person which credential and budget/);
-      assert.match(AGENT_NEXT, /person can choose `--share none`/);
+      assert.doesNotMatch(AGENT_NEXT, /share none|--share|DO_NOT_TRACK|choose/i);
       assert.equal(await init(io, root, undefined, "sk-ant-app", env, confirmation), true);
     }
     assert.equal(ran.find((call) => call.args[0] === "secret")!.stdin, "crimson");
