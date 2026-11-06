@@ -23,8 +23,25 @@ ${rerun ? "        if: github.run_attempt != '1'\n" : ""}${receiptInputs}
     .replace("      # __CRIMSON_PREFLIGHT__\n", enabled ? step() : "")
     .replaceAll("      # __CRIMSON_RERUN_PREFLIGHT__\n", enabled ? step(true) : "")
     .replace("      # __CRIMSON_WRITE_OUTPUT__\n", enabled ? "      receipt: ${{ steps.crimson_receipt.outcome }}\n" : "")
-    .replace(decideGate, enabled ? decideGate + " && needs.write.outputs.receipt == 'success'" : decideGate);
+    .replace(decideGate, enabled ? decideGate + " && needs.write.outputs.receipt == 'success'" : decideGate)
+    .replace("  # __CRIMSON_FINISH__\n", enabled ? finishJob : "");
 }
+
+// GitHub never starts the completion workflow for runs started with GITHUB_TOKEN, so chained rounds report their
+// own finish. It runs after a started round however it ended, and a tracking problem never fails the round itself.
+const finishJob = `  finish:
+    needs: [write, score, decide]
+    if: \${{ always() && needs.write.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    continue-on-error: true
+    permissions: { id-token: write }
+    steps:
+      - name: Record Crimson run finish
+${receiptInputs}
+          step: receipt-finish
+          conclusion: \${{ contains(needs.*.result, 'cancelled') && 'cancelled' || contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+`;
 
 export function renderCrimsonDiagnostics(action: string): string {
   return `${DIAGNOSTICS_HEADER}
