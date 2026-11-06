@@ -6,6 +6,7 @@ import { sha256 } from "../src/core/safety.ts";
 import type { Repo } from "../src/github/repo.ts";
 import { holdoutScorePct, runDecide } from "../src/loop/decide.ts";
 import { displaySeries, renderDeltaBlock, renderScoreSvg, scoreSeries, sparkline } from "../src/loop/delta.ts";
+import { headline } from "../src/loop/report.ts";
 import { DEFAULTS } from "../src/core/goal.ts";
 import { MemoryRepo, goal, scored } from "./helpers.ts";
 
@@ -117,6 +118,15 @@ test("renderDeltaBlock shows only the latest rounds and survives state written b
   assert.ok(oldBlock.includes("Round 1 · no change · $0.03"));
   assert.ok(oldBlock.includes("Nothing was clearly better, so your prompt stayed the same."));
   assert.equal(renderDeltaBlock(goal(), newState()), "");
+});
+
+test("the report headline names the score after a single measured round, and the movement after two", () => {
+  const one = headline(goal(), stateWith([rec(1), rec(2, { scorePct: 20.8 })]));
+  assert.ok(one.summary.startsWith("Your prompt scores 20.8% (checks passed on test cases Synthe never trains on)."));
+  const two = headline(goal(), stateWith([rec(1, { scorePct: 20.8 }), rec(2, { scorePct: 55 })]));
+  assert.ok(two.summary.startsWith("Your prompt: 20.8% → 55% (checks passed on test cases Synthe never trains on)."));
+  const none = headline(goal(), stateWith([rec(1), rec(2)]));
+  assert.ok(!none.summary.includes("Your prompt scores"));
 });
 
 // Decide-level fixtures: 20 training cases and the held-back cases named per test, as JSONL.

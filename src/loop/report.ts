@@ -63,7 +63,15 @@ function bestStep(state: State): string | null {
 export function headline(goal: Goal, state: State, stoppedByTeam = false): { title: string; summary: string } {
   const base = headlineBase(goal, state, stoppedByTeam);
   const move = scoreMovement(state);
-  if (!move) return base;
+  if (!move) {
+    // One measured round is still the team's number; say it the way the delta block does.
+    const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
+    if (measured.length === 1) {
+      const lead = `Your prompt scores ${fmtScore(measured[0].pct)}% (checks passed on test cases Synthe never trains on).`;
+      return { title: base.title, summary: `${lead} ${base.summary}` };
+    }
+    return base;
+  }
   const lead = `Your prompt: ${fmtScore(move.first)}% → ${fmtScore(move.last)}% (checks passed on test cases Synthe never trains on).`;
   const step = state.stopped ? bestStep(state) : null;
   return { title: base.title, summary: `${lead}${step ? ` ${step}` : ""} ${base.summary}` };

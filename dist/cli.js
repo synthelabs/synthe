@@ -28605,7 +28605,14 @@ function bestStep(state) {
 function headline(goal, state, stoppedByTeam = false) {
   const base = headlineBase(goal, state, stoppedByTeam);
   const move = scoreMovement(state);
-  if (!move) return base;
+  if (!move) {
+    const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
+    if (measured.length === 1) {
+      const lead2 = `Your prompt scores ${fmtScore(measured[0].pct)}% (checks passed on test cases Synthe never trains on).`;
+      return { title: base.title, summary: `${lead2} ${base.summary}` };
+    }
+    return base;
+  }
   const lead = `Your prompt: ${fmtScore(move.first)}% \u2192 ${fmtScore(move.last)}% (checks passed on test cases Synthe never trains on).`;
   const step = state.stopped ? bestStep(state) : null;
   return { title: base.title, summary: `${lead}${step ? ` ${step}` : ""} ${base.summary}` };
