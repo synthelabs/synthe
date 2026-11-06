@@ -512,10 +512,14 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   // The notice above is the versioned text (SHARE_NOTICE_VERSION); agent-only options go on their own line.
   if (agent && !sharingOff) io.say("The person can also choose --share none, numbers or detail at confirmation, or set DO_NOT_TRACK=1 on --confirm.");
 
+  io.say(`\nDrafting now: Synthe is reading your current prompt and your goal, "${objective}".`);
   const context = repoContext(tracked, location);
   io.say(`\nReading your prompt${context.names.length ? ` and ${context.names.join(" and ")}` : ""}, and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
   const generated = await generateScenarios(model, objective, promptText, context.text, seeds);
   const { guardrails, policy, brief, rows } = generated;
+  const learnFrom = rows.filter((r) => r.split === "train").length;
+  io.say(`Writing ${rows.length} test cases: ${learnFrom} Synthe can learn from, ${rows.length - learnFrom} held back to check its work.`);
+  io.say("Drafting the checks: plain sentences about a single reply that Synthe will mark every test reply against.");
   if (brief) io.say(`Done. What Synthe understands your agent is for: ${brief}`);
   io.say(`${brief ? "" : "Done. "}Synthe will check your agent's replies against:`);
   io.say("  Rules it must never break:");
@@ -545,6 +549,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
       else io.say("No checks typed, so Synthe keeps its suggestions.");
     }
     checks = await reviewConflicts(io, model, brief, checks, Boolean(agent));
+    io.say("\nMarking a few example replies against your checks, so the scoring is calibrated before the first round.");
     // A short look at real replies, so the checks mean what the team means before the first round measures them.
     const review = await reviewChecksAtSetup(io, buildGoal(location, objective, guardrails, policy, brief, checks), promptText, rows, model, Boolean(agent));
     checks = review.checks;
@@ -621,12 +626,17 @@ async function finishSetup(io: Io, root: string, slug: string, branch: string, g
   writeFileSync(join(root, GOAL_FILE), `${JSON.stringify(goal, null, 2)}\n`);
   writeFileSync(join(root, SCENARIOS_FILE), `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`);
   if (attacks) writeFileSync(join(root, ATTACKS_FILE), `${attacks.map((a) => JSON.stringify(a)).join("\n")}\n`);
+  io.say(`Adding the hourly workflow file, ${WORKFLOW_FILE}, so Synthe runs on its own.`);
   writeFileSync(join(root, WORKFLOW_FILE), renderWorkflow(io.template(), Math.random, undefined, Boolean(enrollment)));
   if (enrollment) writeFileSync(join(root, DIAGNOSTICS_FILE), renderCrimsonDiagnostics(CRIMSON_ACTION));
   ignoreDraft(root);
 
-  if (!event) await io.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
+  if (!event) {
+    io.say("Saving your key as the repo secret SYNTHE_ANTHROPIC_KEY.");
+    await io.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
+  }
   if (enrollment) {
+    io.say("Saving your event code and team code as the repo secrets SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE.");
     await io.run("gh", ["secret", "set", "SYNTHE_EVENT_CODE", "--repo", slug], enrollment.code);
     await io.run("gh", ["secret", "set", "SYNTHE_TEAM_CODE", "--repo", slug], enrollment.team);
   }
@@ -638,6 +648,7 @@ async function finishSetup(io: Io, root: string, slug: string, branch: string, g
   }
 
   const files = [GOAL_FILE, SCENARIOS_FILE, ...(attacks ? [ATTACKS_FILE] : []), WORKFLOW_FILE, ...(enrollment ? [DIAGNOSTICS_FILE] : [])];
+  io.say("Committing the setup files to your repo.");
   await io.run("git", ["add", ...files]);
   await io.run("git", ["commit", "-m", "Add Synthe", "--", ...files]);
   // A protected branch, or one that moved on since the last pull, refuses the push. A pull request works either way.
@@ -662,6 +673,7 @@ async function finishSetup(io: Io, root: string, slug: string, branch: string, g
     io.say(`Merge it to start Synthe, then run \`git pull\`. ${saved}`);
   }
 
+  if (!setupPr) io.say("Queueing the first round now.");
   let started = false;
   for (let i = 0; i < 5 && !started && !setupPr; i++) {
     try {
