@@ -1,7 +1,8 @@
-import type { Goal } from "../core/goal.ts";
+import { STATE_BRANCH, type Goal } from "../core/goal.ts";
 import { guardSentence } from "../core/merge-rule.ts";
 import { budgetSpend, isFinished, type RoundRecord, type State } from "../core/state.ts";
 import { FULL_SHARE_UNTIL, fromSyntheProxy, PROXY_AUTH_MESSAGE, PROXY_REFUSED } from "../core/share.ts";
+import { displaySeries, scoreSeries } from "./delta.ts";
 
 export const ISSUE_TITLE = "Synthe: prompt report";
 
@@ -33,9 +34,42 @@ const busy = (r: RoundRecord | undefined) => r?.outcome === "failed" && r.failur
 const refusedCode = (r: RoundRecord | undefined) => badKey(r) && Boolean(r!.plain?.startsWith(PROXY_REFUSED));
 const CODE_FIX = "If the Synthe table gave you a new code, save it with `gh secret set SYNTHE_TEAM_CODE` (or `gh secret set SYNTHE_EVENT_CODE` for the event code), then run `npx synthe restart`.";
 
-// The first thing a team reads in the morning: the outcome in one line, then what it means.
+const fmtScore = (n: number) => (Number.isInteger(n) ? `${n}` : n.toFixed(1));
+
+// The prompt score's movement across the run, first measurement to last, or null when fewer than two
+// rounds were measured. The score is the held-back check-pass share the decide step records each round.
+function scoreMovement(state: State): { first: number; last: number } | null {
+  const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
+  return measured.length > 1 ? { first: measured[0].pct, last: measured.at(-1)!.pct } : null;
+}
+
+// The biggest single step up, taken at a round where a change merged: the jump from the previous
+// measurement to that round's. Null when no merged round raised the score.
+function bestStep(state: State): string | null {
+  let best: { round: number; from: number; to: number } | null = null;
+  let prev: number | null = null;
+  for (const p of displaySeries(scoreSeries(state))) {
+    if (!p.measured) continue;
+    if (p.merged && prev !== null && p.pct > prev && (!best || p.pct - prev > best.to - best.from)) best = { round: p.round, from: prev, to: p.pct };
+    prev = p.pct;
+  }
+  return best ? `The biggest single step was round ${best.round}: ${fmtScore(best.from)}% to ${fmtScore(best.to)}%.` : null;
+}
+
+// The first thing a team reads in the morning: the outcome in one line, then what it means. When the
+// run has measured scores, the summary leads with the score's movement; a finished run also names
+// the biggest single step, so the end of the run reads as a result, not just a stop.
 // stoppedByTeam: the team ran `npx synthe stop`, which the run state can't know, so a running run reads as paused.
 export function headline(goal: Goal, state: State, stoppedByTeam = false): { title: string; summary: string } {
+  const base = headlineBase(goal, state, stoppedByTeam);
+  const move = scoreMovement(state);
+  if (!move) return base;
+  const lead = `Your prompt: ${fmtScore(move.first)}% → ${fmtScore(move.last)}% (checks passed on test cases Synthe never trains on).`;
+  const step = state.stopped ? bestStep(state) : null;
+  return { title: base.title, summary: `${lead}${step ? ` ${step}` : ""} ${base.summary}` };
+}
+
+function headlineBase(goal: Goal, state: State, stoppedByTeam = false): { title: string; summary: string } {
   const merged = state.rounds.filter((r) => r.outcome === "merged").length;
   // The team's own number, from before the first merge to after the latest one, when they set checks.
   const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
@@ -213,13 +247,19 @@ function roundRow(r: RoundRecord): string {
   return `| ${r.round} | ${result}${r.pr ? ` (#${r.pr})` : ""} | ${tried.replaceAll("|", "/").replaceAll("\n", " ")} | ${cost} |`;
 }
 
-export function renderReport(goal: Goal, state: State, now: Date = new Date()): string {
+export function renderReport(goal: Goal, state: State, now: Date = new Date(), repoSlug?: string): string {
   const { title, summary } = headline(goal, state);
   const changes = state.rounds.filter((r) => ["merged", "reverted", "proposed"].includes(r.outcome) && r.pr);
   const mode = goal.merge_rule.mode === "propose"
     ? "**Mode:** review. Each change waits in a pull request until you merge or close it."
     : "**Mode:** automatic. Changes are merged into your main branch as soon as they win.";
   const lines = [`## ${title}`, "", summary, "", mode, ""];
+  // The score chart, when rounds have been measured and the repo is known: the decide step keeps the
+  // chart beside state.json on the state branch, and the round in the URL keeps a stale cached copy
+  // from standing in for the new one. The round table below stays as the text fallback.
+  if (repoSlug && displaySeries(scoreSeries(state)).some((p) => p.measured)) {
+    lines.push(`![Your prompt's score, round by round](https://raw.githubusercontent.com/${repoSlug}/${STATE_BRANCH}/score.svg?v=${state.round})`, "");
+  }
   if (changes.length) {
     lines.push("### What changed", "");
     for (const r of changes) {

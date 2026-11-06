@@ -25,6 +25,9 @@ const classify = (res: Response, text: string): MergeProblem =>
     : "other";
 
 export interface Repo {
+  // The repo's owner/name, when the implementation knows it: the report embeds files from the state
+  // branch by their raw URL, which needs the slug. Local and test repos may not have one.
+  slug?: string;
   dispatchWorkflow(): Promise<void>;
   defaultBranch(): Promise<string>;
   headSha(branch: string): Promise<string>;
@@ -109,6 +112,7 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
   };
 
   const repo: Repo = {
+    slug,
     async dispatchWorkflow() {
       const res = await call("POST", "/actions/workflows/synthe.yml/dispatches", { ref: await repo.defaultBranch() });
       if (res.ok) return;

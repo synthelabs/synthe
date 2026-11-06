@@ -28511,6 +28511,28 @@ async function oidcToken(audience, env = process.env, fetcher = fetch, signal) {
   return token;
 }
 
+// src/loop/delta.ts
+function scoreSeries(state) {
+  return state.rounds.map((r) => ({
+    round: r.round,
+    scorePct: typeof r.scorePct === "number" && Number.isFinite(r.scorePct) ? r.scorePct : null,
+    merged: r.outcome === "merged"
+  }));
+}
+function displaySeries(points) {
+  const out = [];
+  let last = null;
+  for (const p of points) {
+    if (p.scorePct !== null) {
+      last = p.scorePct;
+      out.push({ round: p.round, pct: p.scorePct, measured: true, merged: p.merged });
+    } else if (last !== null) {
+      out.push({ round: p.round, pct: last, measured: false, merged: p.merged });
+    }
+  }
+  return out;
+}
+
 // src/loop/report.ts
 var ISSUE_TITLE = "Synthe: prompt report";
 var money = (state) => state.spendUnknown ? `over $${budgetSpend(state).toFixed(2)}` : `$${budgetSpend(state).toFixed(2)}`;
@@ -28521,7 +28543,30 @@ var badKey = (r) => r?.outcome === "failed" && r.failure === "key";
 var busy = (r) => r?.outcome === "failed" && r.failure === "busy";
 var refusedCode = (r) => badKey(r) && Boolean(r.plain?.startsWith(PROXY_REFUSED));
 var CODE_FIX = "If the Synthe table gave you a new code, save it with `gh secret set SYNTHE_TEAM_CODE` (or `gh secret set SYNTHE_EVENT_CODE` for the event code), then run `npx synthe restart`.";
+var fmtScore = (n) => Number.isInteger(n) ? `${n}` : n.toFixed(1);
+function scoreMovement(state) {
+  const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
+  return measured.length > 1 ? { first: measured[0].pct, last: measured.at(-1).pct } : null;
+}
+function bestStep(state) {
+  let best = null;
+  let prev = null;
+  for (const p of displaySeries(scoreSeries(state))) {
+    if (!p.measured) continue;
+    if (p.merged && prev !== null && p.pct > prev && (!best || p.pct - prev > best.to - best.from)) best = { round: p.round, from: prev, to: p.pct };
+    prev = p.pct;
+  }
+  return best ? `The biggest single step was round ${best.round}: ${fmtScore(best.from)}% to ${fmtScore(best.to)}%.` : null;
+}
 function headline(goal, state, stoppedByTeam = false) {
+  const base = headlineBase(goal, state, stoppedByTeam);
+  const move = scoreMovement(state);
+  if (!move) return base;
+  const lead = `Your prompt: ${fmtScore(move.first)}% \u2192 ${fmtScore(move.last)}% (checks passed on test cases Synthe never trains on).`;
+  const step = state.stopped ? bestStep(state) : null;
+  return { title: base.title, summary: `${lead}${step ? ` ${step}` : ""} ${base.summary}` };
+}
+function headlineBase(goal, state, stoppedByTeam = false) {
   const merged = state.rounds.filter((r) => r.outcome === "merged").length;
   const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
   const gain = rated.length ? `Your checks now pass ${rated.at(-1).checks.after}% of the time, up from ${rated[0].checks.before}%. ` : "";
@@ -30960,6 +31005,7 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
     throw new Error(detail);
   };
   const repo = {
+    slug,
     async dispatchWorkflow() {
       const res = await call("POST", "/actions/workflows/synthe.yml/dispatches", { ref: await repo.defaultBranch() });
       if (res.ok) return;
