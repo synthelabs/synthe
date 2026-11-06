@@ -471,7 +471,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     if (finished) rmSync(join(root, DRAFT_FILE), { force: true });
     return finished;
   }
-  if (!agent) io.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.\n`);
+  if (!agent) io.say(`Synthe will improve your agent's system prompt in ${slug}, in a run of about half an hour. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.\n`);
 
   const preferred = setupCredential(env, envKey, Boolean(agent));
   const chosen = agent ? (preferred ? { key: preferred, team: preferred.startsWith("sk-ant-") ? undefined : agentTeam(env) } : null)
@@ -533,7 +533,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     if (!line) break;
     seeds.push(line.slice(0, 500));
   }
-  io.say(`\nWhen Synthe finds a clearly better prompt, it can merge it into ${branch} by itself, overnight. If ${branch} deploys your app, each change goes live. Or it can open a pull request each time for you to review.`);
+  io.say(`\nWhen Synthe finds a clearly better prompt, it can merge it into ${branch} by itself. If ${branch} deploys your app, each change goes live. Or it can open a pull request each time for you to review.`);
   let auto = agent ? agent.mode === "auto" : await yesNo(io, `Merge improvements into ${branch} automatically? Type y for automatic, or n to review each one: `);
   if (auto === null) { auto = false; io.say("No clear answer, so Synthe will open pull requests for you to review."); }
   io.say(auto ? `Automatic merging: on. Changes go into ${branch} as soon as they win.` : "Review mode: on. Each change waits in a pull request until you merge or close it.");

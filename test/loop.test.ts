@@ -217,7 +217,7 @@ test("a run that stops finding winners reads as finished and says how to continu
   await runDecide(goal(), repo, round(scored("Old prompt.", 50, 50, 60, 55)));
   for (let i = 0; i < 3; i++) await runDecide(goal(), repo, stall(scored("Better prompt.", 60, 55, 60, 55)));
   assert.match(repo.state.stopped!, /no winner/);
-  assert.match(repo.issue, /## Done: your prompt got better overnight \(1 change merged\)\n\nSynthe stopped because the last 3 rounds found nothing clearly better/);
+  assert.match(repo.issue, /## Done: your prompt got better \(1 change merged\)\n\nSynthe stopped because the last 3 rounds found nothing clearly better/);
   assert.match(repo.issue, /Nothing more will run or change/);
   assert.match(repo.issue, /If you want Synthe to keep going, add test cases your agent still gets wrong to `s\.jsonl` and push/);
 });
