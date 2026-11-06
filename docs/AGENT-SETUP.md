@@ -98,14 +98,18 @@ Tell the person:
 
 - Rounds start by themselves. They do not need to do anything.
 - To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo's Actions tab.
+- Tell the person: 'Ask me "what did Synthe do?" at any time and I will show you what changed.'
+- When the person asks what Synthe did or what changed, run `npx synthe changes` and show its output word for word before adding any commentary of your own.
 - Useful commands:
 
 ```
 npx synthe status
+npx synthe changes
 npx synthe stop
 npx synthe key
 ```
 
   - `status` shows how things are going.
+  - `changes` shows what Synthe changed in the latest rounds and how the prompt's score moved.
   - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.
   - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.
