@@ -196,6 +196,8 @@ const allMutations = [
   ["crimson: finish job skipped after a failure", "src/cli/workflows.ts", "if: \\${{ always() && needs.write.result != 'skipped' }}", "if: \\${{ needs.write.result != 'skipped' }}"],
   ["crimson: failure reported as success", "src/cli/workflows.ts", "contains(needs.*.result, 'failure') && 'failure' || 'success'", "'success'"],
   ["crimson: standard workflow gets a finish job", "src/cli/workflows.ts", '.replace("  # __CRIMSON_FINISH__\\n", enabled ? finishJob : "");', '.replace("  # __CRIMSON_FINISH__\\n", finishJob);'],
+  ["a step exits before its events are sent", "src/core/events.ts", "  const child = worker;\n  if (!child) return;\n  let timer", "  const child = worker;\n  if (child) return;\n  let timer"],
+  ["a silent events server holds a step open", "src/core/events.ts", "await Promise.race([sent, new Promise<void>((done) => { timer = setTimeout(done, timeoutMs); })]);", "await sent;"],
   ["attacks leaked into the writer input", SCORE, "const train = scenarios.filter((s) => s.split === \"train\");\n  const holdout", "const train = [...scenarios, ...attacks.map((a) => ({ id: a.id, input: a.input, expected: a.must, split: \"train\" as const }))].filter((s) => s.split === \"train\");\n  const holdout"],
   ["improve: a change that breaks a passing test can still win", "src/improve/verdict.ts", '  if (broken) return result(false, broken, "tests");\n', ''],
   ["improve: unnamed failing tests pass as clean", "src/improve/verdict.ts", 'if (candidate.failing === null || baseline.failing === null) return', 'if (false) return'],
