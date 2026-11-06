@@ -15,6 +15,7 @@ import { calibrate } from "./calibrate.ts";
 import { migrate } from "./migrate.ts";
 import { restartState } from "./restart.ts";
 import { stoppedLine } from "./stopped.ts";
+import { NO_ROUNDS_YET, changesText } from "./changes.ts";
 import { askSecret } from "./secret.ts";
 import { upgrade } from "./upgrade.ts";
 import { AgentSetupError, agentOptions } from "./agent.ts";
@@ -87,6 +88,26 @@ async function status() {
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
   console.log(goal.merge_rule.mode === "propose" ? "Mode: review." : "Mode: automatic merging.");
   if (s.issue) console.log(`Full report: https://github.com/${slug}/issues/${s.issue}`);
+}
+
+// What Synthe changed, in the words the rounds recorded: the score's movement and the latest
+// rounds, small enough to read in a terminal or paste into a chat. State loads exactly the way
+// status loads it; a missing state file means no round has finished yet, which the changes text
+// reports as plainly as an empty one.
+async function changes() {
+  if (!setUpHere()) return;
+  const slug = await repoSlug();
+  if (!slug) return;
+  let raw: string;
+  try {
+    raw = await run("gh", ["api", `repos/${slug}/contents/state.json?ref=${encodeURIComponent(STATE_BRANCH)}`, "-H", "Accept: application/vnd.github.raw+json"]);
+  } catch {
+    console.log(NO_ROUNDS_YET);
+    return;
+  }
+  const s: State = { ...newState(), ...JSON.parse(raw) };
+  const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
+  console.log(changesText(goal, s));
 }
 
 async function stop() {
@@ -224,6 +245,7 @@ Start here, inside your project's folder:
 
 Then:
   npx synthe status   where it is and what it changed
+  npx synthe changes  what it changed, and how the score moved
   npx synthe upgrade  update only the installed workflow for chained rounds
   npx synthe upgrade --event  install Crimson tracking in an existing event repo
   npx synthe verify FILE   check a round's evidence record (.synthe/evidence/round-N.json)
@@ -249,6 +271,7 @@ async function main() {
   else if (command === "upgrade") console.log(upgrade(process.cwd(), template(), process.argv.includes("--event")));
   else if (command === "stop") await stop();
   else if (command === "status") await status();
+  else if (command === "changes") await changes();
   else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
   else if (command === "verify") process.exitCode = verify(process.argv[3], process.cwd());

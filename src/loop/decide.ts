@@ -7,6 +7,7 @@ import { candidateProblem, promptPathProblem, sha256 } from "../core/safety.ts";
 import { resumeIfScenariosChanged, stopReason, type Landing, type RoundRecord, type State } from "../core/state.ts";
 import { Refusal, type MergeProblem, type Repo } from "../github/repo.ts";
 import { ISSUE_TITLE, exampleText, notTested, renderReport } from "./report.ts";
+import { displaySeries, renderDeltaBlock, renderScoreSvg, scoreSeries } from "./delta.ts";
 import type { Candidate } from "./write.ts";
 import type { Failure } from "./failure.ts";
 import { WIN } from "./score.ts";
@@ -34,6 +35,52 @@ function pickExample(scores: RoundScores, candidateId: string, scenarioText: str
   return won && before && scenario ? { input: clipText(scenario.input, 200), before: clipText(before), after: clipText(won.reply!) } : undefined;
 }
 
+
+// The current prompt's score for the round: the share of the team's checks its replies passed on the
+// held-back cases, from the marks the score step already made. Passed applicable checks over applicable
+// checks (a check that doesn't apply to a message is in neither), to one decimal. Null under the same
+// conditions checkRate is null (no rows, a row that was never marked, or no check applied anywhere), so
+// an unmeasured round is never recorded as a score.
+export function holdoutScorePct(rows: ScoreRow[]): number | null {
+  if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
+  const applicable = rows.reduce((n, r) => n + r.applicable!, 0);
+  if (applicable === 0) return null;
+  const failed = rows.reduce((n, r) => n + r.failed!, 0);
+  return Math.round(((100 * (applicable - failed)) / applicable) * 10) / 10;
+}
+
+const truncReply = (t: string) => (t.length > 300 ? t.slice(0, 300) : t);
+
+// One practice (learning) case a merged change visibly fixed, for the round record's examplePair. The
+// pair comes from the learning cases, not the held-back ones: runScore keeps no held-back replies, on
+// purpose, so nothing about those cases can reach a writer, while the learning rows keep both replies
+// and name the checks the current prompt's reply failed. The winning reply's failed checks are only
+// counted, not named, so a case is used only when the flipped checks are known exactly: the winning
+// row names the checks it still fails, or it failed none. Cases are ranked by how many of the current
+// prompt's failed checks the winning reply passes (ties: the first case). When no case qualifies, the
+// record simply carries no pair rather than an invented one.
+function pickExamplePair(scores: RoundScores, candidateId: string, scenarioText: string | null): RoundRecord["examplePair"] {
+  const winner = scores.candidates.find((c) => c.id === candidateId);
+  if (!winner || !scenarioText) return undefined;
+  let rows: { id: string; input: string; split: string }[] = [];
+  try { rows = parseScenarios(scenarioText); } catch { return undefined; }
+  const current = new Map(scores.baselineTrain.map((r) => [r.id, r]));
+  let best: RoundRecord["examplePair"];
+  for (const row of winner.train) {
+    const before = current.get(row.id);
+    if (!before?.failedChecks?.length) continue;
+    if (typeof before.reply !== "string" || typeof row.reply !== "string") continue;
+    if (typeof before.failed !== "number" || typeof row.failed !== "number" || row.failed >= before.failed) continue;
+    const stillFailed = Array.isArray(row.failedChecks) ? row.failedChecks : row.failed === 0 ? [] : null;
+    if (!stillFailed) continue; // which checks flipped isn't known exactly, so this case can't be named honestly
+    const flipped = before.failedChecks.filter((name) => !stillFailed.includes(name));
+    if (!flipped.length || (best && flipped.length <= best.improvedChecks.length)) continue;
+    const scenario = rows.find((s) => s.id === row.id && s.split === "train");
+    if (!scenario) continue;
+    best = { input: clipText(scenario.input, 200), beforeReply: truncReply(before.reply), afterReply: truncReply(row.reply), improvedChecks: flipped };
+  }
+  return best;
+}
 
 // Details a change adds that a business would have to really offer: amounts, percentages, time limits, web
 // addresses and emails that are nowhere in the old prompt or the policy. A reviewer should check they're real.
@@ -64,9 +111,25 @@ const NEEDS_A_PERSON: Partial<Record<MergeProblem, string>> = {
 // (Issues are off, as in a fresh fork, or the token can't write them) the run carries on and the state is saved
 // with a note on the latest round. It doesn't stop the run: merges and proposals still help, and each pull
 // request explains itself.
+// The score chart lives beside state.json on the state branch, where the report issue can embed it.
+const SCORE_PATH = "score.svg";
+
 async function writeReport(goal: Goal, repo: Repo, state: State) {
+  // The chart first, so the picture is on the branch when the issue that embeds it is written. Losing
+  // the chart mustn't lose the round: a failure is noted on the round, like a refused issue below.
+  const series = scoreSeries(state);
+  if (displaySeries(series).some((p) => p.measured)) {
+    try {
+      await repo.writeStateFile(SCORE_PATH, renderScoreSvg(series), `Synthe round ${state.round}: score chart`);
+    } catch (e) {
+      const note = `couldn't save the score chart: ${(e as Error).message.slice(0, 200)}`;
+      const last = state.rounds.at(-1);
+      if (last && !last.reasons.includes(note)) last.reasons.push(note);
+      console.log(`::warning::${note}`);
+    }
+  }
   try {
-    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state, new Date(), repo.slug));
   } catch (e) {
     if (!(e instanceof Refusal)) throw e;
     const note = `couldn't write the report issue: ${e.plain}`;
@@ -187,6 +250,10 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   const round = state.round + 1;
   const record: RoundRecord = { round, at: now.toISOString(), outcome: "skipped", reasons: [...(input.rejected ?? [])], costUsd: input.costUsd, writeUsd: input.writeUsd ?? null };
   const scores = input.scores;
+  // Set when the round reaches a verdict, and to the winning candidate when a change lands: the score
+  // series below is only recorded for rounds that were actually judged.
+  let judged = false;
+  let winnerId: string | null = null;
 
   // Saved before anything touches the repo: this round's number and spend, and a stall that only a clean finish
   // can take back. If this step dies partway, the run still moves toward its limits instead of spending forever.
@@ -214,7 +281,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
 
   // Opens the pull request, then merges it (auto mode) or leaves it for a person (propose mode, or a repo whose
   // branch rules require a review). Returns the pull request and whether it was only proposed, or null.
-  type Why = { changed: string; plain: string; technical: string; diff?: string[]; example?: Example; unverified?: string[]; evidence?: (proposed: boolean) => EvidenceRecord };
+  type Why = { changed: string; plain: string; technical: string; diff?: string[]; example?: Example; unverified?: string[]; evidence?: (proposed: boolean) => EvidenceRecord; delta?: (proposed: boolean) => string };
   const land = async (text: string, kind: "merge" | "revert", title: string, why: Why): Promise<{ pr: number; proposed: boolean } | null> => {
     const branch = `synthe/round-${round}`;
     const landing: Landing = { branch, kind, text, priorPrompt: current!, propose: merge_rule.mode === "propose" };
@@ -252,6 +319,9 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       "Tested on simulated messages only. It can't tell you how real users will react.",
       `<details><summary>Fingerprints of what was tested</summary>\n\n${receiptFor(proposed)}\n\nThe judge's numbers: ${why.technical}\n\n</details>`,
       `<details><summary>What this did not test</summary>\n\n${notTested(goal).slice(1).join("\n")}\n\n</details>`,
+      // Last, where it survives the squash merge into the commit message: the score's movement and this
+      // round in plain words, so the change explains itself even to someone who never opens the report.
+      ...(why.delta ? [why.delta(proposed)] : []),
     ].join("\n\n");
     const body = bodyFor(Boolean(landing.propose));
     let pr: number;
@@ -342,6 +412,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     const last = state.lastMerge;
     const replaced = last && !last.reverted && last.mergedHash === scores.baselineHash && scores.prior ? scores.prior : null;
     const verdict = judgeRound(scores, goal, replaced);
+    judged = true;
     record.reasons.push(...verdict.reasons);
     // For a skip, the candidate that came closest: its rows are what a later check reruns the merge rule on.
     const closest = scores.candidates.reduce<{ id: string; m: number } | null>((best, c) => {
@@ -395,10 +466,15 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       } else {
         const changed = chosen?.summary ?? "A change to the prompt";
         const example = pickExample(scores, verdict.candidateId, scenarioText);
+        const pair = pickExamplePair(scores, verdict.candidateId, scenarioText);
         const unverified = newDetails(chosen?.edits, `${current}\n${goal.policy ?? ""}`);
         const name = chosen?.title ?? (changed.length > 60 ? `${changed.slice(0, 57)}...` : changed);
         const landed = await land(text!, "merge", `Synthe: ${name}`,
-          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified, evidence: evidenceOf("merge", verdict.candidateId, text!, { checks: verdict.checks }) });
+          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified, evidence: evidenceOf("merge", verdict.candidateId, text!, { checks: verdict.checks }),
+            // The round's record only joins state.rounds at the end of the round, with its score
+            // recorded there too, so the block is rendered from a state carrying this round's record
+            // with the same score and pair that are about to be recorded on it.
+            delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "merged", changed, plain: verdict.plain, scorePct: holdoutScorePct(scores.baselineHoldout), ...(pair ? { examplePair: pair } : {}) }] }) });
         if (landed) {
           if (example) record.example = example;
           if (chosen?.title) record.title = chosen.title;
@@ -406,6 +482,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
           if (unverified.length) record.unverified = unverified;
         }
         if (landed) {
+          winnerId = verdict.candidateId;
           Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...(verdict.checks ? { checks: verdict.checks } : {}), ...(verdict.guards ? { guards: verdict.guards } : {}) });
           record.changed = chosen?.summary ?? "A change to the prompt";
           record.plain = verdict.plain;
@@ -424,7 +501,8 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       }
     } else if (verdict.action === "revert") {
       const prior = state.lastMerge!.priorPrompt;
-      const landed = await land(prior, "revert", "Synthe: undo the last prompt change", { changed: "Puts back the prompt from before Synthe's last change.", plain: verdict.plain, technical: verdict.reasons.join(" "), evidence: evidenceOf("revert", null, prior, { prior: replaced! }) });
+      const landed = await land(prior, "revert", "Synthe: undo the last prompt change", { changed: "Puts back the prompt from before Synthe's last change.", plain: verdict.plain, technical: verdict.reasons.join(" "), evidence: evidenceOf("revert", null, prior, { prior: replaced! }),
+        delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "reverted", changed: "Put back the prompt from before the last change", plain: verdict.plain, scorePct: holdoutScorePct(scores.baselineHoldout) }] }) });
       if (landed) {
         Object.assign(record, { outcome: landed.proposed ? "proposed" : "reverted", pr: landed.pr });
         record.changed = "Put back the prompt from before the last change";
@@ -438,6 +516,15 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   }
 
   if (scores) {
+    // The round's place in the score series, from the held-back marks the score step already made: the
+    // current prompt's check-pass share, and, when a change landed, one practice case it visibly fixed.
+    if (judged) {
+      record.scorePct = holdoutScorePct(scores.baselineHoldout);
+      if (winnerId) {
+        const pair = pickExamplePair(scores, winnerId, scenarioText);
+        if (pair) record.examplePair = pair;
+      }
+    }
     // Count check failures over every row scored this round, for the report's "what failed most". The rows
     // themselves aren't kept in state, so the count has to be taken now.
     const failed: Record<string, number> = {};

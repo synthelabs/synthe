@@ -7,6 +7,11 @@ export interface RoundRecord {
   // For the team, in plain words: what the round did, what changed if anything, and what happened to each idea.
   plain?: string; changed?: string; tried?: { summary: string; outcome: string }[];
   example?: { input: string; before: string; after: string }; title?: string; unverified?: string[];
+  // One practice (learning) case a merged change visibly fixed: both replies, and the checks the old
+  // reply failed that the new one passes. Drawn from the learning cases, whose replies are kept; the
+  // held-back cases never supply it, because their replies are not kept. Set only when the flipped
+  // checks are known exactly, so this is sometimes unset.
+  examplePair?: { input: string; beforeReply: string; afterReply: string; improvedChecks: string[] };
   edits?: { find: string; replace: string }[];
   // Why a failed round's write or score step failed, when it said; the report's advice depends on it.
   failure?: "busy" | "key" | "credit" | "other";
@@ -14,6 +19,11 @@ export interface RoundRecord {
   checks?: { before: number; after: number };
   // The same for the team's guards, when they set counter_checks.
   guards?: { before: number; after: number };
+  // The current prompt's score for the round: the share of the team's checks its replies passed on the
+  // held-back test cases, as a percentage to one decimal. Null when the round never marked held-back
+  // replies (no checks set, or nothing reached the held-back cases), so an unmeasured round is never
+  // read as a score. Rounds recorded before this field existed simply don't have it.
+  scorePct?: number | null;
   // How many scored replies failed each of the team's checks this round, counted over every score row
   // (the current prompt's and each change's, learned-from and hidden). The score rows themselves aren't
   // kept, so this count is what the report's "what failed most" has to work from.

@@ -28392,6 +28392,7 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
     throw new Error(detail);
   };
   const repo = {
+    slug,
     async dispatchWorkflow() {
       const res = await call("POST", "/actions/workflows/synthe.yml/dispatches", { ref: await repo.defaultBranch() });
       if (res.ok) return;
@@ -29084,6 +29085,108 @@ function buildEvidence(p) {
   return record;
 }
 
+// src/loop/delta.ts
+function scoreSeries(state) {
+  return state.rounds.map((r) => ({
+    round: r.round,
+    scorePct: typeof r.scorePct === "number" && Number.isFinite(r.scorePct) ? r.scorePct : null,
+    merged: r.outcome === "merged"
+  }));
+}
+function displaySeries(points) {
+  const out = [];
+  let last = null;
+  for (const p of points) {
+    if (p.scorePct !== null) {
+      last = p.scorePct;
+      out.push({ round: p.round, pct: p.scorePct, measured: true, merged: p.merged });
+    } else if (last !== null) {
+      out.push({ round: p.round, pct: last, measured: false, merged: p.merged });
+    }
+  }
+  return out;
+}
+var BLOCKS = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588";
+function sparkline(points) {
+  return displaySeries(points).map((p) => BLOCKS[Math.min(7, Math.max(0, Math.floor(p.pct / 100 * 8)))]).join("");
+}
+var fmtPct = (n) => Number.isInteger(n) ? `${n}` : n.toFixed(1);
+function renderScoreSvg(points) {
+  const disp = displaySeries(points);
+  const W = 640, H = 180;
+  const left2 = 36, right = 16, top = 24, bottom = 16;
+  const pw = W - left2 - right, ph = H - top - bottom;
+  const num = (v) => Math.round(v * 10) / 10;
+  const x = (i) => disp.length <= 1 ? left2 + pw / 2 : left2 + i * pw / (disp.length - 1);
+  const y = (pct2) => top + (100 - pct2) / 100 * ph;
+  const ink = "#2f6feb", grid = "#d0d7de", faint = "#8b949e";
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img">`,
+    `<line x1="${left2}" y1="${num(y(100))}" x2="${left2 + pw}" y2="${num(y(100))}" stroke="${grid}" stroke-width="1" stroke-dasharray="3 4"/>`,
+    `<line x1="${left2}" y1="${num(y(50))}" x2="${left2 + pw}" y2="${num(y(50))}" stroke="${grid}" stroke-width="1" stroke-dasharray="3 4"/>`,
+    `<line x1="${left2}" y1="${num(y(0))}" x2="${left2 + pw}" y2="${num(y(0))}" stroke="${grid}" stroke-width="1"/>`,
+    `<text x="${left2 - 6}" y="${num(y(100) + 4)}" text-anchor="end" font-size="12" fill="${faint}">100</text>`,
+    `<text x="${left2 - 6}" y="${num(y(50) + 4)}" text-anchor="end" font-size="12" fill="${faint}">50</text>`,
+    `<text x="${left2 - 6}" y="${num(y(0) + 4)}" text-anchor="end" font-size="12" fill="${faint}">0</text>`
+  ];
+  if (disp.length) {
+    parts.push(`<polyline points="${disp.map((p, i) => `${num(x(i))},${num(y(p.pct))}`).join(" ")}" fill="none" stroke="${ink}" stroke-width="2"/>`);
+    disp.forEach((p, i) => {
+      if (!p.measured) parts.push(`<circle cx="${num(x(i))}" cy="${num(y(p.pct))}" r="2.5" fill="${faint}"/>`);
+      else if (p.merged) parts.push(`<circle cx="${num(x(i))}" cy="${num(y(p.pct))}" r="4.5" fill="${ink}" stroke="${ink}"/>`);
+      else parts.push(`<circle cx="${num(x(i))}" cy="${num(y(p.pct))}" r="4.5" fill="none" stroke="${ink}" stroke-width="2"/>`);
+    });
+    const label = (i) => {
+      const p = disp[i];
+      const ly = y(p.pct) < top + 16 ? y(p.pct) + 18 : y(p.pct) - 9;
+      parts.push(`<text x="${num(x(i))}" y="${num(ly)}" text-anchor="middle" font-size="12" fill="${ink}">${fmtPct(p.pct)}%</text>`);
+    };
+    label(0);
+    if (disp.length > 1) label(disp.length - 1);
+  }
+  parts.push("</svg>");
+  return parts.join("\n");
+}
+var money = (r) => typeof r.costUsd === "number" ? ` \xB7 $${r.costUsd.toFixed(2)}` : "";
+function roundLines(r) {
+  if (r.outcome === "merged") {
+    const lines2 = [`Round ${r.round} \xB7 merged${money(r)}`];
+    if (r.changed) lines2.push(`  What changed: ${r.changed}`);
+    if (r.examplePair) {
+      lines2.push(`  Example from a practice case, on: "${r.examplePair.input}"`);
+      lines2.push(`    Before: "${r.examplePair.beforeReply}"`);
+      lines2.push(`    After: "${r.examplePair.afterReply}"`);
+      if (r.examplePair.improvedChecks.length) lines2.push(`    Now passes: ${r.examplePair.improvedChecks.join(", ")}`);
+    }
+    if (typeof r.scorePct === "number") lines2.push(`  Score this round: ${fmtPct(r.scorePct)}%`);
+    return lines2;
+  }
+  if (r.outcome === "proposed") return [`Round ${r.round} \xB7 proposed${money(r)}`, ...r.plain ? [`  ${r.plain}`] : []];
+  if (r.outcome === "reverted") return [`Round ${r.round} \xB7 reverted${money(r)}`, ...r.plain ? [`  ${r.plain}`] : []];
+  if (r.outcome === "declined") return [`Round ${r.round} \xB7 declined${money(r)}`, "  The change was closed without merging, so nothing changed."];
+  if (r.outcome === "failed") return [`Round ${r.round} \xB7 didn't finish${money(r)}`, ...r.plain ? [`  ${r.plain}`] : ["  The round didn't finish, so nothing changed."]];
+  const lines = [`Round ${r.round} \xB7 no change${money(r)}`];
+  if (r.tried?.length) lines.push(`  Tried ${r.tried.length} ${r.tried.length === 1 ? "change" : "changes"}, but none was clearly better, so nothing merged.`);
+  else if (r.plain) lines.push(`  ${r.plain}`);
+  else lines.push("  Nothing was clearly better, so nothing merged.");
+  if (typeof r.scorePct === "number") lines.push(`  Score this round: ${fmtPct(r.scorePct)}%`);
+  return lines;
+}
+function renderDeltaBlock(goal, state, maxRounds = 3) {
+  const series = scoreSeries(state);
+  const measured = displaySeries(series).filter((p) => p.measured);
+  const lines = [];
+  if (measured.length === 1) {
+    lines.push(`Your prompt scores ${fmtPct(measured[0].pct)}% (checks passed on test cases Synthe never trains on)`);
+    lines.push(`Score by round: ${sparkline(series)}`);
+  } else if (measured.length > 1) {
+    lines.push(`Your prompt: ${fmtPct(measured[0].pct)}% \u2192 ${fmtPct(measured.at(-1).pct)}% (checks passed on test cases Synthe never trains on)`);
+    lines.push(`Score by round: ${sparkline(series)}`);
+  }
+  for (const r of state.rounds.slice(-Math.max(0, maxRounds)).reverse()) lines.push(...roundLines(r));
+  return lines.join("\n");
+}
+
 // src/loop/report.ts
 var ISSUE_TITLE = "Synthe: prompt report";
 function notTested(goal) {
@@ -29100,7 +29203,7 @@ var exampleText = (e) => `**For example,** someone wrote: "${e.input}"
 > **Before:** ${e.before}
 >
 > **After:** ${e.after}`;
-var money = (state) => state.spendUnknown ? `over $${budgetSpend(state).toFixed(2)}` : `$${budgetSpend(state).toFixed(2)}`;
+var money2 = (state) => state.spendUnknown ? `over $${budgetSpend(state).toFixed(2)}` : `$${budgetSpend(state).toFixed(2)}`;
 var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")} back to back`;
 var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
@@ -29108,13 +29211,43 @@ var badKey = (r) => r?.outcome === "failed" && r.failure === "key";
 var busy = (r) => r?.outcome === "failed" && r.failure === "busy";
 var refusedCode = (r) => badKey(r) && Boolean(r.plain?.startsWith(PROXY_REFUSED));
 var CODE_FIX = "If the Synthe table gave you a new code, save it with `gh secret set SYNTHE_TEAM_CODE` (or `gh secret set SYNTHE_EVENT_CODE` for the event code), then run `npx synthe restart`.";
+var fmtScore = (n) => Number.isInteger(n) ? `${n}` : n.toFixed(1);
+function scoreMovement(state) {
+  const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
+  return measured.length > 1 ? { first: measured[0].pct, last: measured.at(-1).pct } : null;
+}
+function bestStep(state) {
+  let best = null;
+  let prev = null;
+  for (const p of displaySeries(scoreSeries(state))) {
+    if (!p.measured) continue;
+    if (p.merged && prev !== null && p.pct > prev && (!best || p.pct - prev > best.to - best.from)) best = { round: p.round, from: prev, to: p.pct };
+    prev = p.pct;
+  }
+  return best ? `The biggest single step was round ${best.round}: ${fmtScore(best.from)}% to ${fmtScore(best.to)}%.` : null;
+}
 function headline(goal, state, stoppedByTeam = false) {
+  const base = headlineBase(goal, state, stoppedByTeam);
+  const move = scoreMovement(state);
+  if (!move) {
+    const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
+    if (measured.length === 1) {
+      const lead2 = `Your prompt scores ${fmtScore(measured[0].pct)}% (checks passed on test cases Synthe never trains on).`;
+      return { title: base.title, summary: `${lead2} ${base.summary}` };
+    }
+    return base;
+  }
+  const lead = `Your prompt: ${fmtScore(move.first)}% \u2192 ${fmtScore(move.last)}% (checks passed on test cases Synthe never trains on).`;
+  const step = state.stopped ? bestStep(state) : null;
+  return { title: base.title, summary: `${lead}${step ? ` ${step}` : ""} ${base.summary}` };
+}
+function headlineBase(goal, state, stoppedByTeam = false) {
   const merged = state.rounds.filter((r) => r.outcome === "merged").length;
   const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
   const gain = rated.length ? `Your checks now pass ${rated.at(-1).checks.after}% of the time, up from ${rated[0].checks.before}%. ` : "";
   const guarded = state.rounds.filter((r) => r.outcome === "merged" && r.guards);
   const guardLine = guarded.length ? `${guardSentence({ before: guarded[0].guards.before, after: guarded.at(-1).guards.after })} ` : "";
-  const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;
+  const spent = `It has spent ${money2(state)} of $${goal.budget.max_usd}.`;
   if (state.proposal) {
     return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
   }
@@ -29139,12 +29272,12 @@ function headline(goal, state, stoppedByTeam = false) {
     if (refusedCode(end)) return { title: "Stopped: the Synthe proxy refused this repo's code", summary: `${end.plain} ${CODE_FIX} ${spent}` };
     if (badKey(end)) return { title: end.plain === PROXY_AUTH_MESSAGE ? "Stopped: the Synthe proxy couldn't verify this run" : "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
     if (busy(end) && isFinished(state.stopped)) {
-      return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
+      return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
     }
     if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, run `npx synthe key`." };
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
-  return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
+  return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
 }
 function nextSteps(goal, state) {
   const merged = state.rounds.some((r) => r.outcome === "merged" || r.outcome === "reverted");
@@ -29252,11 +29385,14 @@ function roundRow(r) {
   const cost = r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`;
   return `| ${r.round} | ${result}${r.pr ? ` (#${r.pr})` : ""} | ${tried.replaceAll("|", "/").replaceAll("\n", " ")} | ${cost} |`;
 }
-function renderReport(goal, state, now = /* @__PURE__ */ new Date()) {
+function renderReport(goal, state, now = /* @__PURE__ */ new Date(), repoSlug) {
   const { title, summary } = headline(goal, state);
   const changes = state.rounds.filter((r) => ["merged", "reverted", "proposed"].includes(r.outcome) && r.pr);
   const mode = goal.merge_rule.mode === "propose" ? "**Mode:** review. Each change waits in a pull request until you merge or close it." : "**Mode:** automatic. Changes are merged into your main branch as soon as they win.";
   const lines = [`## ${title}`, "", summary, "", mode, ""];
+  if (repoSlug && displaySeries(scoreSeries(state)).some((p) => p.measured)) {
+    lines.push(`![Your prompt's score, round by round](https://raw.githubusercontent.com/${repoSlug}/${STATE_BRANCH}/score.svg?v=${state.round})`, "");
+  }
   if (changes.length) {
     lines.push("### What changed", "");
     for (const r of changes) {
@@ -29287,7 +29423,7 @@ function renderReport(goal, state, now = /* @__PURE__ */ new Date()) {
     "<details><summary>Details for reviewers</summary>",
     "",
     `- Goal: ${goal.objective}`,
-    `- Rounds: ${state.round} of up to ${goal.merge_rule.max_rounds}. Spent ${money(state)} of $${goal.budget.max_usd}.`,
+    `- Rounds: ${state.round} of up to ${goal.merge_rule.max_rounds}. Spent ${money2(state)} of $${goal.budget.max_usd}.`,
     goal.share === "none" || !goal.share ? "- Sharing with Synthe: off." : goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL) ? '- Sharing with Synthe: everything for Crimson Hacks (prompt and test cases until November 9), then numbers and what changed. Turn it off with "share": "none" in synthe.json.' : `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}. Turn it off with "share": "none" in synthe.json.`,
     `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
@@ -29857,6 +29993,40 @@ function pickExample(scores, candidateId, scenarioText) {
   const scenario = won && rows.find((r) => r.id === won.id && r.split === "train");
   return won && before && scenario ? { input: clipText(scenario.input, 200), before: clipText(before), after: clipText(won.reply) } : void 0;
 }
+function holdoutScorePct(rows) {
+  if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
+  const applicable = rows.reduce((n, r) => n + r.applicable, 0);
+  if (applicable === 0) return null;
+  const failed = rows.reduce((n, r) => n + r.failed, 0);
+  return Math.round(100 * (applicable - failed) / applicable * 10) / 10;
+}
+var truncReply = (t) => t.length > 300 ? t.slice(0, 300) : t;
+function pickExamplePair(scores, candidateId, scenarioText) {
+  const winner = scores.candidates.find((c) => c.id === candidateId);
+  if (!winner || !scenarioText) return void 0;
+  let rows = [];
+  try {
+    rows = parseScenarios(scenarioText);
+  } catch {
+    return void 0;
+  }
+  const current = new Map(scores.baselineTrain.map((r) => [r.id, r]));
+  let best;
+  for (const row of winner.train) {
+    const before = current.get(row.id);
+    if (!before?.failedChecks?.length) continue;
+    if (typeof before.reply !== "string" || typeof row.reply !== "string") continue;
+    if (typeof before.failed !== "number" || typeof row.failed !== "number" || row.failed >= before.failed) continue;
+    const stillFailed = Array.isArray(row.failedChecks) ? row.failedChecks : row.failed === 0 ? [] : null;
+    if (!stillFailed) continue;
+    const flipped = before.failedChecks.filter((name) => !stillFailed.includes(name));
+    if (!flipped.length || best && flipped.length <= best.improvedChecks.length) continue;
+    const scenario = rows.find((s) => s.id === row.id && s.split === "train");
+    if (!scenario) continue;
+    best = { input: clipText(scenario.input, 200), beforeReply: truncReply(before.reply), afterReply: truncReply(row.reply), improvedChecks: flipped };
+  }
+  return best;
+}
 var DETAIL = /\$\s?\d[\d,]*(?:\.\d+)?|\b\d+(?:\.\d+)?\s?%|\b\d+[- ]?(?:days?|hours?|weeks?|months?|years?)\b|\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+|\b(?:https?:\/\/)?[\w-]+(?:\.[\w-]+)*\.(?:com|org|net|io|co|ai|app|shop|store)(?:\/[\w\-/]*)?/gi;
 function newDetails(edits, known) {
   const norm = (t) => t.toLowerCase().replace(/\s+/g, "").replace(/^https?:\/\//, "");
@@ -29874,9 +30044,21 @@ var NEEDS_A_PERSON = {
   permission: "GitHub Actions isn't allowed to merge here; turn on 'Allow GitHub Actions to create and approve pull requests' in the repo's Actions settings",
   token: "GitHub refused the workflow's token"
 };
+var SCORE_PATH = "score.svg";
 async function writeReport(goal, repo, state) {
+  const series = scoreSeries(state);
+  if (displaySeries(series).some((p) => p.measured)) {
+    try {
+      await repo.writeStateFile(SCORE_PATH, renderScoreSvg(series), `Synthe round ${state.round}: score chart`);
+    } catch (e) {
+      const note = `couldn't save the score chart: ${e.message.slice(0, 200)}`;
+      const last = state.rounds.at(-1);
+      if (last && !last.reasons.includes(note)) last.reasons.push(note);
+      console.log(`::warning::${note}`);
+    }
+  }
   try {
-    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state, /* @__PURE__ */ new Date(), repo.slug));
   } catch (e) {
     if (!(e instanceof Refusal)) throw e;
     const note = `couldn't write the report issue: ${e.plain}`;
@@ -29981,6 +30163,8 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
   const round = state.round + 1;
   const record = { round, at: now.toISOString(), outcome: "skipped", reasons: [...input2.rejected ?? []], costUsd: input2.costUsd, writeUsd: input2.writeUsd ?? null };
   const scores = input2.scores;
+  let judged = false;
+  let winnerId = null;
   const priorStalls = state.stalls;
   state.round = round;
   state.spendUsd += input2.costUsd ?? 0;
@@ -30036,7 +30220,10 @@ The judge's numbers: ${why.technical}
 
 ${notTested(goal).slice(1).join("\n")}
 
-</details>`
+</details>`,
+      // Last, where it survives the squash merge into the commit message: the score's movement and this
+      // round in plain words, so the change explains itself even to someone who never opens the report.
+      ...why.delta ? [why.delta(proposed)] : []
     ].join("\n\n");
     const body = bodyFor(Boolean(landing.propose));
     let pr;
@@ -30117,6 +30304,7 @@ ${notTested(goal).slice(1).join("\n")}
     const last = state.lastMerge;
     const replaced = last && !last.reverted && last.mergedHash === scores.baselineHash && scores.prior ? scores.prior : null;
     const verdict = judgeRound(scores, goal, replaced);
+    judged = true;
     record.reasons.push(...verdict.reasons);
     const closest = scores.candidates.reduce((best, c) => {
       const m = mean(c.train) ?? -Infinity;
@@ -30178,6 +30366,7 @@ ${notTested(goal).slice(1).join("\n")}
       } else {
         const changed = chosen?.summary ?? "A change to the prompt";
         const example = pickExample(scores, verdict.candidateId, scenarioText);
+        const pair = pickExamplePair(scores, verdict.candidateId, scenarioText);
         const unverified = newDetails(chosen?.edits, `${current}
 ${goal.policy ?? ""}`);
         const name = chosen?.title ?? (changed.length > 60 ? `${changed.slice(0, 57)}...` : changed);
@@ -30185,7 +30374,19 @@ ${goal.policy ?? ""}`);
           text,
           "merge",
           `Synthe: ${name}`,
-          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified, evidence: evidenceOf("merge", verdict.candidateId, text, { checks: verdict.checks }) }
+          {
+            changed,
+            plain: verdict.plain,
+            technical: verdict.reasons.join(" "),
+            diff: diffLines(chosen?.edits),
+            example,
+            unverified,
+            evidence: evidenceOf("merge", verdict.candidateId, text, { checks: verdict.checks }),
+            // The round's record only joins state.rounds at the end of the round, with its score
+            // recorded there too, so the block is rendered from a state carrying this round's record
+            // with the same score and pair that are about to be recorded on it.
+            delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "merged", changed, plain: verdict.plain, scorePct: holdoutScorePct(scores.baselineHoldout), ...pair ? { examplePair: pair } : {} }] })
+          }
         );
         if (landed) {
           if (example) record.example = example;
@@ -30194,6 +30395,7 @@ ${goal.policy ?? ""}`);
           if (unverified.length) record.unverified = unverified;
         }
         if (landed) {
+          winnerId = verdict.candidateId;
           Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...verdict.checks ? { checks: verdict.checks } : {}, ...verdict.guards ? { guards: verdict.guards } : {} });
           record.changed = chosen?.summary ?? "A change to the prompt";
           record.plain = verdict.plain;
@@ -30210,7 +30412,13 @@ ${goal.policy ?? ""}`);
       }
     } else if (verdict.action === "revert") {
       const prior = state.lastMerge.priorPrompt;
-      const landed = await land(prior, "revert", "Synthe: undo the last prompt change", { changed: "Puts back the prompt from before Synthe's last change.", plain: verdict.plain, technical: verdict.reasons.join(" "), evidence: evidenceOf("revert", null, prior, { prior: replaced }) });
+      const landed = await land(prior, "revert", "Synthe: undo the last prompt change", {
+        changed: "Puts back the prompt from before Synthe's last change.",
+        plain: verdict.plain,
+        technical: verdict.reasons.join(" "),
+        evidence: evidenceOf("revert", null, prior, { prior: replaced }),
+        delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "reverted", changed: "Put back the prompt from before the last change", plain: verdict.plain, scorePct: holdoutScorePct(scores.baselineHoldout) }] })
+      });
       if (landed) {
         Object.assign(record, { outcome: landed.proposed ? "proposed" : "reverted", pr: landed.pr });
         record.changed = "Put back the prompt from before the last change";
@@ -30223,6 +30431,13 @@ ${goal.policy ?? ""}`);
     }
   }
   if (scores) {
+    if (judged) {
+      record.scorePct = holdoutScorePct(scores.baselineHoldout);
+      if (winnerId) {
+        const pair = pickExamplePair(scores, winnerId, scenarioText);
+        if (pair) record.examplePair = pair;
+      }
+    }
     const failed = {};
     for (const row of [...scores.baselineTrain, ...scores.baselineHoldout, ...scores.candidates.flatMap((c) => [...c.train, ...c.holdout ?? []])]) {
       for (const check of row.failedChecks ?? []) failed[check] = (failed[check] ?? 0) + 1;
@@ -30255,7 +30470,7 @@ ${goal.policy ?? ""}`);
 // package.json
 var package_default = {
   name: "synthe",
-  version: "1.7.5",
+  version: "1.8.0",
   description: "Your AI agent's system prompt gets better on its own: Synthe tests small changes and merges only the clear wins.",
   keywords: [
     "ai",
