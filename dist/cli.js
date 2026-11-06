@@ -28543,7 +28543,7 @@ function roundLines(r) {
     const lines2 = [`Round ${r.round} \xB7 merged${money(r)}`];
     if (r.changed) lines2.push(`  What changed: ${r.changed}`);
     if (r.examplePair) {
-      lines2.push(`  Example, on: "${r.examplePair.input}"`);
+      lines2.push(`  Example from a practice case, on: "${r.examplePair.input}"`);
       lines2.push(`    Before: "${r.examplePair.beforeReply}"`);
       lines2.push(`    After: "${r.examplePair.afterReply}"`);
       if (r.examplePair.improvedChecks.length) lines2.push(`    Now passes: ${r.examplePair.improvedChecks.join(", ")}`);
@@ -29782,7 +29782,7 @@ function previousDiagnostics(root) {
 // package.json
 var package_default = {
   name: "synthe",
-  version: "1.7.5",
+  version: "1.8.0",
   description: "Your AI agent's system prompt gets better on its own: Synthe tests small changes and merges only the clear wins.",
   keywords: [
     "ai",
