@@ -11,7 +11,7 @@ Operators should see [no-spend readiness](OFFLINE-READINESS.md) before publishin
 Run one command before you leave tonight. Synthe rewrites your agent's system prompt, tests each version, and merges only what wins. Completed rounds run back to back; 12 rounds usually finish in about half an hour. Open the report to see what changed.
 
 ```
-npx --yes github:synthelabs/synthe#v1.7.5 init
+npx --yes github:synthelabs/synthe#v1.8.2 init
 ```
 
 Event code on the QR card. Stop it any time.
@@ -20,19 +20,19 @@ Use this slide only after the overnight run works. Don't add results until we ha
 
 ## QR card
 
-Using Claude Code, Cursor or Codex? Tell it to set up Synthe in this repo and follow the instructions from `npx --yes github:synthelabs/synthe#v1.7.5 guide`.
+Using Claude Code, Cursor or Codex? Tell it to set up Synthe in this repo and follow the instructions from `npx --yes github:synthelabs/synthe#v1.8.2 guide`.
 
 **Synthe**
 Your AI agent's prompt gets better while you build everything else.
 
 1. Have the event code from the QR card and the team code from the Synthe table ready. The $4 run budget can use event credit.
-2. In your repo, run `npx --yes github:synthelabs/synthe#v1.7.5 init`.
+2. In your repo, run `npx --yes github:synthelabs/synthe#v1.8.2 init`.
 3. Say what your agent should get better at, confirm the checks Synthe proposes, and choose whether to merge improvements automatically or review each one. Crimson requires workflow tracking even with your own Anthropic key. Your optional research-sharing settings control prompt, test case, and other research data.
 4. After the run, open the report issue in your repo.
 
 Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop any time: `npx synthe stop`
 
-If Synthe is already installed, run `npx --yes github:synthelabs/synthe#v1.7.5 upgrade --event` and commit both generated workflow files to your default branch. Confirm both event and team secrets are set before the next run.
+If Synthe is already installed, run `npx --yes github:synthelabs/synthe#v1.8.2 upgrade --event` and commit both generated workflow files to your default branch. Confirm both event and team secrets are set before the next run.
 
 ## Table script
 

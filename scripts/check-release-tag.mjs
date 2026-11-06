@@ -4,6 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { PIN_FILES, pinProblems } from "./version-pins.mjs";
 
 // `git ls-remote` output for one tag: an annotated tag lists the tag object and its peeled commit (`^{}`).
 export function releaseTagProblem(version, head, lsRemote) {
@@ -17,6 +18,12 @@ export function releaseTagProblem(version, head, lsRemote) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  const read = (file) => readFileSync(new URL(`../${file}`, import.meta.url), "utf8");
+  const stale = pinProblems(version, Object.fromEntries([...PIN_FILES, "src/cli/guide.ts"].map((file) => [file, read(file)])));
+  if (stale.length) {
+    console.error(`These setup pins name another version than ${version}: ${stale.join(", ")}. Run \`node scripts/version-pins.mjs && npm run build\` and commit.`);
+    process.exit(1);
+  }
   const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
   const problem = releaseTagProblem(version, git("rev-parse", "HEAD"), git("ls-remote", "--tags", "origin", `refs/tags/v${version}`, `refs/tags/v${version}^{}`));
   if (problem) {
