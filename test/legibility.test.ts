@@ -129,6 +129,28 @@ test("the report headline names the score after a single measured round, and the
   assert.ok(!none.summary.includes("Your prompt scores"));
 });
 
+// A run ends on its stall rounds. "What did Synthe do?" must still show the change that landed.
+test("the delta block always shows rounds that changed the prompt, and counts the quiet ones it leaves out", () => {
+  const rounds = [
+    rec(1, { scorePct: 20 }), rec(2, { scorePct: 21, outcome: "merged", changed: "Adds the refund window" }),
+    rec(3, { scorePct: 60 }), rec(4, { scorePct: 60, outcome: "reverted", plain: "Put back the earlier prompt." }),
+    rec(5, { scorePct: 40 }), rec(6, { scorePct: 41 }), rec(7, { scorePct: 40 }), rec(8, { scorePct: 41 }),
+  ];
+  const block = renderDeltaBlock(goal(), stateWith(rounds));
+  const order = ["Round 8 ·", "Round 7 ·", "Round 6 ·", "Round 4 · reverted", "Round 2 · merged"].map((t) => block.indexOf(t));
+  assert.ok(order.every((at) => at >= 0), block);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, "newest first");
+  assert.ok(block.includes("  What changed: Adds the refund window"));
+  assert.ok(block.includes("  Score before this change: 21%"));
+  assert.ok(!block.includes("Round 5 ·") && !block.includes("Round 3 ·") && !block.includes("Round 1 ·"));
+  assert.ok(block.trimEnd().endsWith("Earlier: 3 more rounds with no change."), block);
+  // Nothing left out: no count line. One left out: singular.
+  assert.ok(!renderDeltaBlock(goal(), stateWith(rounds.slice(5))).includes("Earlier:"));
+  assert.ok(renderDeltaBlock(goal(), stateWith([rec(1), rec(2), rec(3), rec(4)])).endsWith("Earlier: 1 more round with no change."));
+  // A proposal waiting for review is a change too.
+  assert.ok(renderDeltaBlock(goal(), stateWith([rec(1, { outcome: "proposed" }), rec(2), rec(3), rec(4)])).includes("Round 1 · proposed"));
+});
+
 // A merged round records the score of the prompt it started with; the merged prompt is measured the round after.
 test("the headline gives one score once the current prompt is measured, and labels the practice-case gain before that", () => {
   const merged = (round: number, scorePct: number) => rec(round, { outcome: "merged", scorePct, checks: { before: 20, after: 100 } });
@@ -295,7 +317,7 @@ test("a merged round's pull request body ends with the delta block, including th
   assert.ok(body.includes("Score by round: "));
   assert.ok(body.includes("Round 1 · merged · $0.10"));
   assert.ok(body.includes("  What changed: States the order number"));
-  assert.ok(body.includes("  Score this round: 50%"));
+  assert.ok(body.includes("  Score before this change: 50%"), "a merged round measured the prompt it started with");
   assert.ok(body.indexOf("Your prompt scores 50%") > body.indexOf("What this did not test"), "the block is appended after the existing body");
 });
 

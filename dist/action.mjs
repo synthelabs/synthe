@@ -29158,7 +29158,7 @@ function roundLines(r) {
       lines2.push(`    After: "${r.examplePair.afterReply}"`);
       if (r.examplePair.improvedChecks.length) lines2.push(`    Now passes: ${r.examplePair.improvedChecks.join(", ")}`);
     }
-    if (typeof r.scorePct === "number") lines2.push(`  Score this round: ${fmtPct(r.scorePct)}%`);
+    if (typeof r.scorePct === "number") lines2.push(`  Score before this change: ${fmtPct(r.scorePct)}%`);
     return lines2;
   }
   if (r.outcome === "proposed") return [`Round ${r.round} \xB7 proposed${money(r)}`, ...r.plain ? [`  ${r.plain}`] : []];
@@ -29183,9 +29183,14 @@ function renderDeltaBlock(goal, state, maxRounds = 3) {
     lines.push(`Your prompt: ${fmtPct(measured[0].pct)}% \u2192 ${fmtPct(measured.at(-1).pct)}% (checks passed on test cases Synthe never trains on)`);
     lines.push(`Score by round: ${sparkline(series)}`);
   }
-  for (const r of state.rounds.slice(-Math.max(0, maxRounds)).reverse()) lines.push(...roundLines(r));
+  const latest = Math.max(0, state.rounds.length - Math.max(0, maxRounds));
+  const shown = state.rounds.filter((r, i) => i >= latest || CHANGED.has(r.outcome));
+  for (const r of [...shown].reverse()) lines.push(...roundLines(r));
+  const hidden = state.rounds.length - shown.length;
+  if (hidden > 0) lines.push(`Earlier: ${hidden} more ${hidden === 1 ? "round" : "rounds"} with no change.`);
   return lines.join("\n");
 }
+var CHANGED = /* @__PURE__ */ new Set(["merged", "reverted", "proposed"]);
 
 // src/loop/report.ts
 var ISSUE_TITLE = "Synthe: prompt report";
@@ -29280,7 +29285,7 @@ function headlineBase(goal, state, stoppedByTeam = false, mode = "plain") {
     if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, run `npx synthe key`." };
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
-  return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
+  return merged > 0 ? { title: `Done: your prompt got better (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
 }
 function nextSteps(goal, state) {
   const merged = state.rounds.some((r) => r.outcome === "merged" || r.outcome === "reverted");

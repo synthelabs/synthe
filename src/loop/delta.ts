@@ -107,7 +107,8 @@ function roundLines(r: RoundRecord): string[] {
       lines.push(`    After: "${r.examplePair.afterReply}"`);
       if (r.examplePair.improvedChecks.length) lines.push(`    Now passes: ${r.examplePair.improvedChecks.join(", ")}`);
     }
-    if (typeof r.scorePct === "number") lines.push(`  Score this round: ${fmtPct(r.scorePct)}%`);
+    // A round measures the prompt it started with; the merged prompt is measured from the next round on.
+    if (typeof r.scorePct === "number") lines.push(`  Score before this change: ${fmtPct(r.scorePct)}%`);
     return lines;
   }
   if (r.outcome === "proposed") return [`Round ${r.round} · proposed${money(r)}`, ...(r.plain ? [`  ${r.plain}`] : [])];
@@ -136,6 +137,15 @@ export function renderDeltaBlock(goal: Goal, state: State, maxRounds = 3): strin
     lines.push(`Your prompt: ${fmtPct(measured[0].pct)}% → ${fmtPct(measured.at(-1)!.pct)}% (checks passed on test cases Synthe never trains on)`);
     lines.push(`Score by round: ${sparkline(series)}`);
   }
-  for (const r of state.rounds.slice(-Math.max(0, maxRounds)).reverse()) lines.push(...roundLines(r));
+  // A run ends on its stall rounds, so "the latest rounds" alone would answer "what did Synthe do?" with
+  // three no-change rounds and hide the change that actually landed. Rounds that changed the prompt (or
+  // offered a change) always show; older rounds that changed nothing are counted in one line.
+  const latest = Math.max(0, state.rounds.length - Math.max(0, maxRounds));
+  const shown = state.rounds.filter((r, i) => i >= latest || CHANGED.has(r.outcome));
+  for (const r of [...shown].reverse()) lines.push(...roundLines(r));
+  const hidden = state.rounds.length - shown.length;
+  if (hidden > 0) lines.push(`Earlier: ${hidden} more ${hidden === 1 ? "round" : "rounds"} with no change.`);
   return lines.join("\n");
 }
+
+const CHANGED = new Set(["merged", "reverted", "proposed"]);

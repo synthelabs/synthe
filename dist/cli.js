@@ -28548,7 +28548,7 @@ function roundLines(r) {
       lines2.push(`    After: "${r.examplePair.afterReply}"`);
       if (r.examplePair.improvedChecks.length) lines2.push(`    Now passes: ${r.examplePair.improvedChecks.join(", ")}`);
     }
-    if (typeof r.scorePct === "number") lines2.push(`  Score this round: ${fmtPct(r.scorePct)}%`);
+    if (typeof r.scorePct === "number") lines2.push(`  Score before this change: ${fmtPct(r.scorePct)}%`);
     return lines2;
   }
   if (r.outcome === "proposed") return [`Round ${r.round} \xB7 proposed${money(r)}`, ...r.plain ? [`  ${r.plain}`] : []];
@@ -28573,9 +28573,14 @@ function renderDeltaBlock(goal, state, maxRounds = 3) {
     lines.push(`Your prompt: ${fmtPct(measured[0].pct)}% \u2192 ${fmtPct(measured.at(-1).pct)}% (checks passed on test cases Synthe never trains on)`);
     lines.push(`Score by round: ${sparkline(series)}`);
   }
-  for (const r of state.rounds.slice(-Math.max(0, maxRounds)).reverse()) lines.push(...roundLines(r));
+  const latest = Math.max(0, state.rounds.length - Math.max(0, maxRounds));
+  const shown = state.rounds.filter((r, i) => i >= latest || CHANGED.has(r.outcome));
+  for (const r of [...shown].reverse()) lines.push(...roundLines(r));
+  const hidden = state.rounds.length - shown.length;
+  if (hidden > 0) lines.push(`Earlier: ${hidden} more ${hidden === 1 ? "round" : "rounds"} with no change.`);
   return lines.join("\n");
 }
+var CHANGED = /* @__PURE__ */ new Set(["merged", "reverted", "proposed"]);
 
 // src/loop/report.ts
 var ISSUE_TITLE = "Synthe: prompt report";
@@ -28656,7 +28661,7 @@ function headlineBase(goal, state, stoppedByTeam = false, mode = "plain") {
     if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, run `npx synthe key`." };
   }
   if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
-  return merged > 0 ? { title: `Done: your prompt got better overnight (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
+  return merged > 0 ? { title: `Done: your prompt got better (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
 }
 
 // src/model/client.ts
@@ -30279,7 +30284,7 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
     if (finished) rmSync(join6(root, DRAFT_FILE), { force: true });
     return finished;
   }
-  if (!agent) io2.say(`Synthe will improve your agent's system prompt overnight, in ${slug}. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.
+  if (!agent) io2.say(`Synthe will improve your agent's system prompt in ${slug}, in a run of about half an hour. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.
 `);
   const preferred = setupCredential(env, envKey, Boolean(agent));
   const chosen = agent ? preferred ? { key: preferred, team: preferred.startsWith("sk-ant-") ? void 0 : agentTeam(env) } : null : await askKey(io2, envKey, env.SYNTHE_ANTHROPIC_KEY?.trim() || env.SYNTHE_EVENT_CODE?.trim(), env.SYNTHE_TEAM_CODE);
@@ -30353,7 +30358,7 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
     seeds.push(line.slice(0, 500));
   }
   io2.say(`
-When Synthe finds a clearly better prompt, it can merge it into ${branch} by itself, overnight. If ${branch} deploys your app, each change goes live. Or it can open a pull request each time for you to review.`);
+When Synthe finds a clearly better prompt, it can merge it into ${branch} by itself. If ${branch} deploys your app, each change goes live. Or it can open a pull request each time for you to review.`);
   let auto = agent ? agent.mode === "auto" : await yesNo(io2, `Merge improvements into ${branch} automatically? Type y for automatic, or n to review each one: `);
   if (auto === null) {
     auto = false;
