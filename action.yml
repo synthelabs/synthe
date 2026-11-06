@@ -7,6 +7,7 @@ inputs:
   anthropic-api-key: { description: "Model key, used by write and score only", required: false, default: "" }
   event-code: { description: "Event code for Crimson tracking and event credit", required: false, default: "" }
   team-code: { description: "Team code from the event organizers, sent with the event code", required: false, default: "" }
+  conclusion: { description: "receipt-finish inside the Synthe workflow: success, failure or cancelled", required: false, default: "" }
 outputs:
   go: { description: "true when a round should run" }
 runs:

@@ -6,6 +6,9 @@ const ENDPOINT = "https://synthe-crimson.vercel.app/api/collect/receipt";
 const AUDIENCE = "synthe-receipts";
 const EVENT_ENDS = Date.parse("2026-11-08T23:59:00Z");
 const CONCLUSIONS = new Set(["success", "failure", "cancelled", "skipped", "timed_out", "neutral", "action_required", "stale", "startup_failure"]);
+// The workflow's own finish job runs at most 40 minutes (the job timeouts) after a round starts.
+const OWN_FINISH_ENDS = EVENT_ENDS + 3600_000;
+const OWN_CONCLUSIONS = new Set(["success", "failure", "cancelled"]);
 
 interface FinishReceipt {
   kind: "finish";
@@ -13,7 +16,14 @@ interface FinishReceipt {
   attempt: string;
   conclusion: string;
 }
+// Sent by the Synthe workflow's last job about its own run. The proxy takes the run ID and attempt from the signed
+// token, so a workflow can only finish its own run.
+interface OwnFinishReceipt {
+  kind: "finish";
+  conclusion: string;
+}
 interface DeliveryOptions {
+  conclusion?: string;
   env?: NodeJS.ProcessEnv;
   fetcher?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
@@ -46,8 +56,15 @@ export function finishReceipt(eventPath: string | undefined, repositoryId: strin
 export async function deliverReceipt(step: "receipt-start" | "receipt-finish", eventCode: string, teamCode: string, options: DeliveryOptions = {}): Promise<boolean> {
   const { env = process.env, fetcher = fetch, sleep = delay, now = Date.now } = options;
   if (step === "receipt-start" && now() >= EVENT_ENDS) return false;
-  if (step === "receipt-finish" && env.GITHUB_EVENT_NAME !== "workflow_run") return false;
-  const receipt = step === "receipt-start" ? { kind: "start" } : finishReceipt(env.GITHUB_EVENT_PATH, env.GITHUB_REPOSITORY_ID);
+  // GitHub never starts the completion workflow for runs started with GITHUB_TOKEN (every chained round), so the
+  // Synthe workflow's last job reports its own outcome. The completion workflow still covers runs that never got there.
+  const own = step === "receipt-finish" && env.GITHUB_EVENT_NAME !== "workflow_run";
+  if (own && now() >= OWN_FINISH_ENDS) return false;
+  if (own && !OWN_CONCLUSIONS.has(options.conclusion ?? "")) {
+    throw new Error("Crimson tracking couldn't tell how this run ended. Commit the files from `npx synthe upgrade --event` and rerun.");
+  }
+  const receipt: { kind: "start" } | FinishReceipt | OwnFinishReceipt | null = step === "receipt-start" ? { kind: "start" }
+    : own ? { kind: "finish", conclusion: options.conclusion! } : finishReceipt(env.GITHUB_EVENT_PATH, env.GITHUB_REPOSITORY_ID);
   if (!receipt) return false;
   if (!eventCode.trim() || !teamCode.trim()) {
     throw new Error("Crimson tracking needs both repository secrets, SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE. Add them in GitHub Actions settings, then rerun.");

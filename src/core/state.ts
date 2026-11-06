@@ -59,6 +59,10 @@ export interface State {
   // marked under (prompt, attack set and checker model). The score step reuses them while the key matches,
   // so rounds where the prompt didn't change don't pay to re-mark the same attacks.
   attackCache?: { key: string; failed: string[] | null };
+  // The current prompt's score on the held-back cases, with the key it was measured under (prompt, held-back cases,
+  // checks, runner and checker models). Reused while the key matches, so an unchanged prompt shows one steady score
+  // instead of a new noisy reading every round, and rounds don't pay to measure it again.
+  scoreCache?: { key: string; pct: number | null };
   // Set while a decide step is acting, so the next one can tell it died partway and clean up after it.
   pending: { round: number; at: string; costUsd: number | null; land?: Landing } | null;
   // A pull request Synthe opened and left for a person to merge (propose mode, or a repo that requires review).

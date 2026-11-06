@@ -51,6 +51,9 @@ export interface RoundScores {
   // prompt's replies failed (null when that couldn't be measured), and each attack's message, so logs and
   // reports can name a failed attack. Attack results never reach the writer: they live only in the scores.
   attacks?: { total: number; baselineFailed: string[] | null; inputs: Record<string, string> };
+  // The current prompt's score as shown to the team, measured once per prompt version (see runScore's scoreCache).
+  // Display only: decisions read the rows above, never this.
+  scorePct?: number | null;
 }
 
 // reasons are technical, for logs and receipts. plain and notes say the same for the team, in everyday words:
@@ -248,4 +251,17 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
   }
   if (best) best.notes[best.candidateId] = "Merged.";
   return best ?? { action: "skip", reasons: reasons.length ? reasons : ["no candidates"], notes };
+}
+
+// The current prompt's score for the round: the share of the team's checks its replies passed on the
+// held-back cases, from the marks the score step already made. Passed applicable checks over applicable
+// checks (a check that doesn't apply to a message is in neither), to one decimal. Null under the same
+// conditions checkRate is null (no rows, a row that was never marked, or no check applied anywhere), so
+// an unmeasured round is never recorded as a score.
+export function holdoutScorePct(rows: ScoreRow[]): number | null {
+  if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
+  const applicable = rows.reduce((n, r) => n + r.applicable!, 0);
+  if (applicable === 0) return null;
+  const failed = rows.reduce((n, r) => n + r.failed!, 0);
+  return Math.round(((100 * (applicable - failed)) / applicable) * 10) / 10;
 }

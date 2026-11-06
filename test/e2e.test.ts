@@ -89,6 +89,12 @@ const anthropic = createServer((req, res) => {
       const a = good("reply_a"), b = good("reply_b");
       text = JSON.stringify({ better: a === b ? "tie" : a ? "A" : "B", a_guardrail_ok: true, b_guardrail_ok: true });
     }
+    else if (schema.includes('"results"')) {
+      // Check marking: a policy-aware reply passes every check, any other reply fails them.
+      const listed = (user.split("The team's checks:\n")[1] ?? "").split("\n").filter((line: string) => /^\d+\. /.test(line)).length;
+      const pass = /<reply>\n[^<]*policy-aware/.test(user);
+      text = JSON.stringify({ results: Array.from({ length: listed }, (_, i) => ({ check: i + 1, applies: true, passes: pass })) });
+    }
     else if (schema.includes("edits")) {
       const current = /<prompt>\n([\s\S]*?)\n<\/prompt>/.exec(user)![1];
       text = JSON.stringify({ edits: [{ find: current, replace: "You are careful and use the store policy." }], summary: "Uses the store policy." });
@@ -483,3 +489,21 @@ test("local try and calibrate print credit refusals, exit nonzero and leave ever
     assert.ok(requestHeaders.every((headers) => headers["x-synthe-event"] === "crimson" && headers["x-synthe-install"] && !headers.authorization));
   }
 });
+
+test("the score step keeps the prompt's held-back score in state, and decide records it", async () => {
+  reset();
+  const goal = JSON.parse(readFileSync(join(dir, "synthe.json"), "utf8"));
+  goal.checks = ["Uses the store policy"];
+  writeFileSync(join(dir, "synthe.json"), JSON.stringify(goal));
+  files.set("main:synthe.json", JSON.stringify(goal));
+  for (const s of ["write", "score"]) {
+    const r = await step(s);
+    assert.equal(r.code, 0, r.log);
+  }
+  const kept = JSON.parse(files.get("synthe/state:state.json")!).scoreCache;
+  assert.ok(kept && typeof kept.key === "string" && kept.pct === 0, JSON.stringify(kept)); // the vague prompt fails the check
+  const r = await step("decide");
+  assert.equal(r.code, 0, r.log);
+  assert.equal(JSON.parse(files.get("synthe/state:state.json")!).rounds.at(-1).scorePct, 0);
+});
+

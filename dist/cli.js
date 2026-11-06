@@ -28481,6 +28481,13 @@ function judgeRound(scores, goal, replaced) {
   if (best) best.notes[best.candidateId] = "Merged.";
   return best ?? { action: "skip", reasons: reasons.length ? reasons : ["no candidates"], notes };
 }
+function holdoutScorePct(rows) {
+  if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
+  const applicable = rows.reduce((n, r) => n + r.applicable, 0);
+  if (applicable === 0) return null;
+  const failed = rows.reduce((n, r) => n + r.failed, 0);
+  return Math.round(100 * (applicable - failed) / applicable * 10) / 10;
+}
 
 // src/core/share.ts
 var FULL_SHARE_UNTIL = "2026-11-09T23:59:00Z";
@@ -29288,15 +29295,26 @@ function currentRows(set, replies, duels) {
     };
   });
 }
-async function runScore(goal, baseline, candidates, scenarios, model, prior = null, random = Math.random, attacks = [], attackCache = null) {
+function scoreKey(goal, baseline, holdout) {
+  return sha256([
+    sha256(baseline),
+    sha256(JSON.stringify(holdout.map((s) => [s.id, s.input, s.expected]))),
+    sha256(JSON.stringify((goal.checks ?? []).filter((c) => c.trim()))),
+    goal.models.runner,
+    goal.models.judge
+  ].join("\n"));
+}
+async function runScore(goal, baseline, candidates, scenarios, model, prior = null, random = Math.random, attacks = [], attackCache = null, scoreCache = null) {
   const { costs, challenge, repliesFor, confirmBreak, markAttacks, measure, cutOffCount } = scorer(goal, model, random);
   const train = scenarios.filter((s) => s.split === "train");
   const holdout = scenarios.filter((s) => s.split === "holdout");
   const safe = candidates.filter((c) => candidateProblem(c.text, goal.prompt) === null && c.text.trim() !== baseline.trim());
   const hasPrior = prior !== null && prior.trim() !== baseline.trim();
+  const measuredKey = scoreKey(goal, baseline, holdout);
+  const known = scoreCache && scoreCache.key === measuredKey ? scoreCache.pct : void 0;
   if (safe.length === 0 && !hasPrior) {
     const even = (set) => set.map((x) => ({ id: x.id, score: EVEN, violation: null }));
-    return { scores: { baselineHash: sha256(baseline), baselineTrain: even(train), baselineHoldout: even(holdout), candidates: [] }, costUsd: 0, calls: 0, checks: { confirmed: 0, dismissed: 0, failed: 0, excusedConfirmed: 0 }, attackCache: void 0 };
+    return { scores: { baselineHash: sha256(baseline), baselineTrain: even(train), baselineHoldout: even(holdout), candidates: [], ...known !== void 0 ? { scorePct: known } : {} }, costUsd: 0, calls: 0, checks: { confirmed: 0, dismissed: 0, failed: 0, excusedConfirmed: 0 }, attackCache: void 0, scoreCache: void 0 };
   }
   const trainReplies = await repliesFor(baseline, train);
   let held = null;
@@ -29316,7 +29334,7 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
     const duels = await challenge(leader.id, text, holdout, await holdReplies());
     holdDuels.push(duels);
     leader.holdout = duels.map((d) => d.row);
-  } else if (!hasPrior && holdout.length > 0 && (goal.checks?.some((c) => c.trim()) ?? false)) {
+  } else if (known === void 0 && !hasPrior && holdout.length > 0 && (goal.checks?.some((c) => c.trim()) ?? false)) {
     holdDuels.push(await measure(holdout, await holdReplies()));
   }
   let freshAttackCache;
@@ -29342,6 +29360,15 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
   }
   scores.baselineTrain = currentRows(train, trainReplies, trainDuels);
   scores.baselineHoldout = held ? currentRows(holdout, held, holdDuels).map((r) => ({ ...r, reply: void 0 })) : holdout.map((s) => ({ id: s.id, score: EVEN, violation: null }));
+  let freshScoreCache;
+  if (known !== void 0) scores.scorePct = known;
+  else {
+    const pct3 = holdoutScorePct(scores.baselineHoldout);
+    if (pct3 !== null) {
+      scores.scorePct = pct3;
+      freshScoreCache = { key: measuredKey, pct: pct3 };
+    }
+  }
   const checks = { confirmed: 0, dismissed: 0, failed: 0, excusedConfirmed: 0 };
   if (leader) {
     const currentRow = new Map([...scores.baselineTrain, ...scores.baselineHoldout].map((r) => [r.id, r]));
@@ -29369,7 +29396,7 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
   }
   for (const c of scores.candidates) if (c.holdout) c.holdout = c.holdout.map((r) => ({ ...r, reply: void 0 }));
   if (cutOffCount() > 0) scores.cutOff = cutOffCount();
-  return { scores, costUsd: sumCosts(costs), calls: costs.length, checks, attackCache: freshAttackCache };
+  return { scores, costUsd: sumCosts(costs), calls: costs.length, checks, attackCache: freshAttackCache, scoreCache: freshScoreCache };
 }
 async function measureNoise(goal, prompt, scenarios, model) {
   const { costs, challenge, repliesFor } = scorer(goal, model, Math.random, true);
@@ -29768,8 +29795,21 @@ ${rerun ? "        if: github.run_attempt != '1'\n" : ""}${receiptInputs}
           step: receipt-start
 `;
   const decideGate = "needs.write.outputs.go != 'false'";
-  return template2.replaceAll("\r\n", "\n").replace("      # __CRIMSON_PREFLIGHT__\n", enabled ? step() : "").replaceAll("      # __CRIMSON_RERUN_PREFLIGHT__\n", enabled ? step(true) : "").replace("      # __CRIMSON_WRITE_OUTPUT__\n", enabled ? "      receipt: ${{ steps.crimson_receipt.outcome }}\n" : "").replace(decideGate, enabled ? decideGate + " && needs.write.outputs.receipt == 'success'" : decideGate);
+  return template2.replaceAll("\r\n", "\n").replace("      # __CRIMSON_PREFLIGHT__\n", enabled ? step() : "").replaceAll("      # __CRIMSON_RERUN_PREFLIGHT__\n", enabled ? step(true) : "").replace("      # __CRIMSON_WRITE_OUTPUT__\n", enabled ? "      receipt: ${{ steps.crimson_receipt.outcome }}\n" : "").replace(decideGate, enabled ? decideGate + " && needs.write.outputs.receipt == 'success'" : decideGate).replace("  # __CRIMSON_FINISH__\n", enabled ? finishJob : "");
 }
+var finishJob = `  finish:
+    needs: [write, score, decide]
+    if: \${{ always() && needs.write.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    continue-on-error: true
+    permissions: { id-token: write }
+    steps:
+      - name: Record Crimson run finish
+${receiptInputs}
+          step: receipt-finish
+          conclusion: \${{ contains(needs.*.result, 'cancelled') && 'cancelled' || contains(needs.*.result, 'failure') && 'failure' || 'success' }}
+`;
 function renderCrimsonDiagnostics(action) {
   return `${DIAGNOSTICS_HEADER}
 name: Synthe Crimson completion

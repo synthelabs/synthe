@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 import { CRIMSON_ACTION, renderWorkflow } from "../src/cli/init.ts";
 import { renderCrimsonDiagnostics } from "../src/cli/workflows.ts";
 import { deliverReceipt, finishReceipt } from "../src/core/receipts.ts";
@@ -117,4 +119,62 @@ test("event workflow gates write and reruns, while the completion workflow only 
   assert.ok(collector.includes(CRIMSON_ACTION));
   assert.match(collector, /permissions: \{ id-token: write \}/);
   assert.doesNotMatch(collector, /checkout|download-artifact|\brun:|ANTHROPIC/);
+});
+
+// GitHub never starts workflow_run workflows for runs started with GITHUB_TOKEN, so every chained round would
+// otherwise look unfinished on the organizer dashboard. The workflow's last job reports its own outcome.
+test("the workflow's last job reports its own finish; the proxy reads the run from the signed token", async () => {
+  const env = { ...oidc, GITHUB_EVENT_NAME: "workflow_dispatch" };
+  for (const conclusion of ["success", "failure", "cancelled"]) {
+    const { bodies, fetcher } = transport([() => Response.json({ ok: true })]);
+    assert.equal(await deliverReceipt("receipt-finish", "fixture-event", "fixture-team", { env, fetcher, now: afterCutoff, conclusion }), true);
+    assert.deepEqual(bodies, [{ kind: "finish", conclusion }]);
+  }
+  const { bodies, fetcher } = transport([]);
+  for (const conclusion of [undefined, "", "skipped", "untrusted prose"]) {
+    await assert.rejects(deliverReceipt("receipt-finish", "fixture-event", "fixture-team", { env, fetcher, now: beforeCutoff, conclusion }),
+      /couldn't tell how this run ended/);
+  }
+  // Rounds are capped at 40 minutes; a finish more than an hour after the event can't belong to an event run.
+  const late = () => Date.parse("2026-11-09T00:59:00Z");
+  assert.equal(await deliverReceipt("receipt-finish", "", "", { env, fetcher, now: late, conclusion: "success" }), false);
+  assert.equal(bodies.length, 0);
+});
+
+test("event workflows end with a finish job that always runs after a started round and can't fail it", () => {
+  const template = readFileSync("templates/synthe.yml", "utf8");
+  assert.doesNotMatch(renderWorkflow(template, undefined, 17), /^  finish:$|receipt-finish/m);
+  const event = renderWorkflow(template, undefined, 17, true);
+  const finish = event.split(/^  finish:$/m)[1];
+  assert.ok(finish, "event workflow has a finish job");
+  assert.match(finish, /needs: \[write, score, decide\]/);
+  assert.match(finish, /if: \$\{\{ always\(\) && needs\.write\.result != 'skipped' \}\}/);
+  assert.match(finish, /continue-on-error: true/);
+  assert.match(finish, /permissions: \{ id-token: write \}/);
+  assert.match(finish, /step: receipt-finish/);
+  assert.match(finish, /conclusion: \$\{\{ contains\(needs\.\*\.result, 'cancelled'\) && 'cancelled' \|\| contains\(needs\.\*\.result, 'failure'\) && 'failure' \|\| 'success' \}\}/);
+  assert.ok(finish.includes(CRIMSON_ACTION));
+  assert.doesNotMatch(finish, /checkout|download-artifact|\brun:|ANTHROPIC/);
+});
+
+test("the action passes the workflow's conclusion input to its own finish receipt", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "synthe-own-finish-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const preload = join(dir, "network.mjs"), sent = join(dir, "sent.json");
+  writeFileSync(preload, `import { writeFileSync } from "node:fs";
+Date.now = () => ${Date.parse("2026-11-07T00:00:00Z")};
+globalThis.fetch = async (url, init) => {
+  if (new URL(String(url)).host === "github.test") return Response.json({ value: "signed-oidc-token" });
+  writeFileSync(${JSON.stringify(sent)}, String(init.body));
+  return Response.json({ ok: true });
+};`);
+  const child = spawn(process.execPath, ["--import", pathToFileURL(preload).href, resolve("src/action.ts")], { cwd: dir, env: {
+    PATH: process.env.PATH, ...oidc, GITHUB_EVENT_NAME: "workflow_dispatch",
+    INPUT_STEP: "receipt-finish", INPUT_CONCLUSION: "failure", "INPUT_EVENT-CODE": "fixture-event", "INPUT_TEAM-CODE": "fixture-team",
+  }, stdio: ["ignore", "pipe", "pipe"] });
+  let log = "";
+  child.stdout.on("data", (chunk) => { log += chunk; });
+  child.stderr.on("data", (chunk) => { log += chunk; });
+  assert.equal(await new Promise((done) => child.on("exit", done)), 0, log);
+  assert.deepEqual(JSON.parse(readFileSync(sent, "utf8")), { kind: "finish", conclusion: "failure" });
 });
