@@ -30161,6 +30161,9 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
     const current2 = new Set(goal.checks ?? []);
     state.calibration = input2.calibration.filter((r) => current2.has(r.check));
   }
+  const attack = input2.caches?.attack, score = input2.caches?.score;
+  if (attack && typeof attack.key === "string" && (attack.failed === null || Array.isArray(attack.failed))) state.attackCache = { key: attack.key, failed: attack.failed };
+  if (score && typeof score.key === "string" && (score.pct === null || typeof score.pct === "number" && Number.isFinite(score.pct))) state.scoreCache = { key: score.key, pct: score.pct };
   const { merge_rule, budget } = goal;
   const recovered = await recover(goal, repo, state);
   if (state.proposal) {
@@ -30506,7 +30509,7 @@ ${goal.policy ?? ""}`);
 // package.json
 var package_default = {
   name: "synthe",
-  version: "1.8.5",
+  version: "1.8.6",
   description: "Your AI agent's system prompt gets better on its own: Synthe tests small changes and merges only the clear wins.",
   keywords: [
     "ai",
@@ -30926,7 +30929,7 @@ async function main() {
     const scenarios2 = startPrompt !== null ? await repo.readFile(goal2.scenarios, branch) : null;
     const calibrationText = await repo.readFile(".synthe/calibration.json", branch);
     const calibration = calibrationText === null ? null : calibrationReadings(calibrationText);
-    const record = await observeRoundStep("decide", { candidates: written?.candidates }, () => runDecide(goal2, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load("error.json"), calibration }));
+    const record = await observeRoundStep("decide", { candidates: written?.candidates }, () => runDecide(goal2, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load("error.json"), calibration, caches: { attack: scored?.attackCache ?? null, score: scored?.scoreCache ?? null } }));
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     const state2 = await repo.readState();
     if (record && state2.chainReady && state2.round === record.round && state2.round < goal2.merge_rule.max_rounds && !state2.stopped && !state2.proposal && !state2.pending) {
@@ -31010,15 +31013,6 @@ async function main() {
     const prior = last2 && !last2.reverted && last2.mergedHash === sha256(prompt) ? last2.priorPrompt : null;
     const attacks = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync4(ATTACKS_FILE, "utf8")) : [];
     const scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null, state.scoreCache ?? null));
-    if (scored.attackCache || scored.scoreCache) {
-      try {
-        if (scored.attackCache) state.attackCache = scored.attackCache;
-        if (scored.scoreCache) state.scoreCache = scored.scoreCache;
-        await repo.writeState(state);
-      } catch (e) {
-        console.log(`Could not keep the attack results or score for reuse: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
     for (const line of explainScores(scored.scores, scenarios)) console.log(line);
     const { confirmed, dismissed, failed, excusedConfirmed } = scored.checks;

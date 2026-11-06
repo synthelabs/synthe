@@ -200,3 +200,19 @@ test("a new prompt, new checks, new held-back cases or new models are measured a
   assert.equal(r.scoreCache?.pct, 50);
   assert.ok(m.asks.some((a) => a.user.includes("my parcel")));
 });
+
+test("decide keeps the score step's caches in state, and ignores malformed ones", async () => {
+  const repo = new MemoryRepo("Old");
+  repo.files.set("s.jsonl", cases.map((c) => JSON.stringify(c)).join("\n"));
+  const { scores } = await runScore(withChecks(), "Old", [{ id: "c1", text: "New" }], cases, model({ newFails: 1 }));
+  await runDecide(withChecks(), repo, { candidates: [{ id: "c1", text: "New", summary: "s" }], scores, costUsd: 0.05,
+    caches: { score: { key: "k1", pct: 50 }, attack: { key: "a1", failed: ["x"] } } });
+  assert.deepEqual(repo.state.scoreCache, { key: "k1", pct: 50 });
+  assert.deepEqual(repo.state.attackCache, { key: "a1", failed: ["x"] });
+  await runDecide(withChecks(), repo, { candidates: [{ id: "c1", text: "New", summary: "s" }], scores, costUsd: 0.05,
+    caches: { score: { key: 7, pct: "high" } as never, attack: null } });
+  assert.deepEqual(repo.state.scoreCache, { key: "k1", pct: 50 }, "a malformed cache leaves the kept one");
+  await runDecide(withChecks(), repo, { candidates: [{ id: "c1", text: "New", summary: "s" }], scores, costUsd: 0.05,
+    caches: { score: { key: "k2", pct: "high" } as never } });
+  assert.deepEqual(repo.state.scoreCache, { key: "k1", pct: 50 }, "a score that isn't a number is ignored too");
+});

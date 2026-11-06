@@ -16,7 +16,10 @@ import { candidateScope, rememberCandidates } from "../core/candidate-history.ts
 import { fromSyntheProxy, PROXY_REFUSED } from "../core/share.ts";
 
 export const BUSY_RETRIES = 2;
-export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null; calibration?: { check: string; reading: string }[] | null }
+export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null; calibration?: { check: string; reading: string }[] | null;
+  // The score step's reusable results for the current prompt. Only this job may write state (the score job's token
+  // can only read), so the score step hands them over in scores.json and they are kept here.
+  caches?: { attack?: { key: string; failed: string[] | null } | null; score?: { key: string; pct: number | null } | null } }
 
 const LESSONS = 6;
 
@@ -200,6 +203,10 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     const current = new Set(goal.checks ?? []);
     state.calibration = input.calibration.filter((r) => current.has(r.check));
   }
+  // Saved with whatever this round writes to state next. A malformed cache is ignored: it only saves calls.
+  const attack = input.caches?.attack, score = input.caches?.score;
+  if (attack && typeof attack.key === "string" && (attack.failed === null || Array.isArray(attack.failed))) state.attackCache = { key: attack.key, failed: attack.failed };
+  if (score && typeof score.key === "string" && (score.pct === null || (typeof score.pct === "number" && Number.isFinite(score.pct)))) state.scoreCache = { key: score.key, pct: score.pct };
   const { merge_rule, budget } = goal;
   const recovered = await recover(goal, repo, state);
   // While a proposal waits for review, nothing else happens: no candidates, no spend, no round.
