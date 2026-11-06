@@ -29756,6 +29756,46 @@ For each check, in the same order, write one guard: a plain sentence about a sin
     return null;
   }
 }
+var CONFLICTS_SCHEMA = {
+  type: "object",
+  properties: {
+    conflicts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { first: { type: "integer" }, second: { type: "integer" }, why: { type: "string" } },
+        required: ["first", "second", "why"],
+        additionalProperties: false
+      }
+    }
+  },
+  required: ["conflicts"],
+  additionalProperties: false
+};
+async function findCheckConflicts(model, brief, checks) {
+  if (checks.length < 2) return [];
+  try {
+    const { value } = await askJson(model, {
+      model: DEFAULTS.models.writer,
+      maxTokens: 1e3,
+      schema: CONFLICTS_SCHEMA,
+      user: `An AI agent's team marks every reply against these checks. Each is one plain sentence about a single reply, and a check can say it applies only to some messages.
+${brief ? `
+What the agent is for: ${brief.slice(0, 1e3)}
+` : ""}
+Checks:
+${checks.map((c, i) => `${i + 1}. ${c}`).join("\n")}
+
+Could a single reply pass every check? List each pair of checks that can't both pass: there is a realistic user message where both apply and any reply that passes one fails the other. For example, "Makes exactly one tool call" and "When the user leaves out a needed value, asks a clarifying question" conflict, because a reply that asks the question makes no tool call. Don't list checks that only pull in different directions, like being short and being complete, when a good reply can still pass both. For each pair, give the two check numbers and one plain sentence saying why. Return an empty list if every pair can pass together.`
+    });
+    if (!value || !Array.isArray(value.conflicts)) return [];
+    const ok = (n) => Number.isInteger(n) && n >= 1 && n <= checks.length;
+    const pairs = value.conflicts.filter((c) => Boolean(c) && ok(c.first) && ok(c.second) && c.first !== c.second && typeof c.why === "string" && Boolean(c.why.trim())).map((c) => ({ first: Math.min(c.first, c.second) - 1, second: Math.max(c.first, c.second) - 1, why: c.why.trim().slice(0, 300) }));
+    return pairs.filter((p, i) => pairs.findIndex((o) => o.first === p.first && o.second === p.second) === i);
+  } catch {
+    return [];
+  }
+}
 async function proposeAttacks(model, brief, policy) {
   try {
     const { value } = await askJson(model, {
@@ -29817,6 +29857,40 @@ async function yesNo(io2, question) {
     io2.say("Please type y or n.");
   }
   return null;
+}
+async function reviewConflicts(io2, model, brief, proposed, agent) {
+  const checks = [...proposed];
+  const conflicts = await findCheckConflicts(model, brief, checks);
+  if (!conflicts.length) return checks;
+  io2.say(`
+These checks can't both pass on the same reply, so on some messages every reply fails one of them and Synthe can't raise that score:`);
+  if (agent) {
+    conflicts.forEach((c) => io2.say(`  Checks ${c.first + 1} and ${c.second + 1}: ${c.why}`));
+    io2.say("Show the person this conflict and offer to reword one check of each pair. Pass their final wording with --check at confirmation.");
+    return checks;
+  }
+  const reworded = /* @__PURE__ */ new Set();
+  for (const c of conflicts) {
+    if (reworded.has(c.first) || reworded.has(c.second)) continue;
+    io2.say(`  ${c.first + 1}. ${checks[c.first]}
+  ${c.second + 1}. ${checks[c.second]}
+  Why: ${c.why}`);
+    const pick2 = Number((await io2.ask(`Type ${c.first + 1} or ${c.second + 1} to reword that check, or press Enter to keep both: `)).trim()) - 1;
+    if (pick2 !== c.first && pick2 !== c.second) {
+      io2.say(`  Kept both. You can change them in ${GOAL_FILE} any time.`);
+      continue;
+    }
+    const line = (await io2.ask(`New wording for check ${pick2 + 1} (Enter to keep it): `)).trim().slice(0, 300);
+    if (!line) continue;
+    if (checks.some((other, i) => i !== pick2 && sameText(other, line))) {
+      io2.say("  That repeats another check, so it was kept as it was.");
+      continue;
+    }
+    checks[pick2] = line;
+    reworded.add(pick2);
+    io2.say("  Check reworded.");
+  }
+  return checks;
 }
 async function askTeam(io2, envTeam) {
   const fromEnv = normalizeTeamCode(envTeam ?? "");
@@ -30071,6 +30145,7 @@ Reading your prompt${context2.names.length ? ` and ${context2.names.join(" and "
       if (own.length) checks = own;
       else io2.say("No checks typed, so Synthe keeps its suggestions.");
     }
+    checks = await reviewConflicts(io2, model, brief, checks, Boolean(agent));
     const review = await reviewChecksAtSetup(io2, buildGoal(location, objective, guardrails, policy, brief, checks), promptText, rows, model, Boolean(agent));
     checks = review.checks;
     examples = review.examples;
@@ -30448,7 +30523,7 @@ async function setKey(io2, env = process.env, terminal = Boolean(process.stdin.i
 }
 
 // src/cli/guide.ts
-var guide = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand.\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n\n## 1. Prerequisites\n\n1. Check the repo is on GitHub and pushed: `git remote -v` and `git status`. If not, help the person push it first.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the card the Synthe table gave their team (it starts with `crim-`). Event credit needs both. Or they can use their own Anthropic key (it starts with `sk-ant-`) and skip both codes.\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nWith an own key, use `SYNTHE_ANTHROPIC_KEY=<key>` in place of `SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code>`, here and in step 7.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, and the sharing notice. The person must see them. During Crimson Hacks, Synthe shares the prompt and test cases with the Synthe team until Nov 9 at 23:59 UTC. Never code. Secrets are removed. The person can choose `--share none` at confirmation, or set `"share": "none"` in `synthe.json` any time.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person:\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n\nFollow the `NEXT:` line that step 1 printed.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --confirm --keep-checks\n```\n\nAdd `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft\'s sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\n## 8. After setup\n\nTell the person:\n\n- Rounds start by themselves. They do not need to do anything.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n';
+var guide = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand.\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n\n## 1. Prerequisites\n\n1. Check the repo is on GitHub and pushed: `git remote -v` and `git status`. If not, help the person push it first.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the card the Synthe table gave their team (it starts with `crim-`). Event credit needs both. Or they can use their own Anthropic key (it starts with `sk-ant-`) and skip both codes.\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nWith an own key, use `SYNTHE_ANTHROPIC_KEY=<key>` in place of `SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code>`, here and in step 7.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, and the sharing notice. The person must see them. During Crimson Hacks, Synthe shares the prompt and test cases with the Synthe team until Nov 9 at 23:59 UTC. Never code. Secrets are removed. The person can choose `--share none` at confirmation, or set `"share": "none"` in `synthe.json` any time.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person:\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n- If step 1 said some checks can\'t both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can\'t raise that score.\n\nFollow the `NEXT:` line that step 1 printed.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest init --agent --confirm --keep-checks\n```\n\nAdd `--share none`, `--share numbers` or `--share detail` if the person chooses; otherwise confirmation keeps the draft\'s sharing choice. `DO_NOT_TRACK=1` or `SYNTHE_TELEMETRY=0` on either step turns sharing off. Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\n## 8. After setup\n\nTell the person:\n\n- Rounds start by themselves. They do not need to do anything.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n';
 
 // src/core/evidence.ts
 import { execFileSync } from "node:child_process";

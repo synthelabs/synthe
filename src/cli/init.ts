@@ -136,6 +136,50 @@ For each check, in the same order, write one guard: a plain sentence about a sin
   }
 }
 
+const CONFLICTS_SCHEMA = {
+  type: "object",
+  properties: {
+    conflicts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { first: { type: "integer" }, second: { type: "integer" }, why: { type: "string" } },
+        required: ["first", "second", "why"], additionalProperties: false,
+      },
+    },
+  },
+  required: ["conflicts"], additionalProperties: false,
+};
+
+export interface CheckConflict { first: number; second: number; why: string }
+
+// Pairs of checks no single reply can pass together, for example "makes exactly one tool call" and "asks a clarifying
+// question when a value is missing": on a message that's missing a value, every reply fails one of them, so rounds
+// chase a score that can't move. Indexes are 0-based. Empty when there are none or the model's answer can't be used:
+// this only informs, so it never stops setup.
+export async function findCheckConflicts(model: Model, brief: string, checks: string[]): Promise<CheckConflict[]> {
+  if (checks.length < 2) return [];
+  try {
+    const { value } = await askJson<{ conflicts: { first?: unknown; second?: unknown; why?: unknown }[] }>(model, {
+      model: DEFAULTS.models.writer, maxTokens: 1000, schema: CONFLICTS_SCHEMA,
+      user: `An AI agent's team marks every reply against these checks. Each is one plain sentence about a single reply, and a check can say it applies only to some messages.
+${brief ? `\nWhat the agent is for: ${brief.slice(0, 1000)}\n` : ""}
+Checks:
+${checks.map((c, i) => `${i + 1}. ${c}`).join("\n")}
+
+Could a single reply pass every check? List each pair of checks that can't both pass: there is a realistic user message where both apply and any reply that passes one fails the other. For example, "Makes exactly one tool call" and "When the user leaves out a needed value, asks a clarifying question" conflict, because a reply that asks the question makes no tool call. Don't list checks that only pull in different directions, like being short and being complete, when a good reply can still pass both. For each pair, give the two check numbers and one plain sentence saying why. Return an empty list if every pair can pass together.`,
+    });
+    if (!value || !Array.isArray(value.conflicts)) return [];
+    const ok = (n: unknown): n is number => Number.isInteger(n) && (n as number) >= 1 && (n as number) <= checks.length;
+    const pairs = value.conflicts
+      .filter((c): c is { first: number; second: number; why: string } => Boolean(c) && ok(c.first) && ok(c.second) && c.first !== c.second && typeof c.why === "string" && Boolean(c.why.trim()))
+      .map((c) => ({ first: Math.min(c.first, c.second) - 1, second: Math.max(c.first, c.second) - 1, why: c.why.trim().slice(0, 300) }));
+    return pairs.filter((p, i) => pairs.findIndex((o) => o.first === p.first && o.second === p.second) === i);
+  } catch {
+    return [];
+  }
+}
+
 // About ten attack messages for the frozen set in .synthe/attacks.jsonl, written once at setup from the brief
 // and policy: prompt injection, asking for a policy bypass, pressure, and off-topic requests. Each carries a
 // must sentence about the reply, written so it can be answered yes or no. Duplicates are dropped and the set is
@@ -207,6 +251,34 @@ async function yesNo(io: Io, question: string): Promise<boolean | null> {
     io.say("Please type y or n.");
   }
   return null;
+}
+
+// Says which checks can't pass together and, in a terminal, offers to reword one of each pair. It never stops setup:
+// keeping both is allowed, and an agent passes the person's final wording with --check at confirmation.
+async function reviewConflicts(io: Io, model: Model, brief: string, proposed: string[], agent: boolean): Promise<string[]> {
+  const checks = [...proposed];
+  const conflicts = await findCheckConflicts(model, brief, checks);
+  if (!conflicts.length) return checks;
+  io.say(`\nThese checks can't both pass on the same reply, so on some messages every reply fails one of them and Synthe can't raise that score:`);
+  if (agent) {
+    conflicts.forEach((c) => io.say(`  Checks ${c.first + 1} and ${c.second + 1}: ${c.why}`));
+    io.say("Show the person this conflict and offer to reword one check of each pair. Pass their final wording with --check at confirmation.");
+    return checks;
+  }
+  const reworded = new Set<number>();
+  for (const c of conflicts) {
+    if (reworded.has(c.first) || reworded.has(c.second)) continue;
+    io.say(`  ${c.first + 1}. ${checks[c.first]}\n  ${c.second + 1}. ${checks[c.second]}\n  Why: ${c.why}`);
+    const pick = Number((await io.ask(`Type ${c.first + 1} or ${c.second + 1} to reword that check, or press Enter to keep both: `)).trim()) - 1;
+    if (pick !== c.first && pick !== c.second) { io.say(`  Kept both. You can change them in ${GOAL_FILE} any time.`); continue; }
+    const line = (await io.ask(`New wording for check ${pick + 1} (Enter to keep it): `)).trim().slice(0, 300);
+    if (!line) continue;
+    if (checks.some((other, i) => i !== pick && sameText(other, line))) { io.say("  That repeats another check, so it was kept as it was."); continue; }
+    checks[pick] = line;
+    reworded.add(pick);
+    io.say("  Check reworded.");
+  }
+  return checks;
 }
 
 // The team code from the organizers' card. Typed hidden, normalized like the server, and never stored outside the repo secret.
@@ -453,6 +525,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
       if (own.length) checks = own;
       else io.say("No checks typed, so Synthe keeps its suggestions.");
     }
+    checks = await reviewConflicts(io, model, brief, checks, Boolean(agent));
     // A short look at real replies, so the checks mean what the team means before the first round measures them.
     const review = await reviewChecksAtSetup(io, buildGoal(location, objective, guardrails, policy, brief, checks), promptText, rows, model, Boolean(agent));
     checks = review.checks;
