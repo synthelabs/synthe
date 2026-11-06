@@ -11,6 +11,9 @@ import packageJson from "../../package.json" with { type: "json" };
 
 export const EVENTS_ENDPOINT = "https://synthe-crimson.vercel.app/api/events";
 export const MAX_EVENT_BYTES = 192 * 1024;
+// How long a step waits at its end for the worker to send what it holds. A write step's few events take a second or
+// two; a score step's batches take longer. Past this, the job's cleanup kills the worker and the rest is lost.
+export const FLUSH_MS = 15_000;
 const WORDS = /^[a-z_-]{1,16}( [a-z_-]{1,16}){0,3}$/;
 const KEY = /^[a-z][a-z0-9_]{0,39}$/;
 const CREDENTIAL = /secret|token|password|credential|authorization|cookie|(?:^|_)key(?:$|_)|(?:team|event)_code/i;
@@ -77,7 +80,7 @@ export function eventBatches(consent: EventConsent, events: RoundEvent[], env: E
 interface SenderOptions {
   env?: Env; fetcher?: typeof fetch; sleep?: (ms: number) => Promise<void>; now?: () => number; timeoutMs?: number; onDowngrade?: () => void;
 }
-// All transport errors are contained here. The worker owns the waits; the round never awaits this function.
+// All transport errors are contained here. The worker owns the waits; only flushEvents waits for it, after the step's work.
 export async function sendEvents(consent: EventConsent, events: RoundEvent[], options: SenderOptions = {}): Promise<void> {
   const env = options.env ?? process.env, fetcher = options.fetcher ?? fetch;
   const now = options.now ?? Date.now, deadline = now() + (options.timeoutMs ?? 60_000);
@@ -153,6 +156,7 @@ export async function eventConsent(env: Env, fetcher: typeof fetch = fetch): Pro
 }
 
 let worker: ChildProcess | undefined;
+const sending: Promise<void>[] = [];
 function capture(kind: RoundEvent["kind"], stage: string, data: unknown): void {
   try {
     if (!process.env.ACTIONS_ID_TOKEN_REQUEST_URL || !process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) return;
@@ -164,8 +168,29 @@ function capture(kind: RoundEvent["kind"], stage: string, data: unknown): void {
     const event = { id: randomUUID(), kind, at: new Date().toISOString(), stage, data: eventData(data, true, process.env) };
     // Oversized content is omitted before IPC as well as on the wire, bounding the round's work.
     if (Buffer.byteLength(JSON.stringify(event)) > MAX_EVENT_BYTES) event.data = { content_omitted: true };
-    if (worker.connected) worker.send(event, () => {});
+    const child = worker;
+    if (child.connected) sending.push(new Promise((done) => { child.send(event, () => done()); }));
   } catch { /* Even spawning or serializing a sharing worker is optional. */ }
+}
+
+// Actions kills a job's leftover processes as soon as its last step ends, which took the worker down mid-upload and lost
+// the events captured last (a write step's second candidate, a failure). So a step ends by handing over what it
+// captured and waiting, up to a bound, for the worker to send it and exit. It never throws.
+export async function flushEvents(timeoutMs = FLUSH_MS): Promise<void> {
+  const child = worker;
+  if (!child) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const sent = (async () => {
+      await Promise.all(sending);
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const exited = new Promise<void>((done) => child.once("exit", () => done()));
+      // The worker sends everything it has queued once its channel closes, then exits.
+      if (child.connected) child.disconnect();
+      await exited;
+    })();
+    await Promise.race([sent, new Promise<void>((done) => { timer = setTimeout(done, timeoutMs); })]);
+  } catch { /* Sharing must never change a step's outcome. */ } finally { clearTimeout(timer); }
 }
 
 export const captureFailure = (stage: string, error: unknown): void => capture("failure", WORDS.test(stage) ? stage : "round", { reason: "step failed", message: error instanceof Error ? error.message : null });
