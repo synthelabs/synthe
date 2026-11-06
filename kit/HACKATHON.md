@@ -2,7 +2,7 @@
 
 Friday, November 6. Nothing here has been used or sent yet.
 
-Operators: see [no-spend readiness](OFFLINE-READINESS.md) before publishing or printing. The event flow is live in the published package (v1.7.3 on npm). The dollar amounts below match the configured caps as of November 5.
+Operators should see [no-spend readiness](OFFLINE-READINESS.md) before publishing or printing. Use the GitHub release commands below for Crimson workflow tracking. The dollar amounts below match the configured caps as of November 5.
 
 ## Intro slide
 
@@ -11,7 +11,7 @@ Operators: see [no-spend readiness](OFFLINE-READINESS.md) before publishing or p
 Run one command before you leave tonight. Synthe rewrites your agent's system prompt, tests each version, and merges only what wins. Completed rounds run back to back; 12 rounds usually finish in about half an hour. Open the report to see what changed.
 
 ```
-npx synthe init
+npx --yes github:synthelabs/synthe#v1.7.5 init
 ```
 
 Event code on the QR card. Stop it any time.
@@ -20,17 +20,19 @@ Use this slide only after the overnight run works. Don't add results until we ha
 
 ## QR card
 
-Using Claude Code, Cursor or Codex? Tell it: Set up Synthe in this repo. Run `npx synthe@latest guide` and follow it.
+Using Claude Code, Cursor or Codex? Tell it to set up Synthe in this repo and follow the instructions from `npx --yes github:synthelabs/synthe#v1.7.5 guide`.
 
 **Synthe**
 Your AI agent's prompt gets better while you build everything else.
 
-1. Use the event code on this QR card ($4 run budget, on us; no Anthropic key needed).
-2. In your repo, run `npx synthe@latest init`.
-3. Say what your agent should get better at, confirm the checks Synthe proposes to measure it, and choose: merge improvements into main automatically, or review each one. During Crimson Hacks, Synthe shares your prompt, test cases and how the run goes with us (never your code); turn it off with "share": "none" in synthe.json.
+1. Have the event code from the QR card and the team code from the Synthe table ready. The $4 run budget can use event credit.
+2. In your repo, run `npx --yes github:synthelabs/synthe#v1.7.5 init`.
+3. Say what your agent should get better at, confirm the checks Synthe proposes, and choose whether to merge improvements automatically or review each one. Crimson requires workflow tracking even with your own Anthropic key. Your optional research-sharing settings control prompt, test case, and other research data.
 4. After the run, open the report issue in your repo.
 
 Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop any time: `npx synthe stop`
+
+If Synthe is already installed, run `npx --yes github:synthelabs/synthe#v1.7.5 upgrade --event` and commit both generated workflow files to your default branch. Confirm both event and team secrets are set before the next run.
 
 ## Table script
 
@@ -88,6 +90,7 @@ Ask each team at the table. It should take 3 minutes. Write down their words.
 
 | Field | Where it comes from |
 |---|---|
+| Event workflow start, attempt, finish and outcome | Required Crimson tracking receipts |
 | Sharing choice (nothing, numbers, detail, or Crimson Hacks full) | The `share` setting in synthe.json |
 | Rounds run, merges, checks passed (start and end) | Shared numbers in synthelabs/synthe-runs |
 | Goal, checks, edits, one example message and its replies | Private synthelabs/synthe-feedback, for detail and full sharing |

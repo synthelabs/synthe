@@ -14,6 +14,7 @@ import { failureOf, type Failure } from "./loop/failure.ts";
 import { explainScores, runScore } from "./loop/score.ts";
 import { explainWrite, runWrite } from "./loop/write.ts";
 import { captureCancel, captureFailure, observeRoundStep, startEventsWorker } from "./core/events.ts";
+import { deliverReceipt } from "./core/receipts.ts";
 
 const OUT = ".synthe-out";
 // Only the hourly backup uses this gate. A queued chain round starts immediately.
@@ -36,6 +37,11 @@ async function stillWaiting(repo: Repo, branch: string): Promise<boolean> {
 
 async function main() {
   const step = input("step");
+  if (step === "receipt-start" || step === "receipt-finish") {
+    const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"));
+    console.log(acknowledged ? "Crimson tracking acknowledged this run." : "Crimson tracking does not apply to this run.");
+    return;
+  }
   if (step === "cancel") return captureCancel();
   if (step !== "decide" && !(input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() && (input("event-code") || process.env.SYNTHE_EVENT_CODE)?.trim()) requireOidc();
   const repo = githubRepo(process.env.GITHUB_REPOSITORY!, input("github-token"), process.env.GITHUB_API_URL);
@@ -174,10 +180,14 @@ async function main() {
 }
 
 if (!startEventsWorker()) main().catch((e) => {
+  const step = input("step");
+  if (step === "receipt-start" || step === "receipt-finish") {
+    console.log(`::error title=Crimson tracking::${e.message}`);
+    process.exit(1);
+  }
   captureFailure(input("step"), e);
   console.error(e);
   // The decide step reads this to tell a busy API (try again next hour) from a key a person has to replace.
-  const step = input("step");
   if (step === "write" || step === "score") {
     try {
       const failure = failureOf(step, e);

@@ -225,6 +225,7 @@ Start here, inside your project's folder:
 Then:
   npx synthe status   where it is and what it changed
   npx synthe upgrade  update only the installed workflow for chained rounds
+  npx synthe upgrade --event  install Crimson tracking in an existing event repo
   npx synthe verify FILE   check a round's evidence record (.synthe/evidence/round-N.json)
   npx synthe undo N   open a pull request that puts back the prompt from before round N
   npx synthe stop     stop it; nothing more runs or changes
@@ -245,7 +246,7 @@ async function main() {
     if (!setUpHere()) return;
     process.exitCode = (await setKey(io)) ? 0 : 1;
   }
-  else if (command === "upgrade") console.log(upgrade(process.cwd(), template()));
+  else if (command === "upgrade") console.log(upgrade(process.cwd(), template(), process.argv.includes("--event")));
   else if (command === "stop") await stop();
   else if (command === "status") await status();
   else if (command === "restart") await restart();

@@ -14,9 +14,11 @@ Setup reads your README and the code around your prompt, asks what your agent sh
 
 During Crimson Hacks, new installs use `"share": "full"` until November 9, 2026 at 23:59 UTC. This shares the prompt at the start of round 1, the full test-case file (train and holdout), the final prompt when the run stops, and how the run goes. After the cutoff, a full install automatically behaves like detail and stops sending the prompt and test-case file. New installs after the cutoff default to `"share": "detail"`.
 
-Detail shares rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example message with its replies. Numbers go to the public `synthelabs/synthe-runs` repository; all text goes only to the private `synthelabs/synthe-feedback` repository. The Synthe team reads both. Synthe never sends your code, and removes keys, emails and phone numbers before sending. Detail never sends your whole prompt or test-case file.
+Detail shares rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example message with its replies. Numbers go to the private `synthelabs/synthe-runs` repository and shared text goes to the private `synthelabs/synthe-feedback` repository. The Synthe team reads both. Synthe never sends your code, and removes keys, emails and phone numbers before sending. Detail never sends your whole prompt or test-case file.
 
 To turn sharing off any time, set `"share": "none"` in `synthe.json`. Set `"share": "numbers"` to send numbers only, or run init with `DO_NOT_TRACK=1` to start with sharing off. Existing installs without a `share` setting stay off. To ask us to delete your team's data, open an issue on `synthelabs/synthe`.
+
+Crimson Hacks requires a tracking receipt before an enrolled workflow starts and a final status when it ends. This applies even if you use your own Anthropic key or turn off optional sharing. The receipt carries the team association, repository name and ID, workflow run ID and attempt, timing, and the workflow-reported outcome. New runs are tracked until November 8, 2026 at 23:59 UTC. Completions for those runs can arrive for another 48 hours. Your sharing settings still control prompt, test case, and other research data.
 
 ## Before you start
 
@@ -27,11 +29,13 @@ To turn sharing off any time, set `"share": "none"` in `synthe.json`. Set `"shar
 
 ## What it adds to your repo
 
-Setup commits three files: `synthe.json` (the goal, your rules and settings), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). It saves an event code as `SYNTHE_EVENT_CODE`, or your own key as `SYNTHE_ANTHROPIC_KEY`, in repo secrets. Your own key always wins over event credit. Event installs default to a $4 local run budget; own-key installs default to $3. A run budget is not a credit allowance: organizer-configured caps and shared event availability can stop an event run sooner. After that, the only file Synthe ever changes is your prompt. It never runs your agent's code.
+Setup commits `synthe.json` (the goal, your rules and settings), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Crimson setup also installs `.github/workflows/synthe-diagnostics.yml` and saves the event and team codes as the repo secrets `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE`. To enroll with your own key, supply both event codes alongside `SYNTHE_ANTHROPIC_KEY` during setup. Your own key always wins over event credit. Event credit defaults to a $4 local run budget and own-key billing defaults to $3. Organizer credit caps may stop a run sooner than its local budget. After that, the only file Synthe ever changes is your prompt. It never runs your agent's code.
 
 Agent setup requires explicit `SYNTHE_ANTHROPIC_KEY` or `SYNTHE_EVENT_CODE` in both draft and confirmation; it never falls back to `ANTHROPIC_API_KEY`. Local event requests reuse a non-secret install ID at `$XDG_CONFIG_HOME/synthe/install-id`, or `~/.config/synthe/install-id` when no absolute config directory is set. The directory is private (0700), and the ID file is owner-only (0600), created atomically across CLI processes. It is not stored in your repo. This ID keeps the setup allowance stable on this installation, not across people, machines, deleted config directories or resets; it is not a server-side abuse boundary.
 
-Set `SYNTHE_EVENT_CODE` in your environment to skip the code question. Local `try` and `calibrate` also accept it. To switch to your own key, run `npx synthe key` in your terminal, or explicitly supply `SYNTHE_ANTHROPIC_KEY` for noninteractive use. Using `ANTHROPIC_API_KEY` with `key` requires deliberately pressing Enter in your terminal; it is never a noninteractive fallback. Rounds then use your key instead of event credit. If credit stopped the run, run `npx synthe restart` afterward. Existing 1.6.x installs should run `npx synthe upgrade`, then commit and push the workflow to enable event credit.
+Set `SYNTHE_EVENT_CODE` in your environment to skip the code question. Local `try` and `calibrate` also accept it. To switch to your own key, run `npx synthe key` in your terminal, or explicitly supply `SYNTHE_ANTHROPIC_KEY` for noninteractive use. Using `ANTHROPIC_API_KEY` with `key` requires deliberately pressing Enter in your terminal. Rounds then use your key. If credit stopped the run, run `npx synthe restart` afterward.
+
+For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.7.5 init`. For an existing event repo, run `npx --yes github:synthelabs/synthe#v1.7.5 upgrade --event`, commit both workflow files, and push them to the default branch. Add both event and team secrets in GitHub Actions settings if needed.
 
 ## What happens each round
 
@@ -76,6 +80,7 @@ The test cases are simulated single messages, not real users or full conversatio
 | `npx synthe guide` | Instructions for setup through Claude Code, Cursor or Codex |
 | `npx synthe key` | Save your own Anthropic key and stop using event credit |
 | `npx synthe upgrade` | Update only the workflow for chained rounds; commit and push the changed workflow |
+| `npx synthe upgrade --event` | Install Crimson tracking in an existing event repo; commit both workflows and push to the default branch |
 | `npx synthe status` | Show where it is |
 | `npx synthe stop` | Stop it. Nothing more runs or changes |
 | `npx synthe restart` | Start it again, after `stop` or once you've fixed what stopped it |
@@ -109,4 +114,4 @@ Default-on guards still need a live fixture reviewed by a person: block at least
 
 ## Removing it
 
-Run `npx synthe stop`, then delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and the `SYNTHE_EVENT_CODE` and `SYNTHE_ANTHROPIC_KEY` secrets if present.
+Run `npx synthe stop`, then delete `synthe.json`, `.synthe/`, and both Synthe workflow files under `.github/workflows/`. Remove the `SYNTHE_EVENT_CODE`, `SYNTHE_TEAM_CODE`, and `SYNTHE_ANTHROPIC_KEY` secrets if present.

@@ -4,8 +4,9 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ACTION, init, type Io } from "../src/cli/init.ts";
+import { ACTION, CRIMSON_ACTION, init, type Io } from "../src/cli/init.ts";
 import { upgrade } from "../src/cli/upgrade.ts";
+import { DIAGNOSTICS_FILE } from "../src/cli/workflows.ts";
 import { parseGoal, parseScenarios } from "../src/core/goal.ts";
 import { agentOptions, AgentSetupError } from "../src/cli/agent.ts";
 import { AGENT_NEXT, DRAFT_FILE } from "../src/cli/init.ts";
@@ -62,6 +63,8 @@ test("init sets up everything and starts the first run", async () => {
   assert.equal(rows.filter((r) => r.split === "holdout").length, 10);
   const workflow = readFileSync(join(dir, ".github/workflows/synthe.yml"), "utf8");
   assert.ok(workflow.includes(ACTION) && !workflow.includes("__ACTION__"));
+  assert.ok(!workflow.includes("receipt-start"));
+  assert.ok(!existsSync(join(dir, DIAGNOSTICS_FILE)));
   const secret = ran.find((r) => r.args[0] === "secret")!;
   assert.equal(secret.stdin, "sk-ant-test-team-key");
   assert.ok(!secret.args.join(" ").includes("sk-ant"));
@@ -87,6 +90,31 @@ test("upgrade changes only the workflow, keeps the backup minute, and is idempot
   assert.match(readFileSync(workflow, "utf8"), /if: \$\{\{ !cancelled\(\) && needs.write.result/);
   assert.match(upgrade(dir, template), /already up to date\. No files changed/);
   assert.deepEqual(["prompt.md", "synthe.json", ".synthe/scenarios.jsonl"].map((f) => readFileSync(join(dir, f), "utf8")), before);
+});
+
+test("event upgrade installs and repairs both pinned workflows, with no changes to other files", () => {
+  const dir = repoDir(PROMPT);
+  mkdirSync(join(dir, ".github/workflows"), { recursive: true });
+  const workflow = join(dir, ".github/workflows/synthe.yml");
+  const diagnostics = join(dir, DIAGNOSTICS_FILE);
+  const template = readFileSync("templates/synthe.yml", "utf8");
+  const old = template.replaceAll("__ACTION__", ACTION).replaceAll("__MINUTE__", "23");
+  writeFileSync(workflow, old);
+  writeFileSync(diagnostics, "# Workflow owned by the participant\n");
+  assert.throws(() => upgrade(dir, template, true), /already exists/);
+  assert.equal(readFileSync(workflow, "utf8"), old);
+  assert.equal(readFileSync(diagnostics, "utf8"), "# Workflow owned by the participant\n");
+  writeFileSync(diagnostics, "# Synthe Crimson event completion workflow.\n");
+  assert.match(upgrade(dir, template, true), /push both to the default branch/);
+  const event = readFileSync(workflow, "utf8");
+  assert.ok(event.includes(CRIMSON_ACTION) && event.includes("receipt-start") && event.includes('cron: "23 * * * *"'));
+  assert.ok(readFileSync(diagnostics, "utf8").includes(CRIMSON_ACTION));
+  assert.match(upgrade(dir, template), /already up to date/);
+  writeFileSync(diagnostics, "# Synthe Crimson event completion workflow.\n");
+  assert.match(upgrade(dir, template), /Updated the Crimson workflows/);
+  assert.equal(readFileSync(workflow, "utf8"), event);
+  assert.match(readFileSync(diagnostics, "utf8"), /receipt-finish/);
+  assert.equal(readFileSync(join(dir, "prompt.md"), "utf8"), PROMPT);
 });
 
 test("the key is never written into a file", async () => {
@@ -449,6 +477,11 @@ test("event codes are checked cheaply before storing, use the proxy for all setu
     assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).budget.max_usd, 4);
     assert.match(said.join("\n"), /Saved your event code and team code as the repo secrets SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE/);
     assert.ok(!ran.some((call) => call.args.includes("SYNTHE_ANTHROPIC_KEY")));
+    for (const file of [".github/workflows/synthe.yml", DIAGNOSTICS_FILE]) {
+      const yaml = readFileSync(join(dir, file), "utf8");
+      assert.ok(yaml.includes(CRIMSON_ACTION) && !yaml.includes(TEAM) && !yaml.includes("crimson-code"));
+      assert.ok(ran.find((call) => call.args[0] === "commit")?.args.includes(file));
+    }
   }
 });
 
@@ -459,6 +492,19 @@ test("an explicit own key wins over an env event code, keeping the own-key budge
   io.proxy = () => { throw new Error("own key must win"); };
   assert.equal(await init(io, dir, undefined, "", { SYNTHE_ANTHROPIC_KEY: "sk-ant-own", SYNTHE_EVENT_CODE: "event" }), true);
   assert.equal(ran.find((call) => call.args[0] === "secret")!.stdin, "sk-ant-own");
+  assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).budget.max_usd, 3);
+});
+
+test("a repo can enroll with both codes and use its own key for every model call", async () => {
+  const dir = repoDir(PROMPT);
+  const { io, ran, said } = fakeIo(dir);
+  const env = { SYNTHE_ANTHROPIC_KEY: "sk-ant-own", SYNTHE_EVENT_CODE: "fixture-event", SYNTHE_TEAM_CODE: TEAM };
+  assert.equal(await init(io, dir, undefined, "", env), true);
+  const secrets = ran.filter((call) => call.args[0] === "secret");
+  assert.deepEqual(secrets.map((call) => call.args[2]), ["SYNTHE_ANTHROPIC_KEY", "SYNTHE_EVENT_CODE", "SYNTHE_TEAM_CODE"]);
+  assert.deepEqual(secrets.map((call) => call.stdin), ["sk-ant-own", "fixture-event", TEAM]);
+  assert.match(readFileSync(join(dir, DIAGNOSTICS_FILE), "utf8"), /receipt-finish/);
+  assert.match(said.join("\n"), /requires workflow tracking for enrolled teams, even when your own key/);
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).budget.max_usd, 3);
 });
 
@@ -521,7 +567,7 @@ test("agent preparation never prompts or commits, shows notice and complete cali
     assert.equal(saved.budget.max_usd, 4);
     assert.equal(ran.find((call) => call.args[2] === "SYNTHE_TEAM_CODE")!.stdin, TEAM);
     const staged = ran.find((call) => call.cmd === "git" && call.args[0] === "add")!;
-    assert.deepEqual(staged.args, ["add", "synthe.json", ".synthe/scenarios.jsonl", ".synthe/attacks.jsonl", ".github/workflows/synthe.yml"]);
+    assert.deepEqual(staged.args, ["add", "synthe.json", ".synthe/scenarios.jsonl", ".synthe/attacks.jsonl", ".github/workflows/synthe.yml", DIAGNOSTICS_FILE]);
     assert.match(readFileSync(join(dir, ".synthe/attacks.jsonl"), "utf8"), /Ignore your rules/, "the drafted attack set survives to confirmation");
     assert.equal(saved.share_notice, "crimson-2026-11-v1");
     assert.ok(!ran.filter((call) => call.args[0] === "commit" || call.args[0] === "add").some((call) => call.args.includes(DRAFT_FILE)));
