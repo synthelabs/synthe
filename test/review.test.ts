@@ -339,7 +339,7 @@ test("review: credit report always includes the own-key next step, even for a te
   const repo = new MemoryRepo("Old prompt.");
   await runDecide(goal(), repo, { candidates: null, scores: null, costUsd: null, error: failureOf("write", new CreditError("Credit exhausted.")) });
   assert.match(repo.issue, /To use your own Anthropic key, run `npx synthe key`, then `npx synthe restart`/);
-  assert.match(repo.issue, /delete the `SYNTHE_ANTHROPIC_KEY`, `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE` secrets/);
+  assert.match(repo.issue, /delete whichever of the `SYNTHE_ANTHROPIC_KEY`, `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE` secrets your repo has/);
 });
 
 test("review: Anthropic key failures direct people to synthe key", () => {

@@ -28,7 +28,7 @@ The Synthe session is a workshop 1 to 2 hours in, not at the start: by then team
 
 **After**
 
-- A run is up to 12 rounds, usually about 30 minutes. Teams keep building meanwhile. In auto mode Synthe commits to the prompt file on `main`, so everyone runs `git pull` before editing the prompt or pushing.
+- A run is up to 12 rounds and up to about 30 minutes; it stops sooner, often within 5 to 10 minutes, when nothing beats the team's prompt. Teams keep building meanwhile. In auto mode Synthe commits to the prompt file on `main`, so everyone runs `git pull` before editing the prompt or pushing.
 - Ask "what did Synthe do?" in the coding agent at any time; it runs `npx synthe changes`.
 - Known limits: many teams starting at once can hit model rate limits. The proxy retries twice, then the round fails and counts toward a stop. A run that stops because nothing was clearly better restarts only after new test cases are added.
 
@@ -36,10 +36,10 @@ The Synthe session is a workshop 1 to 2 hours in, not at the start: by then team
 
 **Synthe: your agent's prompt gets better while you keep building.**
 
-Set it up now, in about 10 minutes. Synthe rewrites your agent's system prompt, tests each version, and merges only what wins. A run usually takes about half an hour. Open the report to see what changed.
+Set it up now, in about 10 minutes. Synthe rewrites your agent's system prompt, tests each version, and merges only what wins. A run takes up to about half an hour. Open the report to see what changed.
 
 ```
-npx --yes github:synthelabs/synthe#v1.8.4 init
+npx --yes github:synthelabs/synthe#v1.8.5 init
 ```
 
 Event code on the QR card. The repo's owner runs it. Stop it any time.
@@ -48,7 +48,7 @@ Don't add results to this slide until we have real ones.
 
 ## QR card
 
-Using Claude Code, Cursor or Codex? Tell it to set up Synthe in this repo and follow the instructions from `npx --yes github:synthelabs/synthe#v1.8.4 guide`.
+Using Claude Code, Cursor or Codex? Tell it to set up Synthe in this repo and follow the instructions from `npx --yes github:synthelabs/synthe#v1.8.5 guide`.
 
 No coding agent, or a free web chat? Do the steps below in your terminal. A web chat can't see your repo or run commands, and setup asks its own questions, so you don't need an AI tool for it.
 
@@ -56,13 +56,13 @@ No coding agent, or a free web chat? Do the steps below in your terminal. A web 
 Your AI agent's prompt gets better while you build everything else.
 
 1. Push your repo with your agent's prompt committed. The repo's owner runs setup, on `main`, after `git pull`. Have the event code from the QR card and the team code from the Synthe table ready. The $4 run budget can use event credit.
-2. In your repo, run `npx --yes github:synthelabs/synthe#v1.8.4 init`.
+2. In your repo, run `npx --yes github:synthelabs/synthe#v1.8.5 init`.
 3. Say what your agent should get better at, confirm the checks Synthe proposes, and choose whether to merge improvements automatically or review each one. Crimson requires workflow tracking even with your own Anthropic key. By default, Synthe also shares research data about your run, including your prompt and test cases through November 9 at 23:59 UTC.
 4. After the run, open the report issue in your repo.
 
 Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop any time: `npx synthe stop`
 
-If Synthe is already installed, run `npx --yes github:synthelabs/synthe#v1.8.4 upgrade --event` and commit both generated workflow files to your default branch. Confirm both event and team secrets are set before the next run.
+If Synthe is already installed, run `npx --yes github:synthelabs/synthe#v1.8.5 upgrade --event` and commit both generated workflow files to your default branch. Confirm both event and team secrets are set before the next run.
 
 ## Table script
 

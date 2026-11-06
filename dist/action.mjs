@@ -29318,7 +29318,7 @@ function nextSteps(goal, state) {
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");
   }
-  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete the `SYNTHE_ANTHROPIC_KEY`, `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE` secrets in your repo's settings.");
+  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete whichever of the `SYNTHE_ANTHROPIC_KEY`, `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE` secrets your repo has, in its settings.");
   return steps;
 }
 var TRIED_GROUPS = ["not clearly better", "did not hold on the hidden test cases", "broke a rule or a guard"];
@@ -29836,7 +29836,12 @@ Does this reply clearly break one of the guardrails? The business policy and the
     });
     return unknown ? null : failed.sort();
   };
-  return { costs, challenge, repliesFor, confirmBreak, markAttacks, cutOffCount: () => cutOff };
+  const measure2 = (set, replies) => pool(set, CONCURRENCY, async (s) => {
+    const text = replies.get(s.id) ?? null;
+    const currentChecks = text === null ? null : await checkReply(s, text, "checks", "first");
+    return { row: { id: s.id, score: EVEN, violation: null }, currentViolation: null, currentChecks };
+  });
+  return { costs, challenge, repliesFor, confirmBreak, markAttacks, measure: measure2, cutOffCount: () => cutOff };
 }
 function currentRows(set, replies, duels) {
   return set.map((s, i) => {
@@ -29856,7 +29861,7 @@ function currentRows(set, replies, duels) {
   });
 }
 async function runScore(goal, baseline, candidates, scenarios, model, prior = null, random = Math.random, attacks = [], attackCache = null) {
-  const { costs, challenge, repliesFor, confirmBreak, markAttacks, cutOffCount } = scorer(goal, model, random);
+  const { costs, challenge, repliesFor, confirmBreak, markAttacks, measure: measure2, cutOffCount } = scorer(goal, model, random);
   const train = scenarios.filter((s) => s.split === "train");
   const holdout = scenarios.filter((s) => s.split === "holdout");
   const safe = candidates.filter((c) => candidateProblem(c.text, goal.prompt) === null && c.text.trim() !== baseline.trim());
@@ -29883,6 +29888,8 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
     const duels = await challenge(leader.id, text, holdout, await holdReplies());
     holdDuels.push(duels);
     leader.holdout = duels.map((d) => d.row);
+  } else if (!hasPrior && holdout.length > 0 && (goal.checks?.some((c) => c.trim()) ?? false)) {
+    holdDuels.push(await measure2(holdout, await holdReplies()));
   }
   let freshAttackCache;
   if (leader && attacks.length > 0) {
@@ -30478,7 +30485,7 @@ ${goal.policy ?? ""}`);
 // package.json
 var package_default = {
   name: "synthe",
-  version: "1.8.4",
+  version: "1.8.5",
   description: "Your AI agent's system prompt gets better on its own: Synthe tests small changes and merges only the clear wins.",
   keywords: [
     "ai",

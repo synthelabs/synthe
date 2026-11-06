@@ -471,7 +471,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     if (finished) rmSync(join(root, DRAFT_FILE), { force: true });
     return finished;
   }
-  if (!agent) io.say(`Synthe will improve your agent's system prompt in ${slug}, in a run of about half an hour. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.\n`);
+  if (!agent) io.say(`Synthe will improve your agent's system prompt in ${slug}, in a run of up to about half an hour. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.\n`);
 
   const preferred = setupCredential(env, envKey, Boolean(agent));
   const chosen = agent ? (preferred ? { key: preferred, team: preferred.startsWith("sk-ant-") ? undefined : agentTeam(env) } : null)
@@ -721,7 +721,7 @@ async function finishSetup(io: Io, root: string, slug: string, branch: string, g
   }
   // Forks start with Actions turned off, and then nothing would ever run, however long the team waits.
   const actionsOff = !started && !setupPr && (await io.run("gh", ["api", `repos/${slug}/actions/permissions`, "--jq", ".enabled"]).then((o) => o.trim() === "false", () => false));
-  const limits = `Completed rounds start back to back, up to ${goal.merge_rule.max_rounds} rounds with a $${goal.budget.max_usd} local run budget.${event ? " This is not a credit allowance. Organizer-configured caps and shared event availability can stop it sooner." : " Your Anthropic account must have enough credit."} A 12-round session usually takes about half an hour.`;
+  const limits = `Completed rounds start back to back, up to ${goal.merge_rule.max_rounds} rounds with a $${goal.budget.max_usd} local run budget.${event ? " This is not a credit allowance. Organizer-configured caps and shared event availability can stop it sooner." : " Your Anthropic account must have enough credit."} A 12-round session takes up to about half an hour; a run stops sooner when 3 rounds in a row find nothing clearly better.`;
   io.say(started ? `\nSynthe is running: GitHub accepted the first dispatch. The first round takes a few minutes. ${limits}`
     : setupPr ? `\nSet up, waiting for you to merge ${setupPr}. Merging it starts the first round. ${limits}`
     : actionsOff ? `\nSet up, but GitHub Actions is turned off for this repo, so Synthe can't run yet. Turn it on at https://github.com/${slug}/settings/actions, then start the first round with \`gh workflow run synthe.yml\`. ${limits}`

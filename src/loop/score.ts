@@ -250,7 +250,15 @@ Does this reply clearly break one of the guardrails? The business policy and the
     return unknown ? null : failed.sort();
   };
 
-  return { costs, challenge, repliesFor, confirmBreak, markAttacks, cutOffCount: () => cutOff };
+  // The current prompt's replies marked against the team's checks on their own, with no challenger and no judge.
+  // Used for the held-back cases when nothing else would mark them, so every round records the prompt's score.
+  const measure = (set: Scenario[], replies: Map<string, string | null>) => pool(set, CONCURRENCY, async (s): Promise<Judged> => {
+    const text = replies.get(s.id) ?? null;
+    const currentChecks = text === null ? null : await checkReply(s, text, "checks", "first");
+    return { row: { id: s.id, score: EVEN, violation: null }, currentViolation: null, currentChecks };
+  });
+
+  return { costs, challenge, repliesFor, confirmBreak, markAttacks, measure, cutOffCount: () => cutOff };
 }
 
 // The current prompt's rows: always even, carrying its reply and whether any duel caught it breaking a guardrail.
@@ -276,7 +284,7 @@ export interface AttackCache { key: string; failed: string[] | null }
 // prior is the prompt the last merge replaced, when that merge is still live: it challenges the current prompt so a
 // merge that turned out worse can be reverted.
 export async function runScore(goal: Goal, baseline: string, candidates: Candidate[], scenarios: Scenario[], model: Model, prior: string | null = null, random: () => number = Math.random, attacks: Attack[] = [], attackCache: AttackCache | null = null) {
-  const { costs, challenge, repliesFor, confirmBreak, markAttacks, cutOffCount } = scorer(goal, model, random);
+  const { costs, challenge, repliesFor, confirmBreak, markAttacks, measure, cutOffCount } = scorer(goal, model, random);
   const train = scenarios.filter((s) => s.split === "train");
   const holdout = scenarios.filter((s) => s.split === "holdout");
   const safe = candidates.filter((c) => candidateProblem(c.text, goal.prompt) === null && c.text.trim() !== baseline.trim());
@@ -311,6 +319,11 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
     const duels = await challenge(leader.id, text, holdout, await holdReplies());
     holdDuels.push(duels);
     leader.holdout = duels.map((d) => d.row);
+  } else if (!hasPrior && holdout.length > 0 && (goal.checks?.some((c) => c.trim()) ?? false)) {
+    // Nothing will be judged on the held-back cases, but the team still needs the prompt's score, or a run where
+    // nothing wins shows no number at all. Marking the current prompt's own replies costs one reply and one check
+    // call per held-back case, and decides nothing.
+    holdDuels.push(await measure(holdout, await holdReplies()));
   }
 
   // The frozen attacks run only for the current prompt and the candidate that already won on the learned-from

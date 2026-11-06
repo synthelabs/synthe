@@ -35,7 +35,7 @@ Agent setup requires explicit `SYNTHE_ANTHROPIC_KEY` or `SYNTHE_EVENT_CODE` in b
 
 Set `SYNTHE_EVENT_CODE` in your environment to skip the code question. Local `try` and `calibrate` also accept it. To switch to your own key, run `npx synthe key` in your terminal, or explicitly supply `SYNTHE_ANTHROPIC_KEY` for noninteractive use. Using `ANTHROPIC_API_KEY` with `key` requires deliberately pressing Enter in your terminal. Rounds then use your key. If credit stopped the run, run `npx synthe restart` afterward.
 
-For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.8.4 init`. For an existing event repo, run `npx --yes github:synthelabs/synthe#v1.8.4 upgrade --event`, commit both workflow files, and push them to the default branch. Add both event and team secrets in GitHub Actions settings if needed.
+For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.8.5 init`. For an existing event repo, run `npx --yes github:synthelabs/synthe#v1.8.5 upgrade --event`, commit both workflow files, and push them to the default branch. Add both event and team secrets in GitHub Actions settings if needed.
 
 ## What happens each round
 
@@ -44,7 +44,7 @@ For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.8.4 init`.
 3. A change is kept only if its replies are better in clearly more cases than they're worse (more than luck would explain), better again on test cases it never saw, and it breaks none of your rules where your old prompt followed them.
 4. If a kept change later turns out worse than the prompt it replaced, Synthe puts the old one back.
 
-It runs at most 12 rounds, usually finishing a full session in about half an hour. It stops sooner when 3 rounds in a row find nothing better, or when it has used its run budget. If Anthropic's API is busy, it tries again right away, up to twice. Event-credit refusals stop immediately without retries; the report shows what to do. Once you've fixed the cause, `npx synthe restart` continues it. (An hourly scheduled run is a backup, but GitHub often skips scheduled runs, so don't rely on it.) Review mode pauses until the team merges or closes Synthe's pull request.
+It runs at most 12 rounds, a session of up to about half an hour. It stops sooner when 3 rounds in a row find nothing better, or when it has used its run budget. If Anthropic's API is busy, it tries again right away, up to twice. Event-credit refusals stop immediately without retries; the report shows what to do. Once you've fixed the cause, `npx synthe restart` continues it. (An hourly scheduled run is a backup, but GitHub often skips scheduled runs, so don't rely on it.) Review mode pauses until the team merges or closes Synthe's pull request.
 
 ## While it runs
 
