@@ -91,7 +91,8 @@ test("the round record and report lead with the team's number", async () => {
   const record = await runDecide(g, repo, { candidates: [{ id: "c1", text: "New", summary: "Asks for the order number first" }], scores, costUsd: 0.05 });
   assert.equal(record?.outcome, "merged");
   assert.deepEqual(record?.checks, { before: 50, after: 100 });
-  assert.match(repo.issue, /Your checks now pass 100% of the time, up from 50%\./);
+  // Only the merge round is measured, and it measured the old prompt, so the practice-case gain stays, labelled.
+  assert.match(repo.issue, /On the practice cases Synthe learns from, your checks now pass 100% of the time, up from 50%\./);
   assert.match(repo.prs[0].body, /\*\*Why:\*\* Your checks passed 100% of the time, up from 50%\./);
   assert.deepEqual(repo.state.lessons?.rows.find((r) => r.id === "t0")?.failedChecks, ["Asks for the order number first"]);
 });

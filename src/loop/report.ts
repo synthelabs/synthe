@@ -60,12 +60,18 @@ function bestStep(state: State): string | null {
 // run has measured scores, the summary leads with the score's movement; a finished run also names
 // the biggest single step, so the end of the run reads as a result, not just a stop.
 // stoppedByTeam: the team ran `npx synthe stop`, which the run state can't know, so a running run reads as paused.
+// The merge-time check rates come from the practice cases the writer learns from. Next to the held-back score
+// they read as a second, conflicting number ("95.7%" and "100%" in one breath). Once a round has measured the
+// current prompt, the held-back score says it all; before that (a round records the prompt it started with), the
+// practice-case gain is the only sign of the change, so it stays, labelled as such.
 export function headline(goal: Goal, state: State, stoppedByTeam = false): { title: string; summary: string } {
-  const base = headlineBase(goal, state, stoppedByTeam);
   const move = scoreMovement(state);
+  const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
+  const lastChange = Math.max(0, ...state.rounds.filter((r) => r.outcome === "merged" || r.outcome === "reverted").map((r) => r.round));
+  const gain: Gain = !move && measured.length !== 1 ? "plain" : measured.some((p) => p.round > lastChange) ? "none" : "practice";
+  const base = headlineBase(goal, state, stoppedByTeam, gain);
   if (!move) {
     // One measured round is still the team's number; say it the way the delta block does.
-    const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
     if (measured.length === 1) {
       const lead = `Your prompt scores ${fmtScore(measured[0].pct)}% (checks passed on test cases Synthe never trains on).`;
       return { title: base.title, summary: `${lead} ${base.summary}` };
@@ -77,11 +83,15 @@ export function headline(goal: Goal, state: State, stoppedByTeam = false): { tit
   return { title: base.title, summary: `${lead}${step ? ` ${step}` : ""} ${base.summary}` };
 }
 
-function headlineBase(goal: Goal, state: State, stoppedByTeam = false): { title: string; summary: string } {
+type Gain = "plain" | "practice" | "none";
+
+function headlineBase(goal: Goal, state: State, stoppedByTeam = false, mode: Gain = "plain"): { title: string; summary: string } {
   const merged = state.rounds.filter((r) => r.outcome === "merged").length;
-  // The team's own number, from before the first merge to after the latest one, when they set checks.
+  // The team's own number, from before the first merge to after the latest one, when they set checks. Older runs
+  // without a measured score series still get it as it always read.
   const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
-  const gain = rated.length ? `Your checks now pass ${rated.at(-1)!.checks!.after}% of the time, up from ${rated[0].checks!.before}%. ` : "";
+  const rates = rated.length ? `${rated.at(-1)!.checks!.after}% of the time, up from ${rated[0].checks!.before}%. ` : "";
+  const gain = !rates || mode === "none" ? "" : mode === "practice" ? `On the practice cases Synthe learns from, your checks now pass ${rates}` : `Your checks now pass ${rates}`;
   const guarded = state.rounds.filter((r) => r.outcome === "merged" && r.guards);
   const guardLine = guarded.length ? `${guardSentence({ before: guarded[0].guards!.before, after: guarded.at(-1)!.guards!.after })} ` : "";
   const spent = `It has spent ${money(state)} of $${goal.budget.max_usd}.`;

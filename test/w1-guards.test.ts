@@ -180,7 +180,7 @@ test("a merged change that held its guards puts that in the record, the issue an
   assert.match(record!.plain!, /Your guards improved from 0% to 100%\./);
   assert.match(repo.issue, /Your guards improved from 0% to 100%\./);
   assert.match(repo.prs[0].body, /Your guards improved from 0% to 100%\./);
-  assert.match(repo.issue, /Your checks now pass 100% of the time, up from 0%\. Your guards improved from 0% to 100%\./);
+  assert.match(repo.issue, /On the practice cases Synthe learns from, your checks now pass 100% of the time, up from 0%\. Your guards improved from 0% to 100%\./);
 });
 
 test("synthe.json guards: up to 5 sentences, none empty, none repeating a check", () => {

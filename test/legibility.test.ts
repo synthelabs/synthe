@@ -129,6 +129,25 @@ test("the report headline names the score after a single measured round, and the
   assert.ok(!none.summary.includes("Your prompt scores"));
 });
 
+// A merged round records the score of the prompt it started with; the merged prompt is measured the round after.
+test("the headline gives one score once the current prompt is measured, and labels the practice-case gain before that", () => {
+  const merged = (round: number, scorePct: number) => rec(round, { outcome: "merged", scorePct, checks: { before: 20, after: 100 } });
+  // The rehearsal run: merged in round 7, then measured at 95.7% on held-back cases. One number only.
+  const after = headline(goal(), { ...stateWith([rec(6, { scorePct: 20.8 }), merged(7, 16.7), rec(8, { scorePct: 95.7 })]), stopped: "3 rounds in a row found no winner" });
+  assert.ok(after.summary.startsWith("Your prompt: 20.8% → 95.7% (checks passed on test cases Synthe never trains on)."));
+  assert.ok(!/checks now pass/.test(after.summary), after.summary);
+  assert.ok(after.title.startsWith("Done: your prompt got better"), after.title);
+  // Merged in the latest round: the held-back number is still the old prompt's, so the gain stays, labelled.
+  const before = headline(goal(), stateWith([rec(1, { scorePct: 20.8 }), merged(2, 22)]));
+  assert.ok(before.summary.includes("On the practice cases Synthe learns from, your checks now pass 100% of the time, up from 20%."), before.summary);
+  // A revert changes the prompt too: an older measurement no longer counts as current.
+  const reverted = headline(goal(), stateWith([rec(1, { scorePct: 20.8 }), merged(2, 22), rec(3, { scorePct: 90 }), rec(4, { outcome: "reverted", scorePct: 60 })]));
+  assert.ok(reverted.summary.includes("On the practice cases Synthe learns from"), reverted.summary);
+  // A run from before the score series keeps the sentence as it always read.
+  const old = headline(goal(), stateWith([rec(1), merged(2, NaN)].map((r) => ({ ...r, scorePct: undefined }))));
+  assert.ok(old.summary.startsWith("Your checks now pass 100% of the time, up from 20%."), old.summary);
+});
+
 // Decide-level fixtures: 20 training cases and the held-back cases named per test, as JSONL.
 const scenarioText = (holdoutIds: string[]) => [
   ...Array.from({ length: 20 }, (_, i) => JSON.stringify({ id: `t${i}`, input: `train question ${i}`, expected: "good", split: "train" })),
