@@ -158,15 +158,16 @@ async function main() {
     // The frozen attack set, when the repo has one. It is loaded here, in the score step, so attack text can
     // never reach the write step or the writer.
     const attacks: Attack[] = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync(ATTACKS_FILE, "utf8")) : [];
-    const scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null));
-    // Keep the current prompt's fresh attack results for the next round. Saving them is an optimisation, so
-    // a failed save is noted and the round goes on; the next round just marks them again.
-    if (scored.attackCache) {
+    const scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null, state.scoreCache ?? null));
+    // Keep the current prompt's fresh attack results and score for the next rounds. Saving them is an optimisation,
+    // so a failed save is noted and the round goes on; the next round just measures again.
+    if (scored.attackCache || scored.scoreCache) {
       try {
-        state.attackCache = scored.attackCache;
+        if (scored.attackCache) state.attackCache = scored.attackCache;
+        if (scored.scoreCache) state.scoreCache = scored.scoreCache;
         await repo.writeState(state);
       } catch (e) {
-        console.log(`Could not keep the attack results for reuse: ${e instanceof Error ? e.message : String(e)}`);
+        console.log(`Could not keep the attack results or score for reuse: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);

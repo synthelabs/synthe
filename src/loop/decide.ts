@@ -1,7 +1,8 @@
 import { parseScenarios, type Goal } from "../core/goal.ts";
 import { buildEvidence, evidenceFile, evidencePath, hashEvidence, type EvidenceRecord } from "../core/evidence.ts";
 import { STATE_BRANCH } from "../core/goal.ts";
-import { judgeRound, mean, type RoundScores, type ScoreRow } from "../core/merge-rule.ts";
+import { holdoutScorePct, judgeRound, mean, type RoundScores, type ScoreRow } from "../core/merge-rule.ts";
+export { holdoutScorePct };
 import { readPrompt, writePrompt } from "../core/prompt.ts";
 import { candidateProblem, promptPathProblem, sha256 } from "../core/safety.ts";
 import { resumeIfScenariosChanged, stopReason, type Landing, type RoundRecord, type State } from "../core/state.ts";
@@ -36,18 +37,9 @@ function pickExample(scores: RoundScores, candidateId: string, scenarioText: str
 }
 
 
-// The current prompt's score for the round: the share of the team's checks its replies passed on the
-// held-back cases, from the marks the score step already made. Passed applicable checks over applicable
-// checks (a check that doesn't apply to a message is in neither), to one decimal. Null under the same
-// conditions checkRate is null (no rows, a row that was never marked, or no check applied anywhere), so
-// an unmeasured round is never recorded as a score.
-export function holdoutScorePct(rows: ScoreRow[]): number | null {
-  if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
-  const applicable = rows.reduce((n, r) => n + r.applicable!, 0);
-  if (applicable === 0) return null;
-  const failed = rows.reduce((n, r) => n + r.failed!, 0);
-  return Math.round(((100 * (applicable - failed)) / applicable) * 10) / 10;
-}
+// The round's score as shown to the team: the score step's once-per-prompt measurement when it made one, else the
+// marks on the held-back rows. Display only: the merge rule always reads the rows.
+export const shownScorePct = (scores: RoundScores): number | null => scores.scorePct !== undefined ? scores.scorePct : holdoutScorePct(scores.baselineHoldout);
 
 const truncReply = (t: string) => (t.length > 300 ? t.slice(0, 300) : t);
 
@@ -474,7 +466,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
             // The round's record only joins state.rounds at the end of the round, with its score
             // recorded there too, so the block is rendered from a state carrying this round's record
             // with the same score and pair that are about to be recorded on it.
-            delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "merged", changed, plain: verdict.plain, scorePct: holdoutScorePct(scores.baselineHoldout), ...(pair ? { examplePair: pair } : {}) }] }) });
+            delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "merged", changed, plain: verdict.plain, scorePct: shownScorePct(scores), ...(pair ? { examplePair: pair } : {}) }] }) });
         if (landed) {
           if (example) record.example = example;
           if (chosen?.title) record.title = chosen.title;
@@ -502,7 +494,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     } else if (verdict.action === "revert") {
       const prior = state.lastMerge!.priorPrompt;
       const landed = await land(prior, "revert", "Synthe: undo the last prompt change", { changed: "Puts back the prompt from before Synthe's last change.", plain: verdict.plain, technical: verdict.reasons.join(" "), evidence: evidenceOf("revert", null, prior, { prior: replaced! }),
-        delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "reverted", changed: "Put back the prompt from before the last change", plain: verdict.plain, scorePct: holdoutScorePct(scores.baselineHoldout) }] }) });
+        delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "reverted", changed: "Put back the prompt from before the last change", plain: verdict.plain, scorePct: shownScorePct(scores) }] }) });
       if (landed) {
         Object.assign(record, { outcome: landed.proposed ? "proposed" : "reverted", pr: landed.pr });
         record.changed = "Put back the prompt from before the last change";
@@ -519,7 +511,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     // The round's place in the score series, from the held-back marks the score step already made: the
     // current prompt's check-pass share, and, when a change landed, one practice case it visibly fixed.
     if (judged) {
-      record.scorePct = holdoutScorePct(scores.baselineHoldout);
+      record.scorePct = shownScorePct(scores);
       if (winnerId) {
         const pair = pickExamplePair(scores, winnerId, scenarioText);
         if (pair) record.examplePair = pair;

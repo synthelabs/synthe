@@ -29019,6 +29019,13 @@ function judgeRound(scores, goal, replaced) {
   if (best) best.notes[best.candidateId] = "Merged.";
   return best ?? { action: "skip", reasons: reasons.length ? reasons : ["no candidates"], notes };
 }
+function holdoutScorePct(rows) {
+  if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
+  const applicable = rows.reduce((n, r) => n + r.applicable, 0);
+  if (applicable === 0) return null;
+  const failed = rows.reduce((n, r) => n + r.failed, 0);
+  return Math.round(100 * (applicable - failed) / applicable * 10) / 10;
+}
 
 // src/core/evidence.ts
 var EVIDENCE_DIR = ".synthe/evidence";
@@ -29860,15 +29867,26 @@ function currentRows(set, replies, duels) {
     };
   });
 }
-async function runScore(goal, baseline, candidates, scenarios, model, prior = null, random = Math.random, attacks = [], attackCache = null) {
+function scoreKey(goal, baseline, holdout) {
+  return sha256([
+    sha256(baseline),
+    sha256(JSON.stringify(holdout.map((s) => [s.id, s.input, s.expected]))),
+    sha256(JSON.stringify((goal.checks ?? []).filter((c) => c.trim()))),
+    goal.models.runner,
+    goal.models.judge
+  ].join("\n"));
+}
+async function runScore(goal, baseline, candidates, scenarios, model, prior = null, random = Math.random, attacks = [], attackCache = null, scoreCache = null) {
   const { costs, challenge, repliesFor, confirmBreak, markAttacks, measure: measure2, cutOffCount } = scorer(goal, model, random);
   const train = scenarios.filter((s) => s.split === "train");
   const holdout = scenarios.filter((s) => s.split === "holdout");
   const safe = candidates.filter((c) => candidateProblem(c.text, goal.prompt) === null && c.text.trim() !== baseline.trim());
   const hasPrior = prior !== null && prior.trim() !== baseline.trim();
+  const measuredKey = scoreKey(goal, baseline, holdout);
+  const known = scoreCache && scoreCache.key === measuredKey ? scoreCache.pct : void 0;
   if (safe.length === 0 && !hasPrior) {
     const even = (set) => set.map((x) => ({ id: x.id, score: EVEN, violation: null }));
-    return { scores: { baselineHash: sha256(baseline), baselineTrain: even(train), baselineHoldout: even(holdout), candidates: [] }, costUsd: 0, calls: 0, checks: { confirmed: 0, dismissed: 0, failed: 0, excusedConfirmed: 0 }, attackCache: void 0 };
+    return { scores: { baselineHash: sha256(baseline), baselineTrain: even(train), baselineHoldout: even(holdout), candidates: [], ...known !== void 0 ? { scorePct: known } : {} }, costUsd: 0, calls: 0, checks: { confirmed: 0, dismissed: 0, failed: 0, excusedConfirmed: 0 }, attackCache: void 0, scoreCache: void 0 };
   }
   const trainReplies = await repliesFor(baseline, train);
   let held = null;
@@ -29888,7 +29906,7 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
     const duels = await challenge(leader.id, text, holdout, await holdReplies());
     holdDuels.push(duels);
     leader.holdout = duels.map((d) => d.row);
-  } else if (!hasPrior && holdout.length > 0 && (goal.checks?.some((c) => c.trim()) ?? false)) {
+  } else if (known === void 0 && !hasPrior && holdout.length > 0 && (goal.checks?.some((c) => c.trim()) ?? false)) {
     holdDuels.push(await measure2(holdout, await holdReplies()));
   }
   let freshAttackCache;
@@ -29914,6 +29932,15 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
   }
   scores.baselineTrain = currentRows(train, trainReplies, trainDuels);
   scores.baselineHoldout = held ? currentRows(holdout, held, holdDuels).map((r) => ({ ...r, reply: void 0 })) : holdout.map((s) => ({ id: s.id, score: EVEN, violation: null }));
+  let freshScoreCache;
+  if (known !== void 0) scores.scorePct = known;
+  else {
+    const pct2 = holdoutScorePct(scores.baselineHoldout);
+    if (pct2 !== null) {
+      scores.scorePct = pct2;
+      freshScoreCache = { key: measuredKey, pct: pct2 };
+    }
+  }
   const checks = { confirmed: 0, dismissed: 0, failed: 0, excusedConfirmed: 0 };
   if (leader) {
     const currentRow = new Map([...scores.baselineTrain, ...scores.baselineHoldout].map((r) => [r.id, r]));
@@ -29941,7 +29968,7 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
   }
   for (const c of scores.candidates) if (c.holdout) c.holdout = c.holdout.map((r) => ({ ...r, reply: void 0 }));
   if (cutOffCount() > 0) scores.cutOff = cutOffCount();
-  return { scores, costUsd: sumCosts(costs), calls: costs.length, checks, attackCache: freshAttackCache };
+  return { scores, costUsd: sumCosts(costs), calls: costs.length, checks, attackCache: freshAttackCache, scoreCache: freshScoreCache };
 }
 function explainScores(scores, scenarios, samples = 3) {
   const input2 = new Map(scenarios.map((s) => [s.id, s.input]));
@@ -30008,13 +30035,7 @@ function pickExample(scores, candidateId, scenarioText) {
   const scenario = won && rows.find((r) => r.id === won.id && r.split === "train");
   return won && before && scenario ? { input: clipText(scenario.input, 200), before: clipText(before), after: clipText(won.reply) } : void 0;
 }
-function holdoutScorePct(rows) {
-  if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
-  const applicable = rows.reduce((n, r) => n + r.applicable, 0);
-  if (applicable === 0) return null;
-  const failed = rows.reduce((n, r) => n + r.failed, 0);
-  return Math.round(100 * (applicable - failed) / applicable * 10) / 10;
-}
+var shownScorePct = (scores) => scores.scorePct !== void 0 ? scores.scorePct : holdoutScorePct(scores.baselineHoldout);
 var truncReply = (t) => t.length > 300 ? t.slice(0, 300) : t;
 function pickExamplePair(scores, candidateId, scenarioText) {
   const winner = scores.candidates.find((c) => c.id === candidateId);
@@ -30400,7 +30421,7 @@ ${goal.policy ?? ""}`);
             // The round's record only joins state.rounds at the end of the round, with its score
             // recorded there too, so the block is rendered from a state carrying this round's record
             // with the same score and pair that are about to be recorded on it.
-            delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "merged", changed, plain: verdict.plain, scorePct: holdoutScorePct(scores.baselineHoldout), ...pair ? { examplePair: pair } : {} }] })
+            delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "merged", changed, plain: verdict.plain, scorePct: shownScorePct(scores), ...pair ? { examplePair: pair } : {} }] })
           }
         );
         if (landed) {
@@ -30432,7 +30453,7 @@ ${goal.policy ?? ""}`);
         plain: verdict.plain,
         technical: verdict.reasons.join(" "),
         evidence: evidenceOf("revert", null, prior, { prior: replaced }),
-        delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "reverted", changed: "Put back the prompt from before the last change", plain: verdict.plain, scorePct: holdoutScorePct(scores.baselineHoldout) }] })
+        delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "reverted", changed: "Put back the prompt from before the last change", plain: verdict.plain, scorePct: shownScorePct(scores) }] })
       });
       if (landed) {
         Object.assign(record, { outcome: landed.proposed ? "proposed" : "reverted", pr: landed.pr });
@@ -30447,7 +30468,7 @@ ${goal.policy ?? ""}`);
   }
   if (scores) {
     if (judged) {
-      record.scorePct = holdoutScorePct(scores.baselineHoldout);
+      record.scorePct = shownScorePct(scores);
       if (winnerId) {
         const pair = pickExamplePair(scores, winnerId, scenarioText);
         if (pair) record.examplePair = pair;
@@ -30988,13 +31009,14 @@ async function main() {
     const last2 = state.lastMerge;
     const prior = last2 && !last2.reverted && last2.mergedHash === sha256(prompt) ? last2.priorPrompt : null;
     const attacks = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync4(ATTACKS_FILE, "utf8")) : [];
-    const scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null));
-    if (scored.attackCache) {
+    const scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null, state.scoreCache ?? null));
+    if (scored.attackCache || scored.scoreCache) {
       try {
-        state.attackCache = scored.attackCache;
+        if (scored.attackCache) state.attackCache = scored.attackCache;
+        if (scored.scoreCache) state.scoreCache = scored.scoreCache;
         await repo.writeState(state);
       } catch (e) {
-        console.log(`Could not keep the attack results for reuse: ${e instanceof Error ? e.message : String(e)}`);
+        console.log(`Could not keep the attack results or score for reuse: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);

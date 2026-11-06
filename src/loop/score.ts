@@ -1,5 +1,5 @@
 import type { Attack, Goal, Scenario } from "../core/goal.ts";
-import { checkRate, guardRate, paired, signP, trainingProblem, mean, type RoundScores as BaseScores, type ScoreRow } from "../core/merge-rule.ts";
+import { checkRate, guardRate, holdoutScorePct, paired, signP, trainingProblem, mean, type RoundScores as BaseScores, type ScoreRow } from "../core/merge-rule.ts";
 import { candidateProblem, sha256 } from "../core/safety.ts";
 import { sumCosts } from "../core/cost.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
@@ -281,18 +281,29 @@ function currentRows(set: Scenario[], replies: Map<string, string | null>, duels
 // prompt text, the attack set and the checker model, so a hit means the marking would come out the same.
 export interface AttackCache { key: string; failed: string[] | null }
 
+// The current prompt's held-back score, kept by the caller across rounds under the same kind of key: the prompt,
+// the held-back cases, the checks and the models that reply and mark. One reading per prompt version: re-marking an
+// unchanged prompt only adds noise (one of ten cases marked differently moves it about four points) and cost.
+export interface ScoreCache { key: string; pct: number | null }
+export function scoreKey(goal: Goal, baseline: string, holdout: Scenario[]): string {
+  return sha256([sha256(baseline), sha256(JSON.stringify(holdout.map((s) => [s.id, s.input, s.expected]))),
+    sha256(JSON.stringify((goal.checks ?? []).filter((c) => c.trim()))), goal.models.runner, goal.models.judge].join("\n"));
+}
+
 // prior is the prompt the last merge replaced, when that merge is still live: it challenges the current prompt so a
 // merge that turned out worse can be reverted.
-export async function runScore(goal: Goal, baseline: string, candidates: Candidate[], scenarios: Scenario[], model: Model, prior: string | null = null, random: () => number = Math.random, attacks: Attack[] = [], attackCache: AttackCache | null = null) {
+export async function runScore(goal: Goal, baseline: string, candidates: Candidate[], scenarios: Scenario[], model: Model, prior: string | null = null, random: () => number = Math.random, attacks: Attack[] = [], attackCache: AttackCache | null = null, scoreCache: ScoreCache | null = null) {
   const { costs, challenge, repliesFor, confirmBreak, markAttacks, measure, cutOffCount } = scorer(goal, model, random);
   const train = scenarios.filter((s) => s.split === "train");
   const holdout = scenarios.filter((s) => s.split === "holdout");
   const safe = candidates.filter((c) => candidateProblem(c.text, goal.prompt) === null && c.text.trim() !== baseline.trim());
   const hasPrior = prior !== null && prior.trim() !== baseline.trim();
+  const measuredKey = scoreKey(goal, baseline, holdout);
+  const known = scoreCache && scoreCache.key === measuredKey ? scoreCache.pct : undefined;
   // Nothing to compare: don't pay for the current prompt's replies. Head to head, it is simply even.
   if (safe.length === 0 && !hasPrior) {
     const even = (set: Scenario[]) => set.map((x): ScoreRow => ({ id: x.id, score: EVEN, violation: null }));
-    return { scores: { baselineHash: sha256(baseline), baselineTrain: even(train), baselineHoldout: even(holdout), candidates: [] } as RoundScores, costUsd: 0, calls: 0, checks: { confirmed: 0, dismissed: 0, failed: 0, excusedConfirmed: 0 }, attackCache: undefined as AttackCache | undefined };
+    return { scores: { baselineHash: sha256(baseline), baselineTrain: even(train), baselineHoldout: even(holdout), candidates: [], ...(known !== undefined ? { scorePct: known } : {}) } as RoundScores, costUsd: 0, calls: 0, checks: { confirmed: 0, dismissed: 0, failed: 0, excusedConfirmed: 0 }, attackCache: undefined as AttackCache | undefined, scoreCache: undefined as ScoreCache | undefined };
   }
 
   const trainReplies = await repliesFor(baseline, train);
@@ -319,7 +330,7 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
     const duels = await challenge(leader.id, text, holdout, await holdReplies());
     holdDuels.push(duels);
     leader.holdout = duels.map((d) => d.row);
-  } else if (!hasPrior && holdout.length > 0 && (goal.checks?.some((c) => c.trim()) ?? false)) {
+  } else if (known === undefined && !hasPrior && holdout.length > 0 && (goal.checks?.some((c) => c.trim()) ?? false)) {
     // Nothing will be judged on the held-back cases, but the team still needs the prompt's score, or a run where
     // nothing wins shows no number at all. Marking the current prompt's own replies costs one reply and one check
     // call per held-back case, and decides nothing.
@@ -358,6 +369,14 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
   scores.baselineHoldout = held
     ? currentRows(holdout, held, holdDuels).map((r) => ({ ...r, reply: undefined }))
     : holdout.map((s) => ({ id: s.id, score: EVEN, violation: null }));
+  // The score the team sees: the first reading of this prompt version, kept until the prompt, the held-back cases,
+  // the checks or the models change. The rows above stay as marked this round; only decisions read them.
+  let freshScoreCache: ScoreCache | undefined;
+  if (known !== undefined) scores.scorePct = known;
+  else {
+    const pct = holdoutScorePct(scores.baselineHoldout);
+    if (pct !== null) { scores.scorePct = pct; freshScoreCache = { key: measuredKey, pct }; }
+  }
 
   // Re-check the leader's guardrail breaks before they can block it. A break the current prompt also has is only
   // excused if the current prompt's break is confirmed too: a false flag on the current prompt must not let a
@@ -383,7 +402,7 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
   // Held-back replies are never kept, so nothing about those scenarios can reach a writer.
   for (const c of scores.candidates) if (c.holdout) c.holdout = c.holdout.map((r) => ({ ...r, reply: undefined }));
   if (cutOffCount() > 0) scores.cutOff = cutOffCount();
-  return { scores, costUsd: sumCosts(costs), calls: costs.length, checks, attackCache: freshAttackCache };
+  return { scores, costUsd: sumCosts(costs), calls: costs.length, checks, attackCache: freshAttackCache, scoreCache: freshScoreCache };
 }
 
 // Pits the prompt against itself: two independent replies per scenario, judged head to head. Any lopsided split
