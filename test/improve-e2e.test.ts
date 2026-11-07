@@ -74,7 +74,7 @@ test("improve then submit on a signup app: 3 → 12 opens a pull request; a shor
   const prCreates = () => (existsSync(gh.log) ? readFileSync(gh.log, "utf8").split("\n").filter((l) => l.startsWith("ARGS: pr create")).length : 0);
 
   // 1. Baseline.
-  const improved = synthe("improve", "--agent", "--goal", "Let normal emails sign up", "--metric", "custom", "--command", "node metrics/score.js",
+  const improved = synthe("improve", "--handoff", "--agent", "--goal", "Let normal emails sign up", "--metric", "custom", "--command", "node metrics/score.js",
     "--label", "valid signups", "--unit", "of 12", "--direction", "higher", "--mode", "review", "--guard", "npm test");
   assert.equal(improved.code, 0, improved.out);
   assert.ok(improved.out.includes("Current code: 3 of 12 (3 runs: 3, 3, 3)."), improved.out);
