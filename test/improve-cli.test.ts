@@ -32,8 +32,9 @@ function fakeIo(dir: string, f: Fake = {}) {
   const exec: Exec = async (_cwd, command) => {
     if (command.startsWith("git worktree")) return { ok: true, stdout: "", stderr: "", ms: 1, timedOut: false };
     execCalls.push(command);
+    const tests = command === "npm test" || command.includes("pytest");
     const ok = command === "npm test" ? f.guardOk ?? true : true;
-    return { ok, stdout: command === "npm test" ? `ℹ pass ${f.metric ?? "3"}\n` : `> banner\n${f.metric ?? "7"}\n`, stderr: "", ms: 5, timedOut: false };
+    return { ok, stdout: tests ? `ℹ pass ${f.metric ?? "3"}\n` : `> banner\n${f.metric ?? "7"}\n`, stderr: "", ms: 5, timedOut: false };
   };
   const io: ImproveIo = {
     say: (t) => said.push(t),
@@ -184,4 +185,39 @@ test("interactive improve asks goal, metric number, guard, and auto y/n, default
   const auto = fakeIo(second, { answers: { "What should get better": "More tests", "Type 1-4": "1", "Regression check": "none", automatically: "y" } });
   assert.equal(await improve(auto.io, second, improveOptions([])), true);
   assert.deepEqual([configAt(second).mode, configAt(second).guard.command, configAt(second).metric.preset], ["auto", null, "test-pass"]);
+});
+
+test("--metric pytest picks pytest when npm tests exist too; test-pass stays npm, and stands in for pytest only without an npm test script", async () => {
+  const both = repo();
+  writeFileSync(join(both, "pytest.ini"), "");
+  git(both, "add", "."); git(both, "commit", "-qm", "py");
+  const pick = async (dir: string, metric: string) => {
+    const { io } = fakeIo(dir);
+    assert.equal(await improve(io, dir, improveOptions(["--agent", "--goal", "g", "--metric", metric, "--mode", "review"])), true);
+    return configAt(dir).metric;
+  };
+  assert.deepEqual([(await pick(both, "pytest")).preset, (await pick(both, "pytest")).command.includes("pytest")], ["pytest", true]);
+  assert.deepEqual([(await pick(both, "test-pass")).preset, (await pick(both, "test-pass")).command], ["test-pass", "npm test"]);
+
+  const pyOnly = mkdtempSync(join(tmpdir(), "synthe-improve-py-"));
+  git(pyOnly, "init", "-q", "-b", "main");
+  git(pyOnly, "config", "user.email", "t@example.com");
+  git(pyOnly, "config", "user.name", "t");
+  writeFileSync(join(pyOnly, "pytest.ini"), "");
+  git(pyOnly, "add", "."); git(pyOnly, "commit", "-qm", "init");
+  assert.equal((await pick(pyOnly, "pytest")).preset, "pytest");
+  const alias = await pick(pyOnly, "test-pass");
+  assert.equal(alias.preset, "pytest");
+  assert.ok(alias.command.includes("pytest"));
+});
+
+test("prompt mode's files are saved as promptFiles, not as --protect entries, and show on the task card", async () => {
+  const dir = repo();
+  writeFileSync(join(dir, "synthe.json"), JSON.stringify({ version: 1, prompt: { kind: "file", path: "prompts/agent.md" }, objective: "o" }));
+  git(dir, "add", "."); git(dir, "commit", "-qm", "goal");
+  const { io, said } = fakeIo(dir);
+  assert.equal(await improve(io, dir, improveOptions(["--agent", "--goal", "g", "--metric", "test-pass", "--mode", "review", "--protect", "data/seed.json"])), true);
+  assert.deepEqual(configAt(dir).protect, ["data/seed.json"]);
+  assert.deepEqual(configAt(dir).promptFiles, ["prompts/agent.md"]);
+  assert.ok(said.join("\n").includes(".synthe/, and: data/seed.json, prompts/agent.md."));
 });

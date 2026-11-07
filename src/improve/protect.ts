@@ -41,6 +41,8 @@ export function protectedPathProblem(path: string, config: ImproveConfig): strin
   if (named) return `${path} is used by the metric or the regression check (${named}); Synthe measures with it as it is.`;
   const extra = config.protect.find((e) => under(path, e));
   if (extra) return `${path} is protected for this run (--protect ${extra}).`;
+  const prompt = config.promptFiles?.find((e) => under(path, e));
+  if (prompt) return `${path} is the prompt file Synthe's prompt mode tunes (named in ${GOAL_FILE}); improve mode leaves it alone.`;
   if (SENSITIVE_PATHS.some((p) => p.test(path))) return `${path} can run code, ship dependencies, change CI or hold secrets; a measured change leaves it alone.`;
   return null;
 }

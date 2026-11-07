@@ -4,7 +4,7 @@ import { join } from "node:path";
 export const improveFile = (gitDir: string) => join(gitDir, "synthe-improve.json");
 
 export type Direction = "higher" | "lower";
-export type PresetId = "test-pass" | "bundle-size" | "build-time" | "custom";
+export type PresetId = "test-pass" | "pytest" | "bundle-size" | "build-time" | "custom";
 export interface Measurement { commit: string; median: number; runs: number[]; at: string }
 export interface ImproveConfig {
   version: 1;
@@ -12,13 +12,15 @@ export interface ImproveConfig {
   metric: { preset: PresetId; label: string; unit: string; command: string; direction: Direction; runs: number };
   guard: { command: string | null };
   protect: string[];
+  // Files prompt mode tunes (named in synthe.json); kept apart from `protect` so a refusal names the real reason.
+  promptFiles?: string[];
   mode: "auto" | "review";
   baseline: Measurement;
 }
 
 export const DEFAULT_RUNS = 3;
 export const COMMAND_TIMEOUT_MS = 600_000;
-const PRESETS: PresetId[] = ["test-pass", "bundle-size", "build-time", "custom"];
+const PRESETS: PresetId[] = ["test-pass", "pytest", "bundle-size", "build-time", "custom"];
 
 const text = (v: unknown) => typeof v === "string" && v.trim().length > 0;
 
@@ -40,6 +42,10 @@ export function parseImproveConfig(raw: string): ImproveConfig {
   if (!Array.isArray(c.protect) || c.protect.some((p: unknown) => !text(p))) bad("protect must be a list of paths");
   // Same rule as promptPathProblem in src/core/safety.ts: a path that leaves the repo protects nothing in it.
   if (c.protect.some((p: string) => p.startsWith("/") || p.split("/").includes(".."))) bad("protect paths must stay inside the repo");
+  if (c.promptFiles !== undefined) {
+    if (!Array.isArray(c.promptFiles) || c.promptFiles.some((p: unknown) => !text(p))) bad("promptFiles must be a list of paths");
+    if (c.promptFiles.some((p: string) => p.startsWith("/") || p.split("/").includes(".."))) bad("promptFiles paths must stay inside the repo");
+  }
   if (c.mode !== "auto" && c.mode !== "review") bad("mode must be auto or review");
   const b = c.baseline;
   if (!b || typeof b !== "object") bad("baseline is required");

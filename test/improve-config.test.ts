@@ -27,3 +27,15 @@ test("parseImproveConfig accepts a full config and rejects the common mistakes b
 test("the config lives inside the git directory, where it is never tracked", () => {
   assert.equal(improveFile("/r/.git"), join("/r/.git", "synthe-improve.json"));
 });
+
+test("promptFiles is optional, must be paths inside the repo, and old configs without it still load", async () => {
+  const { parseImproveConfig } = await import("../src/improve/config.ts");
+  const { config } = await import("./improve-helpers.ts");
+  const base = config({});
+  const raw = (extra: object) => JSON.stringify({ ...base, ...extra });
+  assert.equal(parseImproveConfig(raw({})).promptFiles, undefined);
+  assert.deepEqual(parseImproveConfig(raw({ promptFiles: ["prompts/agent.md"] })).promptFiles, ["prompts/agent.md"]);
+  assert.throws(() => parseImproveConfig(raw({ promptFiles: "prompts/agent.md" })), /promptFiles must be a list of paths/);
+  assert.throws(() => parseImproveConfig(raw({ promptFiles: ["../x"] })), /promptFiles paths must stay inside the repo/);
+  assert.equal(parseImproveConfig(raw({ metric: { ...base.metric, preset: "pytest" } })).metric.preset, "pytest");
+});
