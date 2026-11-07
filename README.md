@@ -12,15 +12,34 @@ Setup reads your README and the code around your prompt, asks what your agent sh
 
 ## Improve mode (no AI prompt needed)
 
-No prompt in your app yet? Improve mode makes one measured code change with the coding agent you already use. It needs no event code, no key and no Docker, and sends nothing to a model.
+No prompt in your app yet? `npx synthe improve` raises a number you choose: tests passing, bundle size, build time, or your own command that prints one number. Synthe proposes a code change each round, measures it in a throwaway checkout next to the current code, and keeps it only if it wins by more than the run-to-run noise and your regression check (default `npm test`) still passes. Each kept change builds on the one before. At the end it opens ONE pull request, titled like `Synthe: valid signups 3 → 12`, with a table of every round.
 
-```bash
-npx synthe improve        # pick a metric (tests passing, bundle size, build time, or your own command) and measure the current code
-# your coding agent makes ONE small change on the branch the task card names, and commits it
-npx synthe submit         # measures the change the same way; opens the pull request, or merges it in auto mode
+It needs an event code and team code, or your own Anthropic key, in the environment: `SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe improve`, or `SYNTHE_ANTHROPIC_KEY=<key> npx synthe improve`. `ANTHROPIC_API_KEY` is never used. Run it inside your repo, with the code committed and pushed and `gh` signed in. It asks what should get better, which number measures it, which check must keep passing, and whether to merge wins automatically (Enter means a pull request waits for you).
+
+Example, ending with the pull request:
+
+```
+Current code: 3 valid signups (runs: 3, 3, 3)
+Synthe now proposes up to 6 changes, one per round, measures each one the same way and keeps only wins (budget $1.50). Your working tree is not touched. Press Ctrl-C to stop.
+Round 1: trying "accept any address that contains an @" (validate.js)
+Round 1: not kept (the regression check did not pass). Cost $0.02, total $0.02.
+Round 2: trying "email check accepts dots, plus signs, capitals and subdomains" (validate.js)
+Round 2: 3 → 12 valid signups, kept (email check accepts dots, plus signs, capitals and subdomains). Cost $0.02, total $0.04.
+...
+Result: 3 → 12 valid signups, 1 of 5 changes kept. Model cost: $0.11.
+Pull request: https://github.com/team/signup/pull/1
 ```
 
-Both measurements run in a fresh checkout of their commit, 3 times for timing and custom metrics, and the change wins only when it beats the current code by more than the runs vary and the regression check (default `npm test`) still passes. A change to tests, the metric's files, `package.json`, lockfiles, `.github/` or config files is refused before anything is measured. The settings live in `.git/synthe-improve.json`, so nothing is added to your repo. With a coding agent, tell it: Set up Synthe improve mode in this repo. Run `npx synthe@latest guide` and follow section 9.
+That output is from a test run with a fake model. A first real run on a small signup app went 3 → 12 in round 1 for under a cent.
+
+- **Time and cost.** Up to about 20 minutes (`--minutes N` changes it); it stops sooner when nothing wins. A round usually costs a few cents of model time, more on a big repo because up to about 60,000 characters of code go to the model. Default limits: 6 rounds (`--rounds N`, 1 to 20) and $1.50 of model cost (`--budget USD`), whichever comes first. The printed cost is model cost only.
+- **Test metrics** run 3 times, so one lucky run can't win. `bundle-size` and `build-time` need a regression check; if the repo has no test script, pass `--guard "<command that fails if the app is broken>"`. `--guard none` turns the check off.
+- **What it never touches.** Your working tree and branch: every change is made and measured in a temporary checkout. It refuses changes to tests, the metric command and its data, `package.json`, lockfiles, `.github/`, config files and `.synthe/` before measuring anything (`--protect <path>` adds more). It only merges into your main branch if you chose automatic merging.
+- **Lessons.** What each round learned goes in `.synthe/improve-lessons.md` and the pull request, so the next run can read it. `CLAUDE.md` or `AGENTS.md` are only changed with `--lessons claude` or `--lessons agents`.
+- **Interrupted?** Press Ctrl-C any time, or lose the connection: run the same command again. It says `Recovered your verified change from round N.` and continues, and never opens a second pull request. `--fresh` throws the saved run away. If your main branch moved during the run, the pull request says so; on a conflict nothing is opened and a patch is saved.
+- **Undo.** Close the pull request and nothing changes. After merging, revert the pull request on GitHub or run `git revert` on it.
+- **No event code or key?** `npx synthe improve --handoff` measures the current code and prints a task card for the coding agent you already use. Have it make ONE small change on the branch the card names, commit it, then run `npx synthe submit`. Nothing is sent to a model.
+- **With a coding agent**, tell it: Set up Synthe in this repo. Run `npx synthe@latest guide` and follow it. Give it the codes in the same message. It asks you the four questions, runs `improve` for you and shows each round.
 
 ## Data
 
@@ -90,8 +109,9 @@ The test cases are simulated single messages, not real users or full conversatio
 | --- | --- |
 | `npx synthe init` | Set up this repo and start |
 | `npx synthe guide` | Instructions for setup through Claude Code, Cursor or Codex |
-| `npx synthe improve` | Improve mode: pick a metric and measure the current code (`--list` shows what this repo can measure) |
-| `npx synthe submit` | Improve mode: measure your committed change; open the pull request, or merge it in auto mode |
+| `npx synthe improve` | Improve mode: Synthe proposes code changes, measures each, keeps only wins and opens one pull request (`--list` shows what this repo can measure) |
+| `npx synthe improve --handoff` | Improve mode without a credential: measure, then make the change with your own coding agent |
+| `npx synthe submit` | After `--handoff`: measure your committed change; open the pull request, or merge it in auto mode |
 | `npx synthe key` | Save your own Anthropic key and stop using event credit |
 | `npx synthe upgrade` | Update only the workflow for chained rounds; commit and push the changed workflow |
 | `npx synthe upgrade --event` | Install Crimson tracking in an existing event repo; commit both workflows and push to the default branch |
