@@ -20,17 +20,24 @@ The Synthe session is a workshop 1 to 2 hours in, not at the start: by then team
 2. Who owns the repo? That person runs setup. Setup saves repo secrets, which only a repo admin can do. Setup checks this and stops before it spends anything.
 3. Are you on `main`, with `git pull` done?
 
-**Run it (about 10 minutes)**
+**Run it (about 10 minutes for prompt setup)**
 
 - In the repo, open the coding agent and paste the QR card's first line, or run the `init` command yourself. Give the team code at the table.
 - Done means confirm printed `Added to main`, or opened an "Add Synthe" pull request. If it opened a pull request (a teammate pushed meanwhile), merge it now. Then the first round shows in the repo's Actions tab, and the "Synthe: prompt report" issue appears.
 - If the agent stopped after the draft ("Synthe is NOT installed yet"), run the confirm step. A team that drafted but never confirmed shows on the dashboard with setup activity and no linked repo: go to its table.
 
+**Improve mode (teams with no AI prompt)**
+
+- Give the team its team code at the table. The coding agent asks for the event code and team code, then asks four questions in one message: what should get better, which number measures it, which check must keep passing, auto or review. Review is the safe answer.
+- It runs `npx synthe improve` with the codes at the front. That usually takes 5 to 20 minutes and must not be interrupted: the agent runs it in the background if its shell has a time limit. Teams keep building meanwhile, but should not commit in that repo while it runs.
+- It ends with ONE pull request titled like `Synthe: valid signups 3 → 12` and a table of every round. If it was interrupted, run the same command again: it starts over (nothing is pushed until the end).
+- If it says the team's event credit is used up, the team asks at the Synthe table, or sets `SYNTHE_ANTHROPIC_KEY` to use its own key. Wins already found are kept and the pull request still opens.
+
 **After**
 
 - A run is up to 12 rounds and up to about 30 minutes; it stops sooner, often within 5 to 10 minutes, when nothing beats the team's prompt. Teams keep building meanwhile. In auto mode Synthe commits to the prompt file on `main`, so everyone runs `git pull` before editing the prompt or pushing.
 - Ask "what did Synthe do?" in the coding agent at any time; it runs `npx synthe changes`.
-- Known limits: many teams starting at once can hit model rate limits. The proxy retries twice, then the round fails and counts toward a stop. A run that stops because nothing was clearly better restarts only after new test cases are added.
+- Known limits: many teams starting at once can hit model rate limits. The proxy retries twice, then the round fails and counts toward a stop. A run that stops because nothing was clearly better restarts only after new test cases are added. Improve mode measures on the team's own machine (other laptops can get other numbers) and is untested on Windows. It writes code through the same event credit, a few cents a round, and every team that runs it starts a run of usually 5 to 20 minutes.
 
 ## Workshop slide
 
@@ -39,7 +46,7 @@ The Synthe session is a workshop 1 to 2 hours in, not at the start: by then team
 Set it up now, in about 10 minutes. Synthe rewrites your agent's system prompt, tests each version, and merges only what wins. A run takes up to about half an hour. Open the report to see what changed.
 
 ```
-npx --yes github:synthelabs/synthe#v1.8.6 init
+npx --yes github:synthelabs/synthe#v1.8.7 init
 ```
 
 Event code on the QR card. The repo's owner runs it. Stop it any time.
@@ -48,9 +55,9 @@ Don't add results to this slide until we have real ones.
 
 ## QR card
 
-Using Claude Code, Cursor or Codex? Tell it to set up Synthe in this repo and follow the instructions from `npx --yes github:synthelabs/synthe#v1.8.6 guide`.
+Using Claude Code, Cursor or Codex? Tell it to set up Synthe in this repo and follow the instructions from `npx --yes github:synthelabs/synthe#v1.8.7 guide`.
 
-No AI prompt in your app yet? Tell your coding agent: Set up Synthe improve mode in this repo. Run `npx synthe@latest guide` and follow section 9. It measures one number before and after a code change and opens the pull request. No event code needed.
+No AI prompt yet? Tell your coding agent: Set up Synthe in this repo. Run `npx synthe@latest guide` and follow it. Or type `SYNTHE_EVENT_CODE=<event code> SYNTHE_TEAM_CODE=<team code> npx synthe improve`. Synthe writes code changes, keeps only wins on a number you pick, and opens ONE pull request. Usually 5 to 20 minutes.
 
 No coding agent, or a free web chat? Do the steps below in your terminal. A web chat can't see your repo or run commands, and setup asks its own questions, so you don't need an AI tool for it.
 
@@ -58,13 +65,13 @@ No coding agent, or a free web chat? Do the steps below in your terminal. A web 
 Your AI agent's prompt gets better while you build everything else.
 
 1. Push your repo with your agent's prompt committed. The repo's owner runs setup, on `main`, after `git pull`. Have the event code from the QR card and the team code from the Synthe table ready. The $4 run budget can use event credit.
-2. In your repo, run `npx --yes github:synthelabs/synthe#v1.8.6 init`.
+2. In your repo, run `npx --yes github:synthelabs/synthe#v1.8.7 init`.
 3. Say what your agent should get better at, confirm the checks Synthe proposes, and choose whether to merge improvements automatically or review each one. Crimson requires workflow tracking even with your own Anthropic key. By default, Synthe also shares research data about your run, including your prompt and test cases through November 9 at 23:59 UTC.
 4. After the run, open the report issue in your repo.
 
 Needs the GitHub CLI, signed in. If main deploys your app, choose review. Stop any time: `npx synthe stop`
 
-If Synthe is already installed, run `npx --yes github:synthelabs/synthe#v1.8.6 upgrade --event` and commit both generated workflow files to your default branch. Confirm both event and team secrets are set before the next run.
+If Synthe is already installed, run `npx --yes github:synthelabs/synthe#v1.8.7 upgrade --event` and commit both generated workflow files to your default branch. Confirm both event and team secrets are set before the next run.
 
 ## Table script
 
@@ -73,6 +80,7 @@ If Synthe is already installed, run `npx --yes github:synthelabs/synthe#v1.8.6 u
 - **What it won't do:** run your code or touch anything else.
 - **How good is it?** It tests against simulated scenarios, so check the results yourself.
 - **Prompt in code?** It handles most inline strings. If not, move the prompt into a file.
+- **What if my app has no AI prompt?** Use improve mode: tell your coding agent "Set up Synthe in this repo. Run `npx synthe@latest guide` and follow it," or type `npx synthe improve` with the event code and team code at the front. Pick a number (tests passing, bundle size, build time, or your own command). Synthe proposes code changes, measures each one, keeps only wins and opens one pull request, usually 5 to 20 minutes, a few cents a round of event credit. Without codes or a key: `npx synthe improve --handoff` and the coding agent makes the change.
 
 ## Before merging automatically
 

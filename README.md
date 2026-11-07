@@ -10,6 +10,37 @@ Using Claude Code, Cursor or Codex? Tell it: Set up Synthe in this repo. Run `np
 
 Setup reads your README and the code around your prompt, asks what your agent should get better at (and, optionally, a few real messages users send it), proposes checks that measure a good reply for you to confirm, shows you a few of your agent's real replies so you can fix any check that doesn't mean what you mean, asks whether to merge changes automatically or have you review them, and asks for your event code or own Anthropic key. When the run finishes, open the **Synthe: prompt report** issue in your repo. It says what changed, why, and how to undo it.
 
+## Improve mode (no AI prompt needed)
+
+No prompt in your app yet? `npx synthe improve` raises a number you choose: tests passing, bundle size, build time, or your own command that prints one number. Synthe proposes a code change each round, measures it in a throwaway checkout next to the current code, and keeps it only if it wins by more than the run-to-run noise and your regression check (default `npm test`) still passes. Each kept change builds on the one before. At the end it opens ONE pull request, titled like `Synthe: valid signups 3 → 12`, with a table of every round.
+
+It needs an event code and team code, or your own Anthropic key, in the environment: `SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe improve`, or `SYNTHE_ANTHROPIC_KEY=<key> npx synthe improve`. `ANTHROPIC_API_KEY` is never used. Run it inside your repo, with the code committed and pushed and `gh` signed in. It asks what should get better, which number measures it, which check must keep passing, and whether to merge wins automatically (Enter means a pull request waits for you).
+
+Example, ending with the pull request:
+
+```
+Current code: 3 valid signups (runs: 3, 3, 3)
+Synthe now proposes up to 6 changes, one per round, measures each one the same way and keeps only wins (budget $1.50). Your working tree is not touched. Press Ctrl-C to stop.
+Round 1: trying "accept any address that contains an @" (validate.js)
+Round 1: not kept (the regression check did not pass). Cost $0.02, total $0.02.
+Round 2: trying "email check accepts dots, plus signs, capitals and subdomains" (validate.js)
+Round 2: 3 → 12 valid signups, kept (email check accepts dots, plus signs, capitals and subdomains). Cost $0.02, total $0.04.
+...
+Result: 3 → 12 valid signups, 1 of 5 changes kept. Model cost: $0.11.
+Pull request: https://github.com/team/signup/pull/1
+```
+
+That output is from a test run with a fake model. A first real run on a small signup app went 3 → 12 in round 1 for under a cent.
+
+- **Time and cost.** Usually 5 to 20 minutes, depending on how long your metric and check take; it stops sooner when nothing wins. A round usually costs a few cents of model time, more on a big repo because up to about 60,000 characters of code go to the model. Default limits: 6 rounds (`--rounds N`, 1 to 20) and $1.50 of model cost (`--budget USD`), whichever comes first. The printed cost is model cost only.
+- **Test metrics** run 3 times, so one lucky run can't win. `bundle-size` and `build-time` need a regression check; if the repo has no test script, pass `--guard "<command that fails if the app is broken>"`. `--guard none` turns the check off.
+- **What it never touches.** Your working tree and branch: every change is made and measured in a temporary checkout. It refuses changes to tests, the metric command and its data, `package.json`, lockfiles, `.github/`, config files and `.synthe/` before measuring anything (`--protect <path>` adds more). It only merges into your main branch if you chose automatic merging.
+- **Lessons.** What each round learned goes in `.synthe/improve-lessons.md` and the pull request, so the next run can read it. `CLAUDE.md` or `AGENTS.md` are only changed with `--lessons claude` or `--lessons agents`.
+- **Interrupted?** Press Ctrl-C any time: Synthe stops its measurements, removes its temporary checkouts and pushes nothing (it pushes only at the end). Run the same command again to start over. Don't commit to the branch while it runs.
+- **Undo.** Close the pull request and nothing changes. After merging, revert the pull request on GitHub or run `git revert` on it.
+- **No event code or key?** `npx synthe improve --handoff` measures the current code and prints a task card for the coding agent you already use. Have it make ONE small change on the branch the card names, commit it, then run `npx synthe submit`. Nothing is sent to a model.
+- **With a coding agent**, tell it: Set up Synthe in this repo. Run `npx synthe@latest guide` and follow it. Give it the codes in the same message. It asks you the four questions, runs `improve` for you and shows each round.
+
 ## Data
 
 During Crimson Hacks, new installs use `"share": "full"` until November 9, 2026 at 23:59 UTC. This shares the prompt at the start of round 1, the full test-case file (train and holdout), the final prompt when the run stops, and how the run goes. After the cutoff, a full install automatically behaves like detail and stops sending the prompt and test-case file. New installs after the cutoff default to `"share": "detail"`.
@@ -35,7 +66,7 @@ Agent setup requires explicit `SYNTHE_ANTHROPIC_KEY` or `SYNTHE_EVENT_CODE` in b
 
 Set `SYNTHE_EVENT_CODE` in your environment to skip the code question. Local `try` and `calibrate` also accept it. To switch to your own key, run `npx synthe key` in your terminal, or explicitly supply `SYNTHE_ANTHROPIC_KEY` for noninteractive use. Using `ANTHROPIC_API_KEY` with `key` requires deliberately pressing Enter in your terminal. Rounds then use your key. If credit stopped the run, run `npx synthe restart` afterward.
 
-For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.8.6 init`. For an existing event repo, run `npx --yes github:synthelabs/synthe#v1.8.6 upgrade --event`, commit both workflow files, and push them to the default branch. Add both event and team secrets in GitHub Actions settings if needed.
+For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.8.7 init`. For an existing event repo, run `npx --yes github:synthelabs/synthe#v1.8.7 upgrade --event`, commit both workflow files, and push them to the default branch. Add both event and team secrets in GitHub Actions settings if needed.
 
 ## What happens each round
 
@@ -78,6 +109,9 @@ The test cases are simulated single messages, not real users or full conversatio
 | --- | --- |
 | `npx synthe init` | Set up this repo and start |
 | `npx synthe guide` | Instructions for setup through Claude Code, Cursor or Codex |
+| `npx synthe improve` | Improve mode: Synthe proposes code changes, measures each, keeps only wins and opens one pull request (`--list` shows what this repo can measure) |
+| `npx synthe improve --handoff` | Improve mode without a credential: measure, then make the change with your own coding agent |
+| `npx synthe submit` | After `--handoff`: measure your committed change; open the pull request, or merge it in auto mode |
 | `npx synthe key` | Save your own Anthropic key and stop using event credit |
 | `npx synthe upgrade` | Update only the workflow for chained rounds; commit and push the changed workflow |
 | `npx synthe upgrade --event` | Install Crimson tracking in an existing event repo; commit both workflows and push to the default branch |

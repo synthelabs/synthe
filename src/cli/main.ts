@@ -17,6 +17,7 @@ import { restartState } from "./restart.ts";
 import { stoppedLine } from "./stopped.ts";
 import { NO_ROUNDS_YET, changesText } from "./changes.ts";
 import { askSecret } from "./secret.ts";
+import { askPiped, closeStdinLines } from "./stdin-lines.ts";
 import { upgrade } from "./upgrade.ts";
 import { AgentSetupError, agentOptions } from "./agent.ts";
 import { setKey } from "./key.ts";
@@ -24,9 +25,14 @@ import { guide } from "./guide.ts";
 import { verify } from "./verify.ts";
 import { undo } from "./undo.ts";
 import { githubRepo } from "../github/repo.ts";
+import { improve, improveOptions } from "./improve.ts";
+import { submit, submitOptions } from "./submit.ts";
+import { killRunning, shellExec } from "../improve/exec.ts";
 
 const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
-  const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+  // git and gh run the team's hooks; they have no reason to see Synthe's codes or key. gh keeps its own token.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_")));
+  const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env });
   let out = "", err = "";
   child.stdout.on("data", (d) => { out += d; });
   child.stderr.on("data", (d) => { err += d; });
@@ -39,10 +45,25 @@ const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
 });
 
 async function ask(question: string) {
+  if (!process.stdin.isTTY) return askPiped(question);
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const answer = await rl.question(question);
   rl.close();
   return answer;
+}
+
+// Ctrl-C (or the terminal closing, or a kill) during an improve run: nothing async can finish, so the cleanup is
+// synchronous. Running metric or check commands are stopped first: they run model-written code.
+function onInterrupt(cleanup: () => void): () => void {
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+  const stop = () => {
+    killRunning();
+    cleanup();
+    console.log("\nStopped. Synthe stopped its measurements and removed its temporary checkouts; your working tree was never touched.");
+    process.exit(130);
+  };
+  for (const s of signals) process.once(s, stop);
+  return () => { for (const s of signals) process.off(s, stop); };
 }
 
 const template = () => readFileSync(new URL("../templates/synthe.yml", import.meta.url), "utf8");
@@ -242,6 +263,10 @@ const HELP = `Synthe makes your AI agent's system prompt better while you sleep.
 Start here, inside your project's folder:
   npx synthe init     set up this repo and start
   npx synthe guide    instructions for setup through a coding agent
+  npx synthe improve  raise a number you choose (tests passing, bundle size, build time or your own command): Synthe proposes code changes, measures each one, keeps only wins and opens one pull request (event code or own key; no AI prompt needed)
+  npx synthe improve --rounds N --budget USD   at most N rounds (default 6) and USD dollars of model cost (default 1.50)
+  npx synthe improve --handoff   measure only, and make the change with the coding agent you already use; then:
+  npx synthe submit   measure that change; open the pull request, or merge it in auto mode
 
 Then:
   npx synthe status   where it is and what it changed
@@ -264,6 +289,8 @@ async function main() {
   const command = process.argv[2];
   if (command === "init") process.exitCode = (await init(io, process.cwd(), undefined, undefined, process.env, agentOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "guide") console.log(guide);
+  else if (command === "improve") process.exitCode = (await improve({ say: console.log, ask, run, exec: shellExec, env: process.env, onInterrupt }, process.cwd(), improveOptions(process.argv.slice(3)))) ? 0 : 1;
+  else if (command === "submit") process.exitCode = (await submit({ say: console.log, ask, run, exec: shellExec }, process.cwd(), submitOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
     process.exitCode = (await setKey(io)) ? 0 : 1;
@@ -291,4 +318,4 @@ main().catch((e) => {
     console.error("If this keeps happening, open an issue at https://github.com/synthelabs/synthe/issues");
   }
   process.exit(1);
-});
+}).finally(closeStdinLines);
