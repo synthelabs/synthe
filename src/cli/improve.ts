@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { AgentSetupError, askPerson } from "./agent.ts";
 import { DEFAULT_RUNS, improveFile, parseImproveConfig, type Direction, type ImproveConfig, type PresetId } from "../improve/config.ts";
 import type { Exec } from "../improve/exec.ts";
-import { detectPresets, type Preset } from "../improve/presets.ts";
+import { presetsForRepo, type Preset } from "../improve/presets.ts";
+import { promptModeProtect } from "../improve/protect.ts";
 import { taskCard } from "../improve/text.ts";
 import { measureAt } from "../improve/worktree.ts";
 
@@ -120,8 +121,7 @@ export async function improve(io: ImproveIo, root: string, options: ImproveOptio
     return false;
   }
   const top = repo.top || root;
-  const pkg = join(top, "package.json");
-  const presets = detectPresets(existsSync(pkg) ? [{ path: "package.json", text: readFileSync(pkg, "utf8") }] : []);
+  const presets = presetsForRepo(top);
   if (options.list) {
     io.say("Metrics this repo can measure:");
     presets.forEach((p, i) => io.say(presetLine(p, i)));
@@ -129,7 +129,7 @@ export async function improve(io: ImproveIo, root: string, options: ImproveOptio
     return true;
   }
 
-  const draft = await settle(io, options, presets, repo.defaultBranch);
+  const draft = await settle(io, options, presets, repo.defaultBranch, top);
   if (!draft) return false;
 
   let measured;
@@ -159,7 +159,7 @@ export async function improve(io: ImproveIo, root: string, options: ImproveOptio
 }
 
 // The run's settings, from flags (agent) or questions (person). Returns null after saying why it stopped.
-async function settle(io: ImproveIo, o: ImproveOptions, presets: Preset[], defaultBranch: string): Promise<ImproveConfig | null> {
+async function settle(io: ImproveIo, o: ImproveOptions, presets: Preset[], defaultBranch: string, top: string): Promise<ImproveConfig | null> {
   const stop = (why: string) => { io.say(why); return null; };
   let goal = o.goal;
   if (!goal) goal = (await io.ask("What should get better? One sentence: ")).trim();
@@ -168,7 +168,7 @@ async function settle(io: ImproveIo, o: ImproveOptions, presets: Preset[], defau
   let preset: Preset | undefined;
   if (o.metric) {
     preset = presets.find((p) => p.id === o.metric);
-    if (!preset) return stop(`This repo can't measure ${o.metric} (no matching script in package.json). Run npx synthe improve --list to see what it can measure.`);
+    if (!preset) return stop(`This repo can't measure ${o.metric} (no matching test setup or script found). Run npx synthe improve --list to see what it can measure.`);
   } else {
     io.say("Which number measures it?");
     presets.forEach((p, i) => io.say(presetLine(p, i)));
@@ -203,6 +203,6 @@ async function settle(io: ImproveIo, o: ImproveOptions, presets: Preset[], defau
 
   return {
     version: 1, goal, metric: { preset: preset.id, label, unit, command, direction, runs }, guard: { command: guard },
-    protect: o.protect, mode, baseline: { commit: "", median: 0, runs: [], at: "" },
+    protect: [...o.protect, ...promptModeProtect(top)], mode, baseline: { commit: "", median: 0, runs: [], at: "" },
   };
 }

@@ -1,15 +1,19 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { GOAL_FILE } from "../core/goal.ts";
 import { SENSITIVE_PATHS } from "../core/safety.ts";
 import type { ImproveConfig } from "./config.ts";
 
 // What a measured change may not touch: anything that decides the number (tests, the metric and its inputs,
 // dependencies, config) rather than the product code being measured. Checked before any measurement runs.
-const DEPENDENCY_FILES = /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pnpm-workspace\.yaml|bun\.lockb?|poetry\.lock|uv\.lock|Pipfile(\.lock)?|pyproject\.toml|requirements[^/]*\.txt|Cargo\.(toml|lock)|go\.(mod|sum)|Gemfile(\.lock)?|composer\.(json|lock))$/;
+const DEPENDENCY_FILES = /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pnpm-workspace\.yaml|bun\.lockb?|poetry\.lock|uv\.lock|Pipfile(\.lock)?|pyproject\.toml|pytest\.ini|tox\.ini|setup\.cfg|requirements[^/]*\.txt|Cargo\.(toml|lock)|go\.(mod|sum)|Gemfile(\.lock)?|composer\.(json|lock))$/;
 
 const RULES: [RegExp, string][] = [
   [/(^|\/)\.synthe(\/|$)|(^|\/)synthe\.json$/, "is Synthe's own setup; a measured change leaves it alone."],
   [/^\.github\//, "is under .github/; workflows and CI settings are not part of a measured change."],
   [DEPENDENCY_FILES, "lists dependencies or project settings; Synthe measures with them as they are."],
   [/(^|\/)[^/]*\.(test|spec|bench)\.[^/]+$/, "is a test file; Synthe measures with the tests as they are."],
+  [/(^|\/)(test_[^/]*|[^/]*_test|conftest)\.py$/, "is a Python test file; Synthe measures with the tests as they are."],
   [/(^|\/)(test|tests|__tests__|spec|e2e|benchmark|benchmarks|metrics|fixtures)(\/|$)/, "is in a test, benchmark, metric or fixture folder; Synthe measures with those as they are."],
   [/(^|\/)[^/]*\.config\.[^/]+$/, "is a config file; Synthe measures with the project's config as it is."],
   [/(^|\/)\.env/, "is an environment file; a measured change leaves it alone."],
@@ -43,4 +47,20 @@ export function protectedPathProblem(path: string, config: ImproveConfig): strin
 
 export function protectedChanges(paths: string[], config: ImproveConfig): string[] {
   return [...paths].sort().flatMap((p) => protectedPathProblem(p, config) ?? []);
+}
+
+// Files prompt mode (synthe.json) edits: its prompt file and its test cases. Improve mode must never change them,
+// or the two modes would fight over one file. A missing, unreadable or invalid synthe.json protects nothing.
+export function promptModeProtect(top: string): string[] {
+  try {
+    const file = join(top, GOAL_FILE);
+    if (!existsSync(file)) return [];
+    const goal = JSON.parse(readFileSync(file, "utf8"));
+    const clean = (p: unknown) => {
+      if (typeof p !== "string") return [];
+      const path = p.trim().replace(/\\/g, "/").replace(/^\.\//, "");
+      return path && !path.startsWith("/") && !path.split("/").includes("..") ? [path] : [];
+    };
+    return [...new Set([...clean(goal?.prompt?.path), ...clean(goal?.scenarios)])];
+  } catch { return []; }
 }
