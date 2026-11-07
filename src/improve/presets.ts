@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { gzipSync } from "node:zlib";
 import { COMMAND_TIMEOUT_MS, type Direction, type ImproveConfig, type PresetId } from "./config.ts";
 import type { Exec } from "./exec.ts";
@@ -8,8 +8,14 @@ export interface Preset { id: PresetId; label: string; unit: string; direction: 
 
 const NPM_PLACEHOLDER = 'echo "Error: no test specified" && exit 1';
 
+// How to run pytest in a worktree of this repo; only built when the repo shows a Python tests setup.
+export interface PythonSetup { command: string }
+
+const win = process.platform === "win32";
+const VENV_NAMES = [".venv", "venv"];
+
 // Only what this repo can run. Custom is always offered, last.
-export function detectPresets(files: { path: string; text: string }[]): Preset[] {
+export function detectPresets(files: { path: string; text: string }[], python: PythonSetup | null = null): Preset[] {
   let scripts: Record<string, unknown> = {};
   const pkg = files.find((f) => f.path === "package.json");
   if (pkg) {
@@ -17,15 +23,63 @@ export function detectPresets(files: { path: string; text: string }[]): Preset[]
   }
   const hasTest = typeof scripts.test === "string" && scripts.test.trim() !== "" && scripts.test.trim() !== NPM_PLACEHOLDER;
   const hasBuild = typeof scripts.build === "string" && scripts.build.trim() !== "";
-  const guard = hasTest ? "npm test" : null;
+  // A regression check must pass on today's code. When the metric is "tests passing" there is no separate check:
+  // a repo with failing tests is exactly where that number has room to grow, and a check that demanded every
+  // test pass would refuse to start. Other metrics are guarded by the project's test run (npm first, else pytest).
+  const guard = hasTest ? "npm test" : python ? python.command : null;
+  const both = hasTest && python !== null;
   const presets: Preset[] = [];
-  if (hasTest) presets.push({ id: "test-pass", label: "tests passing", unit: "tests", direction: "higher", runs: 1, command: "npm test", guard: null });
+  if (hasTest) presets.push({ id: "test-pass", label: both ? "tests passing (npm test)" : "tests passing", unit: "tests", direction: "higher", runs: 1, command: "npm test", guard: null });
+  if (python) presets.push({ id: "test-pass", label: "tests passing (pytest)", unit: "tests", direction: "higher", runs: 1, command: python.command, guard: null });
   if (hasBuild) {
     presets.push({ id: "bundle-size", label: "built JS and CSS, gzipped", unit: "bytes", direction: "lower", runs: 1, command: "npm run build", guard });
     presets.push({ id: "build-time", label: "build time", unit: "ms", direction: "lower", runs: 3, command: "npm run build", guard });
   }
   presets.push({ id: "custom", label: "your own command", unit: "units", direction: "higher", runs: 3, command: "", guard });
   return presets;
+}
+
+const PYTHON_TEST_FILE = /^(test_.*|.*_test)\.py$/;
+
+function hasPythonTests(dir: string, depth = 3): boolean {
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return false; }
+  return entries.some((e) => (e.isFile() && PYTHON_TEST_FILE.test(e.name))
+    || (depth > 0 && e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules" && hasPythonTests(join(dir, e.name), depth - 1)));
+}
+
+const onPath = (name: string) => (process.env.PATH ?? "").split(delimiter).some((d) => d && existsSync(join(d, win ? `${name}.exe` : name)));
+
+// `src/` holds the package when it has a Python package folder or module in it (the "src layout").
+function srcLayout(top: string): boolean {
+  try {
+    return readdirSync(join(top, "src"), { withFileTypes: true }).some((e) =>
+      (e.isFile() && e.name.endsWith(".py")) || (e.isDirectory() && existsSync(join(top, "src", e.name, "__init__.py"))));
+  } catch { return false; }
+}
+
+// The pytest command for this repo, or null when it shows no Python tests.
+export function pythonSetup(top: string): PythonSetup | null {
+  const signals = ["pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"].some((f) => existsSync(join(top, f)))
+    || hasPythonTests(join(top, "tests"))
+    || readdirSync(top, { withFileTypes: true }).some((e) => e.isFile() && PYTHON_TEST_FILE.test(e.name));
+  if (!signals) return null;
+  // The measurement runs in a worktree where a repo-root venv is linked in (see worktree.ts), so a relative
+  // path finds it there. Without one, the system Python.
+  const venv = VENV_NAMES.find((v) => existsSync(join(top, v, win ? "Scripts" : "bin", win ? "python.exe" : "python")));
+  const python = venv ? (win ? `${venv}\\Scripts\\python` : `${venv}/bin/python`) : win || !onPath("python3") ? "python" : "python3";
+  // `python -m` puts the worktree first on sys.path, which covers a flat layout. A src layout is usually
+  // installed editable, which would import the ORIGINAL repo's package and measure the wrong code, so src/ goes
+  // first on the path explicitly.
+  const src = srcLayout(top);
+  const run = `${python} -m pytest -q${src && win ? " -o pythonpath=src" : ""}`;
+  return { command: src && !win ? `PYTHONPATH=src ${run}` : run };
+}
+
+// What this repo can measure: package.json scripts and Python tests, read from the repo on disk.
+export function presetsForRepo(top: string): Preset[] {
+  const pkg = join(top, "package.json");
+  return detectPresets(existsSync(pkg) ? [{ path: "package.json", text: readFileSync(pkg, "utf8") }] : [], pythonSetup(top));
 }
 
 const NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
@@ -48,7 +102,20 @@ export function countPassed(output: string): number | null {
   return lastMatch(output, /^\s*[ℹ#] pass (\d+)\s*$/gm)
     ?? lastMatch(output, /^\s*Tests:?\s.*?(\d+) passed/gm)
     ?? lastMatch(output, /^\s*(\d+) passing\b/gm)
-    ?? lastMatch(output, /^=+ .*?\b(\d+) passed\b.*=+\s*$/gm);
+    ?? lastMatch(output, /^=+ .*?\b(\d+) passed\b.*=+\s*$/gm)
+    ?? lastMatch(output, PYTEST_PASSED)
+    ?? pytestAllFailed(output);
+}
+
+// `pytest -q` prints no "=====" rule: "12 passed, 1 failed in 0.3s", "1 failed, 5 passed, 2 warnings in 1.20s".
+const PYTEST_PASSED = /^(?:\d+ \w+(?:, | and ))*(\d+) passed\b(?:(?:, | and )\d+ \w+)* in \d[\d.]*s\b/gm;
+const PYTEST_SUMMARY = /^(?:\d+ \w+(?:, | and )?)+ in \d[\d.]*s\b.*$/gm;
+
+// A run where every test failed prints "3 failed in 0.1s": zero passing, a real number. Collection errors alone
+// ("1 error in 0.1s") stay uncounted: that is a broken run, not a measurement.
+function pytestAllFailed(output: string): number | null {
+  const last = [...output.matchAll(PYTEST_SUMMARY)].at(-1)?.[0];
+  return last && /\b\d+ failed\b/.test(last) ? 0 : null;
 }
 
 const OUTPUT_DIRS = ["dist", "build", "out", ".next/static", "public/build"];

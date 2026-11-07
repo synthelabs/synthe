@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { gzipSync } from "node:zlib";
 import { shellExec, type Exec } from "../src/improve/exec.ts";
-import { bundleBytes, countPassed, detectPresets, lastNumber, measureOnce } from "../src/improve/presets.ts";
+import { bundleBytes, countPassed, detectPresets, lastNumber, measureOnce, presetsForRepo } from "../src/improve/presets.ts";
 import { config, custom } from "./improve-helpers.ts";
 
 test("lastNumber takes the last bare-number line and ignores npm banners", () => {
@@ -87,4 +87,80 @@ test("bundleBytes sums gzipped js and css under the first output folder", () => 
   const bytes = bundleBytes(dir)!;
   assert.ok(bytes > 0 && bytes < 20480);
   assert.equal(bytes, expected);
+});
+
+test("countPassed reads pytest -q summaries, including failures, warnings and a run where nothing passed", () => {
+  assert.equal(countPassed("....F\n12 passed, 1 failed in 0.3s"), 12);
+  assert.equal(countPassed("5 passed in 0.02s"), 5);
+  assert.equal(countPassed("1 failed, 5 passed, 2 warnings in 1.20s"), 5);
+  assert.equal(countPassed("1 failed, 2 skipped, 7 passed, 1 xfailed in 1.20s (0:00:01)"), 7);
+  assert.equal(countPassed("===== 8 passed, 2 failed in 0.4s ====="), 8);
+  assert.equal(countPassed("FFF\n3 failed in 0.10s"), 0);
+  assert.equal(countPassed("2 failed, 1 error in 0.10s"), 0);
+  assert.equal(countPassed("no tests ran in 0.01s"), null);
+  assert.equal(countPassed("1 error in 0.10s"), null);
+  assert.equal(countPassed("/usr/bin/python3: No module named pytest"), null);
+  assert.equal(countPassed("ModuleNotFoundError: No module named 'pkg'\nERROR collecting tests/test_a.py"), null);
+});
+
+const pyRepo = (files: Record<string, string>) => {
+  const dir = mkdtempSync(join(tmpdir(), "synthe-py-"));
+  for (const [path, text] of Object.entries(files)) { mkdirSync(join(dir, path, ".."), { recursive: true }); writeFileSync(join(dir, path), text); }
+  return dir;
+};
+const withPath = <T>(path: string, fn: () => T): T => {
+  const before = process.env.PATH;
+  process.env.PATH = path;
+  try { return fn(); } finally { process.env.PATH = before; }
+};
+const posix = process.platform === "win32" ? { skip: "paths differ on Windows" } : {};
+
+test("pytest is offered for each Python signal, and for none without one", () => {
+  const ids = (files: Record<string, string>) => presetsForRepo(pyRepo(files)).map((p) => p.id);
+  for (const files of [
+    { "pyproject.toml": "" }, { "pytest.ini": "" }, { "setup.cfg": "" }, { "tox.ini": "" },
+    { "tests/test_a.py": "" }, { "tests/unit/a_test.py": "" }, { "test_root.py": "" }, { "thing_test.py": "" },
+  ] as Record<string, string>[]) assert.deepEqual(ids(files), ["test-pass", "custom"], JSON.stringify(files));
+  for (const files of [{ "README.md": "" }, { "tests/helper.py": "" }, { "app.py": "" }, {}] as Record<string, string>[]) assert.deepEqual(ids(files), ["custom"], JSON.stringify(files));
+});
+
+test("pytest preset has no separate guard; the custom metric is guarded by the same pytest run", posix, () => {
+  const presets = withPath("/nonexistent", () => presetsForRepo(pyRepo({ "pyproject.toml": "" })));
+  const [tests, own] = presets;
+  assert.deepEqual([tests.label, tests.command, tests.guard, tests.unit, tests.direction, tests.runs], ["tests passing (pytest)", "python -m pytest -q", null, "tests", "higher", 1]);
+  assert.equal(own.guard, "python -m pytest -q");
+});
+
+test("npm and Python together are both offered and labelled", posix, () => {
+  const dir = pyRepo({ "pyproject.toml": "", "package.json": JSON.stringify({ scripts: { test: "node --test", build: "vite build" } }) });
+  const presets = withPath("/nonexistent", () => presetsForRepo(dir));
+  assert.deepEqual(presets.map((p) => [p.id, p.label, p.command]), [
+    ["test-pass", "tests passing (npm test)", "npm test"],
+    ["test-pass", "tests passing (pytest)", "python -m pytest -q"],
+    ["bundle-size", "built JS and CSS, gzipped", "npm run build"],
+    ["build-time", "build time", "npm run build"],
+    ["custom", "your own command", ""],
+  ]);
+  assert.equal(presets[2].guard, "npm test");
+});
+
+test("the interpreter is the repo's venv, else python3, else python", posix, () => {
+  const bin = mkdtempSync(join(tmpdir(), "synthe-bin-"));
+  const cmd = (dir: string) => presetsForRepo(dir)[0].command;
+  const noVenv = pyRepo({ "pytest.ini": "" });
+  assert.equal(withPath(bin, () => cmd(noVenv)), "python -m pytest -q");
+  writeFileSync(join(bin, "python3"), "");
+  assert.equal(withPath(bin, () => cmd(noVenv)), "python3 -m pytest -q");
+  assert.equal(withPath(bin, () => cmd(pyRepo({ "pytest.ini": "", ".venv/bin/python": "" }))), ".venv/bin/python -m pytest -q");
+  assert.equal(withPath(bin, () => cmd(pyRepo({ "pytest.ini": "", "venv/bin/python": "" }))), "venv/bin/python -m pytest -q");
+  assert.equal(withPath(bin, () => cmd(pyRepo({ "pytest.ini": "", ".venv/bin/python": "", "venv/bin/python": "" }))), ".venv/bin/python -m pytest -q");
+  assert.equal(withPath(bin, () => cmd(pyRepo({ "pytest.ini": "", ".venv/notpython": "" }))), "python3 -m pytest -q");
+});
+
+test("a src layout puts src/ first on the path so the candidate's code is measured", posix, () => {
+  const cmd = (files: Record<string, string>) => withPath("/nonexistent", () => presetsForRepo(pyRepo({ "pytest.ini": "", ...files }))[0].command);
+  assert.equal(cmd({ "src/pkg/__init__.py": "" }), "PYTHONPATH=src python -m pytest -q");
+  assert.equal(cmd({ "src/mod.py": "" }), "PYTHONPATH=src python -m pytest -q");
+  assert.equal(cmd({ "pkg/__init__.py": "" }), "python -m pytest -q");
+  assert.equal(cmd({ "src/notes.txt": "" }), "python -m pytest -q");
 });

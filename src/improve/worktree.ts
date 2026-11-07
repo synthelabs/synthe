@@ -11,8 +11,10 @@ const quote = (s: string) => (win ? `"${s}"` : `'${s.replace(/'/g, "'\\''")}'`);
 const GIT_TIMEOUT_MS = 120_000;
 
 // A detached checkout of exactly one commit, so uncommitted files and the person's build output can't leak
-// into the number. node_modules is linked, not installed: the measurement uses the same dependencies the
-// person already has, and setup stays seconds long.
+// into the number. node_modules and a Python venv (.venv, venv) are linked, not installed: the measurement uses
+// the same dependencies the person already has, and setup stays seconds long.
+const LINKED = ["node_modules", ".venv", "venv"];
+
 export async function withWorktree<T>(exec: Exec, root: string, commit: string, fn: (dir: string) => Promise<T>): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), "synthe-improve-"));
   const added = await exec(root, `git worktree add --detach ${quote(dir)} ${commit}`, GIT_TIMEOUT_MS);
@@ -20,17 +22,19 @@ export async function withWorktree<T>(exec: Exec, root: string, commit: string, 
     rmSync(dir, { recursive: true, force: true });
     throw new Error(`Could not check out ${commit.slice(0, 7)} to measure it: ${(added.stderr || added.stdout).trim().split("\n")[0]}`);
   }
-  const link = join(dir, "node_modules");
-  let linked = false;
+  const linked: string[] = [];
   try {
-    if (existsSync(join(root, "node_modules")) && !existsSync(link)) {
-      symlinkSync(join(root, "node_modules"), link, win ? "junction" : "dir");
-      linked = true;
+    for (const name of LINKED) {
+      const link = join(dir, name);
+      if (existsSync(join(root, name)) && !existsSync(link)) {
+        symlinkSync(join(root, name), link, win ? "junction" : "dir");
+        linked.push(link);
+      }
     }
     return await fn(dir);
   } finally {
-    // Unlink first so removing the worktree can never reach through the link into the real node_modules.
-    if (linked) try { if (lstatSync(link).isSymbolicLink()) unlinkSync(link); } catch { /* already gone */ }
+    // Unlink first so removing the worktree can never reach through a link into the real node_modules or venv.
+    for (const link of linked) try { if (lstatSync(link).isSymbolicLink()) unlinkSync(link); } catch { /* already gone */ }
     await exec(root, `git worktree remove --force ${quote(dir)}`, GIT_TIMEOUT_MS);
     await exec(root, "git worktree prune", GIT_TIMEOUT_MS);
     rmSync(dir, { recursive: true, force: true });
