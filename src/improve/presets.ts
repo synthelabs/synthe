@@ -30,7 +30,7 @@ export function detectPresets(files: { path: string; text: string }[], python: P
   const both = hasTest && python !== null;
   const presets: Preset[] = [];
   if (hasTest) presets.push({ id: "test-pass", label: both ? "tests passing (npm test)" : "tests passing", unit: "tests", direction: "higher", runs: 1, command: "npm test", guard: null });
-  if (python) presets.push({ id: "test-pass", label: "tests passing (pytest)", unit: "tests", direction: "higher", runs: 1, command: python.command, guard: null });
+  if (python) presets.push({ id: "pytest", label: "tests passing (pytest)", unit: "tests", direction: "higher", runs: 1, command: python.command, guard: null });
   if (hasBuild) {
     presets.push({ id: "bundle-size", label: "built JS and CSS, gzipped", unit: "bytes", direction: "lower", runs: 1, command: "npm run build", guard });
     presets.push({ id: "build-time", label: "build time", unit: "ms", direction: "lower", runs: 3, command: "npm run build", guard });
@@ -150,7 +150,8 @@ export async function measureOnce(exec: Exec, cwd: string, config: ImproveConfig
   const none = (reason: string) => ({ value: null, ms: r.ms, reason });
   if (r.timedOut) return none(REASONS.timedOut);
   switch (config.metric.preset) {
-    case "test-pass": {
+    case "test-pass":
+    case "pytest": {
       // Failing tests exit non-zero but still count: fewer passing is a lower number, not a broken measurement.
       const n = countPassed(`${r.stdout}\n${r.stderr}`);
       return n === null ? none(REASONS.noTests) : { value: n, ms: r.ms };

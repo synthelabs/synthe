@@ -17,6 +17,7 @@ import { restartState } from "./restart.ts";
 import { stoppedLine } from "./stopped.ts";
 import { NO_ROUNDS_YET, changesText } from "./changes.ts";
 import { askSecret } from "./secret.ts";
+import { askPiped, closeStdinLines } from "./stdin-lines.ts";
 import { upgrade } from "./upgrade.ts";
 import { AgentSetupError, agentOptions } from "./agent.ts";
 import { setKey } from "./key.ts";
@@ -42,6 +43,7 @@ const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
 });
 
 async function ask(question: string) {
+  if (!process.stdin.isTTY) return askPiped(question);
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const answer = await rl.question(question);
   rl.close();
@@ -311,4 +313,4 @@ main().catch((e) => {
     console.error("If this keeps happening, open an issue at https://github.com/synthelabs/synthe/issues");
   }
   process.exit(1);
-});
+}).finally(closeStdinLines);

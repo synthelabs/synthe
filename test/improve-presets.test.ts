@@ -50,6 +50,10 @@ test("measureOnce turns a run into a number or a plain reason", async () => {
   const failingTests: Exec = async () => ({ ok: false, stdout: "ℹ pass 2\nℹ fail 1\n", stderr: "", ms: 5, timedOut: false });
   const testPass = config({ metric: { ...custom("npm test").metric, preset: "test-pass", runs: 1 } });
   assert.equal((await measureOnce(failingTests, "/r", testPass)).value, 2);
+  const pytestOut: Exec = async () => ({ ok: false, stdout: "1 failed, 5 passed in 0.3s\n", stderr: "", ms: 5, timedOut: false });
+  assert.equal((await measureOnce(pytestOut, "/r", config({ metric: { ...custom("python -m pytest -q").metric, preset: "pytest", runs: 1 } }))).value, 5);
+  // Configs saved before the pytest id existed carry test-pass with a pytest command; they measure the same way.
+  assert.equal((await measureOnce(pytestOut, "/r", config({ metric: { ...custom("python -m pytest -q").metric, preset: "test-pass", runs: 1 } }))).value, 5);
   const timed = config({ metric: { ...custom("npm run build").metric, preset: "build-time" } });
   assert.equal((await measureOnce(async () => ({ ok: true, stdout: "", stderr: "", ms: 1234, timedOut: false }), "/r", timed)).value, 1234);
   const bundle = config({ metric: { ...custom("npm run build").metric, preset: "bundle-size" } });
@@ -120,7 +124,7 @@ test("pytest is offered for each Python signal, and for none without one", () =>
   for (const files of [
     { "pyproject.toml": "" }, { "pytest.ini": "" }, { "setup.cfg": "" }, { "tox.ini": "" },
     { "tests/test_a.py": "" }, { "tests/unit/a_test.py": "" }, { "test_root.py": "" }, { "thing_test.py": "" },
-  ] as Record<string, string>[]) assert.deepEqual(ids(files), ["test-pass", "custom"], JSON.stringify(files));
+  ] as Record<string, string>[]) assert.deepEqual(ids(files), ["pytest", "custom"], JSON.stringify(files));
   for (const files of [{ "README.md": "" }, { "tests/helper.py": "" }, { "app.py": "" }, {}] as Record<string, string>[]) assert.deepEqual(ids(files), ["custom"], JSON.stringify(files));
 });
 
@@ -136,7 +140,7 @@ test("npm and Python together are both offered and labelled", posix, () => {
   const presets = withPath("/nonexistent", () => presetsForRepo(dir));
   assert.deepEqual(presets.map((p) => [p.id, p.label, p.command]), [
     ["test-pass", "tests passing (npm test)", "npm test"],
-    ["test-pass", "tests passing (pytest)", "python -m pytest -q"],
+    ["pytest", "tests passing (pytest)", "python -m pytest -q"],
     ["bundle-size", "built JS and CSS, gzipped", "npm run build"],
     ["build-time", "build time", "npm run build"],
     ["custom", "your own command", ""],

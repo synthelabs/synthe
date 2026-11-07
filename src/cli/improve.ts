@@ -29,7 +29,7 @@ export const IMPROVE_LIST_NEXT = "NEXT: Show the person this list as written. As
 export const IMPROVE_LOOP_NEXT_WIN = "NEXT: Show the person every round line, the result and the pull request link as written. In auto mode, tell them to run git pull. In review mode, tell them to review the pull request and merge it to keep the changes.";
 export const IMPROVE_LOOP_NEXT_NONE = "NEXT: Show the person what was tried and why each change was not kept, as written. Nothing was pushed. To try again, run the same command (the next run reads these lessons); to make the change yourself instead, run it with --handoff.";
 
-const PRESET_IDS: PresetId[] = ["test-pass", "bundle-size", "build-time", "custom"];
+const PRESET_IDS: PresetId[] = ["test-pass", "pytest", "bundle-size", "build-time", "custom"];
 const VALUE_FLAGS = ["--goal", "--metric", "--label", "--unit", "--command", "--direction", "--guard", "--mode", "--protect", "--rounds", "--budget", "--lessons"];
 const LOOP_FLAGS = ["--rounds", "--budget", "--lessons"];
 export const MAX_ROUNDS = 20;
@@ -319,7 +319,7 @@ async function settle(io: ImproveIo, o: ImproveOptions, presets: Preset[], defau
 
   let preset: Preset | undefined;
   if (o.metric) {
-    preset = presets.find((p) => p.id === o.metric);
+    preset = presets.find((p) => p.id === o.metric || (o.metric === "test-pass" && p.id === "pytest"));
     if (!preset) return stop(`This repo can't measure ${o.metric} (no matching test setup or script found). Run npx synthe improve --list to see what it can measure.`);
   } else {
     io.say("Which number measures it?");
@@ -355,6 +355,6 @@ async function settle(io: ImproveIo, o: ImproveOptions, presets: Preset[], defau
 
   return {
     version: 1, goal, metric: { preset: preset.id, label, unit, command, direction, runs }, guard: { command: guard },
-    protect: [...o.protect, ...promptModeProtect(top)], mode, baseline: { commit: "", median: 0, runs: [], at: "" },
+    protect: o.protect, promptFiles: promptModeProtect(top), mode, baseline: { commit: "", median: 0, runs: [], at: "" },
   };
 }
