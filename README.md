@@ -66,7 +66,7 @@ Agent setup requires explicit `SYNTHE_ANTHROPIC_KEY` or `SYNTHE_EVENT_CODE` in b
 
 Set `SYNTHE_EVENT_CODE` in your environment to skip the code question. Local `try` and `calibrate` also accept it. To switch to your own key, run `npx synthe key` in your terminal, or explicitly supply `SYNTHE_ANTHROPIC_KEY` for noninteractive use. Using `ANTHROPIC_API_KEY` with `key` requires deliberately pressing Enter in your terminal. Rounds then use your key. If credit stopped the run, run `npx synthe restart` afterward.
 
-For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.9.0 init`. For an existing event repo, run `npx --yes github:synthelabs/synthe#v1.9.0 upgrade --event`, commit both workflow files, and push them to the default branch. Add both event and team secrets in GitHub Actions settings if needed.
+For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.9.1 init`. For an existing event repo, run `npx --yes github:synthelabs/synthe#v1.9.1 upgrade --event`, commit both workflow files, and push them to the default branch. Add both event and team secrets in GitHub Actions settings if needed.
 
 ## What happens each round
 
