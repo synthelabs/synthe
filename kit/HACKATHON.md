@@ -50,6 +50,8 @@ Don't add results to this slide until we have real ones.
 
 Using Claude Code, Cursor or Codex? Tell it to set up Synthe in this repo and follow the instructions from `npx --yes github:synthelabs/synthe#v1.8.6 guide`.
 
+No AI prompt in your app yet? Tell your coding agent: Set up Synthe improve mode in this repo. Run `npx synthe@latest guide` and follow section 9. It measures one number before and after a code change and opens the pull request. No event code needed.
+
 No coding agent, or a free web chat? Do the steps below in your terminal. A web chat can't see your repo or run commands, and setup asks its own questions, so you don't need an AI tool for it.
 
 **Synthe**
