@@ -4,7 +4,10 @@ import { gzipSync } from "node:zlib";
 import { COMMAND_TIMEOUT_MS, type Direction, type ImproveConfig, type PresetId } from "./config.ts";
 import type { Exec } from "./exec.ts";
 
-export interface Preset { id: PresetId; label: string; unit: string; direction: Direction; runs: number; command: string; guard: string | null }
+export interface Preset { id: PresetId; label: string; unit: string; direction: Direction; runs: number; command: string; guard: string | null;
+  requiresGuard?: boolean; // the number can be gamed by deleting features, so a run needs a regression check
+  note?: string; // one plain sentence shown under the preset in the menu
+}
 
 const NPM_PLACEHOLDER = 'echo "Error: no test specified" && exit 1';
 
@@ -14,7 +17,7 @@ export interface PythonSetup { command: string }
 const win = process.platform === "win32";
 const VENV_NAMES = [".venv", "venv"];
 
-// Only what this repo can run. Custom is always offered, last.
+// Only what this repo can run. The first preset is the recommended one.
 export function detectPresets(files: { path: string; text: string }[], python: PythonSetup | null = null): Preset[] {
   let scripts: Record<string, unknown> = {};
   const pkg = files.find((f) => f.path === "package.json");
@@ -28,15 +31,19 @@ export function detectPresets(files: { path: string; text: string }[], python: P
   // test pass would refuse to start. Other metrics are guarded by the project's test run (npm first, else pytest).
   const guard = hasTest ? "npm test" : python ? python.command : null;
   const both = hasTest && python !== null;
-  const presets: Preset[] = [];
-  if (hasTest) presets.push({ id: "test-pass", label: both ? "tests passing (npm test)" : "tests passing", unit: "tests", direction: "higher", runs: 1, command: "npm test", guard: null });
-  if (python) presets.push({ id: "pytest", label: "tests passing (pytest)", unit: "tests", direction: "higher", runs: 1, command: python.command, guard: null });
-  if (hasBuild) {
-    presets.push({ id: "bundle-size", label: "built JS and CSS, gzipped", unit: "bytes", direction: "lower", runs: 1, command: "npm run build", guard });
-    presets.push({ id: "build-time", label: "build time", unit: "ms", direction: "lower", runs: 3, command: "npm run build", guard });
-  }
-  presets.push({ id: "custom", label: "your own command", unit: "units", direction: "higher", runs: 3, command: "", guard });
-  return presets;
+  // Three runs for tests too: a flaky test then shows up as run-to-run spread, and one lucky run can't win.
+  const tests: Preset[] = [];
+  if (hasTest) tests.push({ id: "test-pass", label: both ? "tests passing (npm test)" : "tests passing", unit: "tests", direction: "higher", runs: 3, command: "npm test", guard: null });
+  if (python) tests.push({ id: "pytest", label: "tests passing (pytest)", unit: "tests", direction: "higher", runs: 3, command: python.command, guard: null });
+  // Shrinking a bundle or a build is easy by deleting features, so these never run without a check that notices.
+  const note = guard ? undefined : "No test script to check nothing broke, so this needs --guard <a command that fails if the app is broken>.";
+  const build: Preset[] = hasBuild ? [
+    { id: "bundle-size", label: "built JS and CSS, gzipped", unit: "bytes", direction: "lower", runs: 1, command: "npm run build", guard, requiresGuard: true, ...(note && { note }) },
+    { id: "build-time", label: "build time", unit: "ms", direction: "lower", runs: 3, command: "npm run build", guard, requiresGuard: true, ...(note && { note }) },
+  ] : [];
+  const custom: Preset = { id: "custom", label: "your own command", unit: "units", direction: "higher", runs: 3, command: "", guard };
+  // The first preset is the recommended one: the tests when the repo has them, otherwise the person's own command.
+  return tests.length ? [...tests, ...build, custom] : [custom, ...build];
 }
 
 const PYTHON_TEST_FILE = /^(test_.*|.*_test)\.py$/;
