@@ -5,7 +5,9 @@ export interface ExecResult { ok: boolean; stdout: string; stderr: string; ms: n
 export type Exec = (cwd: string, command: string, timeoutMs: number) => Promise<ExecResult>;
 
 const MAX_OUTPUT = 4 * 1024 * 1024;
-const HIDDEN = ["ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN"];
+// NODE_TEST_CONTEXT: when Synthe itself runs under `node --test`, a team's `node --test` would inherit it, report
+// to a parent that isn't listening, and exit 0 even with failing tests: the guard would pass a broken change.
+const HIDDEN = ["ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "NODE_TEST_CONTEXT"];
 
 // The metric and the guard are the team's own code. They have no reason to see Synthe's codes or a GitHub token.
 export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {

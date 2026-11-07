@@ -61,8 +61,9 @@ test("shellExec runs in the directory, times out, and hides Synthe secrets from 
   process.env.SYNTHE_EVENT_CODE = "secret-code";
   process.env.GH_TOKEN = "gh-secret";
   try {
-    const out = await shellExec(dir, "pwd && echo \"${SYNTHE_EVENT_CODE:-unset}\" \"${GH_TOKEN:-unset}\"", 5_000);
-    assert.ok(out.ok && out.stdout.includes("unset unset") && !out.stdout.includes("secret"));
+    process.env.NODE_TEST_CONTEXT ??= "child-v8";
+    const out = await shellExec(dir, "pwd && echo \"${SYNTHE_EVENT_CODE:-unset}\" \"${GH_TOKEN:-unset}\" \"${NODE_TEST_CONTEXT:-unset}\"", 5_000);
+    assert.ok(out.ok && out.stdout.includes("unset unset unset") && !out.stdout.includes("secret"), out.stdout);
     assert.ok(out.stdout.includes(dir.split("/").at(-1)!));
     const slow = await shellExec(dir, "sleep 2", 200);
     assert.ok(!slow.ok && slow.timedOut);
