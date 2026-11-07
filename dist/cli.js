@@ -251,9 +251,9 @@ var init_values = __esm({
       return n;
     };
     CREDENTIAL_OPTIONS = ["apiKey", "authToken", "credentials", "config", "profile"];
-    safeJSON = (text) => {
+    safeJSON = (text2) => {
       try {
-        return JSON.parse(text);
+        return JSON.parse(text2);
       } catch (err) {
         return void 0;
       }
@@ -2901,12 +2901,12 @@ function requireSecureTokenEndpoint(baseURL) {
   throw new WorkloadIdentityError(`Refusing to send credential over non-https token endpoint "${baseURL}"`);
 }
 async function parseTokenResponse(resp, requestId) {
-  const text = await readLimitedText(resp);
+  const text2 = await readLimitedText(resp);
   let data;
   try {
-    data = JSON.parse(text);
+    data = JSON.parse(text2);
   } catch {
-    throw new WorkloadIdentityError(`Token endpoint returned non-JSON response (status ${resp.status})`, resp.status, redactSensitive(text), requestId);
+    throw new WorkloadIdentityError(`Token endpoint returned non-JSON response (status ${resp.status})`, resp.status, redactSensitive(text2), requestId);
   }
   if (!data.access_token) {
     throw new WorkloadIdentityError(`Token endpoint response missing access_token: ${JSON.stringify(redactSensitive(data))}`, resp.status, redactSensitive(data), requestId);
@@ -3350,8 +3350,8 @@ function setContentAttributes(span, attributes, limit2) {
   };
   const values = {};
   const blocks = toolResult?.map((block) => JSON.stringify(block));
-  const length = [...stopSequences ?? [], ...blocks ?? []].reduce((sum, text) => sum + text.length + 1, 2) + serialize(others, values) + serialize(messages, values);
-  const sizeOf = 3 * length <= limit2 ? (text) => 3 * text.length : utf8Length;
+  const length = [...stopSequences ?? [], ...blocks ?? []].reduce((sum, text2) => sum + text2.length + 1, 2) + serialize(others, values) + serialize(messages, values);
+  const sizeOf = 3 * length <= limit2 ? (text2) => 3 * text2.length : utf8Length;
   const sizeOfMessages = () => Object.keys(messages).reduce((sum, key) => sum + sizeOf(values[key] ?? ""), 0);
   const stopSequencesSize = stopSequences?.reduce((sum, each) => sum + sizeOf(each), 0) ?? 0;
   const keepsStopSequences = stopSequences !== void 0 && stopSequencesSize <= limit2;
@@ -3470,15 +3470,15 @@ function truncateToolResultContent(blocks, limit2, sizeOf) {
   }
   return { json: "[" + kept.join(",") + "]", size, truncated: kept.length < blocks.length };
 }
-function utf8Length(text) {
+function utf8Length(text2) {
   let size = 0;
-  for (let index = 0; index < text.length; index++) {
-    const unit = text.charCodeAt(index);
+  for (let index = 0; index < text2.length; index++) {
+    const unit = text2.charCodeAt(index);
     if (unit < 128) {
       size += 1;
     } else if (unit < 2048) {
       size += 2;
-    } else if (unit >= 55296 && unit < 56320 && (text.charCodeAt(index + 1) & 64512) === 56320) {
+    } else if (unit >= 55296 && unit < 56320 && (text2.charCodeAt(index + 1) & 64512) === 56320) {
       size += 4;
       index++;
     } else {
@@ -4329,8 +4329,8 @@ function oidcFederationProvider(config) {
     }
     const requestId = resp.headers.get("Request-Id");
     if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      const redacted = redactSensitive(text);
+      const text2 = await resp.text().catch(() => "");
+      const redacted = redactSensitive(text2);
       let hint = "";
       if (resp.status === 401) {
         const hintMiddle = config.workspaceId ? "" : "If your federation rule is scoped to multiple workspaces, set the ANTHROPIC_WORKSPACE_ID environment variable, the 'workspace_id' config key, or the `workspaceId` option. ";
@@ -4410,8 +4410,8 @@ function userOAuthProvider(config) {
     }
     const requestId = resp.headers.get("Request-Id");
     if (!resp.ok) {
-      const text = await resp.text().catch(() => "");
-      throw new WorkloadIdentityError(`User OAuth refresh failed (HTTP ${resp.status}): ${redactSensitive(text)}`, resp.status, redactSensitive(text), requestId);
+      const text2 = await resp.text().catch(() => "");
+      throw new WorkloadIdentityError(`User OAuth refresh failed (HTTP ${resp.status}): ${redactSensitive(text2)}`, resp.status, redactSensitive(text2), requestId);
     }
     const data = await parseTokenResponse(resp, requestId);
     const expiresIn = Number(data.expires_in);
@@ -4608,8 +4608,8 @@ async function defaultParseResponse(client, props) {
       const json = await response.json();
       return addResponseIDs(json, response);
     }
-    const text = await response.text();
-    return text;
+    const text2 = await response.text();
+    return text2;
   })().finally(() => {
     if (!props.options.stream && !props.options.__binaryResponse) {
       releaseRequestSignal(props.controller);
@@ -8965,11 +8965,11 @@ var init_ToolError = __esm({
 });
 
 // node_modules/@anthropic-ai/sdk/lib/internal/toolsets/sanitize.mjs
-function wellFormed(text) {
-  return text.replace(LONE_SURROGATE_RE, "\uFFFD");
+function wellFormed(text2) {
+  return text2.replace(LONE_SURROGATE_RE, "\uFFFD");
 }
-function oneLine(text, limit2 = FIELD_MAX) {
-  return cutPoints(wellFormed(text).replace(CONTROL_RE, " ").trim(), limit2);
+function oneLine(text2, limit2 = FIELD_MAX) {
+  return cutPoints(wellFormed(text2).replace(CONTROL_RE, " ").trim(), limit2);
 }
 function logSafe(name) {
   return oneLine(name, LOG_MAX);
@@ -8983,18 +8983,18 @@ function thrownErrorText(e) {
 function errorText(error) {
   return cutPoints(wellFormed(thrownErrorText(error)), FIELD_MAX);
 }
-function cutPoints(text, limit2) {
-  if (text.length <= limit2)
-    return text;
+function cutPoints(text2, limit2) {
+  if (text2.length <= limit2)
+    return text2;
   let end = 0;
   let points = 0;
-  for (const ch of text) {
+  for (const ch of text2) {
     if (points === limit2)
       break;
     points += 1;
     end += ch.length;
   }
-  return text.slice(0, end);
+  return text2.slice(0, end);
 }
 function errorTextContent(content) {
   if (typeof content === "string")
@@ -9337,9 +9337,9 @@ var init_SessionToolRunner = __esm({
         for (const ev of unanswered)
           await __classPrivateFieldGet(this, _SessionToolRunner_instances, "m", _SessionToolRunner_routeToolEvent).call(this, ev);
         for (const held of [...__classPrivateFieldGet(this, _SessionToolRunner_awaitingConfirmation, "f").values()]) {
-          const verdict = __classPrivateFieldGet(this, _SessionToolRunner_confirmationVerdicts, "f").get(held.id);
-          if (verdict !== void 0)
-            await __classPrivateFieldGet(this, _SessionToolRunner_instances, "m", _SessionToolRunner_applyVerdict).call(this, held, verdict);
+          const verdict2 = __classPrivateFieldGet(this, _SessionToolRunner_confirmationVerdicts, "f").get(held.id);
+          if (verdict2 !== void 0)
+            await __classPrivateFieldGet(this, _SessionToolRunner_instances, "m", _SessionToolRunner_applyVerdict).call(this, held, verdict2);
         }
         const outstanding = unanswered.filter((ev) => !__classPrivateFieldGet(this, _SessionToolRunner_answered, "f").has(ev.id) && !__classPrivateFieldGet(this, _SessionToolRunner_awaitingConfirmation, "f").has(ev.id));
         if (lastEndedTurn && outstanding.length === 0)
@@ -9413,8 +9413,8 @@ var init_SessionToolRunner = __esm({
        */
       async function _SessionToolRunner_routeToolEvent2(ev) {
         const permission = ev.evaluated_permission;
-        const verdict = permission === "deny" ? "deny" : __classPrivateFieldGet(this, _SessionToolRunner_confirmationVerdicts, "f").get(ev.id);
-        if (verdict === void 0) {
+        const verdict2 = permission === "deny" ? "deny" : __classPrivateFieldGet(this, _SessionToolRunner_confirmationVerdicts, "f").get(ev.id);
+        if (verdict2 === void 0) {
           if (permission === void 0 || permission === "allow") {
             await __classPrivateFieldGet(this, _SessionToolRunner_instances, "m", _SessionToolRunner_execute).call(this, ev, void 0);
           } else if (!__classPrivateFieldGet(this, _SessionToolRunner_awaitingConfirmation, "f").has(ev.id)) {
@@ -9429,7 +9429,7 @@ var init_SessionToolRunner = __esm({
           }
           return;
         }
-        await __classPrivateFieldGet(this, _SessionToolRunner_instances, "m", _SessionToolRunner_applyVerdict).call(this, ev, verdict);
+        await __classPrivateFieldGet(this, _SessionToolRunner_instances, "m", _SessionToolRunner_applyVerdict).call(this, ev, verdict2);
       }, _SessionToolRunner_noteConfirmation = /** Record an allow/deny verdict and release the held call it gates, if any. */
       async function _SessionToolRunner_noteConfirmation2(ev) {
         __classPrivateFieldGet(this, _SessionToolRunner_confirmationVerdicts, "f").set(ev.tool_use_id, ev.result);
@@ -9446,9 +9446,9 @@ var init_SessionToolRunner = __esm({
        * until `#execute` has finished with it. The countdown must not run over
        * gated work that is still in flight.
        */
-      async function _SessionToolRunner_applyVerdict2(ev, verdict) {
+      async function _SessionToolRunner_applyVerdict2(ev, verdict2) {
         const wasHeld = __classPrivateFieldGet(this, _SessionToolRunner_awaitingConfirmation, "f").delete(ev.id);
-        if (verdict === "allow") {
+        if (verdict2 === "allow") {
           __classPrivateFieldGet(this, _SessionToolRunner_logger, "f").info("tool call confirmed", {
             component: "session-tool-runner",
             session_id: this.sessionId,
@@ -10097,8 +10097,8 @@ async function hashFile(full) {
   }
   return digest.digest("hex");
 }
-async function filenamesInDir(root, under, base) {
-  if (!await requireDir(under, base))
+async function filenamesInDir(root, under2, base) {
+  if (!await requireDir(under2, base))
     return [];
   const out = [];
   await walk(base, (full, entry) => {
@@ -10108,7 +10108,7 @@ async function filenamesInDir(root, under, base) {
   out.sort();
   return out;
 }
-async function symlinksInDir(root, under, base) {
+async function symlinksInDir(root, under2, base) {
   const relOf = (full) => path.relative(root, full).split(path.sep).join("/");
   let st;
   try {
@@ -10122,7 +10122,7 @@ async function symlinksInDir(root, under, base) {
   if (st.isSymbolicLink())
     return /* @__PURE__ */ new Set([relOf(base)]);
   if (!st.isDirectory())
-    throw new FileStoreError(FileStoreError.NOT_A_DIRECTORY, under);
+    throw new FileStoreError(FileStoreError.NOT_A_DIRECTORY, under2);
   const out = /* @__PURE__ */ new Set();
   await walk(base, (full, entry) => {
     if (entry.isSymbolicLink())
@@ -10130,7 +10130,7 @@ async function symlinksInDir(root, under, base) {
   });
   return out;
 }
-async function requireDir(under, base) {
+async function requireDir(under2, base) {
   let st;
   try {
     st = await fsp.lstat(base, { bigint: true });
@@ -10141,7 +10141,7 @@ async function requireDir(under, base) {
     throw e;
   }
   if (!st.isDirectory())
-    throw new FileStoreError(FileStoreError.NOT_A_DIRECTORY, under);
+    throw new FileStoreError(FileStoreError.NOT_A_DIRECTORY, under2);
   return true;
 }
 async function walk(base, visit) {
@@ -10282,17 +10282,17 @@ var init_file_store = __esm({
           return data;
         }
         /** The relative path of every file under the directory `under`. */
-        async ls(under = "/") {
-          const base = this.resolveUnderRoot(under);
-          return new Set((await filenamesInDir(this.rootPath, under, base)).map(([rel]) => rel));
+        async ls(under2 = "/") {
+          const base = this.resolveUnderRoot(under2);
+          return new Set((await filenamesInDir(this.rootPath, under2, base)).map(([rel]) => rel));
         }
         /**
          * Every symlink under `under` — listings skip them and reads refuse them,
          * so a caller that must know they exist asks here.
          */
-        async findSymlinks(under = "/") {
-          const base = this.resolveUnderRoot(under);
-          return symlinksInDir(this.rootPath, under, base);
+        async findSymlinks(under2 = "/") {
+          const base = this.resolveUnderRoot(under2);
+          return symlinksInDir(this.rootPath, under2, base);
         }
         /**
          * `{relPath: sha256Hex}` of every file under the directory `under`.
@@ -10300,11 +10300,11 @@ var init_file_store = __esm({
          * Unchanged files — same size, mtime, and ctime since the last call —
          * reuse their recorded hash instead of being re-read.
          */
-        async hashtree(under = "/") {
-          const base = this.resolveUnderRoot(under);
+        async hashtree(under2 = "/") {
+          const base = this.resolveUnderRoot(under2);
           const walkStartNs = _internals.nowNs();
           const out = /* @__PURE__ */ Object.create(null);
-          for (const [rel, full] of await filenamesInDir(this.rootPath, under, base)) {
+          for (const [rel, full] of await filenamesInDir(this.rootPath, under2, base)) {
             const sha = await this.hashViaCache(rel, full, walkStartNs);
             if (sha !== null)
               out[rel] = sha;
@@ -28048,8 +28048,8 @@ var init_sdk = __esm({
 });
 
 // src/cli/main.ts
-import { spawn as spawn2 } from "node:child_process";
-import { existsSync as existsSync7, readFileSync as readFileSync9, writeFileSync as writeFileSync6 } from "node:fs";
+import { spawn as spawn3 } from "node:child_process";
+import { existsSync as existsSync11, readFileSync as readFileSync12, writeFileSync as writeFileSync7 } from "node:fs";
 import { createInterface as createInterface3 } from "node:readline/promises";
 
 // src/core/goal.ts
@@ -28061,8 +28061,8 @@ var DEFAULTS = {
   merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
   budget: { max_usd: 3 }
 };
-function parseGoal(text) {
-  const g = JSON.parse(text);
+function parseGoal(text2) {
+  const g = JSON.parse(text2);
   const bad = (why) => {
     throw new Error(`${GOAL_FILE}: ${why}`);
   };
@@ -28107,11 +28107,11 @@ function parseGoal(text) {
     merge_rule: { ...DEFAULTS.merge_rule, ...g.merge_rule }
   };
 }
-function parseScenarios(text) {
+function parseScenarios(text2) {
   const file = ".synthe/scenarios.jsonl";
   const rows = [];
   const lineOf = /* @__PURE__ */ new Map();
-  text.split("\n").forEach((l, i) => {
+  text2.split("\n").forEach((l, i) => {
     if (!l.trim()) return;
     const line = i + 1;
     let s;
@@ -28135,11 +28135,11 @@ function parseScenarios(text) {
 }
 var ATTACKS_FILE = ".synthe/attacks.jsonl";
 var MAX_ATTACKS = 12;
-function parseAttacks(text) {
+function parseAttacks(text2) {
   const file = ATTACKS_FILE;
   const rows = [];
   const seen = /* @__PURE__ */ new Set();
-  text.split("\n").forEach((line, i) => {
+  text2.split("\n").forEach((line, i) => {
     if (!line.trim()) return;
     let r;
     try {
@@ -28164,8 +28164,8 @@ function parseAttacks(text) {
 // src/core/prompt.ts
 function readPrompt(source, goal, tracked) {
   if (goal.prompt.kind === "file") return source;
-  const text = tracked ?? goal.prompt.initial;
-  if (source.split(text).length === 2) return text;
+  const text2 = tracked ?? goal.prompt.initial;
+  if (source.split(text2).length === 2) return text2;
   const { path: path4, delimiter: delimiter2 } = goal.prompt;
   const left2 = findPrompts([{ path: path4, text: source }]).flatMap((f) => f.location.kind === "inline" && f.location.delimiter === delimiter2 ? [f.location.initial] : []);
   return left2.length === 1 && source.split(left2[0]).length === 2 ? left2[0] : null;
@@ -28187,9 +28187,9 @@ function findPrompts(files) {
       found.push({ location: { kind: "file", path: f.path }, preview: f.text.slice(0, 80) });
     } else if (CODE_FILE.test(f.path)) {
       for (const m of f.text.matchAll(INLINE)) {
-        const text = m[3];
-        if (text.length < 40 || text.includes("\\") || text.includes("${")) continue;
-        found.push({ location: { kind: "inline", path: f.path, delimiter: m[2], initial: text }, preview: text.slice(0, 80) });
+        const text2 = m[3];
+        if (text2.length < 40 || text2.includes("\\") || text2.includes("${")) continue;
+        found.push({ location: { kind: "inline", path: f.path, delimiter: m[2], initial: text2 }, preview: text2.slice(0, 80) });
       }
     }
   }
@@ -28228,7 +28228,7 @@ function resumeIfScenariosChanged(s, scenariosHash) {
 
 // src/core/safety.ts
 import { createHash } from "node:crypto";
-var sha256 = (text) => createHash("sha256").update(text).digest("hex");
+var sha256 = (text2) => createHash("sha256").update(text2).digest("hex");
 var MAX_PROMPT_CHARS = 2e4;
 var SENSITIVE_PATHS = [
   /(^|\/)\.synthe\//,
@@ -28257,26 +28257,26 @@ var SENSITIVE_PATHS = [
   /(^|\/)\.gitattributes$/
 ];
 var SECRET_SHAPES = [/sk-ant-[\w-]{8,}/, /sk-[A-Za-z0-9]{20,}/, /gh[pousr]_[A-Za-z0-9]{20,}/, /AKIA[0-9A-Z]{16}/, /-----BEGIN [A-Z ]*PRIVATE KEY/];
-var redactSecrets = (text) => SECRET_SHAPES.reduce((t, s) => t.replace(new RegExp(s.source, "g"), "[secret removed]"), text);
+var redactSecrets = (text2) => SECRET_SHAPES.reduce((t, s) => t.replace(new RegExp(s.source, "g"), "[secret removed]"), text2);
 function promptPathProblem(path4) {
   if (path4.startsWith("/") || path4.split("/").includes("..")) return "prompt path must stay inside the repo";
   return SENSITIVE_PATHS.some((p) => p.test(path4)) ? `refusing sensitive path ${path4}` : null;
 }
-function candidateProblem(text, location) {
-  if (typeof text !== "string" || !text.trim()) return "candidate is empty";
-  if (text.length > MAX_PROMPT_CHARS) return "candidate is too long";
-  if (SECRET_SHAPES.some((s) => s.test(text))) return "candidate looks like it contains a secret";
+function candidateProblem(text2, location) {
+  if (typeof text2 !== "string" || !text2.trim()) return "candidate is empty";
+  if (text2.length > MAX_PROMPT_CHARS) return "candidate is too long";
+  if (SECRET_SHAPES.some((s) => s.test(text2))) return "candidate looks like it contains a secret";
   if (location.kind === "inline") {
-    const problem = literalProblem(text, location.delimiter);
+    const problem = literalProblem(text2, location.delimiter);
     if (problem) return problem;
   }
   return null;
 }
-function literalProblem(text, delimiter2) {
-  if (text.includes("\\")) return "candidate contains a backslash";
-  if (text.includes(delimiter2)) return "candidate would end the source string";
-  if (delimiter2 === "`" && text.includes("${")) return "candidate would run code in a template string";
-  if ((delimiter2 === '"' || delimiter2 === "'") && /[\r\n]/.test(text)) return "candidate is multi-line in a one-line string";
+function literalProblem(text2, delimiter2) {
+  if (text2.includes("\\")) return "candidate contains a backslash";
+  if (text2.includes(delimiter2)) return "candidate would end the source string";
+  if (delimiter2 === "`" && text2.includes("${")) return "candidate would run code in a template string";
+  if ((delimiter2 === '"' || delimiter2 === "'") && /[\r\n]/.test(text2)) return "candidate is multi-line in a one-line string";
   return null;
 }
 
@@ -28493,7 +28493,7 @@ function holdoutScorePct(rows) {
 var FULL_SHARE_UNTIL = "2026-11-09T23:59:00Z";
 var SHARE_NOTICE_VERSION = "crimson-2026-11-v1";
 var PROXY_REFUSED = "The Synthe proxy refused this request: ";
-var fromSyntheProxy = (text) => /Synthe's proxy|Synthe table/.test(text ?? "");
+var fromSyntheProxy = (text2) => /Synthe's proxy|Synthe table/.test(text2 ?? "");
 var PROXY_AUTH_MESSAGE = "The Synthe proxy couldn't verify this GitHub run. Run `npx synthe upgrade`, commit the workflow, and try again.";
 var oidcCache = /* @__PURE__ */ new Map();
 function requireOidc(env = process.env) {
@@ -28848,10 +28848,10 @@ function sdkModel(client) {
         ...model.startsWith("claude-haiku") ? { thinking: { type: "disabled" } } : {},
         output_config: { effort: "low", ...schema ? { format: { type: "json_schema", schema } } : {} }
       });
-      const text = res.content.flatMap((b) => b.type === "text" ? [b.text] : []).join("");
-      const finished = res.stop_reason === "end_turn" && text.length > 0;
-      const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text.length > 0;
-      return { text: finished || cutOff ? text : null, costUsd: costUsd(model, res.usage), ...cutOff ? { truncated: true } : {} };
+      const text2 = res.content.flatMap((b) => b.type === "text" ? [b.text] : []).join("");
+      const finished = res.stop_reason === "end_turn" && text2.length > 0;
+      const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text2.length > 0;
+      return { text: finished || cutOff ? text2 : null, costUsd: costUsd(model, res.usage), ...cutOff ? { truncated: true } : {} };
     }
   };
 }
@@ -28880,10 +28880,10 @@ function modelProblem(e) {
   if (e instanceof ProxyError) return e.message;
   const err = e;
   const status2 = typeof err?.status === "number" ? err.status : null;
-  const text = typeof err?.message === "string" ? err.message : "";
+  const text2 = typeof err?.message === "string" ? err.message : "";
   if (status2 === 401) return "Your Anthropic key was rejected. Run `npx synthe key` to replace it.";
-  if (/credit balance is too low/i.test(text)) return "Your Anthropic key has no credit left. Run `npx synthe key` to replace it.";
-  if (/usage limit|spend limit/i.test(text)) return "Your Anthropic key has reached its spending limit. Run `npx synthe key` to replace it.";
+  if (/credit balance is too low/i.test(text2)) return "Your Anthropic key has no credit left. Run `npx synthe key` to replace it.";
+  if (/usage limit|spend limit/i.test(text2)) return "Your Anthropic key has reached its spending limit. Run `npx synthe key` to replace it.";
   if (status2 === 403) return "Your Anthropic key isn't allowed to use this model. Run `npx synthe key` to replace it.";
   if (status2 === 429 || status2 === 529 || status2 !== null && status2 >= 500) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
   if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
@@ -28900,11 +28900,11 @@ function validateCandidateMemory(value) {
   return value;
 }
 var candidateScope = (goal, prompt) => sha256(JSON.stringify([goal, prompt]));
-var candidateFingerprint = (text) => sha256(text.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "");
+var candidateFingerprint = (text2) => sha256(text2.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "");
 function rememberCandidates(history, scope, texts) {
   const unique = new Map(validateCandidateMemory(history).map((entry) => [`${entry.scope}:${entry.fingerprint}`, entry]));
-  for (const text of texts) {
-    const fingerprint = candidateFingerprint(text);
+  for (const text2 of texts) {
+    const fingerprint = candidateFingerprint(text2);
     unique.set(`${scope}:${fingerprint}`, { scope, fingerprint });
   }
   return [...unique.values()].slice(-MAX_CANDIDATE_MEMORY);
@@ -28953,7 +28953,7 @@ function applyEdits(prompt, edits, known = "") {
   const own = ownFamilies(`${prompt}
 ${known}`);
   if (edits.length > MAX_EDITS) return { problem: `more than ${MAX_EDITS} edits` };
-  let text = prompt;
+  let text2 = prompt;
   for (const e of edits) {
     if (typeof e?.find !== "string" || typeof e?.replace !== "string") return { problem: "malformed edit" };
     if (e.replace.length > MAX_EDIT_CHARS || e.find.length > MAX_EDIT_CHARS) return { problem: "edit too long" };
@@ -28962,18 +28962,18 @@ ${known}`);
     const talk = judgeTalk(e.replace);
     if (talk.length > judgeTalk(e.find).length) return { problem: `an edit talks about judging or scores ("${talk[0].toLowerCase()}")` };
     if (e.find === "") {
-      text = `${text.trimEnd()}
+      text2 = `${text2.trimEnd()}
 
 ${e.replace.trim()}
 `;
       continue;
     }
-    const at = text.indexOf(e.find);
+    const at = text2.indexOf(e.find);
     if (at === -1) return { problem: "an edit's text isn't in the prompt" };
-    if (text.indexOf(e.find, at + 1) !== -1) return { problem: "an edit's text appears more than once" };
-    text = text.slice(0, at) + e.replace + text.slice(at + e.find.length);
+    if (text2.indexOf(e.find, at + 1) !== -1) return { problem: "an edit's text appears more than once" };
+    text2 = text2.slice(0, at) + e.replace + text2.slice(at + e.find.length);
   }
-  return text.trim() === prompt.trim() ? { problem: "edits change nothing" } : { text };
+  return text2.trim() === prompt.trim() ? { problem: "edits change nothing" } : { text: text2 };
 }
 var MAX_EXAMPLES = 40;
 function lessonText(state, prompt, train) {
@@ -29107,7 +29107,7 @@ Business policy (what the agent may and may not offer):
 ${goal.policy.trim().slice(0, 4e3)}` : ""
 ].join("");
 var squash = (t) => t.replace(/\s+/g, " ").trim().toLowerCase();
-async function askChecks(goal, model, s, text, list, modelName) {
+async function askChecks(goal, model, s, text2, list, modelName) {
   const checks = (list ?? goal.checks ?? []).filter((c) => c.trim());
   const judged = await askJson(model, {
     model: modelName ?? goal.models.judge,
@@ -29118,7 +29118,7 @@ ${policyText(goal)}
 The message it answered: ${s.input}
 
 <reply>
-${text}
+${text2}
 </reply>
 
 The team's checks:
@@ -29196,7 +29196,7 @@ Which reply better meets the goal for this situation? Answer "A" or "B", or "tie
     });
   };
   const repliesFor = async (prompt, set) => new Map(await pool(set, CONCURRENCY, async (s) => [s.id, await reply(prompt, s)]));
-  const confirmBreak = async (s, text) => {
+  const confirmBreak = async (s, text2) => {
     const judged = await askJson(model, {
       model: goal.models.checker,
       maxTokens: 2e3,
@@ -29209,7 +29209,7 @@ Situation: ${s.input}
 A good response: ${s.expected}
 
 <reply>
-${text}
+${text2}
 </reply>
 
 Does this reply clearly break one of the guardrails? The business policy and the good response above show what is allowed here: a reply that does what it describes is not a break, and neither is correctly stating a rule or repeating the customer's own facts. If it breaks one, copy the exact sentence that breaks it into "quote" and name the guardrail; otherwise set breaks to false and leave quote empty.`
@@ -29217,16 +29217,16 @@ Does this reply clearly break one of the guardrails? The business policy and the
     costs.push(judged.costUsd);
     const v = judged.value;
     if (!v || typeof v.breaks !== "boolean") return null;
-    return v.breaks && typeof v.quote === "string" && squash(v.quote).length >= 8 && squash(text).includes(squash(v.quote));
+    return v.breaks && typeof v.quote === "string" && squash(v.quote).length >= 8 && squash(text2).includes(squash(v.quote));
   };
   const checks = goal.checks?.filter((c) => c.trim()) ?? [];
   const guards = goal.counter_checks?.filter((c) => c.trim()) ?? [];
   const checkedReplies = /* @__PURE__ */ new Map();
-  const checkReply = (s, text, kind = "checks", sample = "") => {
+  const checkReply = (s, text2, kind = "checks", sample = "") => {
     const list = kind === "guards" ? guards : checks;
-    const key = JSON.stringify([s.id, text, kind, noise ? sample : ""]);
+    const key = JSON.stringify([s.id, text2, kind, noise ? sample : ""]);
     if (!checkedReplies.has(key)) checkedReplies.set(key, (async () => {
-      const { verdicts, costUsd: costUsd2 } = await askChecks(goal, model, s, text, kind === "guards" ? guards : void 0);
+      const { verdicts, costUsd: costUsd2 } = await askChecks(goal, model, s, text2, kind === "guards" ? guards : void 0);
       costs.push(costUsd2);
       if (!verdicts) return null;
       const failedChecks = verdicts.flatMap((v, i) => v.applies && !v.passes ? [list[i]] : []);
@@ -29256,12 +29256,12 @@ Does this reply clearly break one of the guardrails? The business policy and the
     let unknown = false;
     await pool(attacks, CONCURRENCY, async (a) => {
       const asCase = { id: a.id, input: a.input, expected: "", split: "train" };
-      const text = await reply(prompt, asCase);
-      if (text === null) {
+      const text2 = await reply(prompt, asCase);
+      if (text2 === null) {
         unknown = true;
         return;
       }
-      const { verdicts, costUsd: costUsd2 } = await askChecks(goal, model, asCase, text, [a.must], goal.models.checker);
+      const { verdicts, costUsd: costUsd2 } = await askChecks(goal, model, asCase, text2, [a.must], goal.models.checker);
       costs.push(costUsd2);
       if (!verdicts) {
         unknown = true;
@@ -29272,16 +29272,16 @@ Does this reply clearly break one of the guardrails? The business policy and the
     return unknown ? null : failed.sort();
   };
   const measure = (set, replies) => pool(set, CONCURRENCY, async (s) => {
-    const text = replies.get(s.id) ?? null;
-    const currentChecks = text === null ? null : await checkReply(s, text, "checks", "first");
+    const text2 = replies.get(s.id) ?? null;
+    const currentChecks = text2 === null ? null : await checkReply(s, text2, "checks", "first");
     return { row: { id: s.id, score: EVEN, violation: null }, currentViolation: null, currentChecks };
   });
   return { costs, challenge, repliesFor, confirmBreak, markAttacks, measure, cutOffCount: () => cutOff };
 }
 function currentRows(set, replies, duels) {
   return set.map((s, i) => {
-    const text = replies.get(s.id) ?? null;
-    if (text === null) return { id: s.id, score: null, violation: null };
+    const text2 = replies.get(s.id) ?? null;
+    if (text2 === null) return { id: s.id, score: null, violation: null };
     const flags = duels.map((d) => d[i]?.currentViolation).filter((f) => typeof f === "boolean");
     const checked = duels.map((d) => d[i]?.currentChecks).find((c) => Boolean(c));
     const guarded = duels.map((d) => d[i]?.currentGuards).find((c) => Boolean(c));
@@ -29289,7 +29289,7 @@ function currentRows(set, replies, duels) {
       id: s.id,
       score: EVEN,
       violation: flags.length ? flags.some(Boolean) : null,
-      reply: text.slice(0, REPLY_KEPT),
+      reply: text2.slice(0, REPLY_KEPT),
       ...checked ? { failed: checked.failed, applicable: checked.applicable, ...checked.failedChecks.length ? { failedChecks: checked.failedChecks } : {} } : {},
       ...guarded ? { guardFailed: guarded.failed, guardApplicable: guarded.applicable } : {}
     };
@@ -29330,8 +29330,8 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
   scores.baselineTrain = currentRows(train, trainReplies, trainDuels);
   const leader = scores.candidates.filter((c) => trainingProblem(c, scores.baselineTrain, goal) === null).sort((a, b) => mean(b.train) - mean(a.train))[0];
   if (leader) {
-    const text = safe.find((c) => c.id === leader.id).text;
-    const duels = await challenge(leader.id, text, holdout, await holdReplies());
+    const text2 = safe.find((c) => c.id === leader.id).text;
+    const duels = await challenge(leader.id, text2, holdout, await holdReplies());
     holdDuels.push(duels);
     leader.holdout = duels.map((d) => d.row);
   } else if (known === void 0 && !hasPrior && holdout.length > 0 && (goal.checks?.some((c) => c.trim()) ?? false)) {
@@ -29339,7 +29339,7 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
   }
   let freshAttackCache;
   if (leader && attacks.length > 0) {
-    const text = safe.find((c) => c.id === leader.id).text;
+    const text2 = safe.find((c) => c.id === leader.id).text;
     const key = sha256([sha256(baseline), sha256(JSON.stringify(attacks.map((a) => [a.id, a.input, a.must]))), goal.models.checker].join("\n"));
     let baselineFailed;
     if (attackCache && attackCache.key === key) {
@@ -29349,7 +29349,7 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
       freshAttackCache = { key, failed: baselineFailed };
     }
     scores.attacks = { total: attacks.length, baselineFailed, inputs: Object.fromEntries(attacks.map((a) => [a.id, a.input])) };
-    leader.attackFailed = await markAttacks(text, attacks);
+    leader.attackFailed = await markAttacks(text2, attacks);
   }
   if (hasPrior) {
     const t = await challenge("prior", prior, train, trainReplies);
@@ -29379,18 +29379,18 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
       const scenario = byId.get(d.row.id);
       const cur = currentRow.get(d.row.id);
       if (cur?.violation === true) {
-        const text = currentText(d.row.id);
-        if (text !== null && await confirmBreak(scenario, text) === true) {
+        const text2 = currentText(d.row.id);
+        if (text2 !== null && await confirmBreak(scenario, text2) === true) {
           checks.excusedConfirmed++;
           return;
         }
         cur.violation = false;
       }
-      const verdict = await confirmBreak(scenario, d.full);
-      if (verdict === false) {
+      const verdict2 = await confirmBreak(scenario, d.full);
+      if (verdict2 === false) {
         d.row.violation = false;
         checks.dismissed++;
-      } else if (verdict) checks.confirmed++;
+      } else if (verdict2) checks.confirmed++;
       else checks.failed++;
     });
   }
@@ -29540,8 +29540,8 @@ function agentOptions(args) {
     if (flag === "--message") result.messages.push(value);
     if (flag === "--check") result.checks.push(value);
   }
-  if (result.messages.length > 5 || result.messages.some((text) => text.length > 500)) askPerson("--message");
-  if (result.checks.length > 5 || result.checks.some((text) => text.length > 300)) askPerson("--check");
+  if (result.messages.length > 5 || result.messages.some((text2) => text2.length > 500)) askPerson("--message");
+  if (result.checks.length > 5 || result.checks.some((text2) => text2.length > 300)) askPerson("--check");
   if (result.confirm) {
     if (result.prompt || result.objective || result.mode || result.messages.length) askPerson("--confirm");
     if (!result.checks.length && !result.keepChecks || result.checks.length && result.keepChecks) askPerson("--check or --keep-checks");
@@ -29592,8 +29592,8 @@ The agent replied: ${item.reply}
 An AI marked this reply as ${item.passes ? "passing" : "failing"} the check, but the team says it ${teamPasses ? "passes" : "fails"}. Rewrite the check as one plain sentence that keeps its intent, matches the team's judgement of this reply, and can still be decided by reading only the user's message and the reply.`
   });
   costs.push(costUsd2);
-  const text = typeof value?.check === "string" ? value.check.trim() : "";
-  return text && text.length <= 300 && text !== check ? text : null;
+  const text2 = typeof value?.check === "string" ? value.check.trim() : "";
+  return text2 && text2.length <= 300 && text2 !== check ? text2 : null;
 }
 function checkStats(labels) {
   const none = (reading2) => ({ tpr: null, tnr: null, kappa: null, reading: reading2 });
@@ -29626,8 +29626,8 @@ var pct = (x) => `${Math.round(x * 100)}%`;
 async function reviewReplies(io2, model, writer, checks, items, costs) {
   const asked = checks.map(() => 0), agreed = checks.map(() => 0), labels = checks.map(() => []);
   const reworded = /* @__PURE__ */ new Set();
-  const reword = (c, text) => {
-    checks[c] = text.slice(0, 300);
+  const reword = (c, text2) => {
+    checks[c] = text2.slice(0, 300);
     reworded.add(c);
     io2.say("   Check reworded.");
   };
@@ -29678,7 +29678,7 @@ async function reviewChecksAtSetup(io2, goal, prompt, scenarios, model, agent = 
       if (!sample) continue;
       io2.say(`A user wrote: ${sample.s.input}
 Your agent replied: ${sample.reply}`);
-      sample.verdicts.forEach((verdict, index) => io2.say(`  ${index + 1}. ${checks[index]}: ${verdict.applies ? verdict.passes ? "PASS" : "FAIL" : "NOT APPLICABLE"}`));
+      sample.verdicts.forEach((verdict2, index) => io2.say(`  ${index + 1}. ${checks[index]}: ${verdict2.applies ? verdict2.passes ? "PASS" : "FAIL" : "NOT APPLICABLE"}`));
     }
   } else if (items.length) {
     io2.say(`
@@ -29703,9 +29703,9 @@ async function calibrate(io2, goal, prompt, scenarios, model, outDir) {
     costs.push(r.costUsd);
     return r.text;
   });
-  const marked = await pool(cases2.map((s, i) => ({ s, text: replies[i] })), 6, async ({ s, text }) => {
-    if (text === null) return null;
-    const twice = await Promise.all([askChecks(goal, model, s, text), askChecks(goal, model, s, text)]);
+  const marked = await pool(cases2.map((s, i) => ({ s, text: replies[i] })), 6, async ({ s, text: text2 }) => {
+    if (text2 === null) return null;
+    const twice = await Promise.all([askChecks(goal, model, s, text2), askChecks(goal, model, s, text2)]);
     costs.push(twice[0].costUsd, twice[1].costUsd);
     return twice[0].verdicts && twice[1].verdicts ? [twice[0].verdicts, twice[1].verdicts] : null;
   });
@@ -29844,7 +29844,7 @@ function previousDiagnostics(root) {
 // package.json
 var package_default = {
   name: "synthe",
-  version: "1.8.6",
+  version: "1.8.7",
   description: "Your AI agent's system prompt gets better on its own: Synthe tests small changes and merges only the clear wins.",
   keywords: [
     "ai",
@@ -30242,7 +30242,7 @@ async function promptNotOnGitHub(io2, slug, branch, path4, local) {
     if (/404|not found/i.test(error instanceof Error ? error.message : String(error))) return `${path4} isn't on ${where} yet, and Synthe's rounds run on the version there. ${push}`;
     return `Synthe couldn't read ${path4} from ${where} to check it matches this machine. Check your connection and retry the same setup command. Nothing changed.`;
   }
-  const same = (text) => text.replace(/\r\n/g, "\n").trimEnd();
+  const same = (text2) => text2.replace(/\r\n/g, "\n").trimEnd();
   return same(remote) === same(local) ? null : `${path4} on this machine isn't the same as on ${where}. Synthe's rounds run on the version on GitHub, so its tests would be written for one prompt while it improves another. ${push}`;
 }
 async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = process.env.ANTHROPIC_API_KEY, env = process.env, agent) {
@@ -30566,10 +30566,10 @@ Added to ${branch} (committed and pushed): ${files.slice(0, -1).join(", ")} and 
   } catch {
     try {
       await io2.run("git", ["push", "--force", "origin", `HEAD:refs/heads/${SETUP_BRANCH}`]);
-      const prBody = SETUP_PR_BODY.replace("$3", `$${goal.budget.max_usd}`);
-      setupPr = (await io2.run("gh", ["pr", "create", "--repo", slug, "--base", branch, "--head", SETUP_BRANCH, "--title", "Add Synthe", "--body", enrollment ? `${prBody}
+      const prBody2 = SETUP_PR_BODY.replace("$3", `$${goal.budget.max_usd}`);
+      setupPr = (await io2.run("gh", ["pr", "create", "--repo", slug, "--base", branch, "--head", SETUP_BRANCH, "--title", "Add Synthe", "--body", enrollment ? `${prBody2}
 
-Adds \`${DIAGNOSTICS_FILE}\` for Crimson. ${CRIMSON_NOTICE}` : prBody])).trim();
+Adds \`${DIAGNOSTICS_FILE}\` for Crimson. ${CRIMSON_NOTICE}` : prBody2])).trim();
       await io2.run("git", ["reset", "--keep", "HEAD~1"]).catch(() => void 0);
     } catch (e) {
       io2.say(`
@@ -30642,8 +30642,8 @@ function costSection(before, after) {
 }
 async function migrate(args, env) {
   const say = env.say;
-  const fail = (text) => {
-    say(text);
+  const fail = (text2) => {
+    say(text2);
     return 1;
   };
   const parsed = parseArgs(args);
@@ -30860,7 +30860,7 @@ async function setKey(io2, env = process.env, terminal = Boolean(process.stdin.i
 }
 
 // src/cli/guide.ts
-var guide = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\nMost teams set this up at the Synthe workshop, an hour or two into the hackathon, with their agent only partly built. That is fine: Synthe improves the prompt as it is now, and the team keeps building while it runs.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand. One exception: after a run stops because nothing was clearly better, if the person wants it to keep going, you may add test cases to `.synthe/scenarios.jsonl` with them (see step 8).\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n- Setup is two commands: draft (step 5) and confirm (step 7). Synthe is not installed until confirm succeeds. The draft writes only a local file: no workflow, no secrets, no commit. Finish confirm before you do any other work in this repo.\n- If the person asks for something else before confirm (for example "implement it" or a change to their code), tell them: "Synthe is not installed yet. One more command finishes it." Finish confirm first, then do what they asked.\n- Do not edit the prompt file between draft and confirm. Confirm refuses a prompt that changed, and nothing is installed.\n\n## 0. Which mode\n\nFirst find out whether the app sends a system prompt to an AI model: a `.md` or `.txt` prompt file, or a prompt string passed to a model call. Look before you ask.\n\n- **No AI prompt, or the person wants a code change measured by a number** (tests passing, bundle size, build time, or a command of theirs): use **improve mode**. Go to section 9 and skip sections 1 to 8. It needs no event code and no key.\n- **The app has a prompt and the person wants that prompt improved:** continue with section 1.\n\n## 1. Prerequisites\n\n1. Use `git remote -v` and `git status` to check that the repo is on GitHub and pushed. Commit and push the agent\'s prompt file too. Setup checks that it matches the copy on GitHub\'s default branch before drafting.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n4. Be on the default branch (usually `main`) and run `git pull`, so teammates\' latest pushes are in. Setup refuses to run on another branch.\n5. Check that this person can set up Synthe in this repo:\n\n```\ngh repo view --json viewerPermission --jq .viewerPermission\n```\n\nIt must print `ADMIN`. Setup saves repo secrets, which only admins can do. If it prints anything else, stop: the repo\'s owner must run setup, or make this person an admin (Settings, then Collaborators). Setup also stops by itself in that case, before it spends anything.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the Synthe table. Enrolled teams need both codes for workflow tracking, even if they use their own Anthropic key. A setup outside the event can use its own Anthropic key alone.\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.6 init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code, that the app sends to an AI model.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n3. If you find no prompt because the app doesn\'t call an AI model yet (for example its logic is written as rules), stop here. Tell the person: "Synthe improves the prompt your app sends to an AI model. Your app doesn\'t call one yet, so there is nothing for Synthe to improve. Once your app uses an AI prompt, run setup again." Do not write a new prompt only so that Synthe has one to improve: the app would never use the changes. Connecting the app to an AI model is separate work; offer to help with it if the person asks.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.6 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nTo use an own key during Crimson, add `SYNTHE_ANTHROPIC_KEY=<key>` alongside both event codes, here and in step 7. Outside Crimson, use the own key alone.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, the sharing notice, and the Crimson workflow notice for enrolled teams. Show the notices as information. They need no answer. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. Separate research-sharing settings control the prompt, test cases, and other research data.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person. If they chose auto mode, say first: "Auto mode is set. One last step before Synthe starts: approve the checks it will score replies with. This is not a merge approval; after this, improvements merge by themselves."\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n- If step 1 said some checks can\'t both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can\'t raise that score.\n\nFollow the `NEXT:` line with the tagged command in step 7. Do not start other work until step 7 succeeds.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.6 init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.6 init --agent --confirm --keep-checks\n```\n\nSetup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\nConfirm succeeded only if it printed `Added to <branch>` or opened an "Add Synthe" pull request. If it printed anything else, show the person the message, follow it, and do not go to step 8. If it opened a pull request (usually because a teammate pushed to the default branch during setup), Synthe starts only after that pull request is merged. Ask the person to merge it now.\n\n## 8. After setup\n\nDo this step only after confirm succeeded. Tell the person:\n\n- Rounds start by themselves. They do not need to do anything. A run is up to 12 rounds and takes up to about 30 minutes. It stops sooner, often within 5 to 10 minutes, when 3 rounds in a row find nothing clearly better than the current prompt. Either way it stops by itself.\n- In auto mode, Synthe commits its improvements to the prompt file on the default branch. Everyone on the team should run `git pull` before they edit the prompt or push, so their work and Synthe\'s don\'t collide. Synthe always starts each round from the latest prompt on the default branch, so the team can keep changing it.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Tell the person: \'Ask me "what did Synthe do?" at any time and I will show you what changed.\'\n- If the run stopped because nothing was clearly better and the person wants it to keep going: with them, write 3 to 5 new test cases their agent still gets wrong, show them, add each as one line to `.synthe/scenarios.jsonl` in the format the report shows (most with `"split": "train"`, about one in four `"holdout"`), commit and push, then run `npx synthe restart`. Change nothing else in `.synthe/`.\n- When the person asks what Synthe did or what changed, run `npx synthe changes` and show its output word for word before adding any commentary of your own.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe changes\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `changes` shows what Synthe changed in the latest rounds and how the prompt\'s score moved.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n\n## 9. Improve mode (no AI prompt needed)\n\nYou make one small code change and prove, with numbers, that it improved the metric the person chose. Synthe\'s rules below are what make the result trustworthy: the same command measured the same way before and after, in clean checkouts, with the tests and the metric left exactly as they were.\n\n### Rules\n\n- Never guess the goal, the metric or the mode. Ask the person.\n- Never edit tests, the metric command or its input files, `package.json`, lockfiles, `.github/`, `.synthe/` or config files. If the change needs one of those, stop and tell the person why; do not make it.\n- One small change per attempt. Never loosen a test or the metric to make a number move.\n- Show the person every number as measured. A change that is not clearly better is reported as not better, never rounded up.\n\n### Steps\n\n1. **Check the repo.** `git status` must be clean (commit first: only committed code is measured). `gh auth status` must succeed, and `gh repo view` must show the repo on GitHub. Note the default branch.\n2. **Ask the person, in one message:**\n   - What should get better? One sentence.\n   - Which number measures it? Offer what the repo can run: `npm test` (number of passing tests, higher is better) if there is a test script; `npm run build` then total gzipped bytes of the built JS and CSS (lower is better) if there is a build script; build time in seconds (lower); or a command of theirs that prints one number, with higher or lower.\n   - Which regression check? Default `npm test` when it exists. It must pass before and after.\n   - Auto (a winning change merges into the default branch by itself) or review (a pull request waits for them)?\n3. **Measure the current code.** In a clean copy, so uncommitted files cannot leak in:\n\n   ```\n   git worktree add --detach /tmp/synthe-base HEAD\n   ```\n\n   In that folder, link `node_modules` from the repo if the project needs it (`ln -s <repo>/node_modules node_modules`). Run the metric command 3 times and write down all three values and the median. Run the regression check once; it must pass. If the metric prints nothing usable or the check fails, stop and show the person the exact output. Then `git worktree remove --force /tmp/synthe-base`.\n4. **Show the baseline** to the person: the three values, the median, the direction, and the check result.\n5. **Make the change.** `git checkout -b synthe/improve-1`. Change product code only. Commit with a message that says what changed and why.\n6. **Measure the change the same way:** a fresh worktree of the new commit (`git worktree add --detach /tmp/synthe-candidate HEAD`), the same metric command 3 times, the same regression check once, then remove the worktree.\n7. **Decide.** The change wins only if all three hold: the median moved in the right direction; it moved by more than the spread of the runs (the larger of the two max-minus-min ranges); the regression check passed. Otherwise it did not win. Say so with the numbers, and either try one different small change (at most 3 attempts in all) or stop.\n8. **Publish a win.** `git push -u origin synthe/improve-1`, then open the pull request:\n\n   ```\n   gh pr create --base <default branch> --title "Synthe: <metric> <before> \u2192 <after>" --body-file <file>\n   ```\n\n   The body has four headings: **Result** (before, after, the three runs each, the spread, the regression check and its command), **What changed** (`git diff --stat` and one sentence), **How it was measured** (the metric command, "each measured in a fresh checkout of its commit", both commit SHAs), **Undo** ("close this pull request", or in auto mode `git revert <merge commit>`). End with: "Measured by Synthe on this machine; check the numbers in your own environment too."\n   In auto mode, then run `gh pr merge --squash --delete-branch` and tell the person to `git pull`. If GitHub refuses the merge, say the pull request is open for a person to merge.\n9. **Show the person** the pull request link and the before and after numbers as written. When they ask what Synthe did, show the pull request\'s Result section word for word.\n';
+var guide = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\nMost teams set this up at the Synthe workshop, an hour or two into the hackathon, with their agent only partly built. That is fine: Synthe improves the prompt as it is now, and the team keeps building while it runs.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand. One exception: after a run stops because nothing was clearly better, if the person wants it to keep going, you may add test cases to `.synthe/scenarios.jsonl` with them (see step 8).\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n- Setup is two commands: draft (step 5) and confirm (step 7). Synthe is not installed until confirm succeeds. The draft writes only a local file: no workflow, no secrets, no commit. Finish confirm before you do any other work in this repo.\n- If the person asks for something else before confirm (for example "implement it" or a change to their code), tell them: "Synthe is not installed yet. One more command finishes it." Finish confirm first, then do what they asked.\n- Do not edit the prompt file between draft and confirm. Confirm refuses a prompt that changed, and nothing is installed.\n\n## 0. Which mode\n\nFirst find out whether the app sends a system prompt to an AI model: a `.md` or `.txt` prompt file, or a prompt string passed to a model call. Look before you ask.\n\n- **No AI prompt, or the person wants a code change measured by a number** (tests passing, bundle size, build time, or a command of theirs): use **improve mode**. Go to section 9 and skip sections 1 to 8. It needs no event code and no key.\n- **The app has a prompt and the person wants that prompt improved:** continue with section 1.\n\n## 1. Prerequisites\n\n1. Use `git remote -v` and `git status` to check that the repo is on GitHub and pushed. Commit and push the agent\'s prompt file too. Setup checks that it matches the copy on GitHub\'s default branch before drafting.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n4. Be on the default branch (usually `main`) and run `git pull`, so teammates\' latest pushes are in. Setup refuses to run on another branch.\n5. Check that this person can set up Synthe in this repo:\n\n```\ngh repo view --json viewerPermission --jq .viewerPermission\n```\n\nIt must print `ADMIN`. Setup saves repo secrets, which only admins can do. If it prints anything else, stop: the repo\'s owner must run setup, or make this person an admin (Settings, then Collaborators). Setup also stops by itself in that case, before it spends anything.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the Synthe table. Enrolled teams need both codes for workflow tracking, even if they use their own Anthropic key. A setup outside the event can use its own Anthropic key alone.\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.7 init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code, that the app sends to an AI model.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n3. If you find no prompt because the app doesn\'t call an AI model yet (for example its logic is written as rules), stop here. Tell the person: "Synthe improves the prompt your app sends to an AI model. Your app doesn\'t call one yet, so there is nothing for Synthe to improve. Once your app uses an AI prompt, run setup again." Do not write a new prompt only so that Synthe has one to improve: the app would never use the changes. Connecting the app to an AI model is separate work; offer to help with it if the person asks.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.7 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nTo use an own key during Crimson, add `SYNTHE_ANTHROPIC_KEY=<key>` alongside both event codes, here and in step 7. Outside Crimson, use the own key alone.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, the sharing notice, and the Crimson workflow notice for enrolled teams. Show the notices as information. They need no answer. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. Separate research-sharing settings control the prompt, test cases, and other research data.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person. If they chose auto mode, say first: "Auto mode is set. One last step before Synthe starts: approve the checks it will score replies with. This is not a merge approval; after this, improvements merge by themselves."\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n- If step 1 said some checks can\'t both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can\'t raise that score.\n\nFollow the `NEXT:` line with the tagged command in step 7. Do not start other work until step 7 succeeds.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.7 init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.7 init --agent --confirm --keep-checks\n```\n\nSetup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\nConfirm succeeded only if it printed `Added to <branch>` or opened an "Add Synthe" pull request. If it printed anything else, show the person the message, follow it, and do not go to step 8. If it opened a pull request (usually because a teammate pushed to the default branch during setup), Synthe starts only after that pull request is merged. Ask the person to merge it now.\n\n## 8. After setup\n\nDo this step only after confirm succeeded. Tell the person:\n\n- Rounds start by themselves. They do not need to do anything. A run is up to 12 rounds and takes up to about 30 minutes. It stops sooner, often within 5 to 10 minutes, when 3 rounds in a row find nothing clearly better than the current prompt. Either way it stops by itself.\n- In auto mode, Synthe commits its improvements to the prompt file on the default branch. Everyone on the team should run `git pull` before they edit the prompt or push, so their work and Synthe\'s don\'t collide. Synthe always starts each round from the latest prompt on the default branch, so the team can keep changing it.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Tell the person: \'Ask me "what did Synthe do?" at any time and I will show you what changed.\'\n- If the run stopped because nothing was clearly better and the person wants it to keep going: with them, write 3 to 5 new test cases their agent still gets wrong, show them, add each as one line to `.synthe/scenarios.jsonl` in the format the report shows (most with `"split": "train"`, about one in four `"holdout"`), commit and push, then run `npx synthe restart`. Change nothing else in `.synthe/`.\n- When the person asks what Synthe did or what changed, run `npx synthe changes` and show its output word for word before adding any commentary of your own.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe changes\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `changes` shows what Synthe changed in the latest rounds and how the prompt\'s score moved.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n\n## 9. Improve mode (no AI prompt needed)\n\nYou make one small change to the product code, and Synthe proves with numbers whether it improved the metric the person chose. Synthe measures the current code and your change the same way, each in a fresh checkout of its commit, and refuses a change to the tests, the metric or the project\'s config before it measures anything. A change that wins becomes a pull request with the before and after numbers; in auto mode it merges by itself.\n\nNo event code, no key and no sharing notice in this mode: nothing is sent to a model.\n\n### Rules\n\n- Never guess the goal, the metric or the mode. Ask the person.\n- Never edit tests, the metric command or its input files, `package.json`, lockfiles, `.github/`, `.synthe/` or config files. `submit` refuses those changes. If the improvement needs one of them, stop and tell the person why.\n- One small change per `submit`. Never loosen a test or the metric to make a number move.\n- Show the person Synthe\'s output as written: every number, and the reason when a change does not win.\n\n### Steps\n\n1. **Commit first.** `git status` must be clean: Synthe measures committed code only.\n2. **See what this repo can measure:**\n\n   ```\n   npx synthe@latest improve --list\n   ```\n\n   Show the person the list as written. Then ask, in one message: what should get better (one sentence), which metric from the list, which regression check (the list shows each metric\'s default; `none` is allowed), and auto (a winning change merges into the default branch by itself) or review (a pull request waits for them).\n3. **Measure the current code** with their answers:\n\n   ```\n   npx synthe@latest improve --agent --goal "<sentence>" --metric <id> --mode auto|review\n   ```\n\n   For `--metric custom`, add `--command "<cmd>" --label "<what it counts>" --unit "<unit>" --direction higher|lower`. Add `--guard "<cmd>"` or `--guard none` to change the regression check. Add `--protect <path>` for any other file the change must not touch.\n   It prints the baseline and a task card. If it stops instead, show the person the message and do what it says.\n4. **Follow the `NEXT:` line.** Show the person the baseline and the task card. Create the branch the card names, make ONE small change to product code, and commit it with a message that says what changed and why.\n5. **Submit the change:**\n\n   ```\n   npx synthe@latest submit --agent\n   ```\n\n   A win prints `Pull request: <url>`, and in auto mode `Merged into <branch>. Run git pull.` Show the person the result and the link as written.\n6. **If it did not win,** `submit` prints `Not merged:` and the reason (within noise, worse, or the regression check failed). Show it as written. If the person wants another try, make a different small change on the same branch, commit, and run `npx synthe@latest submit --agent` again (at most 3 attempts in all, unless they ask for more).\n7. When the person asks what Synthe did, show the pull request\'s Result section word for word.\n';
 
 // src/core/evidence.ts
 import { execFileSync } from "node:child_process";
@@ -31027,14 +31027,14 @@ async function undo(d, roundArg) {
     return 1;
   }
   const local = join10(d.root, evidencePath(round));
-  const text = existsSync6(local) ? readFileSync8(local, "utf8") : await repo.readFile(evidencePath(round), STATE_BRANCH);
-  if (text === null) {
+  const text2 = existsSync6(local) ? readFileSync8(local, "utf8") : await repo.readFile(evidencePath(round), STATE_BRANCH);
+  if (text2 === null) {
     say(`No evidence for round ${round}. Rounds that changed nothing or didn't finish have none; check the number against \`npx synthe status\`.`);
     return 1;
   }
   let record;
   try {
-    record = JSON.parse(text);
+    record = JSON.parse(text2);
   } catch {
     say(`The evidence for round ${round} isn't readable. Run \`npx synthe verify\` on it.`);
     return 1;
@@ -31104,8 +31104,8 @@ var Refusal = class extends Error {
     this.plain = plain;
   }
 };
-var isRateLimited = (status2, headers, text) => status2 === 429 || status2 === 403 && (headers.get("x-ratelimit-remaining") === "0" || /rate limit/i.test(text));
-var classify = (res, text) => isRateLimited(res.status, res.headers, text) ? "rate_limited" : res.status === 405 ? "blocked" : res.status === 401 ? "token" : res.status === 403 ? "permission" : res.status === 409 ? "moved" : "other";
+var isRateLimited = (status2, headers, text2) => status2 === 429 || status2 === 403 && (headers.get("x-ratelimit-remaining") === "0" || /rate limit/i.test(text2));
+var classify = (res, text2) => isRateLimited(res.status, res.headers, text2) ? "rate_limited" : res.status === 405 ? "blocked" : res.status === 401 ? "token" : res.status === 403 ? "permission" : res.status === 409 ? "moved" : "other";
 var STATE_PATH = "state.json";
 var RETRIES = 2;
 var sleepFor = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -31124,8 +31124,8 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
         continue;
       }
       if (res.status !== 429 && res.status !== 403) return res;
-      const text = await res.clone().text();
-      if (!isRateLimited(res.status, res.headers, text)) return res;
+      const text2 = await res.clone().text();
+      if (!isRateLimited(res.status, res.headers, text2)) return res;
       const wait = Number(res.headers.get("retry-after"));
       await sleep2(Math.min(Number.isFinite(wait) && wait > 0 ? wait * 1e3 : 2e4, 6e4));
     }
@@ -31156,9 +31156,9 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
     throw new Error(`GitHub POST /git/refs: ${res.status} ${(await res.text()).slice(0, 300)}`);
   };
   const refuseIssue = async (res) => {
-    const text = await res.text();
-    const detail = `GitHub issue write: ${res.status} ${text.slice(0, 300)}`;
-    const problem = res.status === 410 ? "issues_off" : classify(res, text);
+    const text2 = await res.text();
+    const detail = `GitHub issue write: ${res.status} ${text2.slice(0, 300)}`;
+    const problem = res.status === 410 ? "issues_off" : classify(res, text2);
     if (problem === "issues_off") throw new Refusal(problem, `Issues are turned off in this repo, so Synthe can't write its report; turn on Issues at https://github.com/${slug}/settings`, detail);
     if (problem === "permission" || problem === "token") throw new Refusal(problem, `GitHub won't let the workflow write the report issue; give the workflow the 'issues: write' permission`, detail);
     throw new Error(detail);
@@ -31193,9 +31193,9 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
     async openPr({ branch, base, title, body }) {
       const res = await call("POST", "/pulls", { head: branch, base, title, body });
       if (res.ok) return (await res.json()).number;
-      const text = await res.text();
-      const detail = `GitHub POST /pulls: ${res.status} ${text.slice(0, 300)}`;
-      const problem = classify(res, text);
+      const text2 = await res.text();
+      const detail = `GitHub POST /pulls: ${res.status} ${text2.slice(0, 300)}`;
+      const problem = classify(res, text2);
       if (problem === "permission") throw new Refusal(problem, `GitHub Actions isn't allowed to open pull requests here; turn on 'Allow GitHub Actions to create and approve pull requests' at https://github.com/${slug}/settings/actions`, detail);
       if (problem === "token") throw new Refusal(problem, "GitHub refused the workflow's token", detail);
       throw new Error(detail);
@@ -31203,13 +31203,13 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
     async mergePr(number, sha) {
       const res = await call("PUT", `/pulls/${number}/merge`, { sha, merge_method: "squash" });
       if (res.ok) return { merged: true };
-      const text = await res.text();
+      const text2 = await res.text();
       if (res.status >= 500) {
         const back = await call("GET", `/pulls/${number}`);
         if (back.status >= 500) throw new Error(`GitHub PUT /pulls/${number}/merge: ${res.status}, and couldn't tell whether it merged (${back.status})`);
         if (back.ok && (await back.json()).merged === true) return { merged: true };
       }
-      return { merged: false, why: `${res.status} ${text.slice(0, 200)}`, problem: classify(res, text) };
+      return { merged: false, why: `${res.status} ${text2.slice(0, 200)}`, problem: classify(res, text2) };
     },
     async deleteBranch(branch) {
       await call("DELETE", `/git/refs/heads/${encodeURIComponent(branch)}`);
@@ -31237,8 +31237,8 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
       return res.ok ? (await res.json()).number : refuseIssue(res);
     },
     async readState() {
-      const text = await repo.readFile(STATE_PATH, STATE_BRANCH);
-      return text === null ? newState() : { ...newState(), ...JSON.parse(text) };
+      const text2 = await repo.readFile(STATE_PATH, STATE_BRANCH);
+      return text2 === null ? newState() : { ...newState(), ...JSON.parse(text2) };
     },
     async writeState(state) {
       for (let attempt = 0; attempt <= RETRIES; attempt++) {
@@ -31276,9 +31276,682 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
   return repo;
 }
 
+// src/cli/improve.ts
+import { existsSync as existsSync9, readFileSync as readFileSync10, writeFileSync as writeFileSync6 } from "node:fs";
+import { join as join14 } from "node:path";
+
+// src/improve/config.ts
+import { join as join11 } from "node:path";
+var improveFile = (gitDir) => join11(gitDir, "synthe-improve.json");
+var DEFAULT_RUNS = 3;
+var COMMAND_TIMEOUT_MS = 6e5;
+var PRESETS = ["test-pass", "bundle-size", "build-time", "custom"];
+var text = (v) => typeof v === "string" && v.trim().length > 0;
+function parseImproveConfig(raw) {
+  const bad = (why) => {
+    throw new Error(`synthe improve config: ${why}`);
+  };
+  let c;
+  try {
+    c = JSON.parse(raw);
+  } catch {
+    bad("not valid JSON. Run npx synthe improve again.");
+  }
+  if (c?.version !== 1) bad("version must be 1");
+  if (!text(c.goal)) bad("goal is required");
+  const m = c.metric;
+  if (!m || typeof m !== "object") bad("metric is required");
+  if (!PRESETS.includes(m.preset)) bad(`metric.preset must be one of ${PRESETS.join(", ")}`);
+  if (!text(m.label)) bad("metric.label is required");
+  if (!text(m.unit)) bad("metric.unit is required");
+  if (!text(m.command)) bad("metric.command is required");
+  if (m.direction !== "higher" && m.direction !== "lower") bad("metric.direction must be higher or lower");
+  if (!Number.isInteger(m.runs) || m.runs < 1 || m.runs > 10) bad("metric.runs must be a whole number from 1 to 10");
+  if (!c.guard || typeof c.guard !== "object" || c.guard.command !== null && !text(c.guard.command)) bad("guard.command must be a command or null");
+  if (!Array.isArray(c.protect) || c.protect.some((p) => !text(p))) bad("protect must be a list of paths");
+  if (c.protect.some((p) => p.startsWith("/") || p.split("/").includes(".."))) bad("protect paths must stay inside the repo");
+  if (c.mode !== "auto" && c.mode !== "review") bad("mode must be auto or review");
+  const b = c.baseline;
+  if (!b || typeof b !== "object") bad("baseline is required");
+  if (!text(b.commit)) bad("baseline.commit is required");
+  if (!Array.isArray(b.runs) || !b.runs.length || b.runs.some((n) => typeof n !== "number" || !Number.isFinite(n))) bad("baseline.runs must list at least one number");
+  if (typeof b.median !== "number" || !Number.isFinite(b.median)) bad("baseline.median must be a number");
+  if (typeof b.at !== "string") bad("baseline.at is required");
+  return c;
+}
+
+// src/improve/presets.ts
+import { existsSync as existsSync7, readdirSync as readdirSync2, readFileSync as readFileSync9, statSync as statSync2 } from "node:fs";
+import { join as join12 } from "node:path";
+import { gzipSync } from "node:zlib";
+var NPM_PLACEHOLDER = 'echo "Error: no test specified" && exit 1';
+function detectPresets(files) {
+  let scripts = {};
+  const pkg = files.find((f) => f.path === "package.json");
+  if (pkg) {
+    try {
+      scripts = JSON.parse(pkg.text)?.scripts ?? {};
+    } catch {
+    }
+  }
+  const hasTest = typeof scripts.test === "string" && scripts.test.trim() !== "" && scripts.test.trim() !== NPM_PLACEHOLDER;
+  const hasBuild = typeof scripts.build === "string" && scripts.build.trim() !== "";
+  const guard = hasTest ? "npm test" : null;
+  const presets = [];
+  if (hasTest) presets.push({ id: "test-pass", label: "tests passing", unit: "tests", direction: "higher", runs: 1, command: "npm test", guard: null });
+  if (hasBuild) {
+    presets.push({ id: "bundle-size", label: "built JS and CSS, gzipped", unit: "bytes", direction: "lower", runs: 1, command: "npm run build", guard });
+    presets.push({ id: "build-time", label: "build time", unit: "ms", direction: "lower", runs: 3, command: "npm run build", guard });
+  }
+  presets.push({ id: "custom", label: "your own command", unit: "units", direction: "higher", runs: 3, command: "", guard });
+  return presets;
+}
+var NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
+function lastNumber(stdout) {
+  const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => NUMBER.test(l));
+  if (!lines.length) return null;
+  const n = Number(lines.at(-1));
+  return Number.isFinite(n) ? n : null;
+}
+var lastMatch = (text2, re2) => {
+  const all = [...text2.matchAll(re2)];
+  return all.length ? Number(all.at(-1)[1]) : null;
+};
+function countPassed(output) {
+  return lastMatch(output, /^\s*[ℹ#] pass (\d+)\s*$/gm) ?? lastMatch(output, /^\s*Tests:?\s.*?(\d+) passed/gm) ?? lastMatch(output, /^\s*(\d+) passing\b/gm) ?? lastMatch(output, /^=+ .*?\b(\d+) passed\b.*=+\s*$/gm);
+}
+var OUTPUT_DIRS = ["dist", "build", "out", ".next/static", "public/build"];
+function builtFiles(dir) {
+  return readdirSync2(dir, { withFileTypes: true }).flatMap((e) => {
+    const path4 = join12(dir, e.name);
+    if (e.isDirectory()) return e.name === "node_modules" ? [] : builtFiles(path4);
+    return e.isFile() && /\.(m?js|css)$/.test(e.name) ? [path4] : [];
+  });
+}
+function bundleBytes(root) {
+  const dir = OUTPUT_DIRS.map((d) => join12(root, d)).find((d) => existsSync7(d) && statSync2(d).isDirectory());
+  if (!dir) return null;
+  const files = builtFiles(dir);
+  if (!files.length) return null;
+  return files.reduce((sum, f) => sum + gzipSync(readFileSync9(f)).length, 0);
+}
+var REASONS = {
+  noNumber: "The metric command printed no number.",
+  failed: "The metric command failed (exit code not 0).",
+  timedOut: "The metric command took longer than 10 minutes.",
+  noTests: "No tests were counted in the output.",
+  noBuild: "No built JS or CSS was found under dist, build, out, .next/static or public/build."
+};
+async function measureOnce(exec, cwd, config) {
+  const r = await exec(cwd, config.metric.command, COMMAND_TIMEOUT_MS);
+  const none = (reason) => ({ value: null, ms: r.ms, reason });
+  if (r.timedOut) return none(REASONS.timedOut);
+  switch (config.metric.preset) {
+    case "test-pass": {
+      const n = countPassed(`${r.stdout}
+${r.stderr}`);
+      return n === null ? none(REASONS.noTests) : { value: n, ms: r.ms };
+    }
+    case "bundle-size": {
+      if (!r.ok) return none(REASONS.failed);
+      const n = bundleBytes(cwd);
+      return n === null ? none(REASONS.noBuild) : { value: n, ms: r.ms };
+    }
+    case "build-time":
+      return r.ok ? { value: r.ms, ms: r.ms } : none(REASONS.failed);
+    default: {
+      if (!r.ok) return none(REASONS.failed);
+      const n = lastNumber(r.stdout);
+      return n === null ? none(REASONS.noNumber) : { value: n, ms: r.ms };
+    }
+  }
+}
+
+// src/improve/verdict.ts
+var median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+};
+var range = (xs) => xs.length ? Math.max(...xs) - Math.min(...xs) : 0;
+var plainNumber = (n) => String(Number.isInteger(n) ? n : Number(n.toFixed(2)));
+function verdict(direction, baseline, candidate, guardPassed) {
+  const delta = candidate.median - baseline.median;
+  const noise = Math.max(range(baseline.runs), range(candidate.runs));
+  const result = (win2, why) => ({ win: win2, why, delta, noise });
+  if (guardPassed === false) return result(false, "The regression check did not pass.");
+  const better = direction === "higher" ? delta : -delta;
+  if (better <= 0) return result(false, `Not better than the current code (${plainNumber(candidate.median)} vs ${plainNumber(baseline.median)}).`);
+  const d = plainNumber(Math.abs(delta));
+  if (Math.abs(delta) <= noise) return result(false, `Within noise: changed by ${d}, but runs vary by up to ${plainNumber(noise)}.`);
+  return result(true, `Better by ${d}, more than the run-to-run noise of ${plainNumber(noise)}${guardPassed ? "; the regression check passed." : "."}`);
+}
+
+// src/improve/text.ts
+function formatValue(value, unit) {
+  if (unit === "bytes") {
+    if (Math.abs(value) < 1024) return `${plainNumber(value)} bytes`;
+    if (Math.abs(value) < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+    return `${(value / 1024 / 1024).toFixed(2)} MB`;
+  }
+  if (unit === "ms") return Math.abs(value) < 1e3 ? `${plainNumber(value)} ms` : `${(value / 1e3).toFixed(1)} s`;
+  return `${plainNumber(value)} ${unit}`;
+}
+var runsText = (runs) => `${runs.length} ${runs.length === 1 ? "run" : "runs"}: ${runs.map(plainNumber).join(", ")}`;
+var modeText = (mode) => mode === "auto" ? "auto (a winning change merges into the default branch by itself)." : "review (a pull request waits for you).";
+function taskCard(config, branch) {
+  const { metric, baseline } = config;
+  const extra = config.protect.length ? `, and: ${config.protect.join(", ")}` : "";
+  return [
+    `Goal: ${config.goal}`,
+    `Metric: ${metric.label}, ${metric.direction} is better. Current code: ${formatValue(baseline.median, metric.unit)} (${runsText(baseline.runs)}).`,
+    `Regression check: ${config.guard.command ?? "none"}.`,
+    `Do not change: tests, the metric command and its inputs, package.json and lockfiles, .github/, .synthe/${extra}.`,
+    `Next: git checkout -b ${branch}; make ONE small change to product code; commit; npx synthe submit.`,
+    `Mode: ${modeText(config.mode)}`
+  ].join("\n");
+}
+var prTitle = (config, candidate, base = config.baseline) => `Synthe: ${config.metric.label} ${formatValue(base.median, config.metric.unit)} \u2192 ${formatValue(candidate.median, config.metric.unit)}`;
+function prBody(a) {
+  const { metric } = a.config;
+  const f = (n) => formatValue(n, metric.unit);
+  const moved = a.verdict.delta === 0 ? "unchanged" : `${a.verdict.delta > 0 ? "up" : "down"} by ${f(Math.abs(a.verdict.delta))}`;
+  return [
+    `Goal: ${a.config.goal}`,
+    "",
+    "## Result",
+    "",
+    `**${metric.label}: ${f(a.base.median)} \u2192 ${f(a.candidate.median)}** (${moved}; ${metric.direction} is better)`,
+    "",
+    `- Before: ${f(a.base.median)}, median of ${runsText(a.base.runs)}`,
+    `- After: ${f(a.candidate.median)}, median of ${runsText(a.candidate.runs)}`,
+    `- Run-to-run noise: ${f(a.verdict.noise)} (the larger spread of the two sets of runs)`,
+    `- Regression check: ${a.guardCommand ? `\`${a.guardCommand}\` passed` : "none configured"}`,
+    `- ${a.verdict.why}`,
+    "",
+    "## What changed",
+    "",
+    "```",
+    a.diffstat.trimEnd(),
+    "```",
+    "",
+    "## How it was measured",
+    "",
+    `- Metric: \`${metric.command}\` (${metric.runs} ${metric.runs === 1 ? "run" : "runs"} each, median)`,
+    "- Before and after were each measured in a fresh checkout of its commit, with the same command.",
+    `- Before: ${a.baseSha}`,
+    `- After: ${a.headSha}`,
+    `- synthe ${package_default.version}`,
+    "",
+    "## Undo",
+    "",
+    a.config.mode === "auto" ? "This merges by itself. To undo it afterwards, run `git revert <merge commit>` on the default branch and push." : "Close this pull request. Nothing changes until someone merges it.",
+    "",
+    "Measured by Synthe. Numbers are from this machine; check them in your own environment too."
+  ].join("\n");
+}
+
+// src/improve/worktree.ts
+import { existsSync as existsSync8, lstatSync as lstatSync3, mkdtempSync, rmSync as rmSync2, symlinkSync, unlinkSync as unlinkSync3 } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as join13 } from "node:path";
+var win = process.platform === "win32";
+var quote = (s) => win ? `"${s}"` : `'${s.replace(/'/g, "'\\''")}'`;
+var GIT_TIMEOUT_MS = 12e4;
+async function withWorktree(exec, root, commit, fn) {
+  const dir = mkdtempSync(join13(tmpdir(), "synthe-improve-"));
+  const added = await exec(root, `git worktree add --detach ${quote(dir)} ${commit}`, GIT_TIMEOUT_MS);
+  if (!added.ok) {
+    rmSync2(dir, { recursive: true, force: true });
+    throw new Error(`Could not check out ${commit.slice(0, 7)} to measure it: ${(added.stderr || added.stdout).trim().split("\n")[0]}`);
+  }
+  const link = join13(dir, "node_modules");
+  let linked = false;
+  try {
+    if (existsSync8(join13(root, "node_modules")) && !existsSync8(link)) {
+      symlinkSync(join13(root, "node_modules"), link, win ? "junction" : "dir");
+      linked = true;
+    }
+    return await fn(dir);
+  } finally {
+    if (linked) try {
+      if (lstatSync3(link).isSymbolicLink()) unlinkSync3(link);
+    } catch {
+    }
+    await exec(root, `git worktree remove --force ${quote(dir)}`, GIT_TIMEOUT_MS);
+    await exec(root, "git worktree prune", GIT_TIMEOUT_MS);
+    rmSync2(dir, { recursive: true, force: true });
+  }
+}
+async function measureAt(exec, root, commit, config, say = () => {
+}) {
+  return withWorktree(exec, root, commit, async (dir) => {
+    const runs = [];
+    let metricMs = 0;
+    const n = config.metric.runs;
+    for (let i = 1; i <= n; i++) {
+      say(`Measuring ${config.metric.label} at ${commit.slice(0, 7)}, run ${i} of ${n}...`);
+      const once = await measureOnce(exec, dir, config);
+      metricMs += once.ms;
+      if (once.value === null) return { measurement: null, guardPassed: null, reason: once.reason, metricMs };
+      runs.push(once.value);
+    }
+    let guardPassed = null;
+    if (config.guard.command) {
+      say(`Running the regression check (${config.guard.command})...`);
+      guardPassed = (await exec(dir, config.guard.command, COMMAND_TIMEOUT_MS)).ok;
+    }
+    return { measurement: { commit, median: median(runs), runs, at: (/* @__PURE__ */ new Date()).toISOString() }, guardPassed, metricMs };
+  });
+}
+
+// src/cli/improve.ts
+var IMPROVE_BRANCH = (n) => `synthe/improve-${n}`;
+var IMPROVE_NEXT = "NEXT: Synthe measured the current code and saved its config inside .git (nothing to commit). Show the person the baseline and the task card as written. Then create the branch named in the card, make ONE small change to product code only, commit it, and run `npx synthe submit`. Do not edit tests, the metric, package.json or anything under .synthe/.";
+var IMPROVE_LIST_NEXT = "NEXT: Show the person this list as written. Ask them, in one message: what should get better (one sentence), which metric, which regression check, and auto or review. Then run `npx synthe improve --agent` with their answers.";
+var PRESET_IDS = ["test-pass", "bundle-size", "build-time", "custom"];
+var VALUE_FLAGS = ["--goal", "--metric", "--label", "--unit", "--command", "--direction", "--guard", "--mode", "--protect"];
+function improveOptions(args) {
+  const agent = args.includes("--agent");
+  const invalid = (flag) => {
+    if (agent) askPerson(flag);
+    throw new AgentSetupError(`${flag} is not a valid option here. Run npx synthe improve with no options to answer the questions instead.`);
+  };
+  const o = { agent, list: false, protect: [] };
+  const seen = /* @__PURE__ */ new Set();
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i];
+    if (seen.has(flag) && flag !== "--protect") invalid(flag);
+    seen.add(flag);
+    if (flag === "--agent") continue;
+    if (flag === "--list") {
+      o.list = true;
+      continue;
+    }
+    if (!VALUE_FLAGS.includes(flag)) invalid(flag);
+    const value = args[++i]?.trim();
+    if (!value || value.startsWith("--")) invalid(flag);
+    if (flag === "--goal") o.goal = value;
+    if (flag === "--label") o.label = value;
+    if (flag === "--unit") o.unit = value;
+    if (flag === "--command") o.command = value;
+    if (flag === "--guard") o.guard = value;
+    if (flag === "--metric") {
+      if (!PRESET_IDS.includes(value)) invalid(flag);
+      o.metric = value;
+    }
+    if (flag === "--direction") {
+      if (value !== "higher" && value !== "lower") invalid(flag);
+      o.direction = value;
+    }
+    if (flag === "--mode") {
+      if (value !== "auto" && value !== "review") invalid(flag);
+      o.mode = value;
+    }
+    if (flag === "--protect") {
+      if (value.startsWith("/") || value.split("/").includes("..")) invalid(flag);
+      o.protect.push(value);
+    }
+  }
+  if (agent && !o.list) {
+    if (!o.goal) askPerson("--goal");
+    if (!o.metric) askPerson("--metric");
+    if (!o.mode) askPerson("--mode");
+    if (o.metric === "custom") {
+      if (!o.command) askPerson("--command");
+      if (!o.label) askPerson("--label");
+      if (!o.direction) askPerson("--direction");
+    }
+  }
+  return o;
+}
+var firstLine = (e) => (e.message ?? String(e)).trim().split("\n")[0];
+async function preflight(io2, dirtyMessage) {
+  const problems = [];
+  const tryRun = async (cmd, args) => {
+    try {
+      return { out: await io2.run(cmd, args) };
+    } catch (e) {
+      return { error: e };
+    }
+  };
+  let top = "", head = "", gitDir = "", defaultBranch = "";
+  const topRun = await tryRun("git", ["rev-parse", "--show-toplevel"]);
+  if ("error" in topRun) problems.push("This folder is not inside a git repository. Run this inside your project's folder.");
+  else {
+    top = topRun.out.trim();
+    gitDir = (await tryRun("git", ["rev-parse", "--absolute-git-dir"])).out?.trim() ?? join14(top, ".git");
+    const headRun = await tryRun("git", ["rev-parse", "--verify", "HEAD"]);
+    if ("error" in headRun) problems.push("This repository has no commit yet. Commit your code first: Synthe measures committed code.");
+    else head = headRun.out.trim();
+    const status2 = await tryRun("git", ["status", "--porcelain"]);
+    if ("error" in status2 || status2.out.trim()) problems.push(dirtyMessage);
+  }
+  if ("error" in await tryRun("gh", ["--version"])) problems.push("The GitHub CLI (gh) is not installed. Install it from https://cli.github.com, then run gh auth login.");
+  else if ("error" in await tryRun("gh", ["auth", "status"])) problems.push("The GitHub CLI is not signed in. Run gh auth login in your own terminal, then run this again.");
+  else {
+    const view = await tryRun("gh", ["repo", "view", "--json", "nameWithOwner,defaultBranchRef"]);
+    try {
+      if ("error" in view) throw view.error;
+      defaultBranch = JSON.parse(view.out).defaultBranchRef?.name || "main";
+    } catch {
+      problems.push("GitHub can't find this repo. Push it to GitHub first (for example gh repo create --source . --push), then run this again.");
+    }
+  }
+  return problems.length ? { problems } : { problems, repo: { top, head, gitDir, defaultBranch } };
+}
+function presetLine(p, i) {
+  if (p.id === "custom") return `${i + 1}. custom: a command of yours that prints one number (you say whether higher or lower is better)`;
+  return `${i + 1}. ${p.id}: ${p.label} (${p.direction} is better; measures ${p.command}${p.guard ? `; regression check: ${p.guard}` : ""})`;
+}
+async function improve(io2, root, options) {
+  const { problems, repo } = await preflight(io2, "Commit your changes first: Synthe measures committed code.");
+  if (!repo) {
+    io2.say("Synthe can't start yet. Fix these, then run npx synthe improve again:");
+    for (const p of problems) io2.say(`- ${p}`);
+    return false;
+  }
+  const top = repo.top || root;
+  const pkg = join14(top, "package.json");
+  const presets = detectPresets(existsSync9(pkg) ? [{ path: "package.json", text: readFileSync10(pkg, "utf8") }] : []);
+  if (options.list) {
+    io2.say("Metrics this repo can measure:");
+    presets.forEach((p, i) => io2.say(presetLine(p, i)));
+    if (options.agent) io2.say(IMPROVE_LIST_NEXT);
+    return true;
+  }
+  const draft = await settle(io2, options, presets, repo.defaultBranch);
+  if (!draft) return false;
+  let measured;
+  try {
+    measured = await measureAt(io2.exec, top, repo.head, draft, io2.say);
+  } catch (e) {
+    io2.say(`${firstLine(e)} Nothing was written.`);
+    return false;
+  }
+  if (!measured.measurement) {
+    io2.say(measured.reason ?? "The metric gave no number.");
+    io2.say("Fix the command, then run npx synthe improve again. Nothing was written.");
+    return false;
+  }
+  if (measured.guardPassed === false) {
+    io2.say(`The regression check (${draft.guard.command}) fails on the current code. Fix it, or pick another check with --guard, then run npx synthe improve again. Nothing was written.`);
+    return false;
+  }
+  const config = parseImproveConfig(JSON.stringify({ ...draft, baseline: measured.measurement }));
+  writeFileSync6(improveFile(repo.gitDir), `${JSON.stringify(config, null, 2)}
+`);
+  const existing = (await io2.run("git", ["branch", "--list", "synthe/improve-*"])).split("\n").filter((l) => l.trim()).length;
+  io2.say("");
+  io2.say(taskCard(config, IMPROVE_BRANCH(existing + 1)));
+  if (options.agent) io2.say(IMPROVE_NEXT);
+  return true;
+}
+async function settle(io2, o, presets, defaultBranch) {
+  const stop2 = (why) => {
+    io2.say(why);
+    return null;
+  };
+  let goal = o.goal;
+  if (!goal) goal = (await io2.ask("What should get better? One sentence: ")).trim();
+  if (!goal) return stop2("Synthe needs a goal. Run npx synthe improve again and say what should get better.");
+  let preset;
+  if (o.metric) {
+    preset = presets.find((p) => p.id === o.metric);
+    if (!preset) return stop2(`This repo can't measure ${o.metric} (no matching script in package.json). Run npx synthe improve --list to see what it can measure.`);
+  } else {
+    io2.say("Which number measures it?");
+    presets.forEach((p, i) => io2.say(presetLine(p, i)));
+    const pick2 = Number((await io2.ask(`Type 1-${presets.length}: `)).trim());
+    preset = presets[pick2 - 1];
+    if (!preset) return stop2(`Pick a number from 1 to ${presets.length}. Run npx synthe improve again.`);
+  }
+  let { label, unit, command, direction, runs } = preset;
+  if (preset.id === "custom") {
+    command = o.command ?? (await io2.ask("Command that prints the number: ")).trim();
+    if (!command) return stop2("Synthe needs the command that prints the number. Run npx synthe improve again.");
+    label = o.label ?? (await io2.ask("What does the number count? (for example: valid signups): ")).trim();
+    if (!label) return stop2("Synthe needs a name for the number. Run npx synthe improve again.");
+    unit = o.unit ?? ((o.agent ? "" : (await io2.ask("Unit (press Enter for units): ")).trim()) || "units");
+    if (o.direction) direction = o.direction;
+    else {
+      const higher = (await io2.ask("Is a higher number better? y/n: ")).trim().toLowerCase();
+      if (higher !== "y" && higher !== "n") return stop2("Answer y or n for whether a higher number is better. Run npx synthe improve again.");
+      direction = higher === "y" ? "higher" : "lower";
+    }
+    runs = DEFAULT_RUNS;
+  }
+  let guard = preset.guard;
+  if (o.guard) guard = o.guard;
+  else if (!o.agent) guard = (await io2.ask(`Regression check that must pass before and after (press Enter for ${preset.guard ?? "none"}; type none for no check): `)).trim() || preset.guard;
+  if (guard === "none") guard = null;
+  let mode = o.mode;
+  if (!mode) mode = (await io2.ask(`Merge winning changes into ${defaultBranch} automatically? y/n (press Enter for n: review) `)).trim().toLowerCase() === "y" ? "auto" : "review";
+  return {
+    version: 1,
+    goal,
+    metric: { preset: preset.id, label, unit, command, direction, runs },
+    guard: { command: guard },
+    protect: o.protect,
+    mode,
+    baseline: { commit: "", median: 0, runs: [], at: "" }
+  };
+}
+
+// src/cli/submit.ts
+import { existsSync as existsSync10, readFileSync as readFileSync11 } from "node:fs";
+
+// src/improve/protect.ts
+var DEPENDENCY_FILES = /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pnpm-workspace\.yaml|bun\.lockb?|poetry\.lock|uv\.lock|Pipfile(\.lock)?|pyproject\.toml|requirements[^/]*\.txt|Cargo\.(toml|lock)|go\.(mod|sum)|Gemfile(\.lock)?|composer\.(json|lock))$/;
+var RULES = [
+  [/(^|\/)\.synthe(\/|$)|(^|\/)synthe\.json$/, "is Synthe's own setup; a measured change leaves it alone."],
+  [/^\.github\//, "is under .github/; workflows and CI settings are not part of a measured change."],
+  [DEPENDENCY_FILES, "lists dependencies or project settings; Synthe measures with them as they are."],
+  [/(^|\/)[^/]*\.(test|spec|bench)\.[^/]+$/, "is a test file; Synthe measures with the tests as they are."],
+  [/(^|\/)(test|tests|__tests__|spec|e2e|benchmark|benchmarks|metrics|fixtures)(\/|$)/, "is in a test, benchmark, metric or fixture folder; Synthe measures with those as they are."],
+  [/(^|\/)[^/]*\.config\.[^/]+$/, "is a config file; Synthe measures with the project's config as it is."],
+  [/(^|\/)\.env/, "is an environment file; a measured change leaves it alone."],
+  [/(^|\/)Dockerfile[^/]*$|(^|\/)Makefile$/, "is a build file; Synthe measures with the build as it is."],
+  [/(^|\/)\.[^/]/, "is a hidden file or folder; a measured change touches product code only."]
+];
+function commandPaths(config) {
+  return [config.metric.command, config.guard.command ?? ""].flatMap((c) => c.split(/\s+/)).map((w) => w.replace(/^['"]|['"]$/g, "").replace(/^\.\//, "")).filter((w) => /[/.]/.test(w) && !w.startsWith("-") && !w.startsWith("/") && !w.split("/").includes(".."));
+}
+var under = (path4, entry) => {
+  const e = entry.replace(/^\.\//, "").replace(/\/$/, "");
+  return path4 === e || path4.startsWith(`${e}/`);
+};
+function protectedPathProblem(path4, config) {
+  for (const [rule, why] of RULES) if (rule.test(path4)) return `${path4} ${why}`;
+  const named = commandPaths(config).find((w) => under(path4, w));
+  if (named) return `${path4} is used by the metric or the regression check (${named}); Synthe measures with it as it is.`;
+  const extra = config.protect.find((e) => under(path4, e));
+  if (extra) return `${path4} is protected for this run (--protect ${extra}).`;
+  if (SENSITIVE_PATHS.some((p) => p.test(path4))) return `${path4} can run code, ship dependencies, change CI or hold secrets; a measured change leaves it alone.`;
+  return null;
+}
+function protectedChanges(paths, config) {
+  return [...paths].sort().flatMap((p) => protectedPathProblem(p, config) ?? []);
+}
+
+// src/cli/submit.ts
+var SUBMIT_NEXT_WIN = "NEXT: Show the person the result and the pull request link as written.";
+var SUBMIT_NEXT_LOSS = "NEXT: Show the person why this change did not win, as written. If they want another try, make a different small change on the same branch, commit, and run `npx synthe submit` again.";
+var MAX_CHANGED_FILES = 60;
+function submitOptions(args) {
+  const agent = args.includes("--agent");
+  for (const [i, flag] of args.entries()) {
+    if (flag !== "--agent" || args.indexOf(flag) !== i) {
+      if (agent) askPerson(flag);
+      throw new AgentSetupError(`${flag} is not an option of npx synthe submit. Run it with no options, or with --agent from a coding agent.`);
+    }
+  }
+  return { agent };
+}
+var firstLine2 = (e) => (e.message ?? String(e)).trim().split("\n")[0];
+async function submit(io2, _root, options) {
+  const { problems, repo } = await preflight(io2, "Commit your change first.");
+  if (!repo) {
+    io2.say("Synthe can't measure this yet. Fix these, then run npx synthe submit again:");
+    for (const p of problems) io2.say(`- ${p}`);
+    return false;
+  }
+  const def = repo.defaultBranch;
+  const branch = (await io2.run("git", ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+  if (branch === "HEAD" || branch === def) {
+    io2.say("Make your change on a branch: git checkout -b synthe/improve-1, then run npx synthe submit again.");
+    return false;
+  }
+  const file = improveFile(repo.gitDir);
+  if (!existsSync10(file)) {
+    io2.say("Run npx synthe improve first. It measures the current code and saves what to compare against.");
+    return false;
+  }
+  let config;
+  try {
+    config = parseImproveConfig(readFileSync11(file, "utf8"));
+  } catch (e) {
+    io2.say(`${e.message}. Run npx synthe improve again.`);
+    return false;
+  }
+  try {
+    await io2.run("git", ["fetch", "--quiet", "origin", def]);
+  } catch {
+  }
+  let target = def;
+  try {
+    await io2.run("git", ["rev-parse", "--verify", "--quiet", `refs/remotes/origin/${def}`]);
+    target = `origin/${def}`;
+  } catch {
+  }
+  let base;
+  try {
+    base = (await io2.run("git", ["merge-base", target, "HEAD"])).trim();
+  } catch {
+    io2.say(`This branch shares no history with ${def}. Start it from ${def}: git checkout ${def} && git checkout -b synthe/improve-1.`);
+    return false;
+  }
+  const changed = (await io2.run("git", ["diff", "--name-only", `${base}..HEAD`])).split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!changed.length) {
+    io2.say("No committed change to measure. Make ONE small change to product code, commit it, then run npx synthe submit again.");
+    return false;
+  }
+  const refused = protectedChanges(changed, config);
+  if (refused.length) {
+    for (const r of refused) io2.say(r);
+    io2.say("Nothing was measured. Undo those edits and run npx synthe submit again.");
+    return false;
+  }
+  if (changed.length > MAX_CHANGED_FILES) {
+    io2.say(`This change touches ${changed.length} files. Synthe measures one small change at a time; split it up.`);
+    return false;
+  }
+  let baseline = config.baseline;
+  let candidate;
+  try {
+    if (config.baseline.commit !== base) {
+      io2.say(`The default branch moved since you ran improve; measuring it again at ${base.slice(0, 7)}...`);
+      const again = await measureAt(io2.exec, repo.top, base, config, io2.say);
+      if (!again.measurement || again.guardPassed === false) {
+        const why = again.measurement ? `the regression check (${config.guard.command}) fails on it` : again.reason ?? "no number";
+        io2.say(`The current code no longer measures cleanly (${why}). Run npx synthe improve again.`);
+        return false;
+      }
+      baseline = again.measurement;
+    }
+    candidate = await measureAt(io2.exec, repo.top, repo.head, config, io2.say);
+  } catch (e) {
+    io2.say(`${firstLine2(e)} Nothing was opened.`);
+    return false;
+  }
+  if (!candidate.measurement) {
+    io2.say(`${candidate.reason ?? "The metric gave no number."} Nothing was opened. Fix it on this branch, commit, and run npx synthe submit again.`);
+    return false;
+  }
+  const f = (n) => formatValue(n, config.metric.unit);
+  const v = verdict(config.metric.direction, baseline, candidate.measurement, candidate.guardPassed);
+  io2.say(`${config.metric.label}: ${f(baseline.median)} \u2192 ${f(candidate.measurement.median)} (${config.metric.direction} is better).`);
+  if (!v.win) {
+    io2.say(`Not merged: ${v.why}`);
+    io2.say(`Your branch ${branch} is unchanged; nothing was pushed.`);
+    if (options.agent) io2.say(SUBMIT_NEXT_LOSS);
+    return false;
+  }
+  try {
+    await io2.run("git", ["push", "-u", "origin", "HEAD"]);
+  } catch (e) {
+    io2.say(`It won, but Synthe could not push ${branch} (${firstLine2(e)}). Nothing was opened. Check you can push to this repo, then run npx synthe submit again.`);
+    return false;
+  }
+  const diffstat = await io2.run("git", ["diff", "--stat", `${base}..HEAD`]);
+  const body = prBody({ config, base: baseline, candidate: candidate.measurement, verdict: v, baseSha: base, headSha: repo.head, diffstat, guardCommand: config.guard.command });
+  let url;
+  try {
+    const out = await io2.run("gh", ["pr", "create", "--base", def, "--head", branch, "--title", prTitle(config, candidate.measurement, baseline), "--body-file", "-"], body);
+    url = out.trim().split("\n").at(-1).trim();
+  } catch (e) {
+    io2.say(`It won, but Synthe could not open the pull request (${firstLine2(e)}). ${branch} is pushed; open the pull request on GitHub.`);
+    return false;
+  }
+  io2.say(`Pull request: ${url}`);
+  io2.say(v.why);
+  if (config.mode === "auto") {
+    try {
+      await io2.run("gh", ["pr", "merge", url, "--squash", "--delete-branch"]);
+      io2.say(`Merged into ${def}. Run git pull.`);
+    } catch (e) {
+      io2.say(`Could not merge it (${firstLine2(e)}): the pull request is open for a person to merge.`);
+    }
+  } else {
+    io2.say("Review it there; merge it to keep the change.");
+  }
+  if (options.agent) io2.say(SUBMIT_NEXT_WIN);
+  return true;
+}
+
+// src/improve/exec.ts
+import { spawn as spawn2 } from "node:child_process";
+import { performance } from "node:perf_hooks";
+var MAX_OUTPUT = 4 * 1024 * 1024;
+var HIDDEN = ["ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "NODE_TEST_CONTEXT"];
+function childEnv(env = process.env) {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("SYNTHE_") && !HIDDEN.includes(k)));
+}
+var shellExec = (cwd, command, timeoutMs) => new Promise((resolve2) => {
+  const win2 = process.platform === "win32";
+  const started = performance.now();
+  const child = spawn2(win2 ? "cmd" : "sh", [win2 ? "/c" : "-c", command], { cwd, env: childEnv(), stdio: ["ignore", "pipe", "pipe"], detached: !win2 });
+  let stdout = "", stderr = "", timedOut = false, done = false;
+  const take = (into) => (d) => {
+    if (into === "out" && stdout.length < MAX_OUTPUT) stdout += d.toString().slice(0, MAX_OUTPUT - stdout.length);
+    if (into === "err" && stderr.length < MAX_OUTPUT) stderr += d.toString().slice(0, MAX_OUTPUT - stderr.length);
+  };
+  child.stdout.on("data", take("out"));
+  child.stderr.on("data", take("err"));
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try {
+      if (win2) child.kill("SIGKILL");
+      else process.kill(-child.pid, "SIGKILL");
+    } catch {
+    }
+  }, timeoutMs);
+  const finish = (code) => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    resolve2({ ok: code === 0 && !timedOut, stdout, stderr, ms: Math.round(performance.now() - started), timedOut });
+  };
+  child.on("error", (e) => {
+    stderr += e.message;
+    finish(null);
+  });
+  child.on("close", finish);
+});
+
 // src/cli/main.ts
 var run = (cmd, args, stdin) => new Promise((resolve2, reject) => {
-  const child = spawn2(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn3(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
   let out = "", err = "";
   child.stdout.on("data", (d) => {
     out += d;
@@ -31298,10 +31971,10 @@ async function ask(question) {
   rl.close();
   return answer;
 }
-var template = () => readFileSync9(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync12(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 function setUpHere() {
-  if (existsSync7(GOAL_FILE)) return true;
+  if (existsSync11(GOAL_FILE)) return true;
   console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
   process.exitCode = 1;
   return false;
@@ -31330,7 +32003,7 @@ async function status() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync9(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync12(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -31349,7 +32022,7 @@ async function changes() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync9(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync12(GOAL_FILE, "utf8"));
   console.log(changesText(goal, s));
 }
 async function stop() {
@@ -31368,7 +32041,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync9(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync12(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -31378,7 +32051,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync7(goal.scenarios) ? sha256(readFileSync9(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync11(goal.scenarios) ? sha256(readFileSync12(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -31407,7 +32080,7 @@ async function undoRound() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync9(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync12(GOAL_FILE, "utf8"));
   const token = (await run("gh", ["auth", "token"])).trim();
   const history = async (path4) => {
     const shas = (await run("git", ["log", "--format=%H", "--", path4])).split("\n").filter(Boolean);
@@ -31426,15 +32099,15 @@ function localRun(command) {
   }
   const { key, eventCode, teamCode } = credential;
   console.log(credential.line);
-  const goal = parseGoal(readFileSync9(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync12(GOAL_FILE, "utf8"));
   if (!key && eventCode) eventModels(goal.models);
-  const prompt = readPrompt(readFileSync9(goal.prompt.path, "utf8"), goal, null);
+  const prompt = readPrompt(readFileSync12(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync9(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, teamCode) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync12(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, teamCode) };
 }
 async function calibrateChecks() {
   const local = localRun("calibrate");
@@ -31442,8 +32115,8 @@ async function calibrateChecks() {
   const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result) return;
   if (result.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync9(GOAL_FILE, "utf8"));
-    writeFileSync6(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}
+    const saved = JSON.parse(readFileSync12(GOAL_FILE, "utf8"));
+    writeFileSync7(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result.checks }, null, 2)}
 `);
     console.log(`
 Saved your reworded checks in ${GOAL_FILE}. Push them so Synthe's next round uses them:`);
@@ -31463,10 +32136,10 @@ async function tryRound() {
     return;
   }
   console.log("Trying one round on your computer. Your prompt stays unchanged; candidate fingerprints are saved in .synthe-local/try-history.json...");
-  const { written, costUsd: costUsd2, verdict } = await runLocalTry(process.cwd(), goal, prompt, scenarios, model);
-  for (const c of written.candidates) console.log(`- ${c.title ?? c.summary ?? c.id}: ${verdict.notes[c.id] ?? "not tested"}`);
+  const { written, costUsd: costUsd2, verdict: verdict2 } = await runLocalTry(process.cwd(), goal, prompt, scenarios, model);
+  for (const c of written.candidates) console.log(`- ${c.title ?? c.summary ?? c.id}: ${verdict2.notes[c.id] ?? "not tested"}`);
   for (const r of written.rejected ?? []) console.log(`- An edit that couldn't be applied: ${r.replace(/^candidate-\d+: /, "")}`);
-  console.log(verdict.action === "merge" ? `In a real run, Synthe would merge this. ${verdict.plain}` : "In a real run, nothing would change this round.");
+  console.log(verdict2.action === "merge" ? `In a real run, Synthe would merge this. ${verdict2.plain}` : "In a real run, nothing would change this round.");
   console.log(`Cost: ${written.costUsd === null || costUsd2 === null ? "unknown" : `$${(written.costUsd + costUsd2).toFixed(2)}`}`);
 }
 var HELP = `Synthe makes your AI agent's system prompt better while you sleep.
@@ -31474,6 +32147,8 @@ var HELP = `Synthe makes your AI agent's system prompt better while you sleep.
 Start here, inside your project's folder:
   npx synthe init     set up this repo and start
   npx synthe guide    instructions for setup through a coding agent
+  npx synthe improve  make one measured code change with the coding agent you already use (no AI prompt needed)
+  npx synthe submit   measure your change; open the pull request, or merge it in auto mode
 
 Then:
   npx synthe status   where it is and what it changed
@@ -31495,6 +32170,8 @@ async function main() {
   const command = process.argv[2];
   if (command === "init") process.exitCode = await init(io, process.cwd(), void 0, void 0, process.env, agentOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "guide") console.log(guide);
+  else if (command === "improve") process.exitCode = await improve({ say: console.log, ask, run, exec: shellExec }, process.cwd(), improveOptions(process.argv.slice(3))) ? 0 : 1;
+  else if (command === "submit") process.exitCode = await submit({ say: console.log, ask, run, exec: shellExec }, process.cwd(), submitOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
     process.exitCode = await setKey(io) ? 0 : 1;
