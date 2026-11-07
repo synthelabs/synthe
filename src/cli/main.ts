@@ -54,13 +54,17 @@ async function ask(question: string) {
 
 // Ctrl-C (or the terminal closing, or a kill) during an improve run: nothing async can finish, so the cleanup is
 // synchronous. Running metric or check commands are stopped first: they run model-written code.
-function onInterrupt(cleanup: () => void): () => void {
+// A cleanup may return a promise (the run record's last batch); it gets at most 1.5 seconds before the exit.
+function onInterrupt(cleanup: () => void | Promise<void>): () => void {
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const stop = () => {
     killRunning();
-    cleanup();
+    let pending: void | Promise<void>;
+    try { pending = cleanup(); } catch { pending = undefined; }
     console.log("\nStopped. Synthe stopped its measurements and removed its temporary checkouts; your working tree was never touched.");
-    process.exit(130);
+    const exit = () => process.exit(130);
+    if (pending && typeof pending.then === "function") Promise.race([pending.catch(() => {}), new Promise((resolve) => setTimeout(resolve, 1500))]).then(exit, exit);
+    else exit();
   };
   for (const s of signals) process.once(s, stop);
   return () => { for (const s of signals) process.off(s, stop); };
@@ -290,7 +294,7 @@ async function main() {
   if (command === "init") process.exitCode = (await init(io, process.cwd(), undefined, undefined, process.env, agentOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "guide") console.log(guide);
   else if (command === "improve") process.exitCode = (await improve({ say: console.log, ask, run, exec: shellExec, env: process.env, onInterrupt }, process.cwd(), improveOptions(process.argv.slice(3)))) ? 0 : 1;
-  else if (command === "submit") process.exitCode = (await submit({ say: console.log, ask, run, exec: shellExec }, process.cwd(), submitOptions(process.argv.slice(3)))) ? 0 : 1;
+  else if (command === "submit") process.exitCode = (await submit({ say: console.log, ask, run, exec: shellExec, env: process.env }, process.cwd(), submitOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
     process.exitCode = (await setKey(io)) ? 0 : 1;

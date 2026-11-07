@@ -41,7 +41,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/@anthropic-ai/sdk/internal/tslib.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/tslib.mjs
 function __classPrivateFieldSet(receiver, state, value, kind, f) {
   if (kind === "m")
     throw new TypeError("Private method is not writable");
@@ -59,11 +59,11 @@ function __classPrivateFieldGet(receiver, state, kind, f) {
   return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 }
 var init_tslib = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/tslib.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/tslib.mjs"() {
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/errors.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/errors.mjs
 function isAbortError(err) {
   return typeof err === "object" && err !== null && // Spec-compliant fetch implementations
   ("name" in err && err.name === "AbortError" || // Expo fetch
@@ -71,7 +71,7 @@ function isAbortError(err) {
 }
 var castToError;
 var init_errors = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/errors.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/errors.mjs"() {
     castToError = (err) => {
       if (err instanceof Error)
         return err;
@@ -100,10 +100,10 @@ var init_errors = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/core/error.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/core/error.mjs
 var AnthropicError, APIError, APIUserAbortError, APIConnectionError, APIConnectionTimeoutError, RetryableError, BadRequestError, AuthenticationError, PermissionDeniedError, NotFoundError, ConflictError, UnprocessableEntityError, RateLimitError, InternalServerError;
 var init_error = __esm({
-  "node_modules/@anthropic-ai/sdk/core/error.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/core/error.mjs"() {
     init_errors();
     AnthropicError = /* @__PURE__ */ (() => {
       class AnthropicError2 extends Error {
@@ -209,7 +209,7 @@ var init_error = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/values.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/values.mjs
 function maybeObj(x) {
   if (typeof x !== "object") {
     return {};
@@ -233,7 +233,7 @@ function checkNever(_value) {
 }
 var startsWithSchemeRegexp, isAbsoluteURL, isArray, isReadonlyArray, validatePositiveInteger, CREDENTIAL_OPTIONS, safeJSON;
 var init_values = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/values.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/values.mjs"() {
     init_error();
     startsWithSchemeRegexp = /^[a-z][a-z0-9+.-]*:/i;
     isAbsoluteURL = (url) => {
@@ -261,10 +261,10 @@ var init_values = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/sleep.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/sleep.mjs
 var sleep;
 var init_sleep = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/sleep.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/sleep.mjs"() {
     sleep = (ms, signal) => new Promise((resolve2) => {
       if (signal?.aborted)
         return resolve2();
@@ -281,15 +281,15 @@ var init_sleep = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/version.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/version.mjs
 var VERSION;
 var init_version = __esm({
-  "node_modules/@anthropic-ai/sdk/version.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/version.mjs"() {
     VERSION = "1.3.0";
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/detect-platform.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/detect-platform.mjs
 function getDetectedPlatform() {
   if (typeof Deno !== "undefined" && Deno.build != null) {
     return "deno";
@@ -327,7 +327,7 @@ function getBrowserInfo() {
 }
 var isRunningInBrowser, getPlatformProperties, normalizeArch, normalizePlatform, _platformHeaders, getPlatformHeaders;
 var init_detect_platform = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/detect-platform.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/detect-platform.mjs"() {
     init_version();
     isRunningInBrowser = () => {
       return (
@@ -428,7 +428,7 @@ var init_detect_platform = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/request-signal.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/request-signal.mjs
 function makeCleanup(signal, listener) {
   return () => signal.removeEventListener("abort", listener);
 }
@@ -449,13 +449,13 @@ function releaseRequestSignal(controller) {
 }
 var cleanups, registry;
 var init_request_signal = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/request-signal.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/request-signal.mjs"() {
     cleanups = /* @__PURE__ */ new WeakMap();
     registry = typeof globalThis.FinalizationRegistry === "function" ? new globalThis.FinalizationRegistry((controller) => releaseRequestSignal(controller)) : null;
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/shims.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/shims.mjs
 function getDefaultFetch() {
   if (typeof fetch !== "undefined") {
     return fetch;
@@ -536,7 +536,7 @@ async function CancelReadableStream(stream2) {
 }
 var droppedReaders;
 var init_shims = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/shims.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/shims.mjs"() {
     droppedReaders = typeof FinalizationRegistry === "undefined" ? void 0 : /* @__PURE__ */ new FinalizationRegistry(async (iter) => {
       try {
         await iter.return?.();
@@ -546,10 +546,10 @@ var init_shims = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/request-options.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/request-options.mjs
 var FallbackEncoder;
 var init_request_options = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/request-options.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/request-options.mjs"() {
     FallbackEncoder = ({ headers, body }) => {
       return {
         bodyHeaders: {
@@ -561,15 +561,15 @@ var init_request_options = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/version.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/version.mjs
 var VERSION2;
 var init_version2 = __esm({
-  "node_modules/@opentelemetry/api/dist/version.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/version.mjs"() {
     VERSION2 = "1.10.0";
   }
 });
 
-// node_modules/@opentelemetry/api/dist/internal/semver.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/internal/semver.mjs
 function _makeCompatibilityCheck(ownVersion) {
   const acceptedVersions = /* @__PURE__ */ new Set([ownVersion]);
   const rejectedVersions = /* @__PURE__ */ new Set();
@@ -615,14 +615,14 @@ function _makeCompatibilityCheck(ownVersion) {
 }
 var re, isCompatible;
 var init_semver = __esm({
-  "node_modules/@opentelemetry/api/dist/internal/semver.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/internal/semver.mjs"() {
     init_version2();
     re = /^(\d+)\.(\d+)\.(\d+)(-(.+))?$/;
     isCompatible = _makeCompatibilityCheck(VERSION2);
   }
 });
 
-// node_modules/@opentelemetry/api/dist/internal/global-utils.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/internal/global-utils.mjs
 function _makeGlobalApi() {
   return Object.defineProperty({}, "version", {
     value: VERSION2,
@@ -664,7 +664,7 @@ function unregisterGlobal(type, diag2) {
 }
 var major, GLOBAL_OPENTELEMETRY_API_KEY, _global, _compatibleGlobalApi;
 var init_global_utils = __esm({
-  "node_modules/@opentelemetry/api/dist/internal/global-utils.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/internal/global-utils.mjs"() {
     init_version2();
     init_semver();
     major = VERSION2.split(".")[0];
@@ -673,7 +673,7 @@ var init_global_utils = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/diag/ComponentLogger.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/diag/ComponentLogger.mjs
 function logProxy(funcName, namespace, args) {
   const logger = getGlobal("diag");
   if (!logger) return;
@@ -681,7 +681,7 @@ function logProxy(funcName, namespace, args) {
 }
 var DiagComponentLogger;
 var init_ComponentLogger = __esm({
-  "node_modules/@opentelemetry/api/dist/diag/ComponentLogger.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/diag/ComponentLogger.mjs"() {
     init_global_utils();
     DiagComponentLogger = class {
       constructor(props) {
@@ -706,7 +706,7 @@ var init_ComponentLogger = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/diag/internal/logLevelLogger.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/diag/internal/logLevelLogger.mjs
 function createLogLevelDiagLogger(maxLevel, logger) {
   if (maxLevel < 0) maxLevel = 0;
   else if (maxLevel > 9999) maxLevel = 9999;
@@ -726,14 +726,14 @@ function createLogLevelDiagLogger(maxLevel, logger) {
   };
 }
 var init_logLevelLogger = __esm({
-  "node_modules/@opentelemetry/api/dist/diag/internal/logLevelLogger.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/diag/internal/logLevelLogger.mjs"() {
   }
 });
 
-// node_modules/@opentelemetry/api/dist/api/diag.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/api/diag.mjs
 var API_NAME, DiagAPI;
 var init_diag = __esm({
-  "node_modules/@opentelemetry/api/dist/api/diag.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/api/diag.mjs"() {
     init_global_utils();
     init_ComponentLogger();
     init_logLevelLogger();
@@ -793,10 +793,10 @@ var init_diag = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/baggage/internal/baggage-impl.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/baggage/internal/baggage-impl.mjs
 var BaggageImpl;
 var init_baggage_impl = __esm({
-  "node_modules/@opentelemetry/api/dist/baggage/internal/baggage-impl.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/baggage/internal/baggage-impl.mjs"() {
     BaggageImpl = class BaggageImpl2 {
       constructor(entries) {
         this._entries = entries ? new Map(entries) : /* @__PURE__ */ new Map();
@@ -831,26 +831,26 @@ var init_baggage_impl = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/baggage/utils.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/baggage/utils.mjs
 function createBaggage(entries = {}) {
   return new BaggageImpl(new Map(Object.entries(entries)));
 }
 var diag;
 var init_utils = __esm({
-  "node_modules/@opentelemetry/api/dist/baggage/utils.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/baggage/utils.mjs"() {
     init_diag();
     init_baggage_impl();
     diag = DiagAPI.instance();
   }
 });
 
-// node_modules/@opentelemetry/api/dist/context/context.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/context/context.mjs
 function createContextKey(description) {
   return Symbol.for(description);
 }
 var ROOT_CONTEXT;
 var init_context = __esm({
-  "node_modules/@opentelemetry/api/dist/context/context.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/context/context.mjs"() {
     ROOT_CONTEXT = new class BaseContext {
       /**
       * Construct a new context which inherits values from an optional parent context.
@@ -876,10 +876,10 @@ var init_context = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/propagation/TextMapPropagator.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/propagation/TextMapPropagator.mjs
 var defaultTextMapGetter, defaultTextMapSetter;
 var init_TextMapPropagator = __esm({
-  "node_modules/@opentelemetry/api/dist/propagation/TextMapPropagator.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/propagation/TextMapPropagator.mjs"() {
     defaultTextMapGetter = {
       get(carrier, key) {
         if (carrier == null) return;
@@ -897,10 +897,10 @@ var init_TextMapPropagator = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/trace/invalid-span-constants.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/invalid-span-constants.mjs
 var INVALID_SPANID, INVALID_TRACEID, INVALID_SPAN_CONTEXT;
 var init_invalid_span_constants = __esm({
-  "node_modules/@opentelemetry/api/dist/trace/invalid-span-constants.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/invalid-span-constants.mjs"() {
     INVALID_SPANID = "0000000000000000";
     INVALID_TRACEID = "00000000000000000000000000000000";
     INVALID_SPAN_CONTEXT = {
@@ -911,10 +911,10 @@ var init_invalid_span_constants = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/trace/NonRecordingSpan.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/NonRecordingSpan.mjs
 var NonRecordingSpan;
 var init_NonRecordingSpan = __esm({
-  "node_modules/@opentelemetry/api/dist/trace/NonRecordingSpan.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/NonRecordingSpan.mjs"() {
     init_invalid_span_constants();
     NonRecordingSpan = class {
       constructor(spanContext = INVALID_SPAN_CONTEXT) {
@@ -955,7 +955,7 @@ var init_NonRecordingSpan = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/trace/spancontext-utils.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/spancontext-utils.mjs
 function isValidHex(id, length) {
   if (typeof id !== "string" || id.length !== length) return false;
   let r = 0;
@@ -976,7 +976,7 @@ function wrapSpanContext(spanContext) {
 }
 var isHex;
 var init_spancontext_utils = __esm({
-  "node_modules/@opentelemetry/api/dist/trace/spancontext-utils.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/spancontext-utils.mjs"() {
     init_NonRecordingSpan();
     isHex = new Uint8Array([
       0,
@@ -1086,10 +1086,10 @@ var init_spancontext_utils = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/context/NoopContextManager.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/context/NoopContextManager.mjs
 var NoopContextManager;
 var init_NoopContextManager = __esm({
-  "node_modules/@opentelemetry/api/dist/context/NoopContextManager.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/context/NoopContextManager.mjs"() {
     init_context();
     NoopContextManager = class {
       active() {
@@ -1116,10 +1116,10 @@ var init_NoopContextManager = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/api/context.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/api/context.mjs
 var API_NAME2, NOOP_CONTEXT_MANAGER, NOOP_TOKEN, ContextAPI;
 var init_context2 = __esm({
-  "node_modules/@opentelemetry/api/dist/api/context.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/api/context.mjs"() {
     init_global_utils();
     init_diag();
     init_NoopContextManager();
@@ -1214,7 +1214,7 @@ var init_context2 = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/trace/context-utils.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/context-utils.mjs
 function getSpan(context2) {
   return context2.getValue(SPAN_KEY) || void 0;
 }
@@ -1236,7 +1236,7 @@ function getSpanContext(context2) {
 }
 var SPAN_KEY;
 var init_context_utils = __esm({
-  "node_modules/@opentelemetry/api/dist/trace/context-utils.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/context-utils.mjs"() {
     init_context();
     init_context2();
     init_NonRecordingSpan();
@@ -1244,13 +1244,13 @@ var init_context_utils = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/trace/NoopTracer.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/NoopTracer.mjs
 function isSpanContext(spanContext) {
   return spanContext !== null && typeof spanContext === "object" && "spanId" in spanContext && typeof spanContext["spanId"] === "string" && "traceId" in spanContext && typeof spanContext["traceId"] === "string" && "traceFlags" in spanContext && typeof spanContext["traceFlags"] === "number";
 }
 var contextApi, NoopTracer;
 var init_NoopTracer = __esm({
-  "node_modules/@opentelemetry/api/dist/trace/NoopTracer.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/NoopTracer.mjs"() {
     init_context2();
     init_NonRecordingSpan();
     init_context_utils();
@@ -1287,10 +1287,10 @@ var init_NoopTracer = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/trace/ProxyTracer.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/ProxyTracer.mjs
 var NOOP_TRACER, ProxyTracer;
 var init_ProxyTracer = __esm({
-  "node_modules/@opentelemetry/api/dist/trace/ProxyTracer.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/ProxyTracer.mjs"() {
     init_NoopTracer();
     NOOP_TRACER = new NoopTracer();
     ProxyTracer = class {
@@ -1322,10 +1322,10 @@ var init_ProxyTracer = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/trace/span_kind.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/span_kind.mjs
 var SpanKind;
 var init_span_kind = __esm({
-  "node_modules/@opentelemetry/api/dist/trace/span_kind.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/span_kind.mjs"() {
     SpanKind = /* @__PURE__ */ (function(SpanKind2) {
       SpanKind2[SpanKind2["INTERNAL"] = 0] = "INTERNAL";
       SpanKind2[SpanKind2["SERVER"] = 1] = "SERVER";
@@ -1337,10 +1337,10 @@ var init_span_kind = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/trace/status.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/status.mjs
 var SpanStatusCode;
 var init_status = __esm({
-  "node_modules/@opentelemetry/api/dist/trace/status.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/status.mjs"() {
     SpanStatusCode = /* @__PURE__ */ (function(SpanStatusCode2) {
       SpanStatusCode2[SpanStatusCode2["UNSET"] = 0] = "UNSET";
       SpanStatusCode2[SpanStatusCode2["OK"] = 1] = "OK";
@@ -1350,10 +1350,10 @@ var init_status = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/trace/NoopTracerProvider.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/NoopTracerProvider.mjs
 var NoopTracerProvider;
 var init_NoopTracerProvider = __esm({
-  "node_modules/@opentelemetry/api/dist/trace/NoopTracerProvider.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/NoopTracerProvider.mjs"() {
     init_NoopTracer();
     NoopTracerProvider = class {
       getTracer(_name, _version, _options) {
@@ -1363,10 +1363,10 @@ var init_NoopTracerProvider = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/trace/ProxyTracerProvider.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/ProxyTracerProvider.mjs
 var NOOP_TRACER_PROVIDER, ProxyTracerProvider;
 var init_ProxyTracerProvider = __esm({
-  "node_modules/@opentelemetry/api/dist/trace/ProxyTracerProvider.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/trace/ProxyTracerProvider.mjs"() {
     init_ProxyTracer();
     init_NoopTracerProvider();
     NOOP_TRACER_PROVIDER = new NoopTracerProvider();
@@ -1396,19 +1396,19 @@ var init_ProxyTracerProvider = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/context-api.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/context-api.mjs
 var context;
 var init_context_api = __esm({
-  "node_modules/@opentelemetry/api/dist/context-api.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/context-api.mjs"() {
     init_context2();
     context = ContextAPI.getInstance();
   }
 });
 
-// node_modules/@opentelemetry/api/dist/propagation/NoopTextMapPropagator.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/propagation/NoopTextMapPropagator.mjs
 var NoopTextMapPropagator;
 var init_NoopTextMapPropagator = __esm({
-  "node_modules/@opentelemetry/api/dist/propagation/NoopTextMapPropagator.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/propagation/NoopTextMapPropagator.mjs"() {
     NoopTextMapPropagator = class {
       /** Noop inject function does nothing */
       inject(_context, _carrier) {
@@ -1424,7 +1424,7 @@ var init_NoopTextMapPropagator = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/baggage/context-helpers.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/baggage/context-helpers.mjs
 function getBaggage(context2) {
   return context2.getValue(BAGGAGE_KEY) || void 0;
 }
@@ -1439,17 +1439,17 @@ function deleteBaggage(context2) {
 }
 var BAGGAGE_KEY;
 var init_context_helpers = __esm({
-  "node_modules/@opentelemetry/api/dist/baggage/context-helpers.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/baggage/context-helpers.mjs"() {
     init_context();
     init_context2();
     BAGGAGE_KEY = createContextKey("OpenTelemetry Baggage Key");
   }
 });
 
-// node_modules/@opentelemetry/api/dist/api/propagation.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/api/propagation.mjs
 var API_NAME3, NOOP_TEXT_MAP_PROPAGATOR, PropagationAPI;
 var init_propagation = __esm({
-  "node_modules/@opentelemetry/api/dist/api/propagation.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/api/propagation.mjs"() {
     init_global_utils();
     init_diag();
     init_utils();
@@ -1517,19 +1517,19 @@ var init_propagation = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/propagation-api.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/propagation-api.mjs
 var propagation;
 var init_propagation_api = __esm({
-  "node_modules/@opentelemetry/api/dist/propagation-api.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/propagation-api.mjs"() {
     init_propagation();
     propagation = PropagationAPI.getInstance();
   }
 });
 
-// node_modules/@opentelemetry/api/dist/api/trace.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/api/trace.mjs
 var API_NAME4, TraceAPI;
 var init_trace = __esm({
-  "node_modules/@opentelemetry/api/dist/api/trace.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/api/trace.mjs"() {
     init_global_utils();
     init_diag();
     init_context_utils();
@@ -1585,18 +1585,18 @@ var init_trace = __esm({
   }
 });
 
-// node_modules/@opentelemetry/api/dist/trace-api.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/trace-api.mjs
 var trace;
 var init_trace_api = __esm({
-  "node_modules/@opentelemetry/api/dist/trace-api.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/trace-api.mjs"() {
     init_trace();
     trace = TraceAPI.getInstance();
   }
 });
 
-// node_modules/@opentelemetry/api/dist/index.mjs
+// ../../synthe-improve/node_modules/@opentelemetry/api/dist/index.mjs
 var init_dist = __esm({
-  "node_modules/@opentelemetry/api/dist/index.mjs"() {
+  "../../synthe-improve/node_modules/@opentelemetry/api/dist/index.mjs"() {
     init_span_kind();
     init_status();
     init_context_api();
@@ -1605,7 +1605,7 @@ var init_dist = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/bytes.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/bytes.mjs
 function concatBytes(buffers) {
   let length = 0;
   for (const buffer of buffers) {
@@ -1629,11 +1629,11 @@ function decodeUTF8(bytes) {
 }
 var encodeUTF8_, decodeUTF8_;
 var init_bytes = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/bytes.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/bytes.mjs"() {
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/decoders/line.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/decoders/line.mjs
 function findNewlineIndex(buffer, startIndex) {
   const newline = 10;
   const carriage = 13;
@@ -1649,7 +1649,7 @@ function findNewlineIndex(buffer, startIndex) {
 }
 var _LineDecoder_buffer, _LineDecoder_carriageReturnIndex, LineDecoder;
 var init_line = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/decoders/line.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/decoders/line.mjs"() {
     init_tslib();
     init_bytes();
     LineDecoder = /* @__PURE__ */ (() => {
@@ -1666,7 +1666,7 @@ var init_line = __esm({
           }
           const binaryChunk = chunk instanceof ArrayBuffer ? new Uint8Array(chunk) : typeof chunk === "string" ? encodeUTF8(chunk) : chunk;
           __classPrivateFieldSet(this, _LineDecoder_buffer, concatBytes([__classPrivateFieldGet(this, _LineDecoder_buffer, "f"), binaryChunk]), "f");
-          const lines = [];
+          const lines2 = [];
           let patternIndex;
           while ((patternIndex = findNewlineIndex(__classPrivateFieldGet(this, _LineDecoder_buffer, "f"), __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f"))) != null) {
             if (patternIndex.carriage && __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") == null) {
@@ -1674,18 +1674,18 @@ var init_line = __esm({
               continue;
             }
             if (__classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") != null && (patternIndex.index !== __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") + 1 || patternIndex.carriage)) {
-              lines.push(decodeUTF8(__classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(0, __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") - 1)));
+              lines2.push(decodeUTF8(__classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(0, __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") - 1)));
               __classPrivateFieldSet(this, _LineDecoder_buffer, __classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(__classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f")), "f");
               __classPrivateFieldSet(this, _LineDecoder_carriageReturnIndex, null, "f");
               continue;
             }
             const endIndex = __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") !== null ? patternIndex.preceding - 1 : patternIndex.preceding;
             const line = decodeUTF8(__classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(0, endIndex));
-            lines.push(line);
+            lines2.push(line);
             __classPrivateFieldSet(this, _LineDecoder_buffer, __classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(patternIndex.index), "f");
             __classPrivateFieldSet(this, _LineDecoder_carriageReturnIndex, null, "f");
           }
-          return lines;
+          return lines2;
         }
         flush() {
           if (!__classPrivateFieldGet(this, _LineDecoder_buffer, "f").length) {
@@ -1702,10 +1702,10 @@ var init_line = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/env.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/env.mjs
 var readEnv;
 var init_env = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/env.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/env.mjs"() {
     readEnv = (env) => {
       if (typeof globalThis.process !== "undefined") {
         return globalThis.process.env?.[env]?.trim() || void 0;
@@ -1718,7 +1718,7 @@ var init_env = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/log.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/log.mjs
 function noop() {
 }
 function makeLogFn(fnLevel, logger, logLevel) {
@@ -1766,7 +1766,7 @@ function debugLogRequestDetails(logger, message, details) {
 }
 var defaultLogLevel, levelNumbers, parseLogLevel, noopLogger, cachedLoggers, lastEnvLevel, cachedDefaultLogger, formatRequestDetails;
 var init_log = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/log.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/log.mjs"() {
     init_values();
     init_env();
     defaultLogLevel = "warn";
@@ -1816,7 +1816,7 @@ var init_log = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/core/streaming.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/core/streaming.mjs
 async function* _iterSSEMessages(response, controller) {
   if (!response.body) {
     controller.abort();
@@ -1850,7 +1850,7 @@ function partition(str, delimiter3) {
 }
 var _Stream_client, Stream, SSEDecoder;
 var init_streaming = __esm({
-  "node_modules/@anthropic-ai/sdk/core/streaming.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/core/streaming.mjs"() {
     init_tslib();
     init_error();
     init_shims();
@@ -2072,7 +2072,7 @@ var init_streaming = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/headers.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/headers.mjs
 function* iterateHeaders(headers) {
   if (!headers)
     return;
@@ -2113,7 +2113,7 @@ function* iterateHeaders(headers) {
 }
 var brand_privateNullableHeaders, clearSentinel, APPEND_HEADERS, appendHeaderValue, buildHeaders;
 var init_headers = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/headers.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/headers.mjs"() {
     init_values();
     brand_privateNullableHeaders = /* @__PURE__ */ Symbol.for("brand.privateNullableHeaders");
     clearSentinel = /* @__PURE__ */ Symbol("clear");
@@ -2165,7 +2165,7 @@ var init_headers = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/tracing.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/tracing.mjs
 function resolveOpenTelemetryOptions(option) {
   const { tracerProvider, propagation: propagation2, traces } = option === false ? { traces: false } : option ?? optionFromEnv();
   const { enabled, contentMode, maxContentBytes } = typeof traces === "boolean" ? { enabled: traces } : traces ?? {};
@@ -2436,7 +2436,7 @@ function errorType(error) {
 }
 var INSTRUMENTATION_SCOPE, ATTR_ERROR_TYPE, ATTR_GEN_AI_CONVERSATION_ID, ATTR_GEN_AI_PROVIDER_NAME, ATTR_HTTP_REQUEST_METHOD, ATTR_HTTP_REQUEST_RESEND_COUNT, ATTR_HTTP_RESPONSE_STATUS_CODE, ATTR_HTTP_ROUTE, ATTR_SERVER_ADDRESS, ATTR_SERVER_PORT, ATTR_URL_FULL, ATTR_URL_PATH, ATTR_URL_QUERY, ATTR_URL_SCHEME, ATTR_ANTHROPIC_SESSION_THREAD_ID, DEFAULT_MAX_CONTENT_BYTES, CONTENT_QUERY_PARAMS;
 var init_tracing = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/tracing.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/tracing.mjs"() {
     init_dist();
     init_error();
     init_streaming();
@@ -2464,10 +2464,10 @@ var init_tracing = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/qs/formats.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/qs/formats.mjs
 var default_format, default_formatter, formatters, RFC1738;
 var init_formats = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/qs/formats.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/qs/formats.mjs"() {
     default_format = "RFC3986";
     default_formatter = (v) => String(v);
     formatters = {
@@ -2478,7 +2478,7 @@ var init_formats = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/qs/utils.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/qs/utils.mjs
 function is_buffer(obj) {
   if (!obj || typeof obj !== "object") {
     return false;
@@ -2497,7 +2497,7 @@ function maybe_map(val, fn) {
 }
 var has, hex_table, limit, encode;
 var init_utils2 = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/qs/utils.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/qs/utils.mjs"() {
     init_formats();
     init_values();
     has = (obj, key) => (has = Object.hasOwn ?? Function.prototype.call.bind(Object.prototype.hasOwnProperty), has(obj, key));
@@ -2564,7 +2564,7 @@ var init_utils2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/qs/stringify.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/qs/stringify.mjs
 function is_non_nullish_primitive(v) {
   return typeof v === "string" || typeof v === "number" || typeof v === "boolean" || typeof v === "symbol" || typeof v === "bigint";
 }
@@ -2804,7 +2804,7 @@ function stringify(object, opts = {}) {
 }
 var array_prefix_generators, push_to_array, toISOString, defaults, sentinel;
 var init_stringify = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/qs/stringify.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/qs/stringify.mjs"() {
     init_utils2();
     init_formats();
     init_values();
@@ -2849,17 +2849,17 @@ var init_stringify = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/query.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/query.mjs
 function stringifyQuery(query) {
   return stringify(query, { arrayFormat: "brackets" });
 }
 var init_query = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/query.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/query.mjs"() {
     init_stringify();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/node.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/node.mjs
 var node_exports = {};
 __export(node_exports, {
   child_process: () => child_process,
@@ -2878,11 +2878,11 @@ import * as path from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
 var init_node = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/node.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/node.mjs"() {
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/credentials/types.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/credentials/types.mjs
 function requireSecureTokenEndpoint(baseURL) {
   if (!baseURL)
     return;
@@ -3028,7 +3028,7 @@ async function readLimitedText(resp) {
 }
 var GRANT_TYPE_JWT_BEARER, GRANT_TYPE_REFRESH_TOKEN, TOKEN_ENDPOINT, OAUTH_API_BETA_HEADER, FEDERATION_BETA_HEADER, ADVISORY_REFRESH_THRESHOLD_IN_SECONDS, MANDATORY_REFRESH_THRESHOLD_IN_SECONDS, ADVISORY_REFRESH_BACKOFF_IN_SECONDS, MAX_TOKEN_RESPONSE_BYTES, MAX_ERROR_BODY_CHARS, SAFE_ERROR_KEYS, WorkloadIdentityError;
 var init_types = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/credentials/types.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/credentials/types.mjs"() {
     init_error();
     GRANT_TYPE_JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer";
     GRANT_TYPE_REFRESH_TOKEN = "refresh_token";
@@ -3052,19 +3052,19 @@ var init_types = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/time.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/time.mjs
 function nowAsSeconds() {
   return Math.floor(Date.now() / 1e3);
 }
 var init_time = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/time.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/time.mjs"() {
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/credentials/token-cache.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/credentials/token-cache.mjs
 var TokenCache;
 var init_token_cache = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/credentials/token-cache.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/credentials/token-cache.mjs"() {
     init_types();
     init_time();
     TokenCache = class {
@@ -3157,10 +3157,10 @@ var init_token_cache = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/tracing/attributes.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/attributes.mjs
 var ATTR_GEN_AI_AGENT_NAME, ATTR_GEN_AI_INPUT_MESSAGES, ATTR_GEN_AI_OPERATION_NAME, ATTR_GEN_AI_OUTPUT_MESSAGES, ATTR_GEN_AI_OUTPUT_TYPE, ATTR_GEN_AI_REQUEST_MAX_TOKENS, ATTR_GEN_AI_REQUEST_MODEL, ATTR_GEN_AI_REQUEST_REASONING_LEVEL, ATTR_GEN_AI_REQUEST_STOP_SEQUENCES, ATTR_GEN_AI_REQUEST_STREAM, ATTR_GEN_AI_RESPONSE_ID, ATTR_GEN_AI_RESPONSE_MODEL, ATTR_GEN_AI_RESPONSE_TIME_TO_FIRST_CHUNK, ATTR_GEN_AI_SYSTEM_INSTRUCTIONS, ATTR_GEN_AI_TOOL_CALL_ARGUMENTS, ATTR_GEN_AI_TOOL_CALL_ID, ATTR_GEN_AI_TOOL_DESCRIPTION, ATTR_GEN_AI_TOOL_NAME, ATTR_GEN_AI_TOOL_TYPE, ATTR_GEN_AI_USAGE_CACHE_WRITE_INPUT_TOKENS, ATTR_GEN_AI_USAGE_CACHE_READ_INPUT_TOKENS, ATTR_GEN_AI_USAGE_INPUT_TOKENS, ATTR_GEN_AI_USAGE_OUTPUT_TOKENS, ATTR_GEN_AI_USAGE_REASONING_OUTPUT_TOKENS, GEN_AI_OPERATION_NAME_VALUE_CHAT, GEN_AI_OPERATION_NAME_VALUE_EXECUTE_TOOL, GEN_AI_OPERATION_NAME_VALUE_INVOKE_AGENT, GEN_AI_OUTPUT_TYPE_VALUE_JSON, GEN_AI_TOOL_TYPE_VALUE_FUNCTION, ATTR_ANTHROPIC_REQUEST_ID, ATTR_ANTHROPIC_ORGANIZATION_ID, ATTR_ANTHROPIC_WORKSPACE_ID, ATTR_ANTHROPIC_BETA, ATTR_ANTHROPIC_CONTENT_TRUNCATED, ATTR_ANTHROPIC_MESSAGE_STOP_REASON, ATTR_ANTHROPIC_MESSAGE_COUNT_TOKENS_INPUT_TOKENS, ATTR_ANTHROPIC_REQUEST_SERVICE_TIER, ATTR_ANTHROPIC_RESPONSE_SERVICE_TIER, ATTR_ANTHROPIC_THINKING_BUDGET_TOKENS, ATTR_ANTHROPIC_THINKING_TYPE, ATTR_ANTHROPIC_TOOL_RESULT_CONTENT, ATTR_ANTHROPIC_TOOLSET_NAME, ATTR_ANTHROPIC_USAGE_CACHE_CREATION_EPHEMERAL_1H_INPUT_TOKENS, ATTR_ANTHROPIC_USAGE_CACHE_CREATION_EPHEMERAL_5M_INPUT_TOKENS, ATTR_ANTHROPIC_USAGE_COMPACTION_INPUT_TOKENS, ATTR_ANTHROPIC_USAGE_COMPACTION_OUTPUT_TOKENS, RESPONSE_HEADER_ATTRIBUTES;
 var init_attributes = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/tracing/attributes.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/attributes.mjs"() {
     init_tracing();
     init_tracing();
     ATTR_GEN_AI_AGENT_NAME = "gen_ai.agent.name";
@@ -3217,7 +3217,7 @@ var init_attributes = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/tracing/content.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/content.mjs
 function setMessageContentAttributes(call, body, output, limit2) {
   const span = call.span;
   const requestSize = call.requestContentSize;
@@ -3488,12 +3488,12 @@ function utf8Length(text2) {
   return size;
 }
 var init_content = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/tracing/content.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/content.mjs"() {
     init_attributes();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/tracing/response.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/response.mjs
 function setResponseAttributes(span, message, usage, complete) {
   span.setAttribute(ATTR_GEN_AI_RESPONSE_ID, message.id);
   span.setAttribute(ATTR_GEN_AI_RESPONSE_MODEL, message.model);
@@ -3530,12 +3530,12 @@ function setResponseAttributes(span, message, usage, complete) {
   }
 }
 var init_response = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/tracing/response.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/response.mjs"() {
     init_attributes();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/tracing/api-call.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/api-call.mjs
 function setAnthropicSpanAttributes(client, span, result) {
   if (!span.isRecording()) {
     return;
@@ -3636,7 +3636,7 @@ function recordSessionsCreateResponse(client, call, session) {
   }
 }
 var init_api_call = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/tracing/api-call.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/api-call.mjs"() {
     init_error();
     init_streaming();
     init_headers();
@@ -3647,7 +3647,7 @@ var init_api_call = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/trace-headers.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/trace-headers.mjs
 function traceHeaderNames() {
   const names = /* @__PURE__ */ new Set(["traceparent", "tracestate", "baggage"]);
   try {
@@ -3660,13 +3660,13 @@ function traceHeaderNames() {
   return names;
 }
 var init_trace_headers = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/trace-headers.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/trace-headers.mjs"() {
     init_dist();
     init_log();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/tracing/headers.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/headers.mjs
 function takeTraceHeaders(headers) {
   const names = traceHeaderNames();
   const taken = Array.from(headers.entries()).filter(([name]) => names.has(name));
@@ -3688,12 +3688,12 @@ function withoutTraceHeaders(middleware) {
   };
 }
 var init_headers2 = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/tracing/headers.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/headers.mjs"() {
     init_trace_headers();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/tracing/streaming.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/streaming.mjs
 function recordStreamedMessageContent(client, call, body, message) {
   if (!call.span.isRecording() || client.openTelemetry.traces.contentMode !== "content") {
     return;
@@ -3808,7 +3808,7 @@ function endMessagesCreateSpanWhenStreamEnds(client, span, stream2, props) {
   });
 }
 var init_streaming2 = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/tracing/streaming.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/streaming.mjs"() {
     init_dist();
     init_error();
     init_streaming();
@@ -3821,7 +3821,7 @@ var init_streaming2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/tracing/environments.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/environments.mjs
 function startEnvironmentWorkSpan(client, work, parentContext) {
   return client._tracer?.startSpan("anthropic.environment.work", {
     kind: SpanKind.INTERNAL,
@@ -3864,14 +3864,14 @@ async function withEnvironmentWorkSpan(client, span, signal, handle) {
   guardTracing(client, () => endEnvironmentWorkSpan(span, signal));
 }
 var init_environments = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/tracing/environments.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/environments.mjs"() {
     init_dist();
     init_tracing();
     init_attributes();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/stainless-helper-header.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/stainless-helper-header.mjs
 function helperHeader(value) {
   return { [STAINLESS_HELPER_HEADER]: value };
 }
@@ -3922,14 +3922,14 @@ function stainlessHelperHeaderFromFile(file) {
 }
 var STAINLESS_HELPER_HEADER, STAINLESS_HELPER_METHOD_HEADER, SDK_HELPER_SYMBOL;
 var init_stainless_helper_header = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/stainless-helper-header.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/stainless-helper-header.mjs"() {
     STAINLESS_HELPER_HEADER = "x-stainless-helper";
     STAINLESS_HELPER_METHOD_HEADER = "x-stainless-helper-method";
     SDK_HELPER_SYMBOL = /* @__PURE__ */ Symbol("anthropic.sdk.stainlessHelper");
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/tracing/tools.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/tools.mjs
 function startToolRunnerSpan(client, params, conversationId) {
   if (!client._tracer)
     return void 0;
@@ -3998,7 +3998,7 @@ async function withToolUseSpan(client, tool, toolUse, options, run2) {
   }
 }
 var init_tools = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/tracing/tools.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing/tools.mjs"() {
     init_dist();
     init_stainless_helper_header();
     init_tracing();
@@ -4008,9 +4008,9 @@ var init_tools = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/tracing.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing.mjs
 var init_tracing2 = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/tracing.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/tracing.mjs"() {
     init_api_call();
     init_headers2();
     init_streaming2();
@@ -4019,10 +4019,10 @@ var init_tracing2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/base64.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/base64.mjs
 var fromBase64;
 var init_base64 = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/base64.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/base64.mjs"() {
     init_error();
     fromBase64 = (str) => {
       if (typeof globalThis.Buffer !== "undefined") {
@@ -4042,10 +4042,10 @@ var init_base64 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/uuid.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/uuid.mjs
 var uuid4;
 var init_uuid = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/uuid.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/uuid.mjs"() {
     uuid4 = function() {
       const { crypto: crypto3 } = globalThis;
       if (crypto3?.randomUUID) {
@@ -4059,9 +4059,9 @@ var init_uuid = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils.mjs
 var init_utils3 = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils.mjs"() {
     init_values();
     init_base64();
     init_env();
@@ -4072,7 +4072,7 @@ var init_utils3 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/core/credentials.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/core/credentials.mjs
 function validateProfileName(name) {
   if (!name) {
     throw new Error("profile name is empty");
@@ -4089,7 +4089,7 @@ function validateProfileName(name) {
 }
 var CREDENTIALS_FILE_VERSION, PROFILE_NAME_PATTERN, loadConfigWithSource, getCredentialsPath, getRootConfigPath, supportsLocalConfigFiles, getActiveProfileName;
 var init_credentials = __esm({
-  "node_modules/@anthropic-ai/sdk/core/credentials.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/core/credentials.mjs"() {
     init_error();
     init_detect_platform();
     init_utils3();
@@ -4259,7 +4259,7 @@ var init_credentials = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/credentials/identity-token.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/credentials/identity-token.mjs
 function identityTokenFromFile(path4) {
   if (!path4) {
     throw new AnthropicError("Identity token file path is empty");
@@ -4286,12 +4286,12 @@ function identityTokenFromValue(token) {
   return () => token;
 }
 var init_identity_token = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/credentials/identity-token.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/credentials/identity-token.mjs"() {
     init_error();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/credentials/oidc-federation.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/credentials/oidc-federation.mjs
 function oidcFederationProvider(config) {
   return async () => {
     requireSecureTokenEndpoint(config.baseURL);
@@ -4350,14 +4350,14 @@ function oidcFederationProvider(config) {
   };
 }
 var init_oidc_federation = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/credentials/oidc-federation.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/credentials/oidc-federation.mjs"() {
     init_types();
     init_time();
     init_version();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/credentials/user-oauth.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/credentials/user-oauth.mjs
 function userOAuthProvider(config) {
   return async (opts) => {
     const { fs: fs5 } = await Promise.resolve().then(() => (init_node(), node_exports));
@@ -4432,7 +4432,7 @@ function userOAuthProvider(config) {
   };
 }
 var init_user_oauth = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/credentials/user-oauth.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/credentials/user-oauth.mjs"() {
     init_credentials();
     init_types();
     init_time();
@@ -4440,7 +4440,7 @@ var init_user_oauth = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/credentials/credential-chain.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/credentials/credential-chain.mjs
 function resolveCredentialsFromConfig(config, options) {
   const credentialsPath = config.authentication.credentials_path ?? null;
   const effectiveBaseURL = (config.base_url || options.baseURL).replace(/\/+$/, "");
@@ -4572,7 +4572,7 @@ function cachedExchangeProvider(exchange, credentialsPath, onCacheWriteError, on
   };
 }
 var init_credential_chain = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/credentials/credential-chain.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/credentials/credential-chain.mjs"() {
     init_env();
     init_credentials();
     init_types();
@@ -4583,7 +4583,7 @@ var init_credential_chain = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/parse.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/parse.mjs
 async function defaultParseResponse(client, props) {
   const { response, requestLogID, retryOfRequestLogID, startTime } = props;
   const body = await (async () => {
@@ -4634,14 +4634,14 @@ function addResponseIDs(value, response) {
   });
 }
 var init_parse = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/parse.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/parse.mjs"() {
     init_streaming();
     init_log();
     init_request_signal();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/core/middleware.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/core/middleware.mjs
 function isFetchOriginError(err) {
   return typeof err === "object" && err !== null && fetchOriginErrors.has(err);
 }
@@ -4737,7 +4737,7 @@ function applyMiddleware(fetchFn, middleware, options, client) {
 }
 var fetchOriginErrors;
 var init_middleware = __esm({
-  "node_modules/@anthropic-ai/sdk/core/middleware.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/core/middleware.mjs"() {
     init_errors();
     init_parse();
     init_log();
@@ -4747,7 +4747,7 @@ var init_middleware = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/uploads.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/uploads.mjs
 function makeFile(fileBits, fileName, options) {
   checkFileSupport();
   return new File(fileBits, fileName ?? "", options);
@@ -4778,7 +4778,7 @@ function supportsFormData(fetchObject) {
 }
 var checkFileSupport, isAsyncIterable, multipartFormRequestOptions, supportsFormDataMap, createForm, addFormValue;
 var init_uploads = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/uploads.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/uploads.mjs"() {
     init_shims();
     init_tracing();
     checkFileSupport = () => {
@@ -4845,10 +4845,10 @@ var init_uploads = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/core/api-promise.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/core/api-promise.mjs
 var _APIPromise_client, APIPromise;
 var init_api_promise = __esm({
-  "node_modules/@anthropic-ai/sdk/core/api-promise.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/core/api-promise.mjs"() {
     init_tslib();
     init_parse();
     init_tracing();
@@ -4966,10 +4966,10 @@ var init_api_promise = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/core/pagination.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/core/pagination.mjs
 var _AbstractPage_client, AbstractPage, PagePromise, Page, PageCursor, BidirectionalPageCursor, ReportPageCursor;
 var init_pagination = __esm({
-  "node_modules/@anthropic-ai/sdk/core/pagination.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/core/pagination.mjs"() {
     init_tslib();
     init_error();
     init_parse();
@@ -5177,7 +5177,7 @@ var init_pagination = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/to-file.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/to-file.mjs
 async function toFile(value, name, options) {
   checkFileSupport();
   value = await value;
@@ -5231,7 +5231,7 @@ function propsForError(value) {
 }
 var isBlobLike, isFileLike, isResponseLike;
 var init_to_file = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/to-file.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/to-file.mjs"() {
     init_uploads();
     init_uploads();
     isBlobLike = (value) => value != null && typeof value === "object" && typeof value.size === "number" && typeof value.type === "string" && typeof value.text === "function" && typeof value.slice === "function" && typeof value.arrayBuffer === "function";
@@ -5240,23 +5240,23 @@ var init_to_file = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/core/uploads.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/core/uploads.mjs
 var init_uploads2 = __esm({
-  "node_modules/@anthropic-ai/sdk/core/uploads.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/core/uploads.mjs"() {
     init_to_file();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/shared.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/shared.mjs
 var init_shared = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/shared.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/shared.mjs"() {
   }
 });
 
-// node_modules/@anthropic-ai/sdk/core/resource.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/core/resource.mjs
 var APIResource;
 var init_resource = __esm({
-  "node_modules/@anthropic-ai/sdk/core/resource.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/core/resource.mjs"() {
     APIResource = class {
       constructor(client) {
         this._client = client;
@@ -5265,7 +5265,7 @@ var init_resource = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/messages-request.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/messages-request.mjs
 function messagesCreateHeaders(params, options) {
   const { user_profile_id, workspace_id, tools, messages } = params;
   return buildHeaders([
@@ -5284,7 +5284,7 @@ function startMessagesStreamSpan(client, body, options) {
   return startApiCallSpan(client, "anthropic.messages.create", options, messagesCreateSpanSettings(client, { ...body, stream: true }, headers));
 }
 var init_messages_request = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/messages-request.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/messages-request.mjs"() {
     init_headers();
     init_stainless_helper_header();
     init_tracing();
@@ -5292,21 +5292,21 @@ var init_messages_request = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/error.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/error.mjs
 var init_error2 = __esm({
-  "node_modules/@anthropic-ai/sdk/error.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/error.mjs"() {
     init_error();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/streaming.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/streaming.mjs
 var init_streaming3 = __esm({
-  "node_modules/@anthropic-ai/sdk/streaming.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/streaming.mjs"() {
     init_streaming();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/parser.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/parser.mjs
 function getOutputFormat(params) {
   return params?.output_config?.format;
 }
@@ -5367,15 +5367,15 @@ function parseOutputFormat(params, content) {
   }
 }
 var init_parser = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/parser.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/parser.mjs"() {
     init_error();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/_vendor/partial-json-parser/parser.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/_vendor/partial-json-parser/parser.mjs
 var tokenize, strip, unstrip, generate, partialParse;
 var init_parser2 = __esm({
-  "node_modules/@anthropic-ai/sdk/_vendor/partial-json-parser/parser.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/_vendor/partial-json-parser/parser.mjs"() {
     tokenize = (input) => {
       let current = 0;
       let tokens = [];
@@ -5608,7 +5608,7 @@ var init_parser2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/message-stream-utils.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/message-stream-utils.mjs
 function withLazyInput(prev, jsonBuf) {
   const next = {};
   for (const key of Object.keys(prev)) {
@@ -5633,19 +5633,19 @@ function withLazyInput(prev, jsonBuf) {
 }
 var JSON_BUF_PROPERTY;
 var init_message_stream_utils = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/message-stream-utils.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/message-stream-utils.mjs"() {
     init_parser2();
     JSON_BUF_PROPERTY = "__json_buf";
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/MessageStream.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/MessageStream.mjs
 function tracksToolInput(content) {
   return content.type === "tool_use" || content.type === "server_tool_use";
 }
 var _MessageStream_instances, _MessageStream_currentMessageSnapshot, _MessageStream_params, _MessageStream_connectedPromise, _MessageStream_resolveConnectedPromise, _MessageStream_rejectConnectedPromise, _MessageStream_endPromise, _MessageStream_resolveEndPromise, _MessageStream_rejectEndPromise, _MessageStream_listeners, _MessageStream_ended, _MessageStream_errored, _MessageStream_aborted, _MessageStream_catchingPromiseCreated, _MessageStream_response, _MessageStream_request_id, _MessageStream_workspace_id, _MessageStream_logger, _MessageStream_client, _MessageStream_span, _MessageStream_getFinalMessage, _MessageStream_getFinalText, _MessageStream_handleError, _MessageStream_beginRequest, _MessageStream_addStreamEvent, _MessageStream_endRequest, _MessageStream_accumulateMessage, MessageStream;
 var init_MessageStream = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/MessageStream.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/MessageStream.mjs"() {
     init_tslib();
     init_stainless_helper_header();
     init_errors();
@@ -6265,10 +6265,10 @@ var init_MessageStream = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/decoders/jsonl.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/decoders/jsonl.mjs
 var JSONLDecoder;
 var init_jsonl = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/decoders/jsonl.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/decoders/jsonl.mjs"() {
     init_error();
     init_shims();
     init_line();
@@ -6314,13 +6314,13 @@ var init_jsonl = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/path.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/path.mjs
 function encodeURIPath(str) {
   return str.replace(/[^A-Za-z0-9\-._~!$&'()*+,;=:@]+/g, encodeURIComponent);
 }
 var EMPTY, createPathTagFunction, path2;
 var init_path = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/path.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/path.mjs"() {
     init_error();
     EMPTY = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.create(null));
     createPathTagFunction = (pathEncoder = encodeURIPath) => function path4(statics, ...params) {
@@ -6382,10 +6382,10 @@ ${underline}`);
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/messages/batches.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/messages/batches.mjs
 var Batches;
 var init_batches = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/messages/batches.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/messages/batches.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -6612,10 +6612,10 @@ var init_batches = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/constants.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/constants.mjs
 var MODEL_NONSTREAMING_TOKENS;
 var init_constants = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/constants.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/constants.mjs"() {
     MODEL_NONSTREAMING_TOKENS = {
       "claude-opus-4@20250514": 8192,
       "anthropic.claude-opus-4-1-20250805-v1:0": 8192,
@@ -6624,10 +6624,10 @@ var init_constants = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/messages/messages.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/messages/messages.mjs
 var Messages, DEPRECATED_MODELS, MODELS_TO_WARN_WITH_THINKING_ENABLED;
 var init_messages = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/messages/messages.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/messages/messages.mjs"() {
     init_resource();
     init_headers();
     init_tracing();
@@ -6778,10 +6778,10 @@ Please migrate to a newer model. Visit https://docs.anthropic.com/en/docs/resour
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/deployment-runs.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/deployment-runs.mjs
 var DeploymentRuns;
 var init_deployment_runs = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/deployment-runs.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/deployment-runs.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -6861,10 +6861,10 @@ var init_deployment_runs = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/deployments.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/deployments.mjs
 var Deployments;
 var init_deployments = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/deployments.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/deployments.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -7131,10 +7131,10 @@ var init_deployments = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/dreams.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/dreams.mjs
 var Dreams;
 var init_dreams = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/dreams.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/dreams.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -7329,10 +7329,10 @@ var init_dreams = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/files.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/files.mjs
 var Files;
 var init_files = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/files.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/files.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -7493,10 +7493,10 @@ var init_files = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/models.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/models.mjs
 var Models;
 var init_models = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/models.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/models.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -7571,9 +7571,9 @@ var init_models = __esm({
   }
 });
 
-// node_modules/@stablelib/base64/lib/base64.js
+// ../../synthe-improve/node_modules/@stablelib/base64/lib/base64.js
 var require_base64 = __commonJS({
-  "node_modules/@stablelib/base64/lib/base64.js"(exports) {
+  "../../synthe-improve/node_modules/@stablelib/base64/lib/base64.js"(exports) {
     "use strict";
     var __extends = exports && exports.__extends || /* @__PURE__ */ (function() {
       var extendStatics = function(d, b) {
@@ -7784,9 +7784,9 @@ var require_base64 = __commonJS({
   }
 });
 
-// node_modules/fast-sha256/sha256.js
+// ../../synthe-improve/node_modules/fast-sha256/sha256.js
 var require_sha256 = __commonJS({
-  "node_modules/fast-sha256/sha256.js"(exports, module) {
+  "../../synthe-improve/node_modules/fast-sha256/sha256.js"(exports, module) {
     (function(root, factory) {
       var exports2 = {};
       factory(exports2);
@@ -8208,9 +8208,9 @@ var require_sha256 = __commonJS({
   }
 });
 
-// node_modules/standardwebhooks/dist/timing_safe_equal.js
+// ../../synthe-improve/node_modules/standardwebhooks/dist/timing_safe_equal.js
 var require_timing_safe_equal = __commonJS({
-  "node_modules/standardwebhooks/dist/timing_safe_equal.js"(exports) {
+  "../../synthe-improve/node_modules/standardwebhooks/dist/timing_safe_equal.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.timingSafeEqual = timingSafeEqual;
@@ -8242,9 +8242,9 @@ var require_timing_safe_equal = __commonJS({
   }
 });
 
-// node_modules/standardwebhooks/dist/index.js
+// ../../synthe-improve/node_modules/standardwebhooks/dist/index.js
 var require_dist = __commonJS({
-  "node_modules/standardwebhooks/dist/index.js"(exports) {
+  "../../synthe-improve/node_modules/standardwebhooks/dist/index.js"(exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.Webhook = exports.WebhookVerificationError = void 0;
@@ -8359,10 +8359,10 @@ var require_dist = __commonJS({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/webhooks.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/webhooks.mjs
 var import_standardwebhooks, Webhooks;
 var init_webhooks = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/webhooks.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/webhooks.mjs"() {
     init_resource();
     import_standardwebhooks = __toESM(require_dist(), 1);
     Webhooks = class extends APIResource {
@@ -8393,10 +8393,10 @@ var init_webhooks = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/agents/versions.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/agents/versions.mjs
 var Versions;
 var init_versions = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/agents/versions.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/agents/versions.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -8440,10 +8440,10 @@ var init_versions = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/agents/agents.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/agents/agents.mjs
 var Agents;
 var init_agents = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/agents/agents.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/agents/agents.mjs"() {
     init_resource();
     init_versions();
     init_versions();
@@ -8616,7 +8616,7 @@ var init_agents = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/abort.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/abort.mjs
 function linkAbort(external, controller) {
   if (!external)
     return () => {
@@ -8631,11 +8631,11 @@ function linkAbort(external, controller) {
   return () => external.removeEventListener("abort", onAbort);
 }
 var init_abort = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/abort.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/abort.mjs"() {
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/backoff.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/backoff.mjs
 function isStatus(e, code) {
   return e instanceof APIError && e.status === code;
 }
@@ -8655,12 +8655,12 @@ function applyJitter(ms) {
   return ms * (1 - Math.random() * 0.25);
 }
 var init_backoff = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/backoff.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/backoff.mjs"() {
     init_error();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/helper-client.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/helper-client.mjs
 function copyClientForHelper(client, { authToken, helper }) {
   if (!authToken) {
     throw new AnthropicError(`copyClientForHelper: expected a non-empty authToken but received ${JSON.stringify(authToken)}`);
@@ -8686,14 +8686,14 @@ function copyClientForHelper(client, { authToken, helper }) {
   });
 }
 var init_helper_client = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/helper-client.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/helper-client.mjs"() {
     init_error();
     init_headers();
     init_stainless_helper_header();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/environments/poller.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/environments/poller.mjs
 function backoff2(attempt) {
   return backoff(attempt, POLL_BACKOFF_BASE_MS, POLL_BACKOFF_CAP_MS);
 }
@@ -8704,7 +8704,7 @@ function defaultWorkerId() {
 }
 var _WorkPoller_runnerClient, _WorkPoller_consumed, _WorkPoller_controller, _WorkPoller_detachExternal, _WorkPoller_autoStop, _WorkPoller_drain, _WorkPoller_blockMs, _WorkPoller_reclaimOlderThanMs, _WorkPoller_requestOpts, _IdleLog_log, _IdleLog_environmentId, _IdleLog_idleSince, _IdleLog_lastReport, POLL_BLOCK_MS, POLL_BACKOFF_BASE_MS, POLL_BACKOFF_CAP_MS, IDLE_REPORT_INTERVAL_MS, WorkPoller, IdleLog;
 var init_poller = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/environments/poller.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/environments/poller.mjs"() {
     init_tslib();
     init_dist();
     init_error();
@@ -8870,10 +8870,10 @@ var init_poller = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/async-queue.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/async-queue.mjs
 var _AsyncQueue_items, _AsyncQueue_waiters, _AsyncQueue_closed, AsyncQueue;
 var init_async_queue = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/async-queue.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/async-queue.mjs"() {
     init_tslib();
     AsyncQueue = /* @__PURE__ */ (() => {
       class AsyncQueue2 {
@@ -8942,10 +8942,10 @@ var init_async_queue = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/tools/ToolError.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/tools/ToolError.mjs
 var ToolError;
 var init_ToolError = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/tools/ToolError.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/tools/ToolError.mjs"() {
     ToolError = /* @__PURE__ */ (() => {
       class ToolError2 extends Error {
         constructor(content) {
@@ -8964,7 +8964,7 @@ var init_ToolError = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/toolsets/sanitize.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/toolsets/sanitize.mjs
 function wellFormed(text2) {
   return text2.replace(LONE_SURROGATE_RE, "\uFFFD");
 }
@@ -9003,7 +9003,7 @@ function errorTextContent(content) {
 }
 var LINE_UNSAFE, CONTROL_RE, LONE_SURROGATE_RE, FIELD_MAX, LOG_MAX;
 var init_sanitize = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/toolsets/sanitize.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/toolsets/sanitize.mjs"() {
     LINE_UNSAFE = "\\x00-\\x1f\\x7f-\\x9f\\u061c\\u200e\\u200f\\u2028\\u2029\\u202a-\\u202e\\u2066-\\u2069";
     CONTROL_RE = /* @__PURE__ */ (() => new RegExp(`[${LINE_UNSAFE}]+`, "g"))();
     LONE_SURROGATE_RE = /[\uD800-\uDFFF]/gu;
@@ -9012,7 +9012,7 @@ var init_sanitize = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/tools/BetaRunnableTool.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/tools/BetaRunnableTool.mjs
 function toolName(tool) {
   return "name" in tool ? tool.name : "mcp_server_name" in tool ? tool.mcp_server_name : tool.type;
 }
@@ -9029,13 +9029,13 @@ async function runRunnableTool(tool, rawInput, context2) {
   }
 }
 var init_BetaRunnableTool = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/tools/BetaRunnableTool.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/tools/BetaRunnableTool.mjs"() {
     init_ToolError();
     init_sanitize();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/tools/SessionToolRunner.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/tools/SessionToolRunner.mjs
 function endsTurn(ev) {
   if (ev.type !== "session.status_idle")
     return false;
@@ -9070,7 +9070,7 @@ function toSessionContent(content) {
 }
 var _IdleClock_maxIdleMs, _IdleClock_onExpire, _IdleClock_blockers, _IdleClock_armPending, _IdleClock_timer, _SessionToolRunner_instances, _SessionToolRunner_consumed, _SessionToolRunner_controller, _SessionToolRunner_detachExternal, _SessionToolRunner_requestOpts, _SessionToolRunner_toolByName, _SessionToolRunner_logger, _SessionToolRunner_seen, _SessionToolRunner_answered, _SessionToolRunner_confirmationVerdicts, _SessionToolRunner_awaitingConfirmation, _SessionToolRunner_results, _SessionToolRunner_inFlightCount, _SessionToolRunner_sendRetryWindowMs, _SessionToolRunner_onIdle, _SessionToolRunner_idleClock, _SessionToolRunner_otelContext, _SessionToolRunner_primaryThreadId, _SessionToolRunner_historyRead, _SessionToolRunner_requestOptions, _SessionToolRunner_streamLoop, _SessionToolRunner_reconcile, _SessionToolRunner_ingestHistory, _SessionToolRunner_notePrimaryThread, _SessionToolRunner_handleStreamEvent, _SessionToolRunner_routeToolEvent, _SessionToolRunner_noteConfirmation, _SessionToolRunner_applyVerdict, _SessionToolRunner_surfaceCall, _SessionToolRunner_execute, _SessionToolRunner_sendResult, _SessionToolRunner_drain, STREAM_BACKOFF_START_MS, STREAM_BACKOFF_CAP_MS, TOOL_TIMEOUT_MS, DRAIN_TIMEOUT_MS, SEND_BACKOFF_START_MS, SEND_BACKOFF_CAP_MS, SEND_RETRY_WINDOW_MS, DEFAULT_MAX_IDLE_MS, IdleClock, SessionToolRunner;
 var init_SessionToolRunner = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/tools/SessionToolRunner.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/tools/SessionToolRunner.mjs"() {
     init_tslib();
     init_dist();
     init_error();
@@ -9536,11 +9536,11 @@ var init_SessionToolRunner = __esm({
                 signal: toolCtrl.signal
               });
               const sent = toSessionContent(toolOutcome.content);
-              const recorded = !this.client._tracer ? sent : sent.map((block, i) => {
+              const recorded2 = !this.client._tracer ? sent : sent.map((block, i) => {
                 const original = typeof toolOutcome.content === "string" ? void 0 : toolOutcome.content[i];
                 return original && original.type !== "text" && block.type === "text" ? original : block;
               });
-              return { sent, content: recorded, isError: toolOutcome.isError };
+              return { sent, content: recorded2, isError: toolOutcome.isError };
             });
             content = outcome.sent;
             isError = outcome.isError;
@@ -9614,7 +9614,7 @@ var init_SessionToolRunner = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/tools/agent-toolset/sync-interval.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/tools/agent-toolset/sync-interval.mjs
 function checkMemorySyncInterval(ms, option) {
   if (!(ms >= MIN_MEMORY_SYNC_INTERVAL_MS)) {
     throw new AnthropicError(`${option} must be at least ${MIN_MEMORY_SYNC_INTERVAL_MS}ms (got ${ms}); to run without memory sync, pass \`memorySyncIntervalMs: null\` to the worker instead`);
@@ -9622,14 +9622,14 @@ function checkMemorySyncInterval(ms, option) {
 }
 var DEFAULT_MEMORY_SYNC_INTERVAL_MS, MIN_MEMORY_SYNC_INTERVAL_MS;
 var init_sync_interval = __esm({
-  "node_modules/@anthropic-ai/sdk/tools/agent-toolset/sync-interval.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/tools/agent-toolset/sync-interval.mjs"() {
     init_error();
     DEFAULT_MEMORY_SYNC_INTERVAL_MS = 15e3;
     MIN_MEMORY_SYNC_INTERVAL_MS = 5e3;
   }
 });
 
-// node_modules/@anthropic-ai/sdk/helpers/beta/json-schema.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/helpers/beta/json-schema.mjs
 function betaTool(options) {
   const { name, inputSchema, description, run: run2, ...extraProps } = options;
   if (inputSchema.type !== "object") {
@@ -9646,11 +9646,11 @@ function betaTool(options) {
   };
 }
 var init_json_schema = __esm({
-  "node_modules/@anthropic-ai/sdk/helpers/beta/json-schema.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/helpers/beta/json-schema.mjs"() {
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/utils/promise.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/promise.mjs
 function promiseWithResolvers() {
   let resolve2;
   let reject;
@@ -9661,11 +9661,11 @@ function promiseWithResolvers() {
   return { promise, resolve: resolve2, reject };
 }
 var init_promise = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/utils/promise.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/utils/promise.mjs"() {
   }
 });
 
-// node_modules/@anthropic-ai/sdk/tools/agent-toolset/fs-util.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/tools/agent-toolset/fs-util.mjs
 function isWithin(root, p) {
   const rel = path.relative(root, p);
   return rel === "" || !rel.startsWith(".." + path.sep) && rel !== ".." && !path.isAbsolute(rel);
@@ -9780,7 +9780,7 @@ function fsErrorMessage(err, file) {
 }
 var fs2, DIR_CREATE_MODE, FILE_CREATE_MODE, MAX_SYMLINK_HOPS;
 var init_fs_util = __esm({
-  "node_modules/@anthropic-ai/sdk/tools/agent-toolset/fs-util.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/tools/agent-toolset/fs-util.mjs"() {
     init_node();
     init_ToolError();
     fs2 = fs.promises;
@@ -9790,7 +9790,7 @@ var init_fs_util = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/tools/agent-toolset/skills.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/tools/agent-toolset/skills.mjs
 async function setupSkills(ctx) {
   const { client, sessionId } = ctx;
   if (!client)
@@ -9859,10 +9859,10 @@ function assertSafeMemberNames(names) {
   }
 }
 function listingLines(listing) {
-  const lines = listing.split("\n");
-  if (lines[lines.length - 1] === "")
-    lines.pop();
-  return lines;
+  const lines2 = listing.split("\n");
+  if (lines2[lines2.length - 1] === "")
+    lines2.pop();
+  return lines2;
 }
 function canExcludeVerbatim(cmd, name) {
   return /^[\x20-\x7E]+$/.test(name) && !/[\\^#]/.test(name) && !(cmd === "unzip" && name.startsWith("-"));
@@ -9979,7 +9979,7 @@ async function readHead(file, n) {
 }
 var fs3, execFileAsync, INCONSISTENT_LISTING, PLAIN_TYPE_CHARS;
 var init_skills = __esm({
-  "node_modules/@anthropic-ai/sdk/tools/agent-toolset/skills.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/tools/agent-toolset/skills.mjs"() {
     init_node();
     init_error();
     init_log();
@@ -9991,7 +9991,7 @@ var init_skills = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/internal/file-store.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/file-store.mjs
 function isPathLegal(p) {
   return p.startsWith("/") && !p.split("/").includes("..");
 }
@@ -10173,7 +10173,7 @@ function oldEnoughToCache(st, walkStartNs) {
 }
 var fsp, C, OWNER_ONLY_DIR_MODE, OWNER_ONLY_FILE_MODE, OWNER_ONLY_EXEC_MODE, O_NOFOLLOW, O_NONBLOCK, FileStoreError, FileStore, TIMESTAMP_TRUST_MARGIN_NS, _internals, LocalFileStore, asyncDispose;
 var init_file_store = __esm({
-  "node_modules/@anthropic-ai/sdk/internal/file-store.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/internal/file-store.mjs"() {
     init_node();
     init_bytes();
     fsp = fs.promises;
@@ -10439,7 +10439,7 @@ var init_file_store = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/tools/agent-toolset/memories.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/tools/agent-toolset/memories.mjs
 function markerSha(memoryStoreId) {
   return crypto.createHash("sha256").update(`version ${MARKER_VERSION}
 ${memoryStoreId}`, "utf-8").digest("hex");
@@ -10467,7 +10467,7 @@ async function settledOrAborted(p, signal) {
 }
 var _SessionMemoryStores_instances, _SessionMemoryStores_client, _SessionMemoryStores_workdir, _SessionMemoryStores_syncIntervalMs, _SessionMemoryStores_syncDeletions, _SessionMemoryStores_log, _SessionMemoryStores_lastSyncAt, _SessionMemoryStores_finished, _SessionMemoryStores_stores, _SessionMemoryStores_storeRoot, _SessionMemoryStores_scanMarker, _SessionMemoryStores_syncStore, _SessionMemoryStores_flushStore, _SessionMemoryStores_recover, _SessionMemoryStores_settleSent, _SessionMemoryStores_stampAndPull, _SessionMemoryStores_syncPath, _SessionMemoryStores_removeLocal, _SessionMemoryStores_write, _SessionMemoryStores_pullAll, _SessionMemoryStores_uploadAll, _SessionMemoryStores_listMemories, _SessionMemoryStores_upload, _SessionMemoryStores_corroboratedDelete, _SessionMemoryStores_deleteRemote, MEMORY_FLUSH_TIMEOUT_MS, MARKER_PATH, MARKER_VERSION, DELETE_CORROBORATION_MS, LIST_PAGE_SIZE, FULL_LIST_PAGE_SIZE, FETCH_CONCURRENCY, UPLOAD_CONCURRENCY, DELETE_CAP_FLOOR, DELETE_CAP_CEILING, SessionMemoryError, DeletePass, SessionMemoryStores;
 var init_memories = __esm({
-  "node_modules/@anthropic-ai/sdk/tools/agent-toolset/memories.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/tools/agent-toolset/memories.mjs"() {
     init_tslib();
     init_node();
     init_error();
@@ -11173,7 +11173,7 @@ ${store.memoryStoreId}`);
   }
 });
 
-// node_modules/@anthropic-ai/sdk/tools/agent-toolset/node.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/tools/agent-toolset/node.mjs
 var node_exports2 = {};
 __export(node_exports2, {
   BashSession: () => BashSession,
@@ -11341,28 +11341,28 @@ function betaReadTool(ctx) {
       if (!view_range?.length)
         return data;
       const [startLine, endLine] = view_range;
-      const lines = data.split("\n");
+      const lines2 = data.split("\n");
       const start2 = Math.max(0, startLine - 1);
-      const end = endLine > 0 ? endLine : lines.length;
-      return lines.slice(start2, end).join("\n");
+      const end = endLine > 0 ? endLine : lines2.length;
+      return lines2.slice(start2, end).join("\n");
     }
   });
 }
 async function readRangeStreaming(abs, filePath, startLine, endLine, limit2) {
-  const lines = new LineRangeCollector(filePath, startLine, endLine, limit2);
-  if (lines.rangeIsEmpty())
+  const lines2 = new LineRangeCollector(filePath, startLine, endLine, limit2);
+  if (lines2.rangeIsEmpty())
     return "";
   const stream2 = fssync.createReadStream(abs, { highWaterMark: READ_STREAM_CHUNK_BYTES });
   try {
     for await (const chunk of stream2) {
-      lines.collectFrom(chunk);
-      if (lines.rangeIsCollected())
+      lines2.collectFrom(chunk);
+      if (lines2.rangeIsCollected())
         break;
     }
   } finally {
     stream2.destroy();
   }
-  return lines.text();
+  return lines2.text();
 }
 function betaWriteTool(ctx) {
   rejectUnrestrictedPaths(ctx.unrestrictedPaths);
@@ -11672,7 +11672,7 @@ async function findRg() {
 }
 var _BashSession_instances, _BashSession_proc, _BashSession_buf, _BashSession_truncated, _BashSession_closed, _BashSession_waiting, _BashSession_append, _LineRangeCollector_instances, _LineRangeCollector_filePath, _LineRangeCollector_startLine, _LineRangeCollector_endLine, _LineRangeCollector_start, _LineRangeCollector_end, _LineRangeCollector_limit, _LineRangeCollector_line, _LineRangeCollector_collected, _LineRangeCollector_collectedBytes, _LineRangeCollector_collect, _LineRangeCollector_overLimitError, BASH_OUTPUT_LIMIT, BASH_DEFAULT_TIMEOUT_MS, DEFAULT_MAX_FILE_BYTES, READ_STREAM_CHUNK_BYTES, NEWLINE, GREP_OUTPUT_LIMIT, GREP_MAX_LINE_LENGTH, GLOB_RESULT_LIMIT, BashTimeoutError, ANSI_RE, fsGlob, BashSession, LineRangeCollector, WALK_MAX_DEPTH, WALK_MAX_ENTRIES;
 var init_node2 = __esm({
-  "node_modules/@anthropic-ai/sdk/tools/agent-toolset/node.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/tools/agent-toolset/node.mjs"() {
     init_tslib();
     init_error();
     init_ToolError();
@@ -11887,7 +11887,7 @@ ${out}`;
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/environments/worker.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/environments/worker.mjs
 function hasMemoryStore(session) {
   return session.resources.some((r) => r.type === "memory_store");
 }
@@ -12014,7 +12014,7 @@ async function heartbeatLoop(client, work, lease, logger, requestOptions, onLeas
 }
 var _EnvironmentWorker_instances, _EnvironmentWorker_signal, _EnvironmentWorker_handleItem, _Lease_ctrl, _Lease_endReason, HEARTBEAT_DEFAULT_MS, HEARTBEAT_TTL_DEFAULT_MS, NO_HEARTBEAT_SENTINEL, EnvironmentWorker, Lease;
 var init_worker = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/environments/worker.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/environments/worker.mjs"() {
     init_tslib();
     init_error();
     init_log();
@@ -12320,10 +12320,10 @@ var init_worker = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/environments/work.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/environments/work.mjs
 var Work;
 var init_work = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/environments/work.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/environments/work.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -12633,10 +12633,10 @@ var init_work = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/environments/environments.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/environments/environments.mjs
 var Environments;
 var init_environments2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/environments/environments.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/environments/environments.mjs"() {
     init_resource();
     init_work();
     init_work();
@@ -12835,10 +12835,10 @@ var init_environments2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/memory-stores/memories.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/memory-stores/memories.mjs
 var Memories;
 var init_memories2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/memory-stores/memories.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/memory-stores/memories.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -13014,10 +13014,10 @@ var init_memories2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/memory-stores/memory-versions.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/memory-stores/memory-versions.mjs
 var MemoryVersions;
 var init_memory_versions = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/memory-stores/memory-versions.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/memory-stores/memory-versions.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -13140,10 +13140,10 @@ var init_memory_versions = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/memory-stores/memory-stores.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/memory-stores/memory-stores.mjs
 var MemoryStores;
 var init_memory_stores = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/memory-stores/memory-stores.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/memory-stores/memory-stores.mjs"() {
     init_resource();
     init_memories2();
     init_memories2();
@@ -13337,10 +13337,10 @@ var init_memory_stores = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/messages/batches.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/messages/batches.mjs
 var Batches2;
 var init_batches2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/messages/batches.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/messages/batches.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -13592,7 +13592,7 @@ var init_batches2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/beta-parser.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/beta-parser.mjs
 function getOutputFormat2(params) {
   return params?.output_format ?? params?.output_config?.format;
 }
@@ -13665,12 +13665,12 @@ function parseBetaOutputFormat(params, content) {
   }
 }
 var init_beta_parser = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/beta-parser.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/beta-parser.mjs"() {
     init_error();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/beta-messages-request.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/beta-messages-request.mjs
 function messagesCreateHeaders2(params, options) {
   const { betas, user_profile_id, workspace_id, tools, messages } = params;
   return buildHeaders([
@@ -13709,7 +13709,7 @@ function assertOneOutputFormat(params) {
   }
 }
 var init_beta_messages_request = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/beta-messages-request.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/beta-messages-request.mjs"() {
     init_error2();
     init_headers();
     init_stainless_helper_header();
@@ -13718,13 +13718,13 @@ var init_beta_messages_request = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/BetaMessageStream.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/BetaMessageStream.mjs
 function tracksToolInput2(content) {
   return content.type === "tool_use" || content.type === "server_tool_use" || content.type === "mcp_tool_use";
 }
 var _BetaMessageStream_instances, _BetaMessageStream_currentMessageSnapshot, _BetaMessageStream_params, _BetaMessageStream_connectedPromise, _BetaMessageStream_resolveConnectedPromise, _BetaMessageStream_rejectConnectedPromise, _BetaMessageStream_endPromise, _BetaMessageStream_resolveEndPromise, _BetaMessageStream_rejectEndPromise, _BetaMessageStream_listeners, _BetaMessageStream_ended, _BetaMessageStream_errored, _BetaMessageStream_aborted, _BetaMessageStream_catchingPromiseCreated, _BetaMessageStream_response, _BetaMessageStream_request_id, _BetaMessageStream_workspace_id, _BetaMessageStream_logger, _BetaMessageStream_client, _BetaMessageStream_span, _BetaMessageStream_spanBody, _BetaMessageStream_getFinalMessage, _BetaMessageStream_getFinalText, _BetaMessageStream_handleError, _BetaMessageStream_beginRequest, _BetaMessageStream_addStreamEvent, _BetaMessageStream_endRequest, _BetaMessageStream_accumulateMessage, _BetaMessageStream_toolInputParseError, BetaMessageStream;
 var init_BetaMessageStream = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/BetaMessageStream.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/BetaMessageStream.mjs"() {
     init_tslib();
     init_stainless_helper_header();
     init_error2();
@@ -14419,7 +14419,7 @@ var init_BetaMessageStream = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/toolsets/family.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/toolsets/family.mjs
 function toolsetFamily(toolset) {
   return TOOLSET_TYPE_TO_FAMILY[toolset.type];
 }
@@ -14428,7 +14428,7 @@ function isRunnableToolset(t) {
 }
 var TOOLSET_TYPE_TO_FAMILY;
 var init_family = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/toolsets/family.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/toolsets/family.mjs"() {
     TOOLSET_TYPE_TO_FAMILY = {
       browser_toolset_20260801: "browser",
       computer_toolset_20260801: "computer"
@@ -14436,10 +14436,10 @@ var init_family = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/toolsets/errors.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/toolsets/errors.mjs
 var ToolsetUsageError, ToolsetContractError;
 var init_errors2 = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/toolsets/errors.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/toolsets/errors.mjs"() {
     init_error();
     ToolsetUsageError = class extends AnthropicError {
       constructor(message, options) {
@@ -14458,7 +14458,7 @@ var init_errors2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/toolsets/run.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/toolsets/run.mjs
 function notExecutedText(family2) {
   return Object.prototype.hasOwnProperty.call(NOT_EXECUTED_BY_FAMILY, family2) ? NOT_EXECUTED_BY_FAMILY[family2] : NOT_EXECUTED;
 }
@@ -14498,7 +14498,7 @@ async function runToolsetMember(toolset, toolUse, options = {}) {
 }
 var NOT_EXECUTED, NOT_EXECUTED_BY_FAMILY;
 var init_run = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/toolsets/run.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/toolsets/run.mjs"() {
     init_error();
     init_ToolError();
     init_errors2();
@@ -14512,17 +14512,17 @@ var init_run = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/messages/index.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/messages/index.mjs
 var init_messages2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/messages/index.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/messages/index.mjs"() {
     init_messages3();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/api-keys.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/api-keys.mjs
 var APIKeys;
 var init_api_keys = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/api-keys.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/api-keys.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -14597,10 +14597,10 @@ var init_api_keys = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/artifacts.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/artifacts.mjs
 var Artifacts;
 var init_artifacts = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/artifacts.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/artifacts.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -14638,10 +14638,10 @@ var init_artifacts = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/connectors.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/connectors.mjs
 var Connectors;
 var init_connectors = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/connectors.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/connectors.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -14691,10 +14691,10 @@ var init_connectors = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost.mjs
 var Cost;
 var init_cost = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -14769,10 +14769,10 @@ var init_cost = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost-report.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost-report.mjs
 var CostReport;
 var init_cost_report = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost-report.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost-report.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -14834,10 +14834,10 @@ var init_cost_report = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/plugins.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/plugins.mjs
 var Plugins;
 var init_plugins = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/plugins.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/plugins.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -14890,10 +14890,10 @@ var init_plugins = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/skills.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/skills.mjs
 var Skills;
 var init_skills2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/skills.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/skills.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -14941,10 +14941,10 @@ var init_skills2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/summaries.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/summaries.mjs
 var Summaries;
 var init_summaries = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/summaries.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/summaries.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -14987,10 +14987,10 @@ var init_summaries = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/usage.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/usage.mjs
 var Usage;
 var init_usage = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/usage.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/usage.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -15066,10 +15066,10 @@ var init_usage = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/usage-report.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/usage-report.mjs
 var UsageReport;
 var init_usage_report = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/usage-report.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/usage-report.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -15131,10 +15131,10 @@ var init_usage_report = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/user-cost-report.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/user-cost-report.mjs
 var UserCostReport;
 var init_user_cost_report = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/user-cost-report.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/user-cost-report.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -15201,10 +15201,10 @@ var init_user_cost_report = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/user-usage-report.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/user-usage-report.mjs
 var UserUsageReport;
 var init_user_usage_report = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/user-usage-report.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/user-usage-report.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -15271,10 +15271,10 @@ var init_user_usage_report = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/users.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/users.mjs
 var Users;
 var init_users = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/users.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/users.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -15322,10 +15322,10 @@ var init_users = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/apps/chat/projects.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/apps/chat/projects.mjs
 var Projects;
 var init_projects = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/apps/chat/projects.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/apps/chat/projects.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -15372,10 +15372,10 @@ var init_projects = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/apps/chat/chat.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/apps/chat/chat.mjs
 var Chat;
 var init_chat = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/apps/chat/chat.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/apps/chat/chat.mjs"() {
     init_resource();
     init_projects();
     init_projects();
@@ -15392,10 +15392,10 @@ var init_chat = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/apps/apps.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/apps/apps.mjs
 var Apps;
 var init_apps = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/apps/apps.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/apps/apps.mjs"() {
     init_resource();
     init_chat();
     init_chat();
@@ -15412,10 +15412,10 @@ var init_apps = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/analytics.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/analytics.mjs
 var Analytics;
 var init_analytics = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/analytics.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/analytics.mjs"() {
     init_resource();
     init_artifacts();
     init_artifacts();
@@ -15480,10 +15480,10 @@ var init_analytics = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/bundles/targets.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/bundles/targets.mjs
 var Targets;
 var init_targets = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/bundles/targets.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/bundles/targets.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -15625,10 +15625,10 @@ var init_targets = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/bundles/bundles.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/bundles/bundles.mjs
 var Bundles;
 var init_bundles = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/bundles/bundles.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/bundles/bundles.mjs"() {
     init_resource();
     init_targets();
     init_targets();
@@ -15704,10 +15704,10 @@ var init_bundles = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/slack-channels.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/slack-channels.mjs
 var SlackChannels;
 var init_slack_channels = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/slack-channels.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/slack-channels.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -15897,10 +15897,10 @@ var init_slack_channels = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/slack-workspaces.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/slack-workspaces.mjs
 var SlackWorkspaces;
 var init_slack_workspaces = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/slack-workspaces.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/slack-workspaces.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -16009,10 +16009,10 @@ var init_slack_workspaces = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/claude-tag.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/claude-tag.mjs
 var ClaudeTag;
 var init_claude_tag = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/claude-tag.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/claude-tag/claude-tag.mjs"() {
     init_resource();
     init_slack_channels();
     init_slack_channels();
@@ -16037,10 +16037,10 @@ var init_claude_tag = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/compliance-settings.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/compliance-settings.mjs
 var ComplianceSettings;
 var init_compliance_settings = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/compliance-settings.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/compliance-settings.mjs"() {
     init_resource();
     init_tracing();
     ComplianceSettings = class extends APIResource {
@@ -16104,10 +16104,10 @@ var init_compliance_settings = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/external-keys.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/external-keys.mjs
 var ExternalKeys;
 var init_external_keys = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/external-keys.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/external-keys.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -16264,10 +16264,10 @@ var init_external_keys = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/issuers.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/issuers.mjs
 var Issuers;
 var init_issuers = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/issuers.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/issuers.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -16460,10 +16460,10 @@ var init_issuers = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/rules/workspaces.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/rules/workspaces.mjs
 var Workspaces;
 var init_workspaces = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/rules/workspaces.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/rules/workspaces.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -16597,10 +16597,10 @@ var init_workspaces = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/rules/rules.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/rules/rules.mjs
 var Rules;
 var init_rules = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/rules/rules.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/rules/rules.mjs"() {
     init_resource();
     init_workspaces();
     init_workspaces();
@@ -16824,10 +16824,10 @@ var init_rules = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/federation.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/federation.mjs
 var Federation;
 var init_federation = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/federation.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/federation/federation.mjs"() {
     init_resource();
     init_issuers();
     init_issuers();
@@ -16848,10 +16848,10 @@ var init_federation = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/invites.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/invites.mjs
 var Invites;
 var init_invites = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/invites.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/invites.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -16953,10 +16953,10 @@ var init_invites = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/plugin-marketplaces.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/plugin-marketplaces.mjs
 var PluginMarketplaces;
 var init_plugin_marketplaces = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/plugin-marketplaces.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/plugin-marketplaces.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -17205,10 +17205,10 @@ var init_plugin_marketplaces = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/rate-limits.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/rate-limits.mjs
 var RateLimits;
 var init_rate_limits = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/rate-limits.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/rate-limits.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -17246,10 +17246,10 @@ var init_rate_limits = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/users.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/users.mjs
 var Users2;
 var init_users2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/users.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/users.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -17342,10 +17342,10 @@ var init_users2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/webhooks.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/webhooks.mjs
 var Webhooks2;
 var init_webhooks2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/webhooks.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/webhooks.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -17572,10 +17572,10 @@ var init_webhooks2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/installation-settings.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/installation-settings.mjs
 var InstallationSettings;
 var init_installation_settings = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/installation-settings.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/installation-settings.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -17743,10 +17743,10 @@ var init_installation_settings = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/shares.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/shares.mjs
 var Shares;
 var init_shares = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/shares.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/shares.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -17805,10 +17805,10 @@ var init_shares = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/versions.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/versions.mjs
 var Versions2;
 var init_versions2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/versions.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/versions.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -18031,10 +18031,10 @@ var init_versions2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/plugins.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/plugins.mjs
 var Plugins2;
 var init_plugins2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/plugins.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/plugins/plugins.mjs"() {
     init_resource();
     init_installation_settings();
     init_installation_settings();
@@ -18331,10 +18331,10 @@ var init_plugins2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-groups/members.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-groups/members.mjs
 var Members;
 var init_members = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-groups/members.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-groups/members.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -18430,10 +18430,10 @@ var init_members = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-groups/rbac-groups.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-groups/rbac-groups.mjs
 var RBACGroups;
 var init_rbac_groups = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-groups/rbac-groups.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-groups/rbac-groups.mjs"() {
     init_resource();
     init_members();
     init_members();
@@ -18576,10 +18576,10 @@ var init_rbac_groups = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-roles/permissions.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-roles/permissions.mjs
 var Permissions;
 var init_permissions = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-roles/permissions.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-roles/permissions.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -18616,10 +18616,10 @@ var init_permissions = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-roles/rbac-roles.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-roles/rbac-roles.mjs
 var RBACRoles;
 var init_rbac_roles = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-roles/rbac-roles.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/rbac-roles/rbac-roles.mjs"() {
     init_resource();
     init_permissions();
     init_permissions();
@@ -18686,10 +18686,10 @@ var init_rbac_roles = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/service-accounts/workspaces.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/service-accounts/workspaces.mjs
 var Workspaces2;
 var init_workspaces2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/service-accounts/workspaces.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/service-accounts/workspaces.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -18834,10 +18834,10 @@ var init_workspaces2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/service-accounts/service-accounts.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/service-accounts/service-accounts.mjs
 var ServiceAccounts;
 var init_service_accounts = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/service-accounts/service-accounts.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/service-accounts/service-accounts.mjs"() {
     init_resource();
     init_workspaces2();
     init_workspaces2();
@@ -19037,10 +19037,10 @@ var init_service_accounts = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/spend-limits/effective.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/spend-limits/effective.mjs
 var Effective;
 var init_effective = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/spend-limits/effective.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/spend-limits/effective.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -19076,10 +19076,10 @@ var init_effective = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/spend-limits/increase-requests.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/spend-limits/increase-requests.mjs
 var IncreaseRequests;
 var init_increase_requests = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/spend-limits/increase-requests.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/spend-limits/increase-requests.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -19196,10 +19196,10 @@ var init_increase_requests = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/spend-limits/spend-limits.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/spend-limits/spend-limits.mjs
 var SpendLimits;
 var init_spend_limits = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/spend-limits/spend-limits.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/spend-limits/spend-limits.mjs"() {
     init_resource();
     init_effective();
     init_effective();
@@ -19345,10 +19345,10 @@ var init_spend_limits = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/telemetry-destinations/workspaces.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/telemetry-destinations/workspaces.mjs
 var Workspaces3;
 var init_workspaces3 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/telemetry-destinations/workspaces.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/telemetry-destinations/workspaces.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -19479,10 +19479,10 @@ var init_workspaces3 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/telemetry-destinations/telemetry-destinations.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/telemetry-destinations/telemetry-destinations.mjs
 var TelemetryDestinations;
 var init_telemetry_destinations = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/telemetry-destinations/telemetry-destinations.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/telemetry-destinations/telemetry-destinations.mjs"() {
     init_resource();
     init_workspaces3();
     init_workspaces3();
@@ -19710,10 +19710,10 @@ var init_telemetry_destinations = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/members.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/members.mjs
 var Members2;
 var init_members2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/members.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/members.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -19858,10 +19858,10 @@ var init_members2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/rate-limits.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/rate-limits.mjs
 var RateLimits2;
 var init_rate_limits2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/rate-limits.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/rate-limits.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -19944,10 +19944,10 @@ var init_rate_limits2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/service-accounts.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/service-accounts.mjs
 var ServiceAccounts2;
 var init_service_accounts2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/service-accounts.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/service-accounts.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -20172,10 +20172,10 @@ var init_service_accounts2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/workspaces.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/workspaces.mjs
 var Workspaces4;
 var init_workspaces4 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/workspaces.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/workspaces/workspaces.mjs"() {
     init_resource();
     init_members2();
     init_members2();
@@ -20317,10 +20317,10 @@ var init_workspaces4 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/organization/organization.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/organization.mjs
 var Organization;
 var init_organization = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/organization/organization.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/organization/organization.mjs"() {
     init_resource();
     init_api_keys();
     init_api_keys();
@@ -20425,10 +20425,10 @@ var init_organization = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/sessions/events.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/sessions/events.mjs
 var Events;
 var init_events = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/sessions/events.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/sessions/events.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -20585,10 +20585,10 @@ var init_events = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/sessions/resources.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/sessions/resources.mjs
 var Resources;
 var init_resources = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/sessions/resources.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/sessions/resources.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -20761,10 +20761,10 @@ var init_resources = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/sessions/threads/events.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/sessions/threads/events.mjs
 var Events2;
 var init_events2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/sessions/threads/events.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/sessions/threads/events.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -20845,10 +20845,10 @@ var init_events2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/sessions/threads/threads.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/sessions/threads/threads.mjs
 var Threads;
 var init_threads = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/sessions/threads/threads.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/sessions/threads/threads.mjs"() {
     init_resource();
     init_events2();
     init_events2();
@@ -20962,10 +20962,10 @@ var init_threads = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/sessions/sessions.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/sessions/sessions.mjs
 var Sessions;
 var init_sessions = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/sessions/sessions.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/sessions/sessions.mjs"() {
     init_resource();
     init_events();
     init_events();
@@ -21209,10 +21209,10 @@ var init_sessions = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/skills/versions.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/skills/versions.mjs
 var Versions3;
 var init_versions3 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/skills/versions.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/skills/versions.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -21380,10 +21380,10 @@ var init_versions3 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/skills/skills.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/skills/skills.mjs
 var Skills2;
 var init_skills3 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/skills/skills.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/skills/skills.mjs"() {
     init_resource();
     init_versions3();
     init_versions3();
@@ -21520,10 +21520,10 @@ var init_skills3 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/tunnels/certificates.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/tunnels/certificates.mjs
 var Certificates;
 var init_certificates = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/tunnels/certificates.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/tunnels/certificates.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -21685,10 +21685,10 @@ var init_certificates = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/tunnels/tunnels.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/tunnels/tunnels.mjs
 var Tunnels;
 var init_tunnels = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/tunnels/tunnels.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/tunnels/tunnels.mjs"() {
     init_resource();
     init_certificates();
     init_certificates();
@@ -21918,10 +21918,10 @@ var init_tunnels = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/user-profiles/action-urls.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/user-profiles/action-urls.mjs
 var ActionURLs;
 var init_action_urls = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/user-profiles/action-urls.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/user-profiles/action-urls.mjs"() {
     init_resource();
     init_headers();
     init_tracing();
@@ -21962,10 +21962,10 @@ var init_action_urls = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/user-profiles/user-profiles.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/user-profiles/user-profiles.mjs
 var UserProfiles;
 var init_user_profiles = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/user-profiles/user-profiles.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/user-profiles/user-profiles.mjs"() {
     init_resource();
     init_action_urls();
     init_action_urls();
@@ -22161,10 +22161,10 @@ var init_user_profiles = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/vaults/credentials.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/vaults/credentials.mjs
 var Credentials;
 var init_credentials2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/vaults/credentials.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/vaults/credentials.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -22398,10 +22398,10 @@ var init_credentials2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/vaults/vaults.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/vaults/vaults.mjs
 var Vaults;
 var init_vaults = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/vaults/vaults.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/vaults/vaults.mjs"() {
     init_resource();
     init_credentials2();
     init_credentials2();
@@ -22599,24 +22599,24 @@ var init_vaults = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/index.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/index.mjs
 var init_beta = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/index.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/index.mjs"() {
     init_messages2();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta.mjs
 var init_beta2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta.mjs"() {
     init_beta();
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/BetaToolRunnerStream.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/BetaToolRunnerStream.mjs
 var _BetaToolRunnerStream_instances, _BetaToolRunnerStream_onToolCall, _BetaToolRunnerStream_emitted, _BetaToolRunnerStream_readers, _BetaToolRunnerStream_toolCalls, _BetaToolRunnerStream_closed, _BetaToolRunnerStream_ready, _BetaToolRunnerStream_fallback, _BetaToolRunnerStream_track, _BetaToolRunnerStream_release, _BetaToolRunnerStream_removeReader, BetaToolRunnerStream;
 var init_BetaToolRunnerStream = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/BetaToolRunnerStream.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/BetaToolRunnerStream.mjs"() {
     init_tslib();
     init_BetaMessageStream();
     BetaToolRunnerStream = /* @__PURE__ */ (() => {
@@ -22718,7 +22718,7 @@ var init_BetaToolRunnerStream = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/threads/ThreadState.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/threads/ThreadState.mjs
 function isUnfinishedStopReason(stopReason) {
   return UNFINISHED_STOP_REASONS.some((unfinished) => unfinished === stopReason);
 }
@@ -22793,7 +22793,7 @@ function toMessageList(input) {
 }
 var _ThreadState_instances, _ThreadState_fields, _ThreadState_stored, _ThreadState_staged, _ThreadState_anchor, _ThreadState_turn, _ThreadState_logger, _ThreadState_lastReply_get, _ThreadState_repeatsLastReply, _ThreadState_startNewThread, _ThreadState_retryPartialTurn, _ThreadState_dropsRefusedTurn, _ThreadState_storeTurn, _ThreadState_adoptContainer, _ThreadState_checkCreateOnly, _ThreadState_requestOptions, Turn, ThreadState, UNFINISHED_STOP_REASONS, MESSAGE_THREADS_BETA, CREATE_ONLY_FIELDS, REPLAY_ERROR_CODES;
 var init_ThreadState = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/threads/ThreadState.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/threads/ThreadState.mjs"() {
     init_tslib();
     init_error();
     init_headers();
@@ -23155,7 +23155,7 @@ var init_ThreadState = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/internal/threads/tool-runner-params.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/threads/tool-runner-params.mjs
 function splitToolRunnerParams(params) {
   const { stream: stream2, max_iterations, runToolsEagerly, thread, ...threadParams } = params;
   if (thread !== void 0 && thread !== false) {
@@ -23164,11 +23164,11 @@ function splitToolRunnerParams(params) {
   return { settings: { stream: stream2, max_iterations, runToolsEagerly }, thread, threadParams };
 }
 var init_tool_runner_params = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/internal/threads/tool-runner-params.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/internal/threads/tool-runner-params.mjs"() {
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/tools/BetaToolRunner.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/tools/BetaToolRunner.mjs
 function sameMessages(a, b) {
   return a.length === b.length && a.every((message, i) => sameMessage(message, b[i]));
 }
@@ -23419,7 +23419,7 @@ function determineNextStepFromStopReason(stopReason) {
 }
 var _BetaToolRunner_instances, _BetaToolRunner_consumed, _BetaToolRunner_mutated, _BetaToolRunner_thread, _BetaToolRunner_settings, _BetaToolRunner_options, _BetaToolRunner_helperHeader, _BetaToolRunner_messagesWithoutReply, _BetaToolRunner_message, _BetaToolRunner_stream, _BetaToolRunner_toolResponse, _BetaToolRunner_completion, _BetaToolRunner_iterationCount, _BetaToolRunner_toolRunnerOtelContext, _BetaToolRunner_compaction, _BetaToolRunner_calls, _BetaToolRunner_lastStopReason, _BetaToolRunner_toolOverrides, _BetaToolRunner_pendingToolChanges, _BetaToolRunner_withToolRunnerSpan, _BetaToolRunner_send, _BetaToolRunner_turnOptions, _BetaToolRunner_streamThatStartsTools, _BetaToolRunner_startedCallsSettled, _BetaToolRunner_compact, _BetaToolRunner_compactionThread, _BetaToolRunner_runnableTools, _BetaToolRunner_availableToolNames, _BetaToolRunner_recordRemovalsFromHistory, _BetaToolRunner_compactAfterFinalTurn, _BetaToolRunner_generateToolResponse, _BetaToolRunner_toolsetFamilies, _BetaToolRunner_toolsetParams, _BetaToolRunner_flushPendingToolChanges, _BetaToolRunner_pendingToolChangesMessage, USE_A_NEW_RUNNER, REMOVE_WITH_A_NEW_RUNNER, BetaToolRunner, MESSAGES_CHANGED_WHILE_COMPACTING;
 var init_BetaToolRunner = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/tools/BetaToolRunner.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/tools/BetaToolRunner.mjs"() {
     init_tslib();
     init_dist();
     init_BetaRunnableTool();
@@ -24046,10 +24046,10 @@ var init_BetaToolRunner = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/lib/threads/BetaMessageThread.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/threads/BetaMessageThread.mjs
 var BetaMessageThread;
 var init_BetaMessageThread = __esm({
-  "node_modules/@anthropic-ai/sdk/lib/threads/BetaMessageThread.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/lib/threads/BetaMessageThread.mjs"() {
     init_api_promise();
     init_error();
     init_parse();
@@ -24209,10 +24209,10 @@ var init_BetaMessageThread = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/messages/messages.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/messages/messages.mjs
 var DEPRECATED_MODELS2, MODELS_TO_WARN_WITH_THINKING_ENABLED2, Messages2, BETA_CLIENT_TOOL_UNION_KEYS;
 var init_messages3 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/messages/messages.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/messages/messages.mjs"() {
     init_batches2();
     init_resource();
     init_constants();
@@ -24413,10 +24413,10 @@ Please migrate to a newer model. Visit https://docs.anthropic.com/en/docs/resour
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/beta/beta.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/beta.mjs
 var Beta;
 var init_beta3 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/beta/beta.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/beta/beta.mjs"() {
     init_resource();
     init_deployment_runs();
     init_deployment_runs();
@@ -24493,10 +24493,10 @@ var init_beta3 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/files.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/files.mjs
 var Files2;
 var init_files2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/files.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/files.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -24636,10 +24636,10 @@ var init_files2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/models.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/models.mjs
 var Models2;
 var init_models2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/models.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/models.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -24704,10 +24704,10 @@ var init_models2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/api-keys.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/api-keys.mjs
 var APIKeys2;
 var init_api_keys2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/api-keys.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/api-keys.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -24777,10 +24777,10 @@ var init_api_keys2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/compliance-settings.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/compliance-settings.mjs
 var ComplianceSettings2;
 var init_compliance_settings2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/compliance-settings.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/compliance-settings.mjs"() {
     init_resource();
     init_tracing();
     ComplianceSettings2 = class extends APIResource {
@@ -24842,10 +24842,10 @@ var init_compliance_settings2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/external-keys.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/external-keys.mjs
 var ExternalKeys2;
 var init_external_keys2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/external-keys.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/external-keys.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -24996,10 +24996,10 @@ var init_external_keys2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/invites.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/invites.mjs
 var Invites2;
 var init_invites2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/invites.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/invites.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -25094,10 +25094,10 @@ var init_invites2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/rate-limits.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/rate-limits.mjs
 var RateLimits3;
 var init_rate_limits3 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/rate-limits.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/rate-limits.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -25134,10 +25134,10 @@ var init_rate_limits3 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/users.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/users.mjs
 var Users3;
 var init_users3 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/users.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/users.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -25226,10 +25226,10 @@ var init_users3 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/federation/issuers.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/federation/issuers.mjs
 var Issuers2;
 var init_issuers2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/federation/issuers.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/federation/issuers.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -25391,10 +25391,10 @@ var init_issuers2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/federation/rules/workspaces.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/federation/rules/workspaces.mjs
 var Workspaces5;
 var init_workspaces5 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/federation/rules/workspaces.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/federation/rules/workspaces.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -25510,10 +25510,10 @@ var init_workspaces5 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/federation/rules/rules.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/federation/rules/rules.mjs
 var Rules2;
 var init_rules2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/federation/rules/rules.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/federation/rules/rules.mjs"() {
     init_resource();
     init_workspaces5();
     init_workspaces5();
@@ -25706,10 +25706,10 @@ var init_rules2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/federation/federation.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/federation/federation.mjs
 var Federation2;
 var init_federation2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/federation/federation.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/federation/federation.mjs"() {
     init_resource();
     init_issuers2();
     init_issuers2();
@@ -25730,10 +25730,10 @@ var init_federation2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/service-accounts/workspaces.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/service-accounts/workspaces.mjs
 var Workspaces6;
 var init_workspaces6 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/service-accounts/workspaces.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/service-accounts/workspaces.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -25860,10 +25860,10 @@ var init_workspaces6 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/service-accounts/service-accounts.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/service-accounts/service-accounts.mjs
 var ServiceAccounts3;
 var init_service_accounts3 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/service-accounts/service-accounts.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/service-accounts/service-accounts.mjs"() {
     init_resource();
     init_workspaces6();
     init_workspaces6();
@@ -26032,10 +26032,10 @@ var init_service_accounts3 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/workspaces/members.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/workspaces/members.mjs
 var Members3;
 var init_members3 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/workspaces/members.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/workspaces/members.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -26175,10 +26175,10 @@ var init_members3 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/workspaces/rate-limits.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/workspaces/rate-limits.mjs
 var RateLimits4;
 var init_rate_limits4 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/workspaces/rate-limits.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/workspaces/rate-limits.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -26259,10 +26259,10 @@ var init_rate_limits4 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/workspaces/service-accounts.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/workspaces/service-accounts.mjs
 var ServiceAccounts4;
 var init_service_accounts4 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/workspaces/service-accounts.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/workspaces/service-accounts.mjs"() {
     init_resource();
     init_pagination();
     init_tracing();
@@ -26459,10 +26459,10 @@ var init_service_accounts4 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/workspaces/workspaces.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/workspaces/workspaces.mjs
 var Workspaces7;
 var init_workspaces7 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/workspaces/workspaces.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/workspaces/workspaces.mjs"() {
     init_resource();
     init_members3();
     init_members3();
@@ -26593,10 +26593,10 @@ var init_workspaces7 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/organization/organization.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/organization.mjs
 var Organization2;
 var init_organization2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/organization/organization.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/organization/organization.mjs"() {
     init_resource();
     init_api_keys2();
     init_api_keys2();
@@ -26664,10 +26664,10 @@ var init_organization2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/skills/versions.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/skills/versions.mjs
 var Versions4;
 var init_versions4 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/skills/versions.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/skills/versions.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -26785,10 +26785,10 @@ var init_versions4 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/skills/skills.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/skills/skills.mjs
 var Skills3;
 var init_skills4 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/skills/skills.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/skills/skills.mjs"() {
     init_resource();
     init_versions4();
     init_versions4();
@@ -26905,10 +26905,10 @@ var init_skills4 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/user-profiles/action-urls.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/user-profiles/action-urls.mjs
 var ActionURLs2;
 var init_action_urls2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/user-profiles/action-urls.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/user-profiles/action-urls.mjs"() {
     init_resource();
     init_headers();
     init_tracing();
@@ -26945,10 +26945,10 @@ var init_action_urls2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/user-profiles/user-profiles.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/user-profiles/user-profiles.mjs
 var UserProfiles2;
 var init_user_profiles2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/user-profiles/user-profiles.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/user-profiles/user-profiles.mjs"() {
     init_resource();
     init_action_urls2();
     init_action_urls2();
@@ -27091,9 +27091,9 @@ var init_user_profiles2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/resources/index.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/index.mjs
 var init_resources2 = __esm({
-  "node_modules/@anthropic-ai/sdk/resources/index.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/resources/index.mjs"() {
     init_shared();
     init_messages();
     init_beta3();
@@ -27105,10 +27105,10 @@ var init_resources2 = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/client.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/client.mjs
 var _BaseAnthropic_instances, _a, _BaseAnthropic_encoder, _BaseAnthropic_apiKeyFunction, _BaseAnthropic_openTelemetry, _BaseAnthropic_baseURLOverridden, warnedOfKeyAndTokenInEnv, BaseAnthropic, Anthropic;
 var init_client = __esm({
-  "node_modules/@anthropic-ai/sdk/client.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/client.mjs"() {
     init_tslib();
     init_values();
     init_sleep();
@@ -28040,9 +28040,9 @@ var init_client = __esm({
   }
 });
 
-// node_modules/@anthropic-ai/sdk/index.mjs
+// ../../synthe-improve/node_modules/@anthropic-ai/sdk/index.mjs
 var init_sdk = __esm({
-  "node_modules/@anthropic-ai/sdk/index.mjs"() {
+  "../../synthe-improve/node_modules/@anthropic-ai/sdk/index.mjs"() {
     init_client();
   }
 });
@@ -28547,45 +28547,45 @@ var fmtPct = (n) => Number.isInteger(n) ? `${n}` : n.toFixed(1);
 var money = (r) => typeof r.costUsd === "number" ? ` \xB7 $${r.costUsd.toFixed(2)}` : "";
 function roundLines(r) {
   if (r.outcome === "merged") {
-    const lines2 = [`Round ${r.round} \xB7 merged${money(r)}`];
-    if (r.changed) lines2.push(`  What changed: ${r.changed}`);
+    const lines3 = [`Round ${r.round} \xB7 merged${money(r)}`];
+    if (r.changed) lines3.push(`  What changed: ${r.changed}`);
     if (r.examplePair) {
-      lines2.push(`  Example from a practice case, on: "${r.examplePair.input}"`);
-      lines2.push(`    Before: "${r.examplePair.beforeReply}"`);
-      lines2.push(`    After: "${r.examplePair.afterReply}"`);
-      if (r.examplePair.improvedChecks.length) lines2.push(`    Now passes: ${r.examplePair.improvedChecks.join(", ")}`);
+      lines3.push(`  Example from a practice case, on: "${r.examplePair.input}"`);
+      lines3.push(`    Before: "${r.examplePair.beforeReply}"`);
+      lines3.push(`    After: "${r.examplePair.afterReply}"`);
+      if (r.examplePair.improvedChecks.length) lines3.push(`    Now passes: ${r.examplePair.improvedChecks.join(", ")}`);
     }
-    if (typeof r.scorePct === "number") lines2.push(`  Score before this change: ${fmtPct(r.scorePct)}%`);
-    return lines2;
+    if (typeof r.scorePct === "number") lines3.push(`  Score before this change: ${fmtPct(r.scorePct)}%`);
+    return lines3;
   }
   if (r.outcome === "proposed") return [`Round ${r.round} \xB7 proposed${money(r)}`, ...r.plain ? [`  ${r.plain}`] : []];
   if (r.outcome === "reverted") return [`Round ${r.round} \xB7 reverted${money(r)}`, ...r.plain ? [`  ${r.plain}`] : []];
   if (r.outcome === "declined") return [`Round ${r.round} \xB7 declined${money(r)}`, "  The change was closed without merging, so nothing changed."];
   if (r.outcome === "failed") return [`Round ${r.round} \xB7 didn't finish${money(r)}`, ...r.plain ? [`  ${r.plain}`] : ["  The round didn't finish, so nothing changed."]];
-  const lines = [`Round ${r.round} \xB7 no change${money(r)}`];
-  if (r.tried?.length) lines.push(`  Tried ${r.tried.length} ${r.tried.length === 1 ? "change" : "changes"}, but none was clearly better, so nothing merged.`);
-  else if (r.plain) lines.push(`  ${r.plain}`);
-  else lines.push("  Nothing was clearly better, so nothing merged.");
-  if (typeof r.scorePct === "number") lines.push(`  Score this round: ${fmtPct(r.scorePct)}%`);
-  return lines;
+  const lines2 = [`Round ${r.round} \xB7 no change${money(r)}`];
+  if (r.tried?.length) lines2.push(`  Tried ${r.tried.length} ${r.tried.length === 1 ? "change" : "changes"}, but none was clearly better, so nothing merged.`);
+  else if (r.plain) lines2.push(`  ${r.plain}`);
+  else lines2.push("  Nothing was clearly better, so nothing merged.");
+  if (typeof r.scorePct === "number") lines2.push(`  Score this round: ${fmtPct(r.scorePct)}%`);
+  return lines2;
 }
 function renderDeltaBlock(goal, state, maxRounds = 3) {
   const series = scoreSeries(state);
   const measured = displaySeries(series).filter((p) => p.measured);
-  const lines = [];
+  const lines2 = [];
   if (measured.length === 1) {
-    lines.push(`Your prompt scores ${fmtPct(measured[0].pct)}% (checks passed on test cases Synthe never trains on)`);
-    lines.push(`Score by round: ${sparkline(series)}`);
+    lines2.push(`Your prompt scores ${fmtPct(measured[0].pct)}% (checks passed on test cases Synthe never trains on)`);
+    lines2.push(`Score by round: ${sparkline(series)}`);
   } else if (measured.length > 1) {
-    lines.push(`Your prompt: ${fmtPct(measured[0].pct)}% \u2192 ${fmtPct(measured.at(-1).pct)}% (checks passed on test cases Synthe never trains on)`);
-    lines.push(`Score by round: ${sparkline(series)}`);
+    lines2.push(`Your prompt: ${fmtPct(measured[0].pct)}% \u2192 ${fmtPct(measured.at(-1).pct)}% (checks passed on test cases Synthe never trains on)`);
+    lines2.push(`Score by round: ${sparkline(series)}`);
   }
   const latest = Math.max(0, state.rounds.length - Math.max(0, maxRounds));
   const shown = state.rounds.filter((r, i) => i >= latest || CHANGED.has(r.outcome));
-  for (const r of [...shown].reverse()) lines.push(...roundLines(r));
+  for (const r of [...shown].reverse()) lines2.push(...roundLines(r));
   const hidden = state.rounds.length - shown.length;
-  if (hidden > 0) lines.push(`Earlier: ${hidden} more ${hidden === 1 ? "round" : "rounds"} with no change.`);
-  return lines.join("\n");
+  if (hidden > 0) lines2.push(`Earlier: ${hidden} more ${hidden === 1 ? "round" : "rounds"} with no change.`);
+  return lines2.join("\n");
 }
 var CHANGED = /* @__PURE__ */ new Set(["merged", "reverted", "proposed"]);
 
@@ -28851,7 +28851,13 @@ function sdkModel(client) {
       const text2 = res.content.flatMap((b) => b.type === "text" ? [b.text] : []).join("");
       const finished = res.stop_reason === "end_turn" && text2.length > 0;
       const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text2.length > 0;
-      return { text: finished || cutOff ? text2 : null, costUsd: costUsd(model, res.usage), ...cutOff ? { truncated: true } : {} };
+      return {
+        text: finished || cutOff ? text2 : null,
+        costUsd: costUsd(model, res.usage),
+        ...cutOff ? { truncated: true } : {},
+        usage: { input: res.usage.input_tokens, output: res.usage.output_tokens },
+        stopReason: res.stop_reason ?? null
+      };
     }
   };
 }
@@ -28982,10 +28988,10 @@ function lessonText(state, prompt, train) {
   const cases2 = state.lessons.rows.flatMap((r) => {
     const s = byId.get(r.id);
     if (!s) return [];
-    const lines = [`- Situation: ${s.input}`, `  A good response: ${s.expected}`, `  The current prompt replied${r.violation ? " (and broke a guardrail)" : ""}:`, `  <reply>${r.reply}</reply>`];
-    if (r.failedChecks?.length) lines.push(`  It failed these checks: ${r.failedChecks.join("; ")}`);
-    if (r.better) lines.push(`  A rewrite the judge preferred replied:`, `  <reply>${r.better}</reply>`);
-    return [lines.join("\n")];
+    const lines2 = [`- Situation: ${s.input}`, `  A good response: ${s.expected}`, `  The current prompt replied${r.violation ? " (and broke a guardrail)" : ""}:`, `  <reply>${r.reply}</reply>`];
+    if (r.failedChecks?.length) lines2.push(`  It failed these checks: ${r.failedChecks.join("; ")}`);
+    if (r.better) lines2.push(`  A rewrite the judge preferred replied:`, `  <reply>${r.better}</reply>`);
+    return [lines2.join("\n")];
   });
   if (cases2.length === 0) return "";
   return `
@@ -29420,9 +29426,9 @@ async function measureNoise(goal, prompt, scenarios, model) {
   };
 }
 function explainNoise(noise) {
-  const lines = [noise.wins === null || noise.cases < 5 ? "Noise is inconclusive: too few training cases, missing marks, or reply-order disagreement. This does not show that the judge is steady." : `Your prompt against itself on ${noise.cases} training cases: better in ${noise.wins}, worse in ${noise.losses}, the same in ${noise.ties}. This is one sample of reply and marker variation, not proof of a steady judge or a merge threshold. Hidden cases were not used.`];
-  if (noise.guards) lines.push(noise.guards.spread === null ? "Guard noise is inconclusive. Keep the fallback guard_margin of 3; no setting was changed." : `Guard pass-rate spread: ${noise.guards.spread.toFixed(2)} points between independent samples. A measured guard_margin for review is ${noise.guards.margin.toFixed(2)}; no setting was changed. This sample does not establish the impact or cost gate.`);
-  return lines;
+  const lines2 = [noise.wins === null || noise.cases < 5 ? "Noise is inconclusive: too few training cases, missing marks, or reply-order disagreement. This does not show that the judge is steady." : `Your prompt against itself on ${noise.cases} training cases: better in ${noise.wins}, worse in ${noise.losses}, the same in ${noise.ties}. This is one sample of reply and marker variation, not proof of a steady judge or a merge threshold. Hidden cases were not used.`];
+  if (noise.guards) lines2.push(noise.guards.spread === null ? "Guard noise is inconclusive. Keep the fallback guard_margin of 3; no setting was changed." : `Guard pass-rate spread: ${noise.guards.spread.toFixed(2)} points between independent samples. A measured guard_margin for review is ${noise.guards.margin.toFixed(2)}; no setting was changed. This sample does not establish the impact or cost gate.`);
+  return lines2;
 }
 async function compareRunners(goal, prompt, scenarios, from, to, model, random = Math.random) {
   const on = (runner) => ({ ...goal, models: { ...goal.models, runner } });
@@ -30431,8 +30437,8 @@ Reading your prompt${context2.names.length ? ` and ${context2.names.join(" and "
   io2.say("  Rules it must never break:");
   guardrails.forEach((g) => io2.say(`    - ${g}`));
   if (policy) {
-    const lines = policy.split("\n").filter((l) => l.trim());
-    io2.say(`  Your business policy, copied from your prompt (${lines.length} line${lines.length === 1 ? "" : "s"}), starting: "${lines[0].slice(0, 80)}"`);
+    const lines2 = policy.split("\n").filter((l) => l.trim());
+    io2.say(`  Your business policy, copied from your prompt (${lines2.length} line${lines2.length === 1 ? "" : "s"}), starting: "${lines2[0].slice(0, 80)}"`);
   } else {
     io2.say('  No business rules found in your prompt. Adding them as "policy" in synthe.json makes judging fairer.');
   }
@@ -30689,36 +30695,36 @@ Scenarios: ${train} train + ${scenarios.length - train} holdout = ${scenarios.le
   const avg = (rows) => rows.reduce((n, r) => n + r.score, 0) / rows.length;
   const judgeBefore = avg(judged.map(([b]) => b)), judgeAfter = avg(judged.map(([, a]) => a));
   const count2 = (score) => judged.filter(([, a]) => a.score === score).length;
-  const lines = [];
-  lines.push(`Test cases: better on ${to} in ${count2(WIN)}, worse in ${count2(LOSS)}, the same in ${count2(TIE)}${judged.length < scenarios.length ? `. ${scenarios.length - judged.length} couldn't be judged and are left out` : ""}`, "");
-  lines.push("Judge score (all scenarios, head to head: 50 is even)", `  Before: ${judgeBefore.toFixed(1)}  After: ${judgeAfter.toFixed(1)}  Change: ${signed(judgeAfter - judgeBefore)}`, "");
+  const lines2 = [];
+  lines2.push(`Test cases: better on ${to} in ${count2(WIN)}, worse in ${count2(LOSS)}, the same in ${count2(TIE)}${judged.length < scenarios.length ? `. ${scenarios.length - judged.length} couldn't be judged and are left out` : ""}`, "");
+  lines2.push("Judge score (all scenarios, head to head: 50 is even)", `  Before: ${judgeBefore.toFixed(1)}  After: ${judgeAfter.toFixed(1)}  Change: ${signed(judgeAfter - judgeBefore)}`, "");
   let rateDrop = 0, rateChange = null;
   if (goal.checks?.some((c) => c.trim())) {
     const both = judged.filter(([b, a]) => [b, a].every((r) => typeof r.failed === "number" && typeof r.applicable === "number"));
     const rateBefore = checkRate(both.map(([b]) => b)), rateAfter = checkRate(both.map(([, a]) => a));
-    if (rateBefore === null || rateAfter === null) lines.push("Check pass rate", "  Couldn't be measured: no check applied to these test cases, or the checker's answers were incomplete.", "");
+    if (rateBefore === null || rateAfter === null) lines2.push("Check pass rate", "  Couldn't be measured: no check applied to these test cases, or the checker's answers were incomplete.", "");
     else {
       rateDrop = rateBefore - rateAfter;
       rateChange = rateAfter - rateBefore;
-      lines.push("Check pass rate", `  Before: ${rateBefore}%  After: ${rateAfter}%  Change: ${signed(rateChange, 0)}pp`, "");
+      lines2.push("Check pass rate", `  Before: ${rateBefore}%  After: ${rateAfter}%  Change: ${signed(rateChange, 0)}pp`, "");
     }
   }
   const costBefore = sumCosts(replyCosts.get(from)), costAfter = sumCosts(replyCosts.get(to));
-  lines.push(...costSection(costBefore, costAfter));
+  lines2.push(...costSection(costBefore, costAfter));
   const judgeDrop = judgeBefore - judgeAfter;
   const worse = [];
   if (judgeDrop > MAX_DROP) worse.push(`judge score dropped more than ${MAX_DROP} points`);
   if (rateDrop > MAX_DROP) worse.push(`check pass rate dropped more than ${MAX_DROP}pp`);
   const cheaper = costBefore !== null && costAfter !== null && costAfter < costBefore;
   const better = judgeAfter - judgeBefore > MAX_DROP || (rateChange ?? 0) > MAX_DROP;
-  if (parsed.dryRun) lines.push("Verdict: none from a dry run. Run again without --dry-run to compare real replies.");
-  else if (worse.length) lines.push(`Verdict: ${worse.join("; ")}. Review before switching.`);
-  else if (cheaper) lines.push(`Verdict: Looks good: ${better ? "better" : "similar"} quality, lower cost.`);
-  else lines.push(`Verdict: Review before switching. ${costBefore === null || costAfter === null ? "The cost couldn't be worked out." : "The new model doesn't cost less."}`);
-  lines.push("", "This is one run on each model, so small changes can be the judge varying. `npx synthe try --noise` shows how much it varies.");
+  if (parsed.dryRun) lines2.push("Verdict: none from a dry run. Run again without --dry-run to compare real replies.");
+  else if (worse.length) lines2.push(`Verdict: ${worse.join("; ")}. Review before switching.`);
+  else if (cheaper) lines2.push(`Verdict: Looks good: ${better ? "better" : "similar"} quality, lower cost.`);
+  else lines2.push(`Verdict: Review before switching. ${costBefore === null || costAfter === null ? "The cost couldn't be worked out." : "The new model doesn't cost less."}`);
+  lines2.push("", "This is one run on each model, so small changes can be the judge varying. `npx synthe try --noise` shows how much it varies.");
   const spent = sumCosts(costs);
-  lines.push(parsed.dryRun ? `Cost of this comparison: $0.00 (dry run). A real run would cost about ${money3(spent)}.` : `Cost of this comparison: ${money3(spent)}`);
-  say(lines.join("\n"));
+  lines2.push(parsed.dryRun ? `Cost of this comparison: $0.00 (dry run). A real run would cost about ${money3(spent)}.` : `Cost of this comparison: ${money3(spent)}`);
+  say(lines2.join("\n"));
   return 0;
 }
 
@@ -31364,7 +31370,7 @@ function parseImproveConfig(raw) {
 
 // src/improve/loop.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync11, mkdirSync as mkdirSync6, mkdtempSync as mkdtempSync2, readFileSync as readFileSync13, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync11, mkdirSync as mkdirSync6, mkdtempSync as mkdtempSync2, readFileSync as readFileSync13, realpathSync as realpathSync2, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { basename as basename2, dirname as dirname4, join as join17 } from "node:path";
 
@@ -31542,8 +31548,8 @@ function lessonLine(l) {
   return clip3(`${head}${summary}${tail}`, LINE_MAX);
 }
 var lessonsFile = (gitRoot) => join12(gitRoot, ".synthe", "improve-lessons.md");
-function appendLessons(gitRoot, lines) {
-  const clean = lines.map((l) => oneLine2(l).replace(/^- /, "")).filter(Boolean);
+function appendLessons(gitRoot, lines2) {
+  const clean = lines2.map((l) => oneLine2(l).replace(/^- /, "")).filter(Boolean);
   if (!clean.length) return;
   const file = lessonsFile(gitRoot);
   mkdirSync5(join12(gitRoot, ".synthe"), { recursive: true });
@@ -31564,12 +31570,12 @@ function readLessons(gitRoot, max = 20) {
   } catch {
     return [];
   }
-  const lines = text2.split(/\r?\n/).filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim()).filter(Boolean);
-  return max > 0 ? lines.slice(-max) : [];
+  const lines2 = text2.split(/\r?\n/).filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim()).filter(Boolean);
+  return max > 0 ? lines2.slice(-max) : [];
 }
-function upsertLessonsBlock(fileText, lines) {
+function upsertLessonsBlock(fileText, lines2) {
   const eol = fileText.includes("\r\n") ? "\r\n" : "\n";
-  const bullets = lines.map((l) => oneLine2(l).replace(/^- /, "")).filter(Boolean).slice(-BLOCK_MAX).map((l) => `- ${l}`);
+  const bullets = lines2.map((l) => oneLine2(l).replace(/^- /, "")).filter(Boolean).slice(-BLOCK_MAX).map((l) => `- ${l}`);
   const block = [START, INTRO, CODE_WINS, ...bullets, END].join(eol);
   const MARK = "\0synthe-block\0";
   let found = false;
@@ -31658,9 +31664,9 @@ function presetsForRepo(top) {
 }
 var NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 function lastNumber(stdout) {
-  const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => NUMBER.test(l));
-  if (!lines.length) return null;
-  const n = Number(lines.at(-1));
+  const lines2 = stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => NUMBER.test(l));
+  if (!lines2.length) return null;
+  const n = Number(lines2.at(-1));
   return Number.isFinite(n) ? n : null;
 }
 var lastMatch = (text2, re2) => {
@@ -32025,7 +32031,7 @@ function checkEdits(dir, edits, shown, config) {
   if (!Array.isArray(edits) || edits.length === 0) return { problem: "no edits" };
   if (edits.length > MAX_EDITS2) return { problem: `${edits.length} edits; at most ${MAX_EDITS2} are allowed` };
   const texts = /* @__PURE__ */ new Map();
-  let lines = 0;
+  let lines2 = 0;
   for (const e of edits) {
     if (typeof e?.path !== "string" || typeof e.search !== "string" || typeof e.replace !== "string") return { problem: "an edit is malformed" };
     const path4 = cleanPath(e.path);
@@ -32050,7 +32056,7 @@ function checkEdits(dir, edits, shown, config) {
       if (entry.original !== null || entry.text !== "") return { problem: `the search text for ${path4} is empty, but that file already exists` };
       if (!replace.trim()) return { problem: `${path4} would be created empty` };
       entry.text = replace;
-      lines += changedLines("", replace);
+      lines2 += changedLines("", replace);
       continue;
     }
     if (entry.text.includes("\r\n") && !search.includes("\r")) {
@@ -32062,12 +32068,12 @@ function checkEdits(dir, edits, shown, config) {
     if (n > 1) return { problem: `the search text for ${path4} appears ${n} times; it must appear once` };
     const at = entry.text.indexOf(search);
     entry.text = entry.text.slice(0, at) + replace + entry.text.slice(at + search.length);
-    lines += changedLines(e.search, e.replace);
+    lines2 += changedLines(e.search, e.replace);
   }
   const writes = [...texts].filter(([, t]) => t.text !== t.original).map(([path4, t]) => ({ path: path4, text: t.text, created: t.original === null }));
   if (!writes.length) return { problem: "the edits change nothing" };
-  if (lines > MAX_CHANGED_LINES) return { problem: `the change is about ${lines} lines; the limit is ${MAX_CHANGED_LINES}` };
-  return { writes, changedLines: lines };
+  if (lines2 > MAX_CHANGED_LINES) return { problem: `the change is about ${lines2} lines; the limit is ${MAX_CHANGED_LINES}` };
+  return { writes, changedLines: lines2 };
 }
 
 // src/improve/loop.ts
@@ -32103,9 +32109,17 @@ async function withScratch(io2, top, commit, fn) {
 function removeScratchCheckouts(top) {
   try {
     const list = execFileSync2("git", ["-C", top, "worktree", "list", "--porcelain"], { encoding: "utf8" });
-    for (const line of list.split("\n")) {
-      const path4 = line.startsWith("worktree ") ? line.slice("worktree ".length) : "";
-      if (!path4 || !basename2(path4).startsWith(SCRATCH_PREFIX)) continue;
+    const temp = realpathSync2(tmpdir2());
+    const scratch = new RegExp(`^${SCRATCH_PREFIX}[A-Za-z0-9]{6}$`);
+    const paths = list.split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.slice("worktree ".length));
+    for (const path4 of paths.slice(1)) {
+      let parent = "";
+      try {
+        parent = realpathSync2(dirname4(path4));
+      } catch {
+        parent = dirname4(path4);
+      }
+      if (parent !== temp || !scratch.test(basename2(path4))) continue;
       for (const name of ["node_modules", ".venv", "venv"]) try {
         rmSync3(join17(path4, name));
       } catch {
@@ -32164,6 +32178,10 @@ async function runLoop(io2, o) {
     const line = lessonLine({ round: r.round, kept: r.kept, summary: r.summary, before: r.before, after: r.value, unit: config.metric.unit, ...r.kept ? {} : { why: r.why } });
     lessons.push(line);
     try {
+      o.hooks?.round?.(r, line);
+    } catch {
+    }
+    try {
       appendLessons(gitDir, [line]);
     } catch {
     }
@@ -32206,11 +32224,27 @@ async function runLoop(io2, o) {
         const reply = await proposeEdits(model, ctx, shown);
         spentThisRound.push(reply.costUsd);
         const paths = shown.map((f) => f.path);
-        if (!reply.proposal) return skip("nothing tried", "the model's reply was not usable", paths);
+        const tell = (summary2, edits2, refused, changedLines2) => {
+          try {
+            o.hooks?.candidate?.({ round: n, summary: summary2, shown, edits: edits2, refused, changedLines: changedLines2 });
+          } catch {
+          }
+        };
+        if (!reply.proposal) {
+          tell("(no usable reply)", [], "the model's reply was not usable", null);
+          return skip("nothing tried", "the model's reply was not usable", paths);
+        }
         const { summary, edits } = reply.proposal;
-        if (!edits.length) return skip(summary, "no change proposed", paths);
+        if (!edits.length) {
+          tell(summary, [], "no change proposed", null);
+          return skip(summary, "no change proposed", paths);
+        }
         const checked = checkEdits(dir, edits, new Set(paths), config);
-        if ("problem" in checked) return skip(summary, `edit refused: ${checked.problem}`, paths);
+        if ("problem" in checked) {
+          tell(summary, edits, checked.problem, null);
+          return skip(summary, `edit refused: ${checked.problem}`, paths);
+        }
+        tell(summary, edits, null, checked.changedLines);
         const changed = checked.writes.map((w) => w.path);
         io2.say(`Round ${n}: trying "${summary}" (${changed.join(", ")})`);
         for (const w of checked.writes) {
@@ -32232,6 +32266,10 @@ Proposed by Synthe (npx synthe improve), round ${n}. Kept only if it measures be
         continue;
       }
       const m = await measureAt(io2.exec, top, proposed.commit, config, io2.say);
+      try {
+        o.hooks?.measured?.({ ...m, round: n, commit: proposed.commit });
+      } catch {
+      }
       const record = { round: n, summary: proposed.summary, kept: false, value: m.measurement?.median ?? null, why: "", before, files: proposed.files, costUsd: sumCosts(spentThisRound), commit: proposed.commit };
       if (!m.measurement) record.why = `the metric gave no number: ${(m.reason ?? "no output").replace(/\.$/, "")}`;
       else {
@@ -32293,6 +32331,296 @@ async function publish(io2, a) {
     }
   }
   return out;
+}
+
+// src/improve/receipt.ts
+import { performance } from "node:perf_hooks";
+import { randomUUID as randomUUID3 } from "node:crypto";
+var RECORD_NOTICE = "Event credit: the organizers receive a record of this run \u2014 what this terminal shows, your settings, the code changes Claude proposes and the measurements; secrets are removed.";
+var RECORD_NOTICE_VERSION = "crimson-improve-2026-11-v1";
+var MAX_BATCH_BYTES = 64 * 1024;
+var MAX_BATCH_EVENTS = 200;
+var MAX_DIFF_CHARS = 20 * 1024;
+var MAX_TAIL_CHARS = 2048;
+var SEND_TIMEOUT_MS = 5e3;
+var GIVE_UP_AFTER = 2;
+var CLOSE_WAIT_MS = 6e3;
+var EVENT_BUDGET = 40 * 1024;
+var CONTROL2 = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩؜]/g;
+var SHAPES = [
+  [/\bcrim(-[a-z0-9]{4}){4}\b/gi, "[team code removed]"],
+  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "[token removed]"],
+  [/\bbearer[ \t]+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [token removed]"],
+  [/\b(github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,})\b/g, "[key removed]"]
+];
+function cleanText(text2, env, max) {
+  let out = redactSecrets(String(text2)).replace(CONTROL2, "");
+  for (const [shape, replacement] of SHAPES) out = out.replace(shape, replacement);
+  for (const [name, replacement] of [["SYNTHE_EVENT_CODE", "[event code removed]"], ["SYNTHE_TEAM_CODE", "[team code removed]"], ["SYNTHE_ANTHROPIC_KEY", "[key removed]"], ["ANTHROPIC_API_KEY", "[key removed]"], ["GH_TOKEN", "[token removed]"], ["GITHUB_TOKEN", "[token removed]"]]) {
+    const value = env[name]?.trim();
+    if (value && value.length >= 4) out = out.split(value).join(replacement);
+  }
+  return out.length > max ? `${out.slice(0, max)}\u2026` : out;
+}
+var lines = (text2) => text2 === "" ? [] : text2.replace(/\n$/, "").split("\n");
+function unifiedDiff(path4, before, after) {
+  const a = lines(before), b = lines(after);
+  let start2 = 0;
+  while (start2 < a.length && start2 < b.length && a[start2] === b[start2]) start2++;
+  let end = 0;
+  while (end < a.length - start2 && end < b.length - start2 && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
+  const ctxBefore = Math.min(3, start2), ctxAfter = Math.min(3, end);
+  const removed = a.slice(start2, a.length - end), added = b.slice(start2, b.length - end);
+  const head = a.slice(start2 - ctxBefore, start2), tail = a.slice(a.length - end, a.length - end + ctxAfter);
+  const oldLen = ctxBefore + removed.length + ctxAfter, newLen = ctxBefore + added.length + ctxAfter;
+  const oldStart = before === "" ? 0 : start2 - ctxBefore + 1, newStart = after === "" ? 0 : start2 - ctxBefore + 1;
+  const body = [...head.map((l) => ` ${l}`), ...removed.map((l) => `-${l}`), ...added.map((l) => `+${l}`), ...tail.map((l) => ` ${l}`)];
+  return [`--- ${before === "" ? "/dev/null" : `a/${path4}`}`, `+++ ${after === "" ? "/dev/null" : `b/${path4}`}`, `@@ -${oldStart},${oldLen} +${newStart},${newLen} @@`, ...body].join("\n");
+}
+function candidateDiff(shown, edits) {
+  const texts = new Map(shown.map((f) => [f.path, { before: f.text, after: f.text }]));
+  for (const e of edits) {
+    if (typeof e?.path !== "string" || typeof e.search !== "string" || typeof e.replace !== "string") continue;
+    const path4 = e.path.trim().replace(/^\.\//, "");
+    const entry = texts.get(path4) ?? { before: "", after: "" };
+    if (e.search === "") entry.after = entry.after === "" ? e.replace : entry.after;
+    else {
+      const at = entry.after.indexOf(e.search);
+      entry.after = at === -1 ? `${entry.after}
+@@ edit not applied: search text not found @@
+-${e.search.split("\n").join("\n-")}
++${e.replace.split("\n").join("\n+")}` : entry.after.slice(0, at) + e.replace + entry.after.slice(at + e.search.length);
+    }
+    texts.set(path4, entry);
+  }
+  const files = [...texts].filter(([, t]) => t.before !== t.after).map(([path4]) => path4);
+  let diff = files.map((path4) => unifiedDiff(path4, texts.get(path4).before, texts.get(path4).after)).join("\n");
+  const cut = diff.length > MAX_DIFF_CHARS;
+  if (cut) diff = `${diff.slice(0, MAX_DIFF_CHARS)}
+... cut at ${Math.round(MAX_DIFF_CHARS / 1024)} KB`;
+  return { diff, cut, files };
+}
+var purposeOf = (a) => {
+  const props = a.schema?.properties ?? {};
+  return "paths" in props ? "pick" : "edits" in props ? "propose" : "other";
+};
+var firstLine2 = (e) => (e?.message ?? String(e)).trim().split("\n")[0];
+var tailOf = (text2) => text2.length > MAX_TAIL_CHARS ? text2.slice(-MAX_TAIL_CHARS) : text2;
+var RunRecord = class {
+  runId = randomUUID3();
+  summary = { metric: null, baseline: null, best: null, rounds: [], stop_reason: null, cost_usd: null, pr_url: null, mode: null, status: "running", outcome: null };
+  run;
+  sent = [];
+  pending = [];
+  pendingBytes = 0;
+  seq = 0;
+  count = 0;
+  chain = Promise.resolve();
+  failures = 0;
+  closed = false;
+  url;
+  headers;
+  o;
+  constructor(o) {
+    this.o = o;
+    const now = (o.now ?? (() => /* @__PURE__ */ new Date()))();
+    this.run = {
+      version: o.version ?? package_default.version,
+      node: o.node ?? process.version,
+      platform: o.platform ?? process.platform,
+      arch: o.arch ?? process.arch,
+      repo: null,
+      default_branch: null,
+      head: null,
+      agent: o.agent,
+      command: o.command,
+      notice: RECORD_NOTICE_VERSION,
+      started: now.toISOString()
+    };
+    this.url = `${(o.env.SYNTHE_PROXY_URL || PROXY_URL).replace(/\/+$/, "")}/improve`;
+    this.headers = {
+      "content-type": "application/json",
+      "x-synthe-event": o.env.SYNTHE_EVENT_CODE.trim(),
+      "x-synthe-team": normalizeTeamCode(o.env.SYNTHE_TEAM_CODE),
+      "x-synthe-install": (o.installId ?? (() => setupInstallId(process.env)))()
+    };
+  }
+  get dead() {
+    return this.failures >= GIVE_UP_AFTER;
+  }
+  get batches() {
+    return this.seq;
+  }
+  clean(text2, max) {
+    return text2 === null || text2 === void 0 ? null : cleanText(String(text2), this.o.env, max);
+  }
+  now() {
+    return (this.o.now ?? (() => /* @__PURE__ */ new Date()))().toISOString();
+  }
+  // One record of something that happened. Strings are cleaned here; numbers and booleans pass as they are.
+  event(type, data = {}) {
+    if (this.closed) return;
+    const out = { i: ++this.count, t: this.now(), type };
+    for (const [key, value] of Object.entries(data)) {
+      if (value === void 0) continue;
+      if (typeof value === "string") out[key] = this.clean(value, key === "diff" ? MAX_DIFF_CHARS + 100 : key === "text" || key === "tail" || key === "card" || key === "stack" || key === "goal" ? 4e3 : 500);
+      else if (Array.isArray(value)) out[key] = value.slice(0, 50).map((item) => typeof item === "string" ? this.clean(item, 500) : typeof item === "number" && Number.isFinite(item) ? item : null);
+      else if (typeof value === "number") out[key] = Number.isFinite(value) ? value : null;
+      else out[key] = value ?? null;
+    }
+    this.pending.push(out);
+    this.pendingBytes += JSON.stringify(out).length + 1;
+    if (this.pendingBytes >= EVENT_BUDGET || this.pending.length >= MAX_BATCH_EVENTS) this.flush();
+  }
+  setRepo(repo, defaultBranch, head) {
+    this.run.repo = repo && /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[\w.-]{1,100}$/.test(repo) ? repo : null;
+    this.run.default_branch = defaultBranch ? cleanText(defaultBranch, this.o.env, 100) : null;
+    this.run.head = head && /^[0-9a-f]{40}$/.test(head) ? head : null;
+  }
+  configured(config) {
+    this.summary.metric = { label: cleanText(config.metric.label, this.o.env, 80), unit: cleanText(config.metric.unit, this.o.env, 20), direction: config.metric.direction, preset: config.metric.preset };
+    this.summary.mode = config.mode;
+    if (config.baseline.commit) this.baselined(config.baseline);
+  }
+  baselined(m) {
+    this.summary.baseline = { median: m.median, runs: m.runs.slice(0, 10) };
+    this.summary.best = { median: m.median };
+  }
+  round(r, best) {
+    if (this.summary.rounds.length < 40) this.summary.rounds.push({ n: r.round, kept: r.kept, summary: cleanText(r.summary, this.o.env, 200), value: r.value, why: cleanText(r.why, this.o.env, 200), cost_usd: r.costUsd });
+    if (best !== null) this.summary.best = { median: best };
+    const costs = this.summary.rounds.map((x) => x.cost_usd);
+    this.summary.cost_usd = costs.every((c) => c !== null) ? costs.reduce((a, b) => a + b, 0) : null;
+  }
+  finished(outcome, a = {}) {
+    this.summary.status = "finished";
+    this.summary.outcome = outcome;
+    if (a.stopReason !== void 0) this.summary.stop_reason = a.stopReason === null ? null : cleanText(a.stopReason, this.o.env, 300);
+    if (a.prUrl !== void 0) this.summary.pr_url = a.prUrl && /^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[\w.-]{1,100}\/pull\/\d{1,10}$/.test(a.prUrl) ? a.prUrl : null;
+    if (a.costUsd !== void 0) this.summary.cost_usd = a.costUsd;
+  }
+  // Everything the person sees, asks and runs goes through the record on its way.
+  wrap(io2) {
+    return {
+      ...io2,
+      say: (t) => {
+        this.event("say", { text: t });
+        io2.say(t);
+      },
+      ask: async (q) => {
+        const answer = await io2.ask(q);
+        this.event("ask", { question: q, answer });
+        return answer;
+      },
+      exec: (async (cwd, command, timeoutMs) => {
+        const r = await io2.exec(cwd, command, timeoutMs);
+        this.event("command", { command, ok: r.ok, ms: r.ms, timed_out: r.timedOut, tail: r.ok ? null : tailOf([r.stdout.trimEnd(), r.stderr.trimEnd()].filter(Boolean).join("\n")) });
+        return r;
+      })
+    };
+  }
+  model(m) {
+    return {
+      ask: async (a) => {
+        const started = performance.now(), base = { purpose: purposeOf(a), model: a.model, effort: "low", max_tokens: a.maxTokens };
+        try {
+          const r = await m.ask(a);
+          this.event("model", { ...base, input_tokens: r.usage?.input ?? null, output_tokens: r.usage?.output ?? null, cost_usd: r.costUsd, stop_reason: r.stopReason ?? null, ms: Math.round(performance.now() - started), ok: r.text !== null, error: null });
+          return r;
+        } catch (e) {
+          this.event("model", { ...base, input_tokens: null, output_tokens: null, cost_usd: null, stop_reason: null, ms: Math.round(performance.now() - started), ok: false, error: firstLine2(e) });
+          throw e;
+        }
+      }
+    };
+  }
+  // Sends what is pending, in batches the proxy accepts, one after another in the background. Never throws.
+  flush(final = false) {
+    const batches = [];
+    let current = [], size = 0;
+    for (const event of this.pending) {
+      const length = JSON.stringify(event).length + 1;
+      if (current.length && (size + length > EVENT_BUDGET || current.length >= MAX_BATCH_EVENTS)) {
+        batches.push(current);
+        current = [];
+        size = 0;
+      }
+      current.push(event);
+      size += length;
+    }
+    if (current.length || final && !batches.length) batches.push(current);
+    this.pending = [];
+    this.pendingBytes = 0;
+    for (const [index, events] of batches.entries()) {
+      const seq = ++this.seq, body = JSON.stringify({ schema: 1, run_id: this.runId, seq, final: final && index === batches.length - 1, run: this.run, summary: this.summary, events });
+      this.chain = this.chain.then(() => this.send(seq, events.length, body));
+    }
+    return this.chain;
+  }
+  async send(seq, events, body) {
+    if (this.dead) {
+      this.sent.push({ seq, events, status: null });
+      return;
+    }
+    const fetcher = this.o.fetcher ?? fetch;
+    const once = async () => {
+      const response = await fetcher(this.url, { method: "POST", headers: this.headers, body, signal: AbortSignal.timeout(SEND_TIMEOUT_MS), redirect: "error" });
+      return response.status;
+    };
+    let status2 = null;
+    try {
+      status2 = await once();
+    } catch (e) {
+      if (e?.name !== "TimeoutError") {
+        try {
+          status2 = await once();
+        } catch {
+          status2 = null;
+        }
+      }
+    }
+    this.sent.push({ seq, events, status: status2 });
+    if (status2 !== null && status2 < 500) this.failures = 0;
+    else this.failures++;
+  }
+  // The last batch, waited for only briefly: a slow or dead proxy must not hold the exit.
+  async close() {
+    if (this.closed) return;
+    const done = this.flush(true);
+    this.closed = true;
+    await Promise.race([done, new Promise((resolve2) => setTimeout(resolve2, CLOSE_WAIT_MS).unref?.())]);
+  }
+  // Ctrl-C: nothing can be waited for; the caller races this against its own exit.
+  interrupt() {
+    this.event("interrupt");
+    if (this.summary.status === "running") this.finished("interrupted");
+    return this.close();
+  }
+};
+function startRecord(o) {
+  if (o.env.SYNTHE_ANTHROPIC_KEY?.trim()) return null;
+  if (!o.env.SYNTHE_EVENT_CODE?.trim() || !TEAM_CODE.test(normalizeTeamCode(o.env.SYNTHE_TEAM_CODE ?? ""))) return null;
+  try {
+    return new RunRecord(o);
+  } catch {
+    return null;
+  }
+}
+async function recorded(record, fn) {
+  if (!record) return fn();
+  try {
+    const ok = await fn();
+    if (record.summary.status === "running") record.finished(ok ? "win" : "early-exit");
+    record.event("exit", { ok, code: ok ? 0 : 1 });
+    return ok;
+  } catch (e) {
+    const error = e;
+    record.event("crash", { message: firstLine2(e), stack: (error?.stack ?? "").split("\n").slice(0, 6).join("\n") });
+    if (record.summary.status === "running") record.finished("crashed", { stopReason: firstLine2(e) });
+    throw e;
+  } finally {
+    await record.close();
+  }
 }
 
 // src/cli/improve.ts
@@ -32380,7 +32708,7 @@ function improveOptions(args) {
   }
   return o;
 }
-var firstLine2 = (e) => (e.message ?? String(e)).trim().split("\n")[0];
+var firstLine3 = (e) => (e.message ?? String(e)).trim().split("\n")[0];
 async function preflight(io2, dirtyMessage, more) {
   const problems = [];
   const tryRun = async (cmd, args) => {
@@ -32390,7 +32718,7 @@ async function preflight(io2, dirtyMessage, more) {
       return { error: e };
     }
   };
-  let top = "", head = "", gitDir = "", defaultBranch = "";
+  let top = "", head = "", gitDir = "", defaultBranch = "", slug = null;
   const topRun = await tryRun("git", ["rev-parse", "--show-toplevel"]);
   if ("error" in topRun) problems.push("This folder is not inside a git repository. Run this inside your project's folder.");
   else {
@@ -32408,13 +32736,16 @@ async function preflight(io2, dirtyMessage, more) {
     const view = await tryRun("gh", ["repo", "view", "--json", "nameWithOwner,defaultBranchRef"]);
     try {
       if ("error" in view) throw view.error;
-      defaultBranch = JSON.parse(view.out).defaultBranchRef?.name || "main";
+      const parsed = JSON.parse(view.out);
+      defaultBranch = parsed.defaultBranchRef?.name || "main";
+      slug = typeof parsed.nameWithOwner === "string" ? parsed.nameWithOwner : null;
     } catch {
       problems.push("GitHub can't find this repo. Push it to GitHub first (for example gh repo create --source . --push), then run this again.");
     }
   }
-  if (more) problems.push(...await more({ top, head, gitDir, defaultBranch }));
-  return problems.length ? { problems } : { problems, repo: { top, head, gitDir, defaultBranch } };
+  const found = { top, head, gitDir, defaultBranch, slug };
+  if (more) problems.push(...await more(found));
+  return problems.length ? { problems, found } : { problems, repo: found, found };
 }
 function loopCredential(env) {
   const key = env.SYNTHE_ANTHROPIC_KEY?.trim(), eventCode = env.SYNTHE_EVENT_CODE?.trim(), team = env.SYNTHE_TEAM_CODE?.trim();
@@ -32466,19 +32797,27 @@ function presetLine(p, i) {
   return `${i + 1}. ${p.id}: ${p.label} (${p.direction} is better; measures ${p.command}${p.guard ? `; regression check: ${p.guard}` : ""})`;
 }
 async function improve(io2, root, options) {
+  const record = startRecord({ env: io2.env ?? {}, command: options.handoff ? "improve --handoff" : options.list ? "improve --list" : "improve", agent: options.agent, fetcher: io2.fetcher });
+  return recorded(record, () => improveRun(record ? record.wrap(io2) : io2, root, options, record));
+}
+async function improveRun(io2, root, options, record) {
+  if (record) io2.say(RECORD_NOTICE);
+  record?.event("settings", { goal: options.goal ?? null, preset: options.metric ?? null, label: options.label ?? null, unit: options.unit ?? null, command: options.command ?? null, direction: options.direction ?? null, guard: options.guard ?? null, mode: options.mode ?? null, rounds: options.rounds, budget_usd: options.budgetUsd, protect: options.protect, lessons: options.lessons ?? null, agent: options.agent, handoff: options.handoff, list: options.list });
   const loop = !options.handoff && !options.list;
   const chosen = loop ? loopCredential(io2.env ?? {}) : null;
   let base = "";
-  const { problems, repo } = await preflight(io2, "Commit your changes first: Synthe measures committed code.", loop ? async (found) => {
+  const { problems, repo, found } = await preflight(io2, "Commit your changes first: Synthe measures committed code.", loop ? async (found2) => {
     const more = chosen && "problem" in chosen ? [chosen.problem] : [];
-    if (found.head && found.defaultBranch) {
-      const b = await pullRequestBase(io2, found.defaultBranch, found.head);
+    if (found2.head && found2.defaultBranch) {
+      const b = await pullRequestBase(io2, found2.defaultBranch, found2.head);
       if ("problem" in b) more.push(b.problem);
       else base = b.base;
     }
     return more;
   } : void 0);
+  record?.setRepo(found?.slug ?? null, found?.defaultBranch || null, found?.head || null);
   if (!repo) {
+    record?.event("preflight", { problems });
     io2.say("Synthe can't start yet. Fix these, then run npx synthe improve again:");
     for (const p of problems) io2.say(`- ${p}`);
     return false;
@@ -32486,6 +32825,7 @@ async function improve(io2, root, options) {
   const top = repo.top || root;
   const presets = presetsForRepo(top);
   if (options.list) {
+    record?.finished("early-exit");
     io2.say("Metrics this repo can measure:");
     presets.forEach((p, i) => io2.say(presetLine(p, i)));
     if (options.agent) io2.say(IMPROVE_LIST_NEXT);
@@ -32495,11 +32835,15 @@ async function improve(io2, root, options) {
   if (credential) io2.say(credential.line);
   const draft = await settle(io2, options, presets, loop ? base : repo.defaultBranch, top);
   if (!draft) return false;
+  record?.configured(draft);
+  record?.event("settings", { goal: draft.goal, preset: draft.metric.preset, label: draft.metric.label, unit: draft.metric.unit, command: draft.metric.command, direction: draft.metric.direction, guard: draft.guard.command, mode: draft.mode, rounds: options.rounds, budget_usd: options.budgetUsd, protect: draft.protect, handoff: options.handoff, agent: options.agent });
   let measured;
   try {
     measured = await measureAt(io2.exec, top, repo.head, draft, io2.say);
+    record?.event("measurement", { round: 0, commit: repo.head, median: measured.measurement?.median ?? null, runs: measured.measurement?.runs ?? [], guard_passed: measured.guardPassed, reason: measured.reason ?? null, metric_ms: measured.metricMs });
   } catch (e) {
-    io2.say(`${firstLine2(e)} Nothing was written.`);
+    record?.event("measurement", { round: 0, commit: repo.head, median: null, runs: [], guard_passed: null, reason: firstLine3(e), metric_ms: 0 });
+    io2.say(`${firstLine3(e)} Nothing was written.`);
     return false;
   }
   if (!measured.measurement) {
@@ -32514,29 +32858,53 @@ async function improve(io2, root, options) {
   const config = parseImproveConfig(JSON.stringify({ ...draft, baseline: measured.measurement }));
   writeFileSync7(improveFile(repo.gitDir), `${JSON.stringify(config, null, 2)}
 `);
+  record?.baselined(config.baseline);
   if (!credential) {
     const existing = (await io2.run("git", ["branch", "--list", "synthe/improve-*"])).split("\n").filter((l) => l.trim()).length;
+    const card = taskCard(config, IMPROVE_BRANCH(existing + 1));
+    record?.event("handoff", { card, branch: IMPROVE_BRANCH(existing + 1) });
+    record?.finished("handoff");
     io2.say("");
-    io2.say(taskCard(config, IMPROVE_BRANCH(existing + 1)));
+    io2.say(card);
     if (options.agent) io2.say(IMPROVE_NEXT);
     return true;
   }
-  return improveLoop(io2, options, { top, gitDir: repo.gitDir, base, config, credential });
+  return improveLoop(io2, options, { top, gitDir: repo.gitDir, base, config, credential, record });
 }
 async function improveLoop(io2, o, a) {
-  const { top, config, base } = a;
+  const { top, config, base, record } = a;
   const { metric } = config;
   io2.say(baselineLine(config));
   io2.say(`Synthe now proposes up to ${o.rounds} changes, one per round, measures each one the same way and keeps only wins (budget ${money4(o.budgetUsd)}). Your working tree is not touched. Press Ctrl-C to stop.`);
-  const model = (io2.makeModel ?? credentialModel2)(a.credential);
-  const stopWatching = io2.onInterrupt?.(() => removeScratchCheckouts(top));
+  const made = (io2.makeModel ?? credentialModel2)(a.credential);
+  const model = record ? record.model(made) : made;
+  const stopWatching = io2.onInterrupt?.(() => {
+    removeScratchCheckouts(top);
+    return record?.interrupt();
+  });
+  const hooks = record ? {
+    candidate: (c) => {
+      const { diff, cut, files } = candidateDiff(c.shown, c.edits);
+      record.event("candidate", { round: c.round, summary: c.summary, files, diff, cut, changed_lines: c.changedLines, refused: c.refused });
+    },
+    measured: (m) => record.event("measurement", { round: m.round, commit: m.commit, median: m.measurement?.median ?? null, runs: m.measurement?.runs ?? [], guard_passed: m.guardPassed, reason: m.reason ?? null, metric_ms: m.metricMs }),
+    round: (r, lesson) => {
+      record.round(r, r.kept ? r.value : null);
+      record.event("round", { n: r.round, kept: r.kept, summary: r.summary, value: r.value, why: r.why, cost_usd: r.costUsd, before: r.before, lesson, files: r.files });
+      record.flush();
+    }
+  } : void 0;
   try {
-    const result = await runLoop(io2, { top, gitDir: a.gitDir, config, model, rounds: o.rounds, budgetUsd: o.budgetUsd });
+    const result = await runLoop(io2, { top, gitDir: a.gitDir, config, model, rounds: o.rounds, budgetUsd: o.budgetUsd, hooks });
     const kept = result.rounds.filter((r) => r.kept).length;
     const total = result.costKnown ? money4(result.spentUsd) : `at least ${money4(result.spentUsd)} (some costs unknown)`;
     io2.say("");
     io2.say(result.stopped);
+    record?.event("stop", { reason: result.stopped });
+    const credit = /credit|Synthe table|proxy/i.test(result.stopped) && /Stopped in round/.test(result.stopped);
     if (!kept) {
+      record?.finished(credit ? "credit" : "no-win", { stopReason: result.stopped, costUsd: result.costKnown ? result.spentUsd : null });
+      record?.event("result", { outcome: credit ? "credit" : "no-win", kept: 0, rounds: result.rounds.length, before: config.baseline.median, after: result.best.median, cost_usd: result.spentUsd, cost_known: result.costKnown, pr_url: null, merged: null, problem: null, branch: null });
       io2.say(`No change beat the current code (${quantity(config.baseline.median, metric)}), so nothing was pushed and no pull request was opened.`);
       if (result.rounds.length) {
         io2.say("What was tried:");
@@ -32561,6 +32929,8 @@ async function improveLoop(io2, o, a) {
       title: loopPrTitle(config, result.best),
       body: (lessonsCommit, diffstat, lessonsFiles) => loopPrBody({ config, best: result.best, rows: result.rounds, spentUsd: result.spentUsd, costKnown: result.costKnown, stopped: result.stopped, base, lessonsCommit, lessonsFiles, diffstat, model: EDIT_MODEL })
     });
+    record?.finished(credit ? "credit" : "win", { stopReason: result.stopped, costUsd: result.costKnown ? result.spentUsd : null, prUrl: published.url ?? null });
+    record?.event("result", { outcome: credit ? "credit" : "win", kept, rounds: result.rounds.length, before: config.baseline.median, after: result.best.median, cost_usd: result.spentUsd, cost_known: result.costKnown, pr_url: published.url ?? null, merged: published.merged ?? null, problem: published.problem ?? null, branch });
     if (!published.url) {
       io2.say(published.problem);
       return false;
@@ -32641,10 +33011,18 @@ function submitOptions(args) {
   }
   return { agent };
 }
-var firstLine3 = (e) => (e.message ?? String(e)).trim().split("\n")[0];
-async function submit(io2, _root, options) {
-  const { problems, repo } = await preflight(io2, "Commit your change first.");
+var firstLine4 = (e) => (e.message ?? String(e)).trim().split("\n")[0];
+async function submit(io2, root, options) {
+  const record = startRecord({ env: io2.env ?? {}, command: "submit", agent: options.agent, fetcher: io2.fetcher });
+  return recorded(record, () => submitRun(record ? record.wrap(io2) : io2, root, options, record));
+}
+async function submitRun(io2, _root, options, record) {
+  if (record) io2.say(RECORD_NOTICE);
+  record?.event("settings", { agent: options.agent });
+  const { problems, repo, found } = await preflight(io2, "Commit your change first.");
+  record?.setRepo(found?.slug ?? null, found?.defaultBranch || null, found?.head || null);
   if (!repo) {
+    record?.event("preflight", { problems });
     io2.say("Synthe can't measure this yet. Fix these, then run npx synthe submit again:");
     for (const p of problems) io2.say(`- ${p}`);
     return false;
@@ -32667,6 +33045,7 @@ async function submit(io2, _root, options) {
     io2.say(`${e.message}. Run npx synthe improve again.`);
     return false;
   }
+  record?.configured(config);
   try {
     await io2.run("git", ["fetch", "--quiet", "origin", def]);
   } catch {
@@ -32714,7 +33093,7 @@ async function submit(io2, _root, options) {
     }
     candidate = await measureAt(io2.exec, repo.top, repo.head, config, io2.say);
   } catch (e) {
-    io2.say(`${firstLine3(e)} Nothing was opened.`);
+    io2.say(`${firstLine4(e)} Nothing was opened.`);
     return false;
   }
   if (!candidate.measurement) {
@@ -32723,8 +33102,13 @@ async function submit(io2, _root, options) {
   }
   const f = (n) => formatValue(n, config.metric.unit);
   const v = verdict(config.metric.direction, baseline, candidate.measurement, candidate.guardPassed);
+  record?.baselined(baseline);
+  record?.event("measurement", { round: 1, commit: repo.head, median: candidate.measurement.median, runs: candidate.measurement.runs, guard_passed: candidate.guardPassed, reason: null, metric_ms: candidate.metricMs });
+  record?.round({ round: 1, kept: v.win, summary: `${changed.length} changed file${changed.length === 1 ? "" : "s"} on ${branch}`, value: candidate.measurement.median, why: v.why, costUsd: 0 }, v.win ? candidate.measurement.median : null);
+  record?.event("submit", { branch, changed_files: changed, before: baseline.median, after: candidate.measurement.median, win: v.win, why: v.why });
   io2.say(`${config.metric.label}: ${f(baseline.median)} \u2192 ${f(candidate.measurement.median)} (${config.metric.direction} is better).`);
   if (!v.win) {
+    record?.finished("not-merged", { stopReason: v.why, costUsd: 0 });
     io2.say(`Not merged: ${v.why}`);
     io2.say(`Your branch ${branch} is unchanged; nothing was pushed.`);
     if (options.agent) io2.say(SUBMIT_NEXT_LOSS);
@@ -32733,7 +33117,7 @@ async function submit(io2, _root, options) {
   try {
     await io2.run("git", ["push", "-u", "origin", "HEAD"]);
   } catch (e) {
-    io2.say(`It won, but Synthe could not push ${branch} (${firstLine3(e)}). Nothing was opened. Check you can push to this repo, then run npx synthe submit again.`);
+    io2.say(`It won, but Synthe could not push ${branch} (${firstLine4(e)}). Nothing was opened. Check you can push to this repo, then run npx synthe submit again.`);
     return false;
   }
   const diffstat = await io2.run("git", ["diff", "--stat", `${base}..HEAD`]);
@@ -32743,9 +33127,10 @@ async function submit(io2, _root, options) {
     const out = await io2.run("gh", ["pr", "create", "--base", def, "--head", branch, "--title", prTitle(config, candidate.measurement, baseline), "--body-file", "-"], body);
     url = out.trim().split("\n").at(-1).trim();
   } catch (e) {
-    io2.say(`It won, but Synthe could not open the pull request (${firstLine3(e)}). ${branch} is pushed; open the pull request on GitHub.`);
+    io2.say(`It won, but Synthe could not open the pull request (${firstLine4(e)}). ${branch} is pushed; open the pull request on GitHub.`);
     return false;
   }
+  record?.finished("submitted", { stopReason: null, prUrl: url, costUsd: 0 });
   io2.say(`Pull request: ${url}`);
   io2.say(v.why);
   if (config.mode === "auto") {
@@ -32753,7 +33138,7 @@ async function submit(io2, _root, options) {
       await io2.run("gh", ["pr", "merge", url, "--squash", "--delete-branch"]);
       io2.say(`Merged into ${def}. Run git pull.`);
     } catch (e) {
-      io2.say(`Could not merge it (${firstLine3(e)}): the pull request is open for a person to merge.`);
+      io2.say(`Could not merge it (${firstLine4(e)}): the pull request is open for a person to merge.`);
     }
   } else {
     io2.say("Review it there; merge it to keep the change.");
@@ -32764,7 +33149,7 @@ async function submit(io2, _root, options) {
 
 // src/improve/exec.ts
 import { spawn as spawn2 } from "node:child_process";
-import { performance } from "node:perf_hooks";
+import { performance as performance2 } from "node:perf_hooks";
 var MAX_OUTPUT = 4 * 1024 * 1024;
 var HIDDEN = ["ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "NODE_TEST_CONTEXT"];
 function childEnv(env = process.env) {
@@ -32782,7 +33167,7 @@ function killRunning() {
 }
 var shellExec = (cwd, command, timeoutMs) => new Promise((resolve2) => {
   const win3 = process.platform === "win32";
-  const started = performance.now();
+  const started = performance2.now();
   const child = spawn2(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: childEnv(), stdio: ["ignore", "pipe", "pipe"], detached: !win3 });
   if (child.pid) live.add(child.pid);
   let stdout = "", stderr = "", timedOut = false, done = false;
@@ -32805,7 +33190,7 @@ var shellExec = (cwd, command, timeoutMs) => new Promise((resolve2) => {
     done = true;
     if (child.pid) live.delete(child.pid);
     clearTimeout(timer);
-    resolve2({ ok: code === 0 && !timedOut, stdout, stderr, ms: Math.round(performance.now() - started), timedOut });
+    resolve2({ ok: code === 0 && !timedOut, stdout, stderr, ms: Math.round(performance2.now() - started), timedOut });
   };
   child.on("error", (e) => {
     stderr += e.message;
@@ -32842,9 +33227,17 @@ function onInterrupt(cleanup) {
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
   const stop2 = () => {
     killRunning();
-    cleanup();
+    let pending;
+    try {
+      pending = cleanup();
+    } catch {
+      pending = void 0;
+    }
     console.log("\nStopped. Synthe stopped its measurements and removed its temporary checkouts; your working tree was never touched.");
-    process.exit(130);
+    const exit = () => process.exit(130);
+    if (pending && typeof pending.then === "function") Promise.race([pending.catch(() => {
+    }), new Promise((resolve2) => setTimeout(resolve2, 1500))]).then(exit, exit);
+    else exit();
   };
   for (const s of signals) process.once(s, stop2);
   return () => {
@@ -33053,7 +33446,7 @@ async function main() {
   if (command === "init") process.exitCode = await init(io, process.cwd(), void 0, void 0, process.env, agentOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "guide") console.log(guide);
   else if (command === "improve") process.exitCode = await improve({ say: console.log, ask, run, exec: shellExec, env: process.env, onInterrupt }, process.cwd(), improveOptions(process.argv.slice(3))) ? 0 : 1;
-  else if (command === "submit") process.exitCode = await submit({ say: console.log, ask, run, exec: shellExec }, process.cwd(), submitOptions(process.argv.slice(3))) ? 0 : 1;
+  else if (command === "submit") process.exitCode = await submit({ say: console.log, ask, run, exec: shellExec, env: process.env }, process.cwd(), submitOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
     process.exitCode = await setKey(io) ? 0 : 1;

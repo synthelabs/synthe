@@ -6,6 +6,7 @@ import { protectedChanges } from "../improve/protect.ts";
 import { formatValue, prBody, prTitle } from "../improve/text.ts";
 import { verdict } from "../improve/verdict.ts";
 import { measureAt, type MeasureResult } from "../improve/worktree.ts";
+import { RECORD_NOTICE, recorded, startRecord, type RunRecord } from "../improve/receipt.ts";
 
 export const SUBMIT_NEXT_WIN = "NEXT: Show the person the result and the pull request link as written.";
 export const SUBMIT_NEXT_LOSS = "NEXT: Show the person why this change did not win, as written. If they want another try, make a different small change on the same branch, commit, and run `npx synthe submit` again.";
@@ -25,9 +26,19 @@ export function submitOptions(args: string[]): { agent: boolean } {
 
 const firstLine = (e: unknown) => ((e as Error).message ?? String(e)).trim().split("\n")[0];
 
-export async function submit(io: ImproveIo, _root: string, options: { agent: boolean }): Promise<boolean> {
-  const { problems, repo } = await preflight(io, "Commit your change first.");
+// On event credit the run is recorded for the organizers, like improve; the team's own key sends nothing.
+export async function submit(io: ImproveIo, root: string, options: { agent: boolean }): Promise<boolean> {
+  const record = startRecord({ env: io.env ?? {}, command: "submit", agent: options.agent, fetcher: io.fetcher });
+  return recorded(record, () => submitRun(record ? record.wrap(io) : io, root, options, record));
+}
+
+async function submitRun(io: ImproveIo, _root: string, options: { agent: boolean }, record: RunRecord | null): Promise<boolean> {
+  if (record) io.say(RECORD_NOTICE);
+  record?.event("settings", { agent: options.agent });
+  const { problems, repo, found } = await preflight(io, "Commit your change first.");
+  record?.setRepo(found?.slug ?? null, found?.defaultBranch || null, found?.head || null);
   if (!repo) {
+    record?.event("preflight", { problems });
     io.say("Synthe can't measure this yet. Fix these, then run npx synthe submit again:");
     for (const p of problems) io.say(`- ${p}`);
     return false;
@@ -50,6 +61,7 @@ export async function submit(io: ImproveIo, _root: string, options: { agent: boo
     io.say(`${(e as Error).message}. Run npx synthe improve again.`);
     return false;
   }
+  record?.configured(config);
 
   // Compare against what the pull request will merge into: the default branch as GitHub has it, when known.
   try { await io.run("git", ["fetch", "--quiet", "origin", def]); } catch { /* offline: use what this clone has */ }
@@ -103,8 +115,13 @@ export async function submit(io: ImproveIo, _root: string, options: { agent: boo
 
   const f = (n: number) => formatValue(n, config.metric.unit);
   const v = verdict(config.metric.direction, baseline, candidate.measurement, candidate.guardPassed);
+  record?.baselined(baseline);
+  record?.event("measurement", { round: 1, commit: repo.head, median: candidate.measurement.median, runs: candidate.measurement.runs, guard_passed: candidate.guardPassed, reason: null, metric_ms: candidate.metricMs });
+  record?.round({ round: 1, kept: v.win, summary: `${changed.length} changed file${changed.length === 1 ? "" : "s"} on ${branch}`, value: candidate.measurement.median, why: v.why, costUsd: 0 }, v.win ? candidate.measurement.median : null);
+  record?.event("submit", { branch, changed_files: changed, before: baseline.median, after: candidate.measurement.median, win: v.win, why: v.why });
   io.say(`${config.metric.label}: ${f(baseline.median)} → ${f(candidate.measurement.median)} (${config.metric.direction} is better).`);
   if (!v.win) {
+    record?.finished("not-merged", { stopReason: v.why, costUsd: 0 });
     io.say(`Not merged: ${v.why}`);
     io.say(`Your branch ${branch} is unchanged; nothing was pushed.`);
     if (options.agent) io.say(SUBMIT_NEXT_LOSS);
@@ -127,6 +144,7 @@ export async function submit(io: ImproveIo, _root: string, options: { agent: boo
     io.say(`It won, but Synthe could not open the pull request (${firstLine(e)}). ${branch} is pushed; open the pull request on GitHub.`);
     return false;
   }
+  record?.finished("submitted", { stopReason: null, prUrl: url, costUsd: 0 });
   io.say(`Pull request: ${url}`);
   io.say(v.why);
   if (config.mode === "auto") {
