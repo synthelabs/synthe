@@ -30548,7 +30548,7 @@ var package_default = {
     test: "node --test test/*.test.ts",
     typecheck: "tsc --noEmit",
     prepublishOnly: "node scripts/check-release-tag.mjs",
-    version: "node scripts/version-pins.mjs && npm run build",
+    version: "node scripts/version-pins.mjs && npm run build && git add README.md docs/AGENT-SETUP.md kit/HACKATHON.md src/cli/guide.ts dist",
     mutation: "node scripts/mutation-check.mjs",
     simulate: "node scripts/simulate-gate.ts"
   },
