@@ -2327,11 +2327,11 @@ function endApiCallSpan(span, result) {
 }
 function observeStream(stream2, signal, observer) {
   const iterate = stream2[Symbol.asyncIterator];
-  let ended = false;
+  let ended2 = false;
   const end = (how) => {
-    if (ended)
+    if (ended2)
       return;
-    ended = true;
+    ended2 = true;
     signal.removeEventListener("abort", cancel);
     try {
       observer.onEnd(how);
@@ -2360,7 +2360,7 @@ function observeStream(stream2, signal, observer) {
         }
         if (result.done) {
           end({ reason: signal.aborted ? "canceled" : "completed" });
-        } else if (!ended) {
+        } else if (!ended2) {
           try {
             observer.onItem?.(result.value);
           } catch {
@@ -5434,8 +5434,8 @@ var init_parser2 = __esm({
           continue;
         }
         if (char === '"') {
-          const start = current + 1;
-          let end = start;
+          const start2 = current + 1;
+          let end = start2;
           let danglingQuote = false;
           while (true) {
             end = input.indexOf('"', end);
@@ -5445,7 +5445,7 @@ var init_parser2 = __esm({
             }
             let backslashes = 0;
             let i = end - 1;
-            while (i >= start && input[i] === "\\") {
+            while (i >= start2 && input[i] === "\\") {
               backslashes++;
               i--;
             }
@@ -5458,7 +5458,7 @@ var init_parser2 = __esm({
           } else {
             tokens.push({
               type: "string",
-              value: input.slice(start, end)
+              value: input.slice(start2, end)
             });
             current = end + 1;
           }
@@ -9566,7 +9566,7 @@ var init_SessionToolRunner = __esm({
         }
       }, _SessionToolRunner_sendResult = async function _SessionToolRunner_sendResult2(result, toolUseId, conversationId) {
         const ctrl = __classPrivateFieldGet(this, _SessionToolRunner_controller, "f");
-        const start = Date.now();
+        const start2 = Date.now();
         let lastErr;
         let attempt = 0;
         while (true) {
@@ -9580,7 +9580,7 @@ var init_SessionToolRunner = __esm({
             lastErr = e;
             if (isFatal4xx(e))
               break;
-            const remainingMs = __classPrivateFieldGet(this, _SessionToolRunner_sendRetryWindowMs, "f") - (Date.now() - start);
+            const remainingMs = __classPrivateFieldGet(this, _SessionToolRunner_sendRetryWindowMs, "f") - (Date.now() - start2);
             if (remainingMs <= 0)
               break;
             const waitMs = Math.min(applyJitter(backoff(attempt - 1, SEND_BACKOFF_START_MS, SEND_BACKOFF_CAP_MS)), remainingMs);
@@ -11342,9 +11342,9 @@ function betaReadTool(ctx) {
         return data;
       const [startLine, endLine] = view_range;
       const lines = data.split("\n");
-      const start = Math.max(0, startLine - 1);
+      const start2 = Math.max(0, startLine - 1);
       const end = endLine > 0 ? endLine : lines.length;
-      return lines.slice(start, end).join("\n");
+      return lines.slice(start2, end).join("\n");
     }
   });
 }
@@ -11609,10 +11609,10 @@ async function runWalkGrep(pattern, root, signal) {
 }
 async function grepFile(file, re2, push) {
   const stream2 = fssync.createReadStream(file, { encoding: "utf8" });
-  const rl = readline.createInterface({ input: stream2, crlfDelay: Infinity });
+  const rl2 = readline.createInterface({ input: stream2, crlfDelay: Infinity });
   let i = 0;
   try {
-    for await (const line of rl) {
+    for await (const line of rl2) {
       i++;
       if (line.length > GREP_MAX_LINE_LENGTH)
         continue;
@@ -28050,7 +28050,7 @@ var init_sdk = __esm({
 // src/cli/main.ts
 import { spawn as spawn3 } from "node:child_process";
 import { existsSync as existsSync12, readFileSync as readFileSync13, writeFileSync as writeFileSync7 } from "node:fs";
-import { createInterface as createInterface3 } from "node:readline/promises";
+import { createInterface as createInterface4 } from "node:readline/promises";
 
 // src/core/goal.ts
 var STATE_BRANCH = "synthe/state";
@@ -30764,16 +30764,54 @@ function changesText(goal, state) {
 }
 
 // src/cli/secret.ts
-import { createInterface as createInterface2 } from "node:readline/promises";
+import { createInterface as createInterface3 } from "node:readline/promises";
 import { Writable } from "node:stream";
+
+// src/cli/stdin-lines.ts
+import { createInterface as createInterface2 } from "node:readline";
+var rl = null;
+var ended = false;
+var queued = [];
+var waiting = [];
+function start() {
+  rl = createInterface2({ input: process.stdin, terminal: false });
+  rl.on("line", (line) => {
+    const w = waiting.shift();
+    if (w) w(line);
+    else queued.push(line);
+  });
+  rl.on("close", () => {
+    ended = true;
+    for (const w of waiting.splice(0)) w("");
+  });
+}
+function nextLine() {
+  if (!rl) start();
+  if (queued.length) return Promise.resolve(queued.shift());
+  if (ended) return Promise.resolve("");
+  return new Promise((resolve2) => waiting.push(resolve2));
+}
+async function askPiped(question) {
+  process.stdout.write(question);
+  const answer = await nextLine();
+  process.stdout.write("\n");
+  return answer;
+}
+function closeStdinLines() {
+  rl?.close();
+  process.stdin.unref?.();
+}
+
+// src/cli/secret.ts
 async function askSecret(question, input = process.stdin, output = process.stdout) {
+  if (input === process.stdin && !process.stdin.isTTY) return askPiped(question);
   const muted = new Writable({ write(_chunk, _encoding, done) {
     done();
   } });
-  const rl = createInterface2({ input, output: muted, terminal: true });
+  const rl2 = createInterface3({ input, output: muted, terminal: true });
   output.write(question);
-  const answer = await rl.question("");
-  rl.close();
+  const answer = await rl2.question("");
+  rl2.close();
   output.write("\n");
   return answer;
 }
@@ -31285,7 +31323,7 @@ import { join as join11 } from "node:path";
 var improveFile = (gitDir) => join11(gitDir, "synthe-improve.json");
 var DEFAULT_RUNS = 3;
 var COMMAND_TIMEOUT_MS = 6e5;
-var PRESETS = ["test-pass", "bundle-size", "build-time", "custom"];
+var PRESETS = ["test-pass", "pytest", "bundle-size", "build-time", "custom"];
 var text = (v) => typeof v === "string" && v.trim().length > 0;
 function parseImproveConfig(raw) {
   const bad = (why) => {
@@ -31310,6 +31348,10 @@ function parseImproveConfig(raw) {
   if (!c.guard || typeof c.guard !== "object" || c.guard.command !== null && !text(c.guard.command)) bad("guard.command must be a command or null");
   if (!Array.isArray(c.protect) || c.protect.some((p) => !text(p))) bad("protect must be a list of paths");
   if (c.protect.some((p) => p.startsWith("/") || p.split("/").includes(".."))) bad("protect paths must stay inside the repo");
+  if (c.promptFiles !== void 0) {
+    if (!Array.isArray(c.promptFiles) || c.promptFiles.some((p) => !text(p))) bad("promptFiles must be a list of paths");
+    if (c.promptFiles.some((p) => p.startsWith("/") || p.split("/").includes(".."))) bad("promptFiles paths must stay inside the repo");
+  }
   if (c.mode !== "auto" && c.mode !== "review") bad("mode must be auto or review");
   const b = c.baseline;
   if (!b || typeof b !== "object") bad("baseline is required");
@@ -31342,7 +31384,7 @@ function detectPresets(files, python = null) {
   const both = hasTest && python !== null;
   const presets = [];
   if (hasTest) presets.push({ id: "test-pass", label: both ? "tests passing (npm test)" : "tests passing", unit: "tests", direction: "higher", runs: 1, command: "npm test", guard: null });
-  if (python) presets.push({ id: "test-pass", label: "tests passing (pytest)", unit: "tests", direction: "higher", runs: 1, command: python.command, guard: null });
+  if (python) presets.push({ id: "pytest", label: "tests passing (pytest)", unit: "tests", direction: "higher", runs: 1, command: python.command, guard: null });
   if (hasBuild) {
     presets.push({ id: "bundle-size", label: "built JS and CSS, gzipped", unit: "bytes", direction: "lower", runs: 1, command: "npm run build", guard });
     presets.push({ id: "build-time", label: "build time", unit: "ms", direction: "lower", runs: 3, command: "npm run build", guard });
@@ -31428,7 +31470,8 @@ async function measureOnce(exec, cwd, config) {
   const none = (reason) => ({ value: null, ms: r.ms, reason });
   if (r.timedOut) return none(REASONS.timedOut);
   switch (config.metric.preset) {
-    case "test-pass": {
+    case "test-pass":
+    case "pytest": {
       const n = countPassed(`${r.stdout}
 ${r.stderr}`);
       return n === null ? none(REASONS.noTests) : { value: n, ms: r.ms };
@@ -31477,6 +31520,8 @@ function protectedPathProblem(path4, config) {
   if (named) return `${path4} is used by the metric or the regression check (${named}); Synthe measures with it as it is.`;
   const extra = config.protect.find((e) => under(path4, e));
   if (extra) return `${path4} is protected for this run (--protect ${extra}).`;
+  const prompt = config.promptFiles?.find((e) => under(path4, e));
+  if (prompt) return `${path4} is the prompt file Synthe's prompt mode tunes (named in ${GOAL_FILE}); improve mode leaves it alone.`;
   if (SENSITIVE_PATHS.some((p) => p.test(path4))) return `${path4} can run code, ship dependencies, change CI or hold secrets; a measured change leaves it alone.`;
   return null;
 }
@@ -31533,7 +31578,8 @@ var runsText = (runs) => `${runs.length} ${runs.length === 1 ? "run" : "runs"}: 
 var modeText = (mode) => mode === "auto" ? "auto (a winning change merges into the default branch by itself)." : "review (a pull request waits for you).";
 function taskCard(config, branch) {
   const { metric, baseline } = config;
-  const extra = config.protect.length ? `, and: ${config.protect.join(", ")}` : "";
+  const listed = [...config.protect, ...config.promptFiles ?? []];
+  const extra = listed.length ? `, and: ${listed.join(", ")}` : "";
   return [
     `Goal: ${config.goal}`,
     `Metric: ${metric.label}, ${metric.direction} is better. Current code: ${formatValue(baseline.median, metric.unit)} (${runsText(baseline.runs)}).`,
@@ -31644,7 +31690,7 @@ async function measureAt(exec, root, commit, config, say = () => {
 var IMPROVE_BRANCH = (n) => `synthe/improve-${n}`;
 var IMPROVE_NEXT = "NEXT: Synthe measured the current code and saved its config inside .git (nothing to commit). Show the person the baseline and the task card as written. Then create the branch named in the card, make ONE small change to product code only, commit it, and run `npx synthe submit`. Do not edit tests, the metric, package.json or anything under .synthe/.";
 var IMPROVE_LIST_NEXT = "NEXT: Show the person this list as written. Ask them, in one message: what should get better (one sentence), which metric, which regression check, and auto or review. Then run `npx synthe improve --agent` with their answers.";
-var PRESET_IDS = ["test-pass", "bundle-size", "build-time", "custom"];
+var PRESET_IDS = ["test-pass", "pytest", "bundle-size", "build-time", "custom"];
 var VALUE_FLAGS = ["--goal", "--metric", "--label", "--unit", "--command", "--direction", "--guard", "--mode", "--protect"];
 function improveOptions(args) {
   const agent = args.includes("--agent");
@@ -31791,7 +31837,7 @@ async function settle(io2, o, presets, defaultBranch, top) {
   if (!goal) return stop2("Synthe needs a goal. Run npx synthe improve again and say what should get better.");
   let preset;
   if (o.metric) {
-    preset = presets.find((p) => p.id === o.metric);
+    preset = presets.find((p) => p.id === o.metric || o.metric === "test-pass" && p.id === "pytest");
     if (!preset) return stop2(`This repo can't measure ${o.metric} (no matching test setup or script found). Run npx synthe improve --list to see what it can measure.`);
   } else {
     io2.say("Which number measures it?");
@@ -31826,7 +31872,8 @@ async function settle(io2, o, presets, defaultBranch, top) {
     goal,
     metric: { preset: preset.id, label, unit, command, direction, runs },
     guard: { command: guard },
-    protect: [...o.protect, ...promptModeProtect(top)],
+    protect: o.protect,
+    promptFiles: promptModeProtect(top),
     mode,
     baseline: { commit: "", median: 0, runs: [], at: "" }
   };
@@ -32025,9 +32072,10 @@ var run = (cmd, args, stdin) => new Promise((resolve2, reject) => {
   child.stdin.end(stdin ?? "");
 });
 async function ask(question) {
-  const rl = createInterface3({ input: process.stdin, output: process.stdout });
-  const answer = await rl.question(question);
-  rl.close();
+  if (!process.stdin.isTTY) return askPiped(question);
+  const rl2 = createInterface4({ input: process.stdin, output: process.stdout });
+  const answer = await rl2.question(question);
+  rl2.close();
   return answer;
 }
 var template = () => readFileSync13(new URL("../templates/synthe.yml", import.meta.url), "utf8");
@@ -32259,4 +32307,4 @@ main().catch((e) => {
     console.error("If this keeps happening, open an issue at https://github.com/synthelabs/synthe/issues");
   }
   process.exit(1);
-});
+}).finally(closeStdinLines);
