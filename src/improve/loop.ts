@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { sumCosts } from "../core/cost.ts";
@@ -51,9 +51,15 @@ async function withScratch<T>(io: LoopIo, top: string, commit: string, fn: (dir:
 export function removeScratchCheckouts(top: string): void {
   try {
     const list = execFileSync("git", ["-C", top, "worktree", "list", "--porcelain"], { encoding: "utf8" });
-    for (const line of list.split("\n")) {
-      const path = line.startsWith("worktree ") ? line.slice("worktree ".length) : "";
-      if (!path || !basename(path).startsWith(SCRATCH_PREFIX)) continue;
+    // Only Synthe's own throwaway checkouts: directly in the system temp folder, named exactly like mkdtemp makes them,
+    // and never the first entry (the person's own checkout), whatever its folder is called.
+    const temp = realpathSync(tmpdir());
+    const scratch = new RegExp(`^${SCRATCH_PREFIX}[A-Za-z0-9]{6}$`);
+    const paths = list.split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.slice("worktree ".length));
+    for (const path of paths.slice(1)) {
+      let parent = "";
+      try { parent = realpathSync(dirname(path)); } catch { parent = dirname(path); }
+      if (parent !== temp || !scratch.test(basename(path))) continue;
       // node_modules and venvs are links into the person's own folders: unlink them before removing anything.
       for (const name of ["node_modules", ".venv", "venv"]) try { rmSync(join(path, name)); } catch { /* not a link */ }
       try { execFileSync("git", ["-C", top, "worktree", "remove", "--force", path], { stdio: "ignore" }); } catch { /* pruned below */ }
