@@ -24,6 +24,8 @@ import { guide } from "./guide.ts";
 import { verify } from "./verify.ts";
 import { undo } from "./undo.ts";
 import { githubRepo } from "../github/repo.ts";
+import { improve, improveOptions } from "./improve.ts";
+import { shellExec } from "../improve/exec.ts";
 
 const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
   const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -242,6 +244,7 @@ const HELP = `Synthe makes your AI agent's system prompt better while you sleep.
 Start here, inside your project's folder:
   npx synthe init     set up this repo and start
   npx synthe guide    instructions for setup through a coding agent
+  npx synthe improve  make one measured code change with the coding agent you already use (no AI prompt needed)
 
 Then:
   npx synthe status   where it is and what it changed
@@ -264,6 +267,7 @@ async function main() {
   const command = process.argv[2];
   if (command === "init") process.exitCode = (await init(io, process.cwd(), undefined, undefined, process.env, agentOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "guide") console.log(guide);
+  else if (command === "improve") process.exitCode = (await improve({ say: console.log, ask, run, exec: shellExec }, process.cwd(), improveOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
     process.exitCode = (await setKey(io)) ? 0 : 1;
