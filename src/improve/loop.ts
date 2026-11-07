@@ -97,6 +97,7 @@ export async function runLoop(io: LoopIo, o: LoopOptions): Promise<LoopResult> {
   let spent = 0;
   let misses = 0;
   let stopped = "";
+  let partialUnknown = false;
 
   const finish = (r: RoundRecord) => {
     rounds.push(r);
@@ -173,11 +174,12 @@ export async function runLoop(io: LoopIo, o: LoopOptions): Promise<LoopResult> {
       // Credit used up, the proxy refusing, the API down, or git failing: keep what already won and stop here.
       const partial = sumCosts(spentThisRound);
       if (partial !== null) spent += partial;
+      else partialUnknown = true;
       stopped = `Stopped in round ${n}: ${modelProblem(e) ?? firstLine(e)}`;
       break;
     }
   }
-  return { best, rounds, spentUsd: spent, costKnown: rounds.every((r) => r.costUsd !== null), stopped, lessons };
+  return { best, rounds, spentUsd: spent, costKnown: !partialUnknown && rounds.every((r) => r.costUsd !== null), stopped, lessons };
 }
 
 export const LESSONS_FILE = ".synthe/improve-lessons.md";

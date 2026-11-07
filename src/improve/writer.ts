@@ -24,7 +24,7 @@ export const MAX_CHANGED_LINES = 200;
 
 export interface RepoFile { path: string; bytes: number }
 // What the model is told about earlier rounds in this run: its own summary and what was measured.
-export interface Tried { round: number; summary: string; kept: boolean; value: number | null; why: string }
+export interface Tried { round: number; summary: string; kept: boolean; value: number | null; why: string; files?: string[] }
 export interface WriterContext { config: ImproveConfig; best: number; tried: Tried[]; lessons: string[] }
 export interface Edit { path: string; search: string; replace: string }
 export interface Proposal { summary: string; edits: Edit[] }
@@ -58,7 +58,7 @@ const one = (n: number, config: ImproveConfig) => quantity(n, config.metric);
 function situation(ctx: WriterContext): string {
   const { metric, guard } = ctx.config;
   const rounds = ctx.tried.length
-    ? ctx.tried.map((t) => `- Round ${t.round}: "${t.summary}" -> ${t.value === null ? "not measured" : one(t.value, ctx.config)}; ${t.kept ? "kept (already in the code below)" : `not kept: ${t.why}`}`).join("\n")
+    ? ctx.tried.map((t) => `- Round ${t.round}${t.files?.length ? ` (${t.files.join(", ")})` : ""}: "${t.summary}" -> ${t.value === null ? "not measured" : one(t.value, ctx.config)}; ${t.kept ? "kept (already in the code below)" : `not kept: ${t.why}`}`).join("\n")
     : "None yet: this is the first round.";
   const lessons = ctx.lessons.length ? ctx.lessons.map((l) => `- ${l.replace(/^-\s*/, "")}`).join("\n") : "None yet.";
   return `Goal: ${ctx.config.goal}
@@ -131,6 +131,7 @@ A good change:
 - Improves how the product actually behaves, aimed at the goal. Someone reading the diff should agree the product got better, not just the number.
 - Is one focused idea: at most ${MAX_EDITS} edits and about ${MAX_CHANGED_LINES} changed lines in all. Smaller is better.
 - Keeps every promise the code already makes. The regression check exists to catch shortcuts, so keep the behaviour the tests rely on. For example, a validator must keep rejecting input that really is invalid.
+- Reads like the rest of the file: same style, same conventions, no stray debugging code.
 
 Never game the metric:
 - Do not special-case the metric's inputs, hard-code expected outputs, detect that a measurement or test is running, or weaken checks just so more gets through.
@@ -140,6 +141,7 @@ Never game the metric:
 Learn from the earlier rounds. Do not propose an idea again in the same form if it was not kept. If a round failed the regression check, it broke behaviour the tests protect: find a change that keeps it. If a round was not better or within noise, the idea did not move the number enough: try something more effective.
 
 How to write edits:
+- Edit only the files shown below, or create a new file.
 - Each edit has "path", "search" and "replace". "search" is copied exactly, character for character including indentation, from the file as shown, and must appear exactly once in that file: include enough surrounding lines to make it unique. "replace" is the text that goes in its place.
 - Several edits to one file apply in order, each to the file as the previous edit left it.
 - To create a new file, use an empty "search" and put the whole file in "replace". Only for a path that does not exist yet.
@@ -163,8 +165,13 @@ const EDIT_SCHEMA = {
   additionalProperties: false,
 };
 
+// Model text is printed to the terminal and the pull request: no control characters (an escape sequence from
+// injected repo text must not reach the person's terminal), one line.
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+export const printable = (s: string) => s.replace(/\s+/g, " ").replace(new RegExp(CONTROL.source, "g"), "?");
+
 export const cleanSummary = (s: unknown) => {
-  const text = typeof s === "string" ? s.replace(/\s+/g, " ").trim().replace(/\.$/, "") : "";
+  const text = typeof s === "string" ? printable(s).trim().replace(/\.$/, "") : "";
   return (text.length > 160 ? `${text.slice(0, 157)}...` : text) || "(no summary)";
 };
 
@@ -222,7 +229,7 @@ export function checkEdits(dir: string, edits: unknown, shown: Set<string>, conf
   for (const e of edits as Partial<Edit>[]) {
     if (typeof e?.path !== "string" || typeof e.search !== "string" || typeof e.replace !== "string") return { problem: "an edit is malformed" };
     const path = cleanPath(e.path);
-    if (!path || path.startsWith("/") || path.includes("\\") || path.endsWith("/") || path.split("/").some((s) => s === ".." || s === "." || s === "")) return { problem: `${e.path} is not a path inside the repo` };
+    if (!path || path.startsWith("/") || path.includes("\\") || path.endsWith("/") || CONTROL.test(path) || path.split("/").some((s) => s === ".." || s === "." || s === "")) return { problem: `${printable(e.path).slice(0, 120)} is not a path inside the repo` };
     const refused = protectedPathProblem(path, config);
     if (refused) return { problem: refused };
     if (AGENT_NOTES.test(path)) return { problem: `${path} holds notes for coding agents; Synthe writes its lessons there itself` };

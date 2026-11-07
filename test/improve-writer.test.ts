@@ -71,6 +71,8 @@ test("proposeEdits sends the files and the rules, and returns null for a reply t
   const { model, asks } = replying({ summary: "Accept dots.\n", edits: [{ path: "a.js", search: "x", replace: "y" }] });
   const r = await proposeEdits(model, ctx(), [{ path: "a.js", text: "x\n" }]);
   assert.deepEqual(r.proposal, { summary: "Accept dots", edits: [{ path: "a.js", search: "x", replace: "y" }] });
+  const sneaky = await proposeEdits(replying({ summary: "ok\u001b]0;pwned\u0007 now", edits: [] }).model, ctx(), []);
+  assert.equal(sneaky.proposal?.summary, "ok?]0;pwned? now");
   const a = asks[0];
   assert.equal(a.model, EDIT_MODEL);
   assert.ok(a.maxTokens <= 16000);
@@ -119,7 +121,8 @@ test("checkEdits refuses protected paths, ambiguous or missing search text, unse
   assert.equal(problem(dir, edit("validate.js", "", "new")), "the search text for validate.js is empty, but that file already exists");
   assert.equal(problem(dir, edit("ghost.js")), "ghost.js does not exist");
   assert.equal(problem(dir, edit("new.js", "", "  ")), "new.js would be created empty");
-  for (const bad of ["../outside.js", "/etc/passwd", "a//b.js", "src\\x.js"]) assert.match(problem(dir, edit(bad, "", "x"))!, /is not a path inside the repo$/, bad);
+  for (const bad of ["../outside.js", "/etc/passwd", "a//b.js", "src\\x.js", "a\u001b[2Jb.js"]) assert.match(problem(dir, edit(bad, "", "x"))!, /is not a path inside the repo$/, bad);
+  assert.equal(problem(dir, edit("a\u001b[2Jb.js", "", "x")), "a?[2Jb.js is not a path inside the repo");
   const unseen = tree({ "other.js": "x" });
   assert.deepEqual(checkEdits(unseen, edit("other.js"), new Set(), cfg), { problem: "other.js was not among the files shown, so it can't be edited" });
   assert.equal(problem(dir, []), "no edits");

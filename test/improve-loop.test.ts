@@ -120,7 +120,7 @@ test("the loop keeps the measured win, refuses the shortcut and the no-op, build
 
   // Round 2 was told why round 1 failed; round 3 saw the code as round 2 left it.
   const proposes = asks.filter((a) => !(a.schema as any)?.properties?.paths);
-  assert.ok(proposes[1].user.includes(`Round 1: "accept any address that contains an @" -> 12 valid signups; not kept: the regression check did not pass`), proposes[1].user);
+  assert.ok(proposes[1].user.includes(`Round 1 (validate.js): "accept any address that contains an @" -> 12 valid signups; not kept: the regression check did not pass`), proposes[1].user);
   assert.ok(proposes[2].user.includes("/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/"));
   assert.ok(asks.every((a) => ["claude-sonnet-5-5", "claude-haiku-5-5"].includes(a.model) && a.maxTokens <= 16000));
 
