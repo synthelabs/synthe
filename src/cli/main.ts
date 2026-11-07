@@ -25,6 +25,7 @@ import { verify } from "./verify.ts";
 import { undo } from "./undo.ts";
 import { githubRepo } from "../github/repo.ts";
 import { improve, improveOptions } from "./improve.ts";
+import { submit, submitOptions } from "./submit.ts";
 import { shellExec } from "../improve/exec.ts";
 
 const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
@@ -245,6 +246,7 @@ Start here, inside your project's folder:
   npx synthe init     set up this repo and start
   npx synthe guide    instructions for setup through a coding agent
   npx synthe improve  make one measured code change with the coding agent you already use (no AI prompt needed)
+  npx synthe submit   measure your change; open the pull request, or merge it in auto mode
 
 Then:
   npx synthe status   where it is and what it changed
@@ -268,6 +270,7 @@ async function main() {
   if (command === "init") process.exitCode = (await init(io, process.cwd(), undefined, undefined, process.env, agentOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "guide") console.log(guide);
   else if (command === "improve") process.exitCode = (await improve({ say: console.log, ask, run, exec: shellExec }, process.cwd(), improveOptions(process.argv.slice(3)))) ? 0 : 1;
+  else if (command === "submit") process.exitCode = (await submit({ say: console.log, ask, run, exec: shellExec }, process.cwd(), submitOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
     process.exitCode = (await setKey(io)) ? 0 : 1;
