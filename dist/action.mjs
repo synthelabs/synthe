@@ -30587,12 +30587,21 @@ var WORDS = /^[a-z_-]{1,16}( [a-z_-]{1,16}){0,3}$/;
 var KEY = /^[a-z][a-z0-9_]{0,39}$/;
 var CREDENTIAL = /secret|token|password|credential|authorization|cookie|(?:^|_)key(?:$|_)|(?:team|event)_code/i;
 var CONTENT_KEYS = /* @__PURE__ */ new Set(["candidate_id", "case_id", "parent_prompt_sha256", "final_prompt_sha256", "diff", "prompt", "writer_rejection", "baseline_output", "candidate_output", "failed_checks", "reasons", "message", "no_op_reason"]);
+var NOT_SECRET = /^(?:string|number|boolean|null|undefined|true|false|any|unknown|never|void|(?:process\.env|import\.meta\.env|os\.environ|os\.getenv|env)\b[\w.[\]'"()]{0,200})[;,)]?$/;
+function keepCredentialValue(separator, value, after) {
+  if (/^["']/.test(value)) return false;
+  if (NOT_SECRET.test(value)) return true;
+  return separator.includes(":") && /^[A-Z]?[a-z]{1,30}$/.test(value) && /^ [A-Za-z]{2,}/.test(after);
+}
 function scrubEventText(text, env) {
   let clean = text;
   for (const [name, value] of Object.entries(env)) {
     if (value?.trim() && /secret|token|password|credential|api.?key|anthropic.*key|(?:event|team)[_-]code/i.test(name)) clean = clean.split(value.trim()).join("[removed]");
   }
-  return scrub(clean).replace(/\bcrim(?:-[a-z0-9]{4}){4}\b/gi, "[team code removed]").replace(/\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-synthe-event|x-synthe-team)[ \t]*[:=][ \t]*[^\r\n]*/gi, "$1: [removed]").replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [removed]").replace(/\b(?:npm_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,}|ya29\.[A-Za-z0-9_-]+|[srp]k_(?:live|test)_[A-Za-z0-9]+)/g, "[key removed]").replace(/(["']?)\b([\w.-]*(?:secret|token|password|credential|api[_-]?key|private[_-]?key|access[_-]?key|team[_-]?code|event[_-]?code)[\w.-]*)\1\s*[:=]\s*("[^"\r\n]*"|'[^'\r\n]*'|[^\s,}\]]+)/gi, "$2=[removed]").replace(/https?:\/\/[^\s"'<>]+[?&](?:token|sig|signature|X-Amz-[\w-]+|code|key|access_token)=[^\s"'<>]*/gi, "[signed URL removed]").replace(/https?:\/\/[^\s/:@]+:[^\s/@]+@[^\s"'<>]*/g, "[credential URL removed]").replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "[private key removed]").replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD");
+  return scrub(clean).replace(/\bcrim(?:-[a-z0-9]{4}){4}\b/gi, "[team code removed]").replace(/\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-synthe-event|x-synthe-team)[ \t]*[:=][ \t]*[^\r\n]*/gi, "$1: [removed]").replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [removed]").replace(/\b(?:npm_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,}|ya29\.[A-Za-z0-9_-]+|[srp]k_(?:live|test)_[A-Za-z0-9]+)/g, "[key removed]").replace(
+    /(["']?)\b([\w.-]*(?:secret|token|password|credential|api[_-]?key|private[_-]?key|access[_-]?key|team[_-]?code|event[_-]?code)[\w.-]*)\1(\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s,}\]]+)/gi,
+    (match, _quote, name, separator, value, offset, whole) => keepCredentialValue(separator, value, whole.slice(offset + match.length, offset + match.length + 40)) ? match : `${name}=[removed]`
+  ).replace(/https?:\/\/[^\s"'<>]+[?&](?:token|sig|signature|X-Amz-[\w-]+|code|key|access_token)=[^\s"'<>]*/gi, "[signed URL removed]").replace(/https?:\/\/[^\s/:@]+:[^\s/@]+@[^\s"'<>]*/g, "[credential URL removed]").replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "[private key removed]").replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD");
 }
 function eventData(value, full, env = {}, depth = 0) {
   if (depth > 6) return null;
