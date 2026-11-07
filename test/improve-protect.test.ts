@@ -48,8 +48,9 @@ test("promptModeProtect names the prompt file and test cases from synthe.json, a
 
 test("a change to prompt mode's prompt file is refused", () => {
   const dir = promptRepo(JSON.stringify({ version: 1, prompt: { kind: "file", path: "prompts/agent.md" }, objective: "o" }));
-  const cfg = config({ protect: promptModeProtect(dir) });
+  const cfg = config({ promptFiles: promptModeProtect(dir) });
   assert.equal(protectedChanges(["src/ok.py", "prompts/agent.md"], cfg).length, 1);
-  assert.match(protectedChanges(["prompts/agent.md"], cfg)[0], /^prompts\/agent\.md is protected for this run/);
+  assert.equal(protectedChanges(["prompts/agent.md"], cfg)[0], "prompts/agent.md is the prompt file Synthe's prompt mode tunes (named in synthe.json); improve mode leaves it alone.");
+  assert.doesNotMatch(protectedChanges(["prompts/agent.md"], cfg)[0], /--protect/);
   assert.equal(protectedChanges(["prompts/other.md"], cfg).length, 0);
 });

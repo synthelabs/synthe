@@ -18,7 +18,7 @@ export const IMPROVE_BRANCH = (n: number) => `synthe/improve-${n}`;
 export const IMPROVE_NEXT = "NEXT: Synthe measured the current code and saved its config inside .git (nothing to commit). Show the person the baseline and the task card as written. Then create the branch named in the card, make ONE small change to product code only, commit it, and run `npx synthe submit`. Do not edit tests, the metric, package.json or anything under .synthe/.";
 export const IMPROVE_LIST_NEXT = "NEXT: Show the person this list as written. Ask them, in one message: what should get better (one sentence), which metric, which regression check, and auto or review. Then run `npx synthe improve --agent` with their answers.";
 
-const PRESET_IDS: PresetId[] = ["test-pass", "bundle-size", "build-time", "custom"];
+const PRESET_IDS: PresetId[] = ["test-pass", "pytest", "bundle-size", "build-time", "custom"];
 const VALUE_FLAGS = ["--goal", "--metric", "--label", "--unit", "--command", "--direction", "--guard", "--mode", "--protect"];
 
 export function improveOptions(args: string[]): ImproveOptions {
@@ -167,7 +167,7 @@ async function settle(io: ImproveIo, o: ImproveOptions, presets: Preset[], defau
 
   let preset: Preset | undefined;
   if (o.metric) {
-    preset = presets.find((p) => p.id === o.metric);
+    preset = presets.find((p) => p.id === o.metric || (o.metric === "test-pass" && p.id === "pytest"));
     if (!preset) return stop(`This repo can't measure ${o.metric} (no matching test setup or script found). Run npx synthe improve --list to see what it can measure.`);
   } else {
     io.say("Which number measures it?");
@@ -203,6 +203,6 @@ async function settle(io: ImproveIo, o: ImproveOptions, presets: Preset[], defau
 
   return {
     version: 1, goal, metric: { preset: preset.id, label, unit, command, direction, runs }, guard: { command: guard },
-    protect: [...o.protect, ...promptModeProtect(top)], mode, baseline: { commit: "", median: 0, runs: [], at: "" },
+    protect: o.protect, promptFiles: promptModeProtect(top), mode, baseline: { commit: "", median: 0, runs: [], at: "" },
   };
 }
