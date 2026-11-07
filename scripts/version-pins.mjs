@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export const PIN_FILES = ["README.md", "docs/AGENT-SETUP.md", "kit/HACKATHON.md"];
-const PIN = /github:synthelabs\/synthe#v(\d+\.\d+\.\d+)/g;
+const PIN = /github:synthelabs\/synthe#v(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)/g;
 
 export const setPins = (text, version) => text.replace(PIN, `github:synthelabs/synthe#v${version}`);
 

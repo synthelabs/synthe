@@ -8,6 +8,10 @@ npx synthe init
 
 Using Claude Code, Cursor or Codex? Tell it: Set up Synthe in this repo. Run `npx synthe@latest guide` and follow it.
 
+### Builder preview
+
+Builder makes a measured code change in repos without an AI feature. Install the preview with `npx synthe@builder builder --help`. It needs a clean Git checkout, a signed-in Codex CLI, Docker running Linux containers, an offline metric command and a regression command. Checks run in a bounded Docker container with the tracked files. Review saves a patch for inspection.
+
 Setup reads your README and the code around your prompt, asks what your agent should get better at (and, optionally, a few real messages users send it), proposes checks that measure a good reply for you to confirm, shows you a few of your agent's real replies so you can fix any check that doesn't mean what you mean, asks whether to merge changes automatically or have you review them, and asks for your event code or own Anthropic key. When the run finishes, open the **Synthe: prompt report** issue in your repo. It says what changed, why, and how to undo it.
 
 ## Data
@@ -35,7 +39,7 @@ Agent setup requires explicit `SYNTHE_ANTHROPIC_KEY` or `SYNTHE_EVENT_CODE` in b
 
 Set `SYNTHE_EVENT_CODE` in your environment to skip the code question. Local `try` and `calibrate` also accept it. To switch to your own key, run `npx synthe key` in your terminal, or explicitly supply `SYNTHE_ANTHROPIC_KEY` for noninteractive use. Using `ANTHROPIC_API_KEY` with `key` requires deliberately pressing Enter in your terminal. Rounds then use your key. If credit stopped the run, run `npx synthe restart` afterward.
 
-For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.8.6 init`. For an existing event repo, run `npx --yes github:synthelabs/synthe#v1.8.6 upgrade --event`, commit both workflow files, and push them to the default branch. Add both event and team secrets in GitHub Actions settings if needed.
+For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.9.0-builder.1 init`. For an existing event repo, run `npx --yes github:synthelabs/synthe#v1.9.0-builder.1 upgrade --event`, commit both workflow files, and push them to the default branch. Add both event and team secrets in GitHub Actions settings if needed.
 
 ## What happens each round
 

@@ -17,6 +17,11 @@ test("setPins moves every pin and nothing else", () => {
   assert.equal(setPins(text, "1.8.2"), "run `npx --yes github:synthelabs/synthe#v1.8.2 init`, then github:synthelabs/synthe#v1.8.2 upgrade; uses: synthelabs/synthe@v1");
 });
 
+test("prerelease pins keep their full version", () => {
+  const text = "run `npx --yes github:synthelabs/synthe#v1.8.6`, then github:synthelabs/synthe#v1.9.0-builder.1";
+  assert.equal(setPins(text, "1.9.0-builder.2"), "run `npx --yes github:synthelabs/synthe#v1.9.0-builder.2`, then github:synthelabs/synthe#v1.9.0-builder.2");
+});
+
 test("pinProblems names each stale pin and its file", () => {
   assert.deepEqual(pinProblems("1.8.2", { "a.md": "github:synthelabs/synthe#v1.8.2", "b.md": "github:synthelabs/synthe#v1.7.5 x github:synthelabs/synthe#v1.8.1" }),
     ["b.md: v1.7.5", "b.md: v1.8.1"]);
