@@ -49,7 +49,7 @@ It must print `ADMIN`. Setup saves repo secrets, which only admins can do. If it
 2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person's own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):
 
 ```
-SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.6 init --agent ...
+SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.7 init --agent ...
 ```
 
 3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.
@@ -75,7 +75,7 @@ Agent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SY
 Run this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.
 
 ```
-SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.6 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"
+SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.7 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"
 ```
 
 To use an own key during Crimson, add `SYNTHE_ANTHROPIC_KEY=<key>` alongside both event codes, here and in step 7. Outside Crimson, use the own key alone.
@@ -103,13 +103,13 @@ Follow the `NEXT:` line with the tagged command in step 7. Do not start other wo
 Run this with one `--check` per check the person kept, using their final wording:
 
 ```
-SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.6 init --agent --confirm --check "<final sentence>" --check "<final sentence>"
+SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.7 init --agent --confirm --check "<final sentence>" --check "<final sentence>"
 ```
 
 If the person accepted every proposed check as it is, run this instead:
 
 ```
-SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.6 init --agent --confirm --keep-checks
+SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.8.7 init --agent --confirm --keep-checks
 ```
 
 Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don't confirm twice.
@@ -142,40 +142,42 @@ npx synthe key
 
 ## 9. Improve mode (no AI prompt needed)
 
-You make one small code change and prove, with numbers, that it improved the metric the person chose. Synthe's rules below are what make the result trustworthy: the same command measured the same way before and after, in clean checkouts, with the tests and the metric left exactly as they were.
+You make one small change to the product code, and Synthe proves with numbers whether it improved the metric the person chose. Synthe measures the current code and your change the same way, each in a fresh checkout of its commit, and refuses a change to the tests, the metric or the project's config before it measures anything. A change that wins becomes a pull request with the before and after numbers; in auto mode it merges by itself.
+
+No event code, no key and no sharing notice in this mode: nothing is sent to a model.
 
 ### Rules
 
 - Never guess the goal, the metric or the mode. Ask the person.
-- Never edit tests, the metric command or its input files, `package.json`, lockfiles, `.github/`, `.synthe/` or config files. If the change needs one of those, stop and tell the person why; do not make it.
-- One small change per attempt. Never loosen a test or the metric to make a number move.
-- Show the person every number as measured. A change that is not clearly better is reported as not better, never rounded up.
+- Never edit tests, the metric command or its input files, `package.json`, lockfiles, `.github/`, `.synthe/` or config files. `submit` refuses those changes. If the improvement needs one of them, stop and tell the person why.
+- One small change per `submit`. Never loosen a test or the metric to make a number move.
+- Show the person Synthe's output as written: every number, and the reason when a change does not win.
 
 ### Steps
 
-1. **Check the repo.** `git status` must be clean (commit first: only committed code is measured). `gh auth status` must succeed, and `gh repo view` must show the repo on GitHub. Note the default branch.
-2. **Ask the person, in one message:**
-   - What should get better? One sentence.
-   - Which number measures it? Offer what the repo can run: `npm test` (number of passing tests, higher is better) if there is a test script; `npm run build` then total gzipped bytes of the built JS and CSS (lower is better) if there is a build script; build time in seconds (lower); or a command of theirs that prints one number, with higher or lower.
-   - Which regression check? Default `npm test` when it exists. It must pass before and after.
-   - Auto (a winning change merges into the default branch by itself) or review (a pull request waits for them)?
-3. **Measure the current code.** In a clean copy, so uncommitted files cannot leak in:
+1. **Commit first.** `git status` must be clean: Synthe measures committed code only.
+2. **See what this repo can measure:**
 
    ```
-   git worktree add --detach /tmp/synthe-base HEAD
+   npx synthe@latest improve --list
    ```
 
-   In that folder, link `node_modules` from the repo if the project needs it (`ln -s <repo>/node_modules node_modules`). Run the metric command 3 times and write down all three values and the median. Run the regression check once; it must pass. If the metric prints nothing usable or the check fails, stop and show the person the exact output. Then `git worktree remove --force /tmp/synthe-base`.
-4. **Show the baseline** to the person: the three values, the median, the direction, and the check result.
-5. **Make the change.** `git checkout -b synthe/improve-1`. Change product code only. Commit with a message that says what changed and why.
-6. **Measure the change the same way:** a fresh worktree of the new commit (`git worktree add --detach /tmp/synthe-candidate HEAD`), the same metric command 3 times, the same regression check once, then remove the worktree.
-7. **Decide.** The change wins only if all three hold: the median moved in the right direction; it moved by more than the spread of the runs (the larger of the two max-minus-min ranges); the regression check passed. Otherwise it did not win. Say so with the numbers, and either try one different small change (at most 3 attempts in all) or stop.
-8. **Publish a win.** `git push -u origin synthe/improve-1`, then open the pull request:
+   Show the person the list as written. Then ask, in one message: what should get better (one sentence), which metric from the list, which regression check (the list shows each metric's default; `none` is allowed), and auto (a winning change merges into the default branch by itself) or review (a pull request waits for them).
+3. **Measure the current code** with their answers:
 
    ```
-   gh pr create --base <default branch> --title "Synthe: <metric> <before> → <after>" --body-file <file>
+   npx synthe@latest improve --agent --goal "<sentence>" --metric <id> --mode auto|review
    ```
 
-   The body has four headings: **Result** (before, after, the three runs each, the spread, the regression check and its command), **What changed** (`git diff --stat` and one sentence), **How it was measured** (the metric command, "each measured in a fresh checkout of its commit", both commit SHAs), **Undo** ("close this pull request", or in auto mode `git revert <merge commit>`). End with: "Measured by Synthe on this machine; check the numbers in your own environment too."
-   In auto mode, then run `gh pr merge --squash --delete-branch` and tell the person to `git pull`. If GitHub refuses the merge, say the pull request is open for a person to merge.
-9. **Show the person** the pull request link and the before and after numbers as written. When they ask what Synthe did, show the pull request's Result section word for word.
+   For `--metric custom`, add `--command "<cmd>" --label "<what it counts>" --unit "<unit>" --direction higher|lower`. Add `--guard "<cmd>"` or `--guard none` to change the regression check. Add `--protect <path>` for any other file the change must not touch.
+   It prints the baseline and a task card. If it stops instead, show the person the message and do what it says.
+4. **Follow the `NEXT:` line.** Show the person the baseline and the task card. Create the branch the card names, make ONE small change to product code, and commit it with a message that says what changed and why.
+5. **Submit the change:**
+
+   ```
+   npx synthe@latest submit --agent
+   ```
+
+   A win prints `Pull request: <url>`, and in auto mode `Merged into <branch>. Run git pull.` Show the person the result and the link as written.
+6. **If it did not win,** `submit` prints `Not merged:` and the reason (within noise, worse, or the regression check failed). Show it as written. If the person wants another try, make a different small change on the same branch, commit, and run `npx synthe@latest submit --agent` again (at most 3 attempts in all, unless they ask for more).
+7. When the person asks what Synthe did, show the pull request's Result section word for word.

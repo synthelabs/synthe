@@ -12,10 +12,13 @@ test("the guide routes repos without an AI prompt to improve mode before any pro
   assert.ok(zero > -1 && zero < one && nine > one);
   const improve = guide.slice(nine);
   assert.ok(improve.includes("Never guess the goal, the metric or the mode."));
-  assert.ok(improve.includes("git worktree add --detach /tmp/synthe-base HEAD"));
-  assert.ok(improve.includes("Run the metric command 3 times"));
-  assert.ok(improve.includes("gh pr create --base <default branch>"));
-  assert.ok(improve.includes("gh pr merge --squash --delete-branch"));
+  assert.ok(improve.includes("npx synthe@latest improve --list"));
+  assert.ok(improve.includes('npx synthe@latest improve --agent --goal "<sentence>" --metric <id> --mode auto|review'));
+  assert.ok(improve.includes("npx synthe@latest submit --agent"));
   assert.ok(improve.includes("Never loosen a test or the metric"));
+  assert.ok(improve.includes("Follow the `NEXT:` line"));
+  // The commands now do the measuring; the guide must not send an agent back to doing it by hand.
+  assert.ok(!improve.includes("git worktree add"));
+  assert.ok(!improve.includes("gh pr create"));
   assert.equal(guide, readFileSync("docs/AGENT-SETUP.md", "utf8"));
 });
