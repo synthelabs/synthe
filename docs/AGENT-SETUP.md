@@ -16,6 +16,13 @@ Most teams set this up at the Synthe workshop, an hour or two into the hackathon
 - If the person asks for something else before confirm (for example "implement it" or a change to their code), tell them: "Synthe is not installed yet. One more command finishes it." Finish confirm first, then do what they asked.
 - Do not edit the prompt file between draft and confirm. Confirm refuses a prompt that changed, and nothing is installed.
 
+## 0. Which mode
+
+First find out whether the app sends a system prompt to an AI model: a `.md` or `.txt` prompt file, or a prompt string passed to a model call. Look before you ask.
+
+- **No AI prompt, or the person wants a code change measured by a number** (tests passing, bundle size, build time, or a command of theirs): use **improve mode**. Go to section 9 and skip sections 1 to 8. It needs no event code and no key.
+- **The app has a prompt and the person wants that prompt improved:** continue with section 1.
+
 ## 1. Prerequisites
 
 1. Use `git remote -v` and `git status` to check that the repo is on GitHub and pushed. Commit and push the agent's prompt file too. Setup checks that it matches the copy on GitHub's default branch before drafting.
@@ -132,3 +139,43 @@ npx synthe key
   - `changes` shows what Synthe changed in the latest rounds and how the prompt's score moved.
   - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.
   - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.
+
+## 9. Improve mode (no AI prompt needed)
+
+You make one small code change and prove, with numbers, that it improved the metric the person chose. Synthe's rules below are what make the result trustworthy: the same command measured the same way before and after, in clean checkouts, with the tests and the metric left exactly as they were.
+
+### Rules
+
+- Never guess the goal, the metric or the mode. Ask the person.
+- Never edit tests, the metric command or its input files, `package.json`, lockfiles, `.github/`, `.synthe/` or config files. If the change needs one of those, stop and tell the person why; do not make it.
+- One small change per attempt. Never loosen a test or the metric to make a number move.
+- Show the person every number as measured. A change that is not clearly better is reported as not better, never rounded up.
+
+### Steps
+
+1. **Check the repo.** `git status` must be clean (commit first: only committed code is measured). `gh auth status` must succeed, and `gh repo view` must show the repo on GitHub. Note the default branch.
+2. **Ask the person, in one message:**
+   - What should get better? One sentence.
+   - Which number measures it? Offer what the repo can run: `npm test` (number of passing tests, higher is better) if there is a test script; `npm run build` then total gzipped bytes of the built JS and CSS (lower is better) if there is a build script; build time in seconds (lower); or a command of theirs that prints one number, with higher or lower.
+   - Which regression check? Default `npm test` when it exists. It must pass before and after.
+   - Auto (a winning change merges into the default branch by itself) or review (a pull request waits for them)?
+3. **Measure the current code.** In a clean copy, so uncommitted files cannot leak in:
+
+   ```
+   git worktree add --detach /tmp/synthe-base HEAD
+   ```
+
+   In that folder, link `node_modules` from the repo if the project needs it (`ln -s <repo>/node_modules node_modules`). Run the metric command 3 times and write down all three values and the median. Run the regression check once; it must pass. If the metric prints nothing usable or the check fails, stop and show the person the exact output. Then `git worktree remove --force /tmp/synthe-base`.
+4. **Show the baseline** to the person: the three values, the median, the direction, and the check result.
+5. **Make the change.** `git checkout -b synthe/improve-1`. Change product code only. Commit with a message that says what changed and why.
+6. **Measure the change the same way:** a fresh worktree of the new commit (`git worktree add --detach /tmp/synthe-candidate HEAD`), the same metric command 3 times, the same regression check once, then remove the worktree.
+7. **Decide.** The change wins only if all three hold: the median moved in the right direction; it moved by more than the spread of the runs (the larger of the two max-minus-min ranges); the regression check passed. Otherwise it did not win. Say so with the numbers, and either try one different small change (at most 3 attempts in all) or stop.
+8. **Publish a win.** `git push -u origin synthe/improve-1`, then open the pull request:
+
+   ```
+   gh pr create --base <default branch> --title "Synthe: <metric> <before> → <after>" --body-file <file>
+   ```
+
+   The body has four headings: **Result** (before, after, the three runs each, the spread, the regression check and its command), **What changed** (`git diff --stat` and one sentence), **How it was measured** (the metric command, "each measured in a fresh checkout of its commit", both commit SHAs), **Undo** ("close this pull request", or in auto mode `git revert <merge commit>`). End with: "Measured by Synthe on this machine; check the numbers in your own environment too."
+   In auto mode, then run `gh pr merge --squash --delete-branch` and tell the person to `git pull`. If GitHub refuses the merge, say the pull request is open for a person to merge.
+9. **Show the person** the pull request link and the before and after numbers as written. When they ask what Synthe did, show the pull request's Result section word for word.
