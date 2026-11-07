@@ -28049,7 +28049,7 @@ var init_sdk = __esm({
 
 // src/cli/main.ts
 import { spawn as spawn3 } from "node:child_process";
-import { existsSync as existsSync14, readFileSync as readFileSync15, writeFileSync as writeFileSync8 } from "node:fs";
+import { existsSync as existsSync13, readFileSync as readFileSync15, writeFileSync as writeFileSync8 } from "node:fs";
 import { createInterface as createInterface4 } from "node:readline/promises";
 
 // src/core/goal.ts
@@ -31364,12 +31364,12 @@ function parseImproveConfig(raw) {
 
 // src/improve/loop.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync12, mkdirSync as mkdirSync6, mkdtempSync as mkdtempSync2, readFileSync as readFileSync13, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync11, mkdirSync as mkdirSync6, mkdtempSync as mkdtempSync2, readFileSync as readFileSync13, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { basename as basename2, dirname as dirname4, join as join17 } from "node:path";
 
 // src/improve/lessons.ts
-import { appendFileSync, existsSync as existsSync7, mkdirSync as mkdirSync5, readFileSync as readFileSync9 } from "node:fs";
+import { appendFileSync, mkdirSync as mkdirSync5, readFileSync as readFileSync9 } from "node:fs";
 import { join as join12 } from "node:path";
 
 // src/improve/verdict.ts
@@ -31528,6 +31528,7 @@ var BLOCK_MAX = 12;
 var START = "<!-- synthe:lessons:start -->";
 var END = "<!-- synthe:lessons:end -->";
 var INTRO = "Measured by Synthe in this repo (newest last). Keep or delete freely; Synthe rewrites only this block.";
+var CODE_WINS = "If this conflicts with the code, the code wins.";
 var HEADER = "# What Synthe measured in this repo\n\nWritten by `npx synthe improve`: one line per round, newest last, each from a measurement.\n";
 var oneLine2 = (s) => s.replace(/\s+/g, " ").replace(/<!--/g, "<!- -").trim();
 var clip3 = (s, max) => s.length <= max ? s : `${s.slice(0, Math.max(0, max - 1)).trimEnd()}\u2026`;
@@ -31569,7 +31570,7 @@ function readLessons(gitRoot, max = 20) {
 function upsertLessonsBlock(fileText, lines) {
   const eol = fileText.includes("\r\n") ? "\r\n" : "\n";
   const bullets = lines.map((l) => oneLine2(l).replace(/^- /, "")).filter(Boolean).slice(-BLOCK_MAX).map((l) => `- ${l}`);
-  const block = [START, INTRO, ...bullets, END].join(eol);
+  const block = [START, INTRO, CODE_WINS, ...bullets, END].join(eol);
   const MARK = "\0synthe-block\0";
   let found = false;
   let text2 = fileText.replace(new RegExp(`${START}[\\s\\S]*?${END}(\\r?\\n)?`, "g"), (_m, nl) => {
@@ -31582,22 +31583,19 @@ function upsertLessonsBlock(fileText, lines) {
   if (!text2) return block + eol;
   return `${text2}${text2.endsWith("\n") ? "" : eol}${eol}${block}${eol}`;
 }
-function lessonsTarget(gitRoot, choice) {
-  if (choice === "none") return null;
+function lessonsTarget(_gitRoot, choice) {
   if (choice === "claude") return "CLAUDE.md";
   if (choice === "agents") return "AGENTS.md";
-  if (existsSync7(join12(gitRoot, "CLAUDE.md"))) return "CLAUDE.md";
-  if (existsSync7(join12(gitRoot, "AGENTS.md"))) return "AGENTS.md";
   return null;
 }
 
 // src/improve/worktree.ts
-import { existsSync as existsSync9, lstatSync as lstatSync3, mkdtempSync, rmSync as rmSync2, symlinkSync, unlinkSync as unlinkSync3 } from "node:fs";
+import { existsSync as existsSync8, lstatSync as lstatSync3, mkdtempSync, rmSync as rmSync2, symlinkSync, unlinkSync as unlinkSync3 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as join14 } from "node:path";
 
 // src/improve/presets.ts
-import { existsSync as existsSync8, readdirSync as readdirSync2, readFileSync as readFileSync10, statSync as statSync2 } from "node:fs";
+import { existsSync as existsSync7, readdirSync as readdirSync2, readFileSync as readFileSync10, statSync as statSync2 } from "node:fs";
 import { delimiter as delimiter2, join as join13 } from "node:path";
 import { gzipSync } from "node:zlib";
 var NPM_PLACEHOLDER = 'echo "Error: no test specified" && exit 1';
@@ -31616,15 +31614,16 @@ function detectPresets(files, python = null) {
   const hasBuild = typeof scripts.build === "string" && scripts.build.trim() !== "";
   const guard = hasTest ? "npm test" : python ? python.command : null;
   const both = hasTest && python !== null;
-  const presets = [];
-  if (hasTest) presets.push({ id: "test-pass", label: both ? "tests passing (npm test)" : "tests passing", unit: "tests", direction: "higher", runs: 1, command: "npm test", guard: null });
-  if (python) presets.push({ id: "pytest", label: "tests passing (pytest)", unit: "tests", direction: "higher", runs: 1, command: python.command, guard: null });
-  if (hasBuild) {
-    presets.push({ id: "bundle-size", label: "built JS and CSS, gzipped", unit: "bytes", direction: "lower", runs: 1, command: "npm run build", guard });
-    presets.push({ id: "build-time", label: "build time", unit: "ms", direction: "lower", runs: 3, command: "npm run build", guard });
-  }
-  presets.push({ id: "custom", label: "your own command", unit: "units", direction: "higher", runs: 3, command: "", guard });
-  return presets;
+  const tests = [];
+  if (hasTest) tests.push({ id: "test-pass", label: both ? "tests passing (npm test)" : "tests passing", unit: "tests", direction: "higher", runs: 3, command: "npm test", guard: null });
+  if (python) tests.push({ id: "pytest", label: "tests passing (pytest)", unit: "tests", direction: "higher", runs: 3, command: python.command, guard: null });
+  const note = guard ? void 0 : "No test script to check nothing broke, so this needs --guard <a command that fails if the app is broken>.";
+  const build = hasBuild ? [
+    { id: "bundle-size", label: "built JS and CSS, gzipped", unit: "bytes", direction: "lower", runs: 1, command: "npm run build", guard, requiresGuard: true, ...note && { note } },
+    { id: "build-time", label: "build time", unit: "ms", direction: "lower", runs: 3, command: "npm run build", guard, requiresGuard: true, ...note && { note } }
+  ] : [];
+  const custom = { id: "custom", label: "your own command", unit: "units", direction: "higher", runs: 3, command: "", guard };
+  return tests.length ? [...tests, ...build, custom] : [custom, ...build];
 }
 var PYTHON_TEST_FILE = /^(test_.*|.*_test)\.py$/;
 function hasPythonTests(dir, depth = 3) {
@@ -31636,18 +31635,18 @@ function hasPythonTests(dir, depth = 3) {
   }
   return entries.some((e) => e.isFile() && PYTHON_TEST_FILE.test(e.name) || depth > 0 && e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules" && hasPythonTests(join13(dir, e.name), depth - 1));
 }
-var onPath = (name) => (process.env.PATH ?? "").split(delimiter2).some((d) => d && existsSync8(join13(d, win ? `${name}.exe` : name)));
+var onPath = (name) => (process.env.PATH ?? "").split(delimiter2).some((d) => d && existsSync7(join13(d, win ? `${name}.exe` : name)));
 function srcLayout(top) {
   try {
-    return readdirSync2(join13(top, "src"), { withFileTypes: true }).some((e) => e.isFile() && e.name.endsWith(".py") || e.isDirectory() && existsSync8(join13(top, "src", e.name, "__init__.py")));
+    return readdirSync2(join13(top, "src"), { withFileTypes: true }).some((e) => e.isFile() && e.name.endsWith(".py") || e.isDirectory() && existsSync7(join13(top, "src", e.name, "__init__.py")));
   } catch {
     return false;
   }
 }
 function pythonSetup(top) {
-  const signals = ["pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"].some((f) => existsSync8(join13(top, f))) || hasPythonTests(join13(top, "tests")) || readdirSync2(top, { withFileTypes: true }).some((e) => e.isFile() && PYTHON_TEST_FILE.test(e.name));
+  const signals = ["pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"].some((f) => existsSync7(join13(top, f))) || hasPythonTests(join13(top, "tests")) || readdirSync2(top, { withFileTypes: true }).some((e) => e.isFile() && PYTHON_TEST_FILE.test(e.name));
   if (!signals) return null;
-  const venv = VENV_NAMES.find((v) => existsSync8(join13(top, v, win ? "Scripts" : "bin", win ? "python.exe" : "python")));
+  const venv = VENV_NAMES.find((v) => existsSync7(join13(top, v, win ? "Scripts" : "bin", win ? "python.exe" : "python")));
   const python = venv ? win ? `${venv}\\Scripts\\python` : `${venv}/bin/python` : win || !onPath("python3") ? "python" : "python3";
   const src = srcLayout(top);
   const run2 = `${python} -m pytest -q${src && win ? " -o pythonpath=src" : ""}`;
@@ -31655,7 +31654,7 @@ function pythonSetup(top) {
 }
 function presetsForRepo(top) {
   const pkg = join13(top, "package.json");
-  return detectPresets(existsSync8(pkg) ? [{ path: "package.json", text: readFileSync10(pkg, "utf8") }] : [], pythonSetup(top));
+  return detectPresets(existsSync7(pkg) ? [{ path: "package.json", text: readFileSync10(pkg, "utf8") }] : [], pythonSetup(top));
 }
 var NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 function lastNumber(stdout) {
@@ -31686,7 +31685,7 @@ function builtFiles(dir) {
   });
 }
 function bundleBytes(root) {
-  const dir = OUTPUT_DIRS.map((d) => join13(root, d)).find((d) => existsSync8(d) && statSync2(d).isDirectory());
+  const dir = OUTPUT_DIRS.map((d) => join13(root, d)).find((d) => existsSync7(d) && statSync2(d).isDirectory());
   if (!dir) return null;
   const files = builtFiles(dir);
   if (!files.length) return null;
@@ -31741,7 +31740,7 @@ async function withWorktree(exec, root, commit, fn) {
   try {
     for (const name of LINKED) {
       const link = join14(dir, name);
-      if (existsSync9(join14(root, name)) && !existsSync9(link)) {
+      if (existsSync8(join14(root, name)) && !existsSync8(link)) {
         symlinkSync(join14(root, name), link, win2 ? "junction" : "dir");
         linked.push(link);
       }
@@ -31780,11 +31779,11 @@ async function measureAt(exec, root, commit, config, say = () => {
 }
 
 // src/improve/writer.ts
-import { existsSync as existsSync11, lstatSync as lstatSync4, readFileSync as readFileSync12, realpathSync } from "node:fs";
+import { existsSync as existsSync10, lstatSync as lstatSync4, readFileSync as readFileSync12, realpathSync } from "node:fs";
 import { dirname as dirname3, join as join16, sep } from "node:path";
 
 // src/improve/protect.ts
-import { existsSync as existsSync10, readFileSync as readFileSync11 } from "node:fs";
+import { existsSync as existsSync9, readFileSync as readFileSync11 } from "node:fs";
 import { join as join15 } from "node:path";
 var DEPENDENCY_FILES = /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pnpm-workspace\.yaml|bun\.lockb?|poetry\.lock|uv\.lock|Pipfile(\.lock)?|pyproject\.toml|pytest\.ini|tox\.ini|setup\.cfg|requirements[^/]*\.txt|Cargo\.(toml|lock)|go\.(mod|sum)|Gemfile(\.lock)?|composer\.(json|lock))$/;
 var RULES = [
@@ -31823,7 +31822,7 @@ function protectedChanges(paths, config) {
 function promptModeProtect(top) {
   try {
     const file = join15(top, GOAL_FILE);
-    if (!existsSync10(file)) return [];
+    if (!existsSync9(file)) return [];
     const goal = JSON.parse(readFileSync11(file, "utf8"));
     const clean = (p) => {
       if (typeof p !== "string") return [];
@@ -32017,7 +32016,7 @@ var count = (text2, part) => {
 function insideCheckout(dir, path4) {
   const root = realpathSync(dir);
   let parent = dirname3(join16(dir, path4));
-  while (!existsSync11(parent)) parent = dirname3(parent);
+  while (!existsSync10(parent)) parent = dirname3(parent);
   const real = realpathSync(parent);
   return real === root || real.startsWith(root + sep);
 }
@@ -32036,7 +32035,7 @@ function checkEdits(dir, edits, shown, config) {
     if (GENERATED.test(path4)) return { problem: `${path4} is generated output; change the source it is built from` };
     let entry = texts.get(path4);
     if (!entry) {
-      const onDisk = existsSync11(join16(dir, path4));
+      const onDisk = existsSync10(join16(dir, path4));
       if (shown.has(path4)) entry = { original: readFileSync12(join16(dir, path4), "utf8"), text: "" };
       else if (onDisk) return { problem: `${path4} was not among the files shown, so it can't be edited` };
       else if (e.search !== "") return { problem: `${path4} does not exist` };
@@ -32262,7 +32261,7 @@ async function publish(io2, a) {
     const target = lessonsTarget(dir, a.lessonsChoice);
     if (target) {
       const path4 = join17(dir, target);
-      writeFileSync6(path4, upsertLessonsBlock(existsSync12(path4) ? readFileSync13(path4, "utf8") : "", a.result.lessons));
+      writeFileSync6(path4, upsertLessonsBlock(existsSync11(path4) ? readFileSync13(path4, "utf8") : "", a.result.lessons));
       files.push(target);
     }
     const sha = await commitPaths(io2, dir, files, "Synthe: lessons from this improve run\n\nOnly adds what was measured in each round. No code changes.\n", true);
@@ -32627,7 +32626,7 @@ async function settle(io2, o, presets, defaultBranch, top) {
 }
 
 // src/cli/submit.ts
-import { existsSync as existsSync13, readFileSync as readFileSync14 } from "node:fs";
+import { existsSync as existsSync12, readFileSync as readFileSync14 } from "node:fs";
 var SUBMIT_NEXT_WIN = "NEXT: Show the person the result and the pull request link as written.";
 var SUBMIT_NEXT_LOSS = "NEXT: Show the person why this change did not win, as written. If they want another try, make a different small change on the same branch, commit, and run `npx synthe submit` again.";
 var MAX_CHANGED_FILES = 60;
@@ -32656,7 +32655,7 @@ async function submit(io2, _root, options) {
     return false;
   }
   const file = improveFile(repo.gitDir);
-  if (!existsSync13(file)) {
+  if (!existsSync12(file)) {
     io2.say("Run npx synthe improve first. It measures the current code and saves what to compare against.");
     return false;
   }
@@ -32839,7 +32838,7 @@ function onInterrupt(cleanup) {
 var template = () => readFileSync15(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 function setUpHere() {
-  if (existsSync14(GOAL_FILE)) return true;
+  if (existsSync13(GOAL_FILE)) return true;
   console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
   process.exitCode = 1;
   return false;
@@ -32916,7 +32915,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync14(goal.scenarios) ? sha256(readFileSync15(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync13(goal.scenarios) ? sha256(readFileSync15(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;

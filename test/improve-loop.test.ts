@@ -104,7 +104,7 @@ test("the loop keeps the measured win, refuses the shortcut and the no-op, build
   const { io, said, gh } = loopIo(app, model);
   const start = app.git("rev-parse", "HEAD");
 
-  assert.equal(await improve(io, app.dir, improveOptions([...AGENT, "--mode", "review", "--rounds", "3"])), true, said.join("\n"));
+  assert.equal(await improve(io, app.dir, improveOptions([...AGENT, "--mode", "review", "--rounds", "3", "--lessons", "claude"])), true, said.join("\n"));
   const out = said.join("\n");
   assert.equal(said.filter((l) => l.startsWith("Credential:")).length, 1);
   assert.ok(out.includes("Credential: Crimson Hacks event credit, with your team code from SYNTHE_TEAM_CODE."));
