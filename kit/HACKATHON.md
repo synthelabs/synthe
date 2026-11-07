@@ -30,7 +30,7 @@ The Synthe session is a workshop 1 to 2 hours in, not at the start: by then team
 
 - A run is up to 12 rounds and up to about 30 minutes; it stops sooner, often within 5 to 10 minutes, when nothing beats the team's prompt. Teams keep building meanwhile. In auto mode Synthe commits to the prompt file on `main`, so everyone runs `git pull` before editing the prompt or pushing.
 - Ask "what did Synthe do?" in the coding agent at any time; it runs `npx synthe changes`.
-- Known limits: many teams starting at once can hit model rate limits. The proxy retries twice, then the round fails and counts toward a stop. A run that stops because nothing was clearly better restarts only after new test cases are added.
+- Known limits: many teams starting at once can hit model rate limits. The proxy retries twice, then the round fails and counts toward a stop. A run that stops because nothing was clearly better restarts only after new test cases are added. Improve mode measures on the team's own machine (other laptops can get other numbers), takes one change per submit, and is untested on Windows.
 
 ## Workshop slide
 
@@ -73,6 +73,7 @@ If Synthe is already installed, run `npx --yes github:synthelabs/synthe#v1.8.7 u
 - **What it won't do:** run your code or touch anything else.
 - **How good is it?** It tests against simulated scenarios, so check the results yourself.
 - **Prompt in code?** It handles most inline strings. If not, move the prompt into a file.
+- **What if my app has no AI prompt?** Use improve mode: `npx synthe improve`, or tell your coding agent to follow section 9 of `npx synthe@latest guide`. Pick a number (tests passing, bundle size, build time, or your own command); the agent makes one small change and `npx synthe submit` opens a pull request only if the number really got better and the tests still pass. No event code needed.
 
 ## Before merging automatically
 

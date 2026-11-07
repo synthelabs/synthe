@@ -10,6 +10,18 @@ Using Claude Code, Cursor or Codex? Tell it: Set up Synthe in this repo. Run `np
 
 Setup reads your README and the code around your prompt, asks what your agent should get better at (and, optionally, a few real messages users send it), proposes checks that measure a good reply for you to confirm, shows you a few of your agent's real replies so you can fix any check that doesn't mean what you mean, asks whether to merge changes automatically or have you review them, and asks for your event code or own Anthropic key. When the run finishes, open the **Synthe: prompt report** issue in your repo. It says what changed, why, and how to undo it.
 
+## Improve mode (no AI prompt needed)
+
+No prompt in your app yet? Improve mode makes one measured code change with the coding agent you already use. It needs no event code, no key and no Docker, and sends nothing to a model.
+
+```bash
+npx synthe improve        # pick a metric (tests passing, bundle size, build time, or your own command) and measure the current code
+# your coding agent makes ONE small change on the branch the task card names, and commits it
+npx synthe submit         # measures the change the same way; opens the pull request, or merges it in auto mode
+```
+
+Both measurements run in a fresh checkout of their commit, 3 times for timing and custom metrics, and the change wins only when it beats the current code by more than the runs vary and the regression check (default `npm test`) still passes. A change to tests, the metric's files, `package.json`, lockfiles, `.github/` or config files is refused before anything is measured. The settings live in `.git/synthe-improve.json`, so nothing is added to your repo. With a coding agent, tell it: Set up Synthe improve mode in this repo. Run `npx synthe@latest guide` and follow section 9.
+
 ## Data
 
 During Crimson Hacks, new installs use `"share": "full"` until November 9, 2026 at 23:59 UTC. This shares the prompt at the start of round 1, the full test-case file (train and holdout), the final prompt when the run stops, and how the run goes. After the cutoff, a full install automatically behaves like detail and stops sending the prompt and test-case file. New installs after the cutoff default to `"share": "detail"`.
@@ -78,6 +90,8 @@ The test cases are simulated single messages, not real users or full conversatio
 | --- | --- |
 | `npx synthe init` | Set up this repo and start |
 | `npx synthe guide` | Instructions for setup through Claude Code, Cursor or Codex |
+| `npx synthe improve` | Improve mode: pick a metric and measure the current code (`--list` shows what this repo can measure) |
+| `npx synthe submit` | Improve mode: measure your committed change; open the pull request, or merge it in auto mode |
 | `npx synthe key` | Save your own Anthropic key and stop using event credit |
 | `npx synthe upgrade` | Update only the workflow for chained rounds; commit and push the changed workflow |
 | `npx synthe upgrade --event` | Install Crimson tracking in an existing event repo; commit both workflows and push to the default branch |
