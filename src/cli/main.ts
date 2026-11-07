@@ -50,6 +50,17 @@ async function ask(question: string) {
   return answer;
 }
 
+// Ctrl-C during an improve run: nothing async can finish, so the cleanup is synchronous, then the run ends.
+function onInterrupt(cleanup: () => void): () => void {
+  const stop = () => {
+    cleanup();
+    console.log("\nStopped. Synthe removed its temporary checkouts; your working tree was never touched.");
+    process.exit(130);
+  };
+  process.once("SIGINT", stop);
+  return () => { process.off("SIGINT", stop); };
+}
+
 const template = () => readFileSync(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 const io: Io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 
@@ -247,8 +258,10 @@ const HELP = `Synthe makes your AI agent's system prompt better while you sleep.
 Start here, inside your project's folder:
   npx synthe init     set up this repo and start
   npx synthe guide    instructions for setup through a coding agent
-  npx synthe improve  make one measured code change with the coding agent you already use (no AI prompt needed)
-  npx synthe submit   measure your change; open the pull request, or merge it in auto mode
+  npx synthe improve  raise a number you choose (tests passing, bundle size, build time or your own command): Synthe proposes code changes, measures each one, keeps only wins and opens one pull request (event code or own key; no AI prompt needed)
+  npx synthe improve --rounds N --budget USD   at most N rounds (default 6) and USD dollars of model cost (default 1.50)
+  npx synthe improve --handoff   measure only, and make the change with the coding agent you already use; then:
+  npx synthe submit   measure that change; open the pull request, or merge it in auto mode
 
 Then:
   npx synthe status   where it is and what it changed
@@ -271,7 +284,7 @@ async function main() {
   const command = process.argv[2];
   if (command === "init") process.exitCode = (await init(io, process.cwd(), undefined, undefined, process.env, agentOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "guide") console.log(guide);
-  else if (command === "improve") process.exitCode = (await improve({ say: console.log, ask, run, exec: shellExec }, process.cwd(), improveOptions(process.argv.slice(3)))) ? 0 : 1;
+  else if (command === "improve") process.exitCode = (await improve({ say: console.log, ask, run, exec: shellExec, env: process.env, onInterrupt }, process.cwd(), improveOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "submit") process.exitCode = (await submit({ say: console.log, ask, run, exec: shellExec }, process.cwd(), submitOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
