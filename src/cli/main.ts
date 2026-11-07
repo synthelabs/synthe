@@ -27,10 +27,12 @@ import { undo } from "./undo.ts";
 import { githubRepo } from "../github/repo.ts";
 import { improve, improveOptions } from "./improve.ts";
 import { submit, submitOptions } from "./submit.ts";
-import { shellExec } from "../improve/exec.ts";
+import { killRunning, shellExec } from "../improve/exec.ts";
 
 const run: Io["run"] = (cmd, args, stdin) => new Promise((resolve, reject) => {
-  const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
+  // git and gh run the team's hooks; they have no reason to see Synthe's codes or key. gh keeps its own token.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_")));
+  const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env });
   let out = "", err = "";
   child.stdout.on("data", (d) => { out += d; });
   child.stderr.on("data", (d) => { err += d; });
@@ -50,15 +52,18 @@ async function ask(question: string) {
   return answer;
 }
 
-// Ctrl-C during an improve run: nothing async can finish, so the cleanup is synchronous, then the run ends.
+// Ctrl-C (or the terminal closing, or a kill) during an improve run: nothing async can finish, so the cleanup is
+// synchronous. Running metric or check commands are stopped first: they run model-written code.
 function onInterrupt(cleanup: () => void): () => void {
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const stop = () => {
+    killRunning();
     cleanup();
-    console.log("\nStopped. Synthe removed its temporary checkouts; your working tree was never touched.");
+    console.log("\nStopped. Synthe stopped its measurements and removed its temporary checkouts; your working tree was never touched.");
     process.exit(130);
   };
-  process.once("SIGINT", stop);
-  return () => { process.off("SIGINT", stop); };
+  for (const s of signals) process.once(s, stop);
+  return () => { for (const s of signals) process.off(s, stop); };
 }
 
 const template = () => readFileSync(new URL("../templates/synthe.yml", import.meta.url), "utf8");

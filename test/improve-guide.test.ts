@@ -21,18 +21,18 @@ test("section 9 runs the loop: four answers in one message, codes at the front, 
   assert.ok(improve.includes("Never guess the goal, the metric, the check or the mode."));
   assert.ok(improve.includes("npx synthe@latest improve --list"));
   assert.ok(improve.includes("in ONE message"));
-  assert.ok(improve.includes("marked \"(recommended)\""));
+  assert.ok(improve.includes("Offer the first one in the list first"));
   assert.ok(improve.includes('SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest improve --agent --goal "<sentence>" --metric <id> --guard "<check command>" --mode auto|review'));
   assert.ok(improve.includes("SYNTHE_ANTHROPIC_KEY"));
   assert.match(improve, /Never use `ANTHROPIC_API_KEY`/);
   assert.match(improve, /timeout of at least 30 minutes/);
   assert.match(improve, /Do not interrupt a running `improve`/);
-  for (const flag of ["--command", "--label", "--direction", "--unit", "--protect", "--rounds", "--budget", "--minutes", "--lessons", "--fresh"]) assert.ok(improve.includes(flag), flag);
+  for (const flag of ["--command", "--label", "--direction", "--unit", "--protect", "--rounds", "--budget", "--lessons"]) assert.ok(improve.includes(flag), flag);
   assert.ok(improve.includes("one pull request") || improve.includes("ONE pull request"));
 });
 
 test("section 9 tells the agent what to show and what to do when the run stops, is interrupted or wins nothing", () => {
-  assert.ok(improve.includes("Recovered your verified change from round N."));
+  assert.ok(improve.includes("It starts over from the current code"));
   assert.ok(improve.includes("the exact same command again"));
   assert.ok(improve.includes("Merged into <branch>. Run git pull."));
   assert.ok(improve.includes("No change beat the current code"));

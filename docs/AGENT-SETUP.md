@@ -144,7 +144,7 @@ npx synthe key
 
 `npx synthe improve` is a loop. Synthe itself proposes one code change per round, through the event proxy or the person's own key. It measures each change in a throwaway checkout, next to the current code, the same way. It keeps a change only when it beats the best so far by more than the run-to-run noise and the regression check still passes. Each kept change builds on the one before. At the end it opens ONE pull request titled like `Synthe: valid signups 3 → 12`, with a table of every round. The person's working tree is never touched.
 
-It takes up to about 20 minutes, and stops sooner when nothing wins. A round usually costs a few cents of model time (more on a big repo, because Synthe sends up to about 60,000 characters of code). The default limits are 6 rounds and $1.50 of model cost, whichever comes first.
+It usually takes 5 to 20 minutes, depending on how long the metric and the check take, and stops sooner when nothing wins. A round usually costs a few cents of model time (more on a big repo, because Synthe sends up to about 60,000 characters of code). The default limits are 6 rounds and $1.50 of model cost, whichever comes first.
 
 ### Rules
 
@@ -168,11 +168,11 @@ It takes up to about 20 minutes, and stops sooner when nothing wins. A round usu
 
    Show the person the list as written. Then ask, in ONE message, these four things:
    - What should get better? One sentence.
-   - Which metric from the list? Offer the one marked "(recommended)" first. If they pick `custom`, also ask for the command that prints one number, what the number counts, and whether higher or lower is better.
+   - Which metric from the list? Offer the first one in the list first: it is listed first because it fits the repo best. If they pick `custom`, also ask for the command that prints one number, what the number counts, and whether higher or lower is better.
    - Which regression check must keep passing? The list shows each metric's default; `none` is allowed.
    - Auto (the winning changes merge into the branch by themselves) or review (a pull request waits for them)? If they are unsure, say review.
 
-   Do not run anything until they answer all four. Tell them: it takes up to about 20 minutes and stops sooner when nothing wins, a round usually costs a few cents, and the default limit is $1.50.
+   Do not run anything until they answer all four. Tell them: it usually takes 5 to 20 minutes and stops sooner when nothing wins, a round usually costs a few cents, and the default limit is $1.50.
 4. **Run it**, with their answers and the credit at the front:
 
    ```
@@ -182,16 +182,15 @@ It takes up to about 20 minutes, and stops sooner when nothing wins. A round usu
    - `<id>` is one of `test-pass`, `pytest`, `bundle-size`, `build-time`, `custom`.
    - For `--metric custom`, add `--command "<cmd>" --label "<what it counts>" --direction higher|lower`, and `--unit "<unit>"` if they gave one.
    - `--guard "<check command>"` is their check. Use `--guard none` for no check. Leave `--guard` out only to accept the metric's default shown in the list.
-   - Add `--protect <path>` (repeat it) for any other file the changes must not touch. Add `--rounds N` (1 to 20), `--budget <dollars>` or `--minutes N` only if the person asks for a different limit. Add `--lessons claude` or `--lessons agents` only if they want the lessons also written into `CLAUDE.md` or `AGENTS.md`; by default lessons go only to `.synthe/improve-lessons.md` and the pull request.
+   - Add `--protect <path>` (repeat it) for any other file the changes must not touch. Add `--rounds N` (1 to 20) or `--budget <dollars>` only if the person asks for a different limit. Add `--lessons claude` or `--lessons agents` only if they want the lessons also written into `CLAUDE.md` or `AGENTS.md`; by default lessons go only to `.synthe/improve-lessons.md` and the pull request.
    - **Give the command a timeout of at least 30 minutes, and let it finish.** Many shell tools cap a command at about 10 minutes. If yours does, run the command in the background and wait for it to end, reading its output as it comes. Do not stop it.
    - While it runs, show the person each `Round` line as it appears, as written. You may leave out the `Measuring ...` and `Running the regression check ...` lines.
    - The output ends with a `NEXT:` line written for you. Do what it says; do not paste it to the person as if it were Synthe's result.
    - If it stops before the first round, it printed what to fix (a dirty tree, an unpushed branch, a missing credential, a regression check that fails today). Show it, fix that, and run the same command again.
-5. **If it was interrupted** (Ctrl-C, a lost connection, a closed terminal), run the exact same command again. It finds the saved run, prints `Recovered your verified change from round N.` and continues, and never opens a second pull request. Add `--fresh` only if the person wants to throw the saved run away and start over.
+5. **If it was interrupted** (Ctrl-C, a lost connection, a closed terminal), run the exact same command again. It starts over from the current code: nothing is pushed until the end of a run, so an interrupted run leaves nothing behind.
 6. **Show the result as written**: the `Result:` line, the `Model cost` line and the `Pull request:` link. Then explain in plain words what happened: how many rounds ran, which changes were kept and why they helped, which were not kept and why, what it cost.
    - Review mode: tell the person to open the pull request, read the table of rounds, and merge it to keep the changes.
    - Auto mode: it prints `Merged into <branch>. Run git pull.` Tell the person to run `git pull`.
-   - If it says the branch moved during the run, or that nothing was opened because of a conflict and a patch was saved, show that message as written and do what it says.
    - If it says `No change beat the current code`, nothing was pushed and no pull request exists. Show what was tried as written. Offer to run the same command again (the next run reads the lessons from this one) or to try `--handoff` below.
 7. When the person asks what Synthe did, show the pull request's Result and Rounds sections word for word.
 

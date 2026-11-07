@@ -14,11 +14,23 @@ export function childEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEn
   return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("SYNTHE_") && !HIDDEN.includes(k)));
 }
 
+// Process groups of metric and check commands still running. They run model-written code, so an interrupted run
+// must stop them too: they are detached (their own group) and would not see the terminal's Ctrl-C.
+const live = new Set<number>();
+
+export function killRunning(): void {
+  for (const pid of live) {
+    try { process.kill(process.platform === "win32" ? pid : -pid, "SIGKILL"); } catch { /* already gone */ }
+  }
+  live.clear();
+}
+
 export const shellExec: Exec = (cwd, command, timeoutMs) => new Promise((resolve) => {
   const win = process.platform === "win32";
   const started = performance.now();
   // Its own process group off Windows, so a timeout kills `npm run` and everything it started, not just the shell.
   const child = spawn(win ? "cmd" : "sh", [win ? "/c" : "-c", command], { cwd, env: childEnv(), stdio: ["ignore", "pipe", "pipe"], detached: !win });
+  if (child.pid) live.add(child.pid);
   let stdout = "", stderr = "", timedOut = false, done = false;
   const take = (into: "out" | "err") => (d: Buffer) => {
     if (into === "out" && stdout.length < MAX_OUTPUT) stdout += d.toString().slice(0, MAX_OUTPUT - stdout.length);
@@ -33,6 +45,7 @@ export const shellExec: Exec = (cwd, command, timeoutMs) => new Promise((resolve
   const finish = (code: number | null) => {
     if (done) return;
     done = true;
+    if (child.pid) live.delete(child.pid);
     clearTimeout(timer);
     resolve({ ok: code === 0 && !timedOut, stdout, stderr, ms: Math.round(performance.now() - started), timedOut });
   };

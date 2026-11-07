@@ -32,8 +32,8 @@ export interface ShownFile { path: string; text: string }
 
 // Files a change should never be written into even when no rule protects them: generated output (rebuilt from
 // source, so an edit there is lost or games a bundle metric) and the files Synthe writes its lessons into.
-const GENERATED = /(^|\/)(node_modules|dist|build|out|coverage|vendor|\.next)\/|\.min\.[a-z]+$|\.map$/;
-const AGENT_NOTES = /(^|\/)(CLAUDE|AGENTS)\.md$/;
+const GENERATED = /(^|\/)(node_modules|dist|build|out|coverage|vendor|\.next)\/|\.min\.[a-z]+$|\.map$/i;
+const AGENT_NOTES = /(^|\/)(CLAUDE|AGENTS)\.md$/i;
 const BINARY = /\.(png|jpe?g|gif|webp|ico|bmp|tiff?|svg|pdf|zip|gz|tgz|bz2|xz|7z|rar|woff2?|ttf|otf|eot|mp3|mp4|m4a|mov|avi|wav|webm|ogg|flac|wasm|jar|class|exe|dll|so|dylib|bin|dat|db|sqlite3?|pyc|lockb|psd|key|pem)$/i;
 const SOURCE = /\.(ts|tsx|js|jsx|mjs|cjs|py|rb|go|rs|java|kt|swift|php|cs|c|cc|cpp|h|hpp|vue|svelte|astro|html|css|scss|sql)$/i;
 

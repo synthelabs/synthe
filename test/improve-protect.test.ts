@@ -54,3 +54,13 @@ test("a change to prompt mode's prompt file is refused", () => {
   assert.doesNotMatch(protectedChanges(["prompts/agent.md"], cfg)[0], /--protect/);
   assert.equal(protectedChanges(["prompts/other.md"], cfg).length, 0);
 });
+
+// Found in review: macOS ignores case and the tools honour other spellings, so every rule must too.
+test("case and spelling variants of protected files are refused", () => {
+  const cfg = config({ metric: { preset: "custom", label: "x", unit: "u", command: "node Metrics/score.js", direction: "higher", runs: 3 }, guard: { command: "make test" } });
+  for (const path of ["makefile", "GNUmakefile", "Makefile", "Pytest.ini", "Tox.ini", "Setup.cfg", "Pyproject.toml", "Package.json", "TEST/b.js", "Tests/x.py",
+    "src/Login.Test.js", "Conftest.py", "jest.CONFIG.js", "dockerfile", ".GitHub/workflows/x.yml", "metrics/score.js", "METRICS/data.json", "Synthe.json"]) {
+    assert.ok(protectedPathProblem(path, cfg), `${path} should be refused`);
+  }
+  assert.equal(protectedPathProblem("src/validate.js", cfg), null);
+});
