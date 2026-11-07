@@ -3,18 +3,20 @@ import { writeFileSync } from "node:fs";
 import { AgentSetupError, askPerson } from "./agent.ts";
 import { DEFAULT_RUNS, improveFile, parseImproveConfig, type Direction, type ImproveConfig, type PresetId } from "../improve/config.ts";
 import type { Exec } from "../improve/exec.ts";
-import { DEFAULT_BUDGET_USD, DEFAULT_ROUNDS, FIRST_ROUND_ESTIMATE_USD, LESSONS_FILE, publish, removeScratchCheckouts, runLoop } from "../improve/loop.ts";
+import { DEFAULT_BUDGET_USD, DEFAULT_ROUNDS, FIRST_ROUND_ESTIMATE_USD, LESSONS_FILE, publish, removeScratchCheckouts, runLoop, type LoopHooks, type RoundRecord } from "../improve/loop.ts";
 import { presetsForRepo, type Preset } from "../improve/presets.ts";
 import { promptModeProtect } from "../improve/protect.ts";
+import { candidateDiff, RECORD_NOTICE, recorded, startRecord, type RunRecord } from "../improve/receipt.ts";
 import { baselineLine, loopPrBody, loopPrTitle, money, movement, quantity, taskCard, triedLines } from "../improve/text.ts";
 import { measureAt } from "../improve/worktree.ts";
 import { EDIT_MODEL } from "../improve/writer.ts";
 import { anthropicModel, normalizeTeamCode, proxyModel, TEAM_CODE, type Model } from "../model/client.ts";
 
-// env, makeModel and onInterrupt are only used by the loop; main.ts passes the real ones, tests pass fakes.
+// env, makeModel and onInterrupt are only used by the loop; main.ts passes the real ones, tests pass fakes. fetcher is
+// what the run record sends with (tests point it at a fake).
 export interface ImproveIo {
   say(t: string): void; ask(q: string): Promise<string>; run(cmd: string, args: string[], stdin?: string): Promise<string>; exec: Exec;
-  env?: Partial<Record<string, string>>; makeModel?: (c: LoopCredential) => Model; onInterrupt?: (cleanup: () => void) => () => void;
+  env?: Partial<Record<string, string>>; makeModel?: (c: LoopCredential) => Model; onInterrupt?: (cleanup: () => void | Promise<void>) => () => void; fetcher?: typeof fetch;
 }
 export type LessonsChoice = "claude" | "agents" | "none";
 export interface ImproveOptions {
@@ -105,16 +107,16 @@ export function improveOptions(args: string[]): ImproveOptions {
   return o;
 }
 
-interface Repo { top: string; head: string; gitDir: string; defaultBranch: string }
+export interface Repo { top: string; head: string; gitDir: string; defaultBranch: string; slug: string | null }
 
 const firstLine = (e: unknown) => ((e as Error).message ?? String(e)).trim().split("\n")[0];
 
 // Everything that would stop a run, found at once, so a person fixes them in one pass instead of one per try.
 // `more` adds checks that need what was found (the loop's credential and pull request base).
-export async function preflight(io: ImproveIo, dirtyMessage: string, more?: (found: Repo) => Promise<string[]>): Promise<{ problems: string[]; repo?: Repo }> {
+export async function preflight(io: ImproveIo, dirtyMessage: string, more?: (found: Repo) => Promise<string[]>): Promise<{ problems: string[]; repo?: Repo; found?: Repo }> {
   const problems: string[] = [];
   const tryRun = async (cmd: string, args: string[]) => { try { return { out: await io.run(cmd, args) }; } catch (e) { return { error: e }; } };
-  let top = "", head = "", gitDir = "", defaultBranch = "";
+  let top = "", head = "", gitDir = "", defaultBranch = "", slug: string | null = null;
   const topRun = await tryRun("git", ["rev-parse", "--show-toplevel"]);
   if ("error" in topRun) problems.push("This folder is not inside a git repository. Run this inside your project's folder.");
   else {
@@ -132,13 +134,16 @@ export async function preflight(io: ImproveIo, dirtyMessage: string, more?: (fou
     const view = await tryRun("gh", ["repo", "view", "--json", "nameWithOwner,defaultBranchRef"]);
     try {
       if ("error" in view) throw view.error;
-      defaultBranch = JSON.parse(view.out!).defaultBranchRef?.name || "main";
+      const parsed = JSON.parse(view.out!);
+      defaultBranch = parsed.defaultBranchRef?.name || "main";
+      slug = typeof parsed.nameWithOwner === "string" ? parsed.nameWithOwner : null;
     } catch {
       problems.push("GitHub can't find this repo. Push it to GitHub first (for example gh repo create --source . --push), then run this again.");
     }
   }
-  if (more) problems.push(...await more({ top, head, gitDir, defaultBranch }));
-  return problems.length ? { problems } : { problems, repo: { top, head, gitDir, defaultBranch } };
+  const found: Repo = { top, head, gitDir, defaultBranch, slug };
+  if (more) problems.push(...await more(found));
+  return problems.length ? { problems, found } : { problems, repo: found, found };
 }
 
 export interface LoopCredential { key?: string; eventCode?: string; teamCode?: string; line: string }
@@ -203,11 +208,19 @@ function presetLine(p: Preset, i: number): string {
   return `${i + 1}. ${p.id}: ${p.label} (${p.direction} is better; measures ${p.command}${p.guard ? `; regression check: ${p.guard}` : ""})`;
 }
 
+// On event credit the whole run is recorded for the organizers (see receipt.ts); the team's own key sends nothing.
 export async function improve(io: ImproveIo, root: string, options: ImproveOptions): Promise<boolean> {
+  const record = startRecord({ env: io.env ?? {}, command: options.handoff ? "improve --handoff" : options.list ? "improve --list" : "improve", agent: options.agent, fetcher: io.fetcher });
+  return recorded(record, () => improveRun(record ? record.wrap(io) : io, root, options, record));
+}
+
+async function improveRun(io: ImproveIo, root: string, options: ImproveOptions, record: RunRecord | null): Promise<boolean> {
+  if (record) io.say(RECORD_NOTICE);
+  record?.event("settings", { goal: options.goal ?? null, preset: options.metric ?? null, label: options.label ?? null, unit: options.unit ?? null, command: options.command ?? null, direction: options.direction ?? null, guard: options.guard ?? null, mode: options.mode ?? null, rounds: options.rounds, budget_usd: options.budgetUsd, protect: options.protect, lessons: options.lessons ?? null, agent: options.agent, handoff: options.handoff, list: options.list });
   const loop = !options.handoff && !options.list;
   const chosen = loop ? loopCredential(io.env ?? {}) : null;
   let base = "";
-  const { problems, repo } = await preflight(io, "Commit your changes first: Synthe measures committed code.", loop ? async (found) => {
+  const { problems, repo, found } = await preflight(io, "Commit your changes first: Synthe measures committed code.", loop ? async (found) => {
     const more = chosen && "problem" in chosen ? [chosen.problem] : [];
     if (found.head && found.defaultBranch) {
       const b = await pullRequestBase(io, found.defaultBranch, found.head);
@@ -216,7 +229,9 @@ export async function improve(io: ImproveIo, root: string, options: ImproveOptio
     }
     return more;
   } : undefined);
+  record?.setRepo(found?.slug ?? null, found?.defaultBranch || null, found?.head || null);
   if (!repo) {
+    record?.event("preflight", { problems });
     io.say("Synthe can't start yet. Fix these, then run npx synthe improve again:");
     for (const p of problems) io.say(`- ${p}`);
     return false;
@@ -224,6 +239,7 @@ export async function improve(io: ImproveIo, root: string, options: ImproveOptio
   const top = repo.top || root;
   const presets = presetsForRepo(top);
   if (options.list) {
+    record?.finished("early-exit");
     io.say("Metrics this repo can measure:");
     presets.forEach((p, i) => io.say(presetLine(p, i)));
     if (options.agent) io.say(IMPROVE_LIST_NEXT);
@@ -234,11 +250,15 @@ export async function improve(io: ImproveIo, root: string, options: ImproveOptio
 
   const draft = await settle(io, options, presets, loop ? base : repo.defaultBranch, top);
   if (!draft) return false;
+  record?.configured(draft);
+  record?.event("settings", { goal: draft.goal, preset: draft.metric.preset, label: draft.metric.label, unit: draft.metric.unit, command: draft.metric.command, direction: draft.metric.direction, guard: draft.guard.command, mode: draft.mode, rounds: options.rounds, budget_usd: options.budgetUsd, protect: draft.protect, handoff: options.handoff, agent: options.agent });
 
   let measured;
   try {
     measured = await measureAt(io.exec, top, repo.head, draft, io.say);
+    record?.event("measurement", { round: 0, commit: repo.head, median: measured.measurement?.median ?? null, runs: measured.measurement?.runs ?? [], guard_passed: measured.guardPassed, reason: measured.reason ?? null, metric_ms: measured.metricMs });
   } catch (e) {
+    record?.event("measurement", { round: 0, commit: repo.head, median: null, runs: [], guard_passed: null, reason: firstLine(e), metric_ms: 0 });
     io.say(`${firstLine(e)} Nothing was written.`);
     return false;
   }
@@ -253,32 +273,53 @@ export async function improve(io: ImproveIo, root: string, options: ImproveOptio
   }
   const config = parseImproveConfig(JSON.stringify({ ...draft, baseline: measured.measurement }));
   writeFileSync(improveFile(repo.gitDir), `${JSON.stringify(config, null, 2)}\n`);
+  record?.baselined(config.baseline);
 
   if (!credential) {
     const existing = (await io.run("git", ["branch", "--list", "synthe/improve-*"])).split("\n").filter((l) => l.trim()).length;
+    const card = taskCard(config, IMPROVE_BRANCH(existing + 1));
+    record?.event("handoff", { card, branch: IMPROVE_BRANCH(existing + 1) });
+    record?.finished("handoff");
     io.say("");
-    io.say(taskCard(config, IMPROVE_BRANCH(existing + 1)));
+    io.say(card);
     if (options.agent) io.say(IMPROVE_NEXT);
     return true;
   }
-  return improveLoop(io, options, { top, gitDir: repo.gitDir, base, config, credential });
+  return improveLoop(io, options, { top, gitDir: repo.gitDir, base, config, credential, record });
 }
 
 // The rounds, then the pull request. Temp checkouts are cleaned up on every path, Ctrl-C included.
-async function improveLoop(io: ImproveIo, o: ImproveOptions, a: { top: string; gitDir: string; base: string; config: ImproveConfig; credential: LoopCredential }): Promise<boolean> {
-  const { top, config, base } = a;
+async function improveLoop(io: ImproveIo, o: ImproveOptions, a: { top: string; gitDir: string; base: string; config: ImproveConfig; credential: LoopCredential; record: RunRecord | null }): Promise<boolean> {
+  const { top, config, base, record } = a;
   const { metric } = config;
   io.say(baselineLine(config));
   io.say(`Synthe now proposes up to ${o.rounds} changes, one per round, measures each one the same way and keeps only wins (budget ${money(o.budgetUsd)}). Your working tree is not touched. Press Ctrl-C to stop.`);
-  const model = (io.makeModel ?? credentialModel)(a.credential);
-  const stopWatching = io.onInterrupt?.(() => removeScratchCheckouts(top));
+  const made = (io.makeModel ?? credentialModel)(a.credential);
+  const model = record ? record.model(made) : made;
+  const stopWatching = io.onInterrupt?.(() => { removeScratchCheckouts(top); return record?.interrupt(); });
+  const hooks = record ? {
+    candidate: (c: Parameters<NonNullable<LoopHooks["candidate"]>>[0]) => {
+      const { diff, cut, files } = candidateDiff(c.shown, c.edits);
+      record.event("candidate", { round: c.round, summary: c.summary, files, diff, cut, changed_lines: c.changedLines, refused: c.refused });
+    },
+    measured: (m: Parameters<NonNullable<LoopHooks["measured"]>>[0]) => record.event("measurement", { round: m.round, commit: m.commit, median: m.measurement?.median ?? null, runs: m.measurement?.runs ?? [], guard_passed: m.guardPassed, reason: m.reason ?? null, metric_ms: m.metricMs }),
+    round: (r: RoundRecord, lesson: string) => {
+      record.round(r, r.kept ? r.value : null);
+      record.event("round", { n: r.round, kept: r.kept, summary: r.summary, value: r.value, why: r.why, cost_usd: r.costUsd, before: r.before, lesson, files: r.files });
+      record.flush();
+    },
+  } : undefined;
   try {
-    const result = await runLoop(io, { top, gitDir: a.gitDir, config, model, rounds: o.rounds, budgetUsd: o.budgetUsd });
+    const result = await runLoop(io, { top, gitDir: a.gitDir, config, model, rounds: o.rounds, budgetUsd: o.budgetUsd, hooks });
     const kept = result.rounds.filter((r) => r.kept).length;
     const total = result.costKnown ? money(result.spentUsd) : `at least ${money(result.spentUsd)} (some costs unknown)`;
     io.say("");
     io.say(result.stopped);
+    record?.event("stop", { reason: result.stopped });
+    const credit = /credit|Synthe table|proxy/i.test(result.stopped) && /Stopped in round/.test(result.stopped);
     if (!kept) {
+      record?.finished(credit ? "credit" : "no-win", { stopReason: result.stopped, costUsd: result.costKnown ? result.spentUsd : null });
+      record?.event("result", { outcome: credit ? "credit" : "no-win", kept: 0, rounds: result.rounds.length, before: config.baseline.median, after: result.best.median, cost_usd: result.spentUsd, cost_known: result.costKnown, pr_url: null, merged: null, problem: null, branch: null });
       io.say(`No change beat the current code (${quantity(config.baseline.median, metric)}), so nothing was pushed and no pull request was opened.`);
       if (result.rounds.length) {
         io.say("What was tried:");
@@ -296,6 +337,8 @@ async function improveLoop(io: ImproveIo, o: ImproveOptions, a: { top: string; g
       top, start: config.baseline.commit, base, branch, config, result, lessonsChoice: o.lessons, title: loopPrTitle(config, result.best),
       body: (lessonsCommit, diffstat, lessonsFiles) => loopPrBody({ config, best: result.best, rows: result.rounds, spentUsd: result.spentUsd, costKnown: result.costKnown, stopped: result.stopped, base, lessonsCommit, lessonsFiles, diffstat, model: EDIT_MODEL }),
     });
+    record?.finished(credit ? "credit" : "win", { stopReason: result.stopped, costUsd: result.costKnown ? result.spentUsd : null, prUrl: published.url ?? null });
+    record?.event("result", { outcome: credit ? "credit" : "win", kept, rounds: result.rounds.length, before: config.baseline.median, after: result.best.median, cost_usd: result.spentUsd, cost_known: result.costKnown, pr_url: published.url ?? null, merged: published.merged ?? null, problem: published.problem ?? null, branch });
     if (!published.url) {
       io.say(published.problem!);
       return false;

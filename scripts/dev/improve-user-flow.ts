@@ -116,6 +116,28 @@ console.log(a.git("log", "--format=%h %an: %s", "synthe/improve-1", "-3"));
 console.log("lessons commit touches:", a.git("diff-tree", "--no-commit-id", "--name-only", "-r", "synthe/improve-1").split("\n").join(", "));
 console.log("working tree clean:", a.git("status", "--porcelain") === "", "| worktrees:", a.git("worktree", "list").split("\n").length);
 console.log("local lesson log:", existsSync(join(a.dir, ".git/.synthe/improve-lessons.md")));
+// What the organizers receive on event credit: the run record, batched to the proxy's /improve endpoint.
+const showReceipts = (label: string, receipts: { headers: any; body: any }[]) => {
+  console.log(`\n--- ${label}: run record received by the (fake) proxy ---`);
+  const events = receipts.flatMap((r) => r.body.events);
+  const last = receipts.at(-1)?.body;
+  console.log(`batches: ${receipts.length}; run ${last?.run_id}; final: ${last?.final}; seq: ${receipts.map((r) => r.body.seq).join(",")}; sizes: ${receipts.map((r) => JSON.stringify(r.body).length).join(",")} bytes`);
+  console.log(`headers carry the codes (event: ${receipts.every((r) => r.headers["x-synthe-event"] === EVENT)}, team: ${receipts.every((r) => r.headers["x-synthe-team"] === TEAM)}, install id: ${receipts.every((r) => /^[0-9a-f-]{36}$/.test(r.headers["x-synthe-install"]))}); bodies never do: ${!receipts.some((r) => JSON.stringify(r.body).includes(EVENT) || JSON.stringify(r.body).includes(TEAM))}`);
+  console.log(`run: ${JSON.stringify(last?.run)}`);
+  console.log(`summary: ${JSON.stringify(last?.summary)}`);
+  const counts: Record<string, number> = {};
+  for (const e of events) counts[e.type] = (counts[e.type] ?? 0) + 1;
+  console.log(`events: ${events.length} (${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(", ")})`);
+  for (const e of events) {
+    if (e.type === "say") console.log(`  ${e.i} say      ${String(e.text).slice(0, 110)}`);
+    else if (e.type === "ask") console.log(`  ${e.i} ask      ${e.question} -> ${JSON.stringify(e.answer)}`);
+    else if (e.type === "model") console.log(`  ${e.i} model    ${e.purpose} ${e.model} max ${e.max_tokens} in ${e.input_tokens} out ${e.output_tokens} $${e.cost_usd} ${e.stop_reason} ${e.ms}ms ok=${e.ok}`);
+    else if (e.type === "candidate") console.log(`  ${e.i} candidate round ${e.round} "${e.summary}" files ${JSON.stringify(e.files)} refused=${e.refused} cut=${e.cut}\n${String(e.diff).split("\n").map((l: string) => `           | ${l}`).join("\n")}`);
+    else if (e.type === "command") console.log(`  ${e.i} command  ${e.command} ok=${e.ok} ${e.ms}ms${e.tail ? ` tail=${JSON.stringify(String(e.tail).slice(-80))}` : ""}`);
+    else console.log(`  ${e.i} ${e.type.padEnd(8)} ${JSON.stringify(Object.fromEntries(Object.entries(e).filter(([k]) => !["i", "t", "type"].includes(k)))).slice(0, 200)}`);
+  }
+};
+showReceipts("A", serverA.receipts);
 const reqA = serverA.requests;
 console.log(`requests: ${reqA.length}; models: ${[...new Set(reqA.map((r) => r.body.model))].join(", ")}; max_tokens: ${[...new Set(reqA.map((r) => r.body.max_tokens))].join(", ")}; stream: ${reqA.some((r) => r.body.stream)}; tools: ${reqA.some((r) => r.body.tools)}`);
 console.log(`x-synthe-team header on every request, equal to SYNTHE_TEAM_CODE: ${reqA.every((r) => r.headers["x-synthe-team"] === TEAM)}`);
@@ -146,5 +168,7 @@ c.write("validate.js", "module.exports = (email) => /^[^\\s@]+@[^\\s@]+\\.[^\\s@
 c.git("commit", "-qam", "Accept ordinary email addresses");
 show("C: npx synthe submit", await improve(c.dir, ["submit"], serverC.url, []));
 console.log(`\nC: requests to the model: ${serverC.requests.length}`);
+console.log(`C: run records: ${serverC.receipts.length} batches; commands ${JSON.stringify([...new Set(serverC.receipts.map((r) => r.body.run.command))])}; outcomes ${JSON.stringify(serverC.receipts.filter((r) => r.body.final).map((r) => r.body.summary.outcome))}`);
+console.log(`B: run record: ${serverB.receipts.length} batches; outcome ${serverB.receipts.at(-1)?.body.summary.outcome}; stop: ${serverB.receipts.at(-1)?.body.summary.stop_reason}`);
 await serverC.close();
 console.log(`\nWork folder: ${work}`);
