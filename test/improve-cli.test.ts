@@ -87,7 +87,7 @@ test("improve numbers the branch after the improve branches that already exist",
   const out = said.join("\n");
   assert.ok(out.includes("git checkout -b synthe/improve-3"));
   assert.ok(out.includes(".synthe/, and: data/seed.json."));
-  assert.ok(out.includes("Current code: 3 tests (1 run: 3)."));
+  assert.ok(out.includes("Current code: 3 tests (3 runs: 3, 3, 3)."));
   assert.ok(out.includes("Mode: auto (a winning change merges into the default branch by itself)."));
   assert.deepEqual(configAt(dir).protect, ["data/seed.json"]);
 });
