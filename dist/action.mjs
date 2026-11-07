@@ -28706,12 +28706,13 @@ function eventModels(models) {
     if (!["claude-haiku-5-5", "claude-sonnet-5-5"].includes(model)) throw new CreditError(`Event credit only supports claude-haiku-5-5 and claude-sonnet-5-5; your goal names ${model}. Use an allowed model or run \`npx synthe key\` to use your own Anthropic key.`);
   }
 }
-function proxyModel(eventCode, action = false, teamCode) {
+function proxyModel(eventCode, action = false, teamCode, options = {}) {
   const team = teamCode ? normalizeTeamCode(teamCode) : "";
   const client = new Anthropic({
     apiKey: "synthe-proxy",
-    baseURL: process.env.SYNTHE_PROXY_URL || PROXY_URL,
-    maxRetries: 2,
+    baseURL: options.fixedEndpoint ? PROXY_URL : process.env.SYNTHE_PROXY_URL || PROXY_URL,
+    maxRetries: options.fixedEndpoint ? 0 : 2,
+    ...options.fixedEndpoint ? { timeout: 45e3 } : {},
     logLevel: "off",
     fetch: async (url, init) => {
       const headers = new Headers(init?.headers);
@@ -28723,7 +28724,7 @@ function proxyModel(eventCode, action = false, teamCode) {
         headers.delete("Authorization");
         headers.set("x-synthe-install", setupInstallId());
       }
-      const response = await fetch(url, { ...init, headers });
+      const response = await fetch(url, { ...init, headers, ...options.fixedEndpoint ? { redirect: "error" } : {} });
       if (response.status === 402 || response.status === 403) {
         const body = await response.clone().json().catch(() => null);
         if (body?.error?.type === "synthe_credit" && typeof body.error.message === "string") {

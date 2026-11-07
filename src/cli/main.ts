@@ -21,6 +21,7 @@ import { upgrade } from "./upgrade.ts";
 import { AgentSetupError, agentOptions } from "./agent.ts";
 import { setKey } from "./key.ts";
 import { guide } from "./guide.ts";
+import { builder } from "./builder.ts";
 import { verify } from "./verify.ts";
 import { undo } from "./undo.ts";
 import { githubRepo } from "../github/repo.ts";
@@ -242,6 +243,7 @@ const HELP = `Synthe makes your AI agent's system prompt better while you sleep.
 Start here, inside your project's folder:
   npx synthe init     set up this repo and start
   npx synthe guide    instructions for setup through a coding agent
+  npx synthe builder  improve a product metric with Codex in a local repo
 
 Then:
   npx synthe status   where it is and what it changed
@@ -264,6 +266,10 @@ async function main() {
   const command = process.argv[2];
   if (command === "init") process.exitCode = (await init(io, process.cwd(), undefined, undefined, process.env, agentOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "guide") console.log(guide);
+  else if (command === "builder") await builder(process.argv.slice(3), {
+    cwd: process.cwd(), env: process.env, interactive: Boolean(process.stdin.isTTY),
+    io: { ask, askSecret, say: console.log },
+  });
   else if (command === "key") {
     if (!setUpHere()) return;
     process.exitCode = (await setKey(io)) ? 0 : 1;

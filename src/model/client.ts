@@ -19,9 +19,10 @@ export function eventModels(models: Record<string, string>): void {
   }
 }
 
-export function proxyModel(eventCode: string, action = false, teamCode?: string): Model {
+export function proxyModel(eventCode: string, action = false, teamCode?: string, options: { fixedEndpoint?: boolean } = {}): Model {
   const team = teamCode ? normalizeTeamCode(teamCode) : "";
-  const client = new Anthropic({ apiKey: "synthe-proxy", baseURL: process.env.SYNTHE_PROXY_URL || PROXY_URL, maxRetries: 2, logLevel: "off",
+  const client = new Anthropic({ apiKey: "synthe-proxy", baseURL: options.fixedEndpoint ? PROXY_URL : process.env.SYNTHE_PROXY_URL || PROXY_URL,
+    maxRetries: options.fixedEndpoint ? 0 : 2, ...(options.fixedEndpoint ? { timeout: 45_000 } : {}), logLevel: "off",
     fetch: async (url, init) => {
       const headers = new Headers(init?.headers);
       headers.set("x-synthe-event", eventCode);
@@ -29,7 +30,7 @@ export function proxyModel(eventCode: string, action = false, teamCode?: string)
       headers.set("x-api-key", "synthe-proxy");
       if (action) headers.set("Authorization", `Bearer ${await oidcToken("synthe-proxy")}`);
       else { headers.delete("Authorization"); headers.set("x-synthe-install", setupInstallId()); }
-      const response = await fetch(url, { ...init, headers });
+      const response = await fetch(url, { ...init, headers, ...(options.fixedEndpoint ? { redirect: "error" as const } : {}) });
       if (response.status === 402 || response.status === 403) {
         const body = await response.clone().json().catch(() => null) as { error?: { type?: string; message?: string } } | null;
         if (body?.error?.type === "synthe_credit" && typeof body.error.message === "string") {
