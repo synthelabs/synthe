@@ -97,7 +97,7 @@ test("text before and after the block stays byte-identical", () => {
 test("empty and newline-less files get a well-formed block", () => {
   const empty = upsertLessonsBlock("", ["a"]);
   assert.ok(empty.startsWith(START) && empty.endsWith(`${END}\n`));
-  assert.equal(upsertLessonsBlock("no newline", ["a"]), `no newline\n\n${START}\n${"Measured by Synthe in this repo (newest last). Keep or delete freely; Synthe rewrites only this block."}\n- a\n${END}\n`);
+  assert.equal(upsertLessonsBlock("no newline", ["a"]), `no newline\n\n${START}\n${"Measured by Synthe in this repo (newest last). Keep or delete freely; Synthe rewrites only this block."}\nIf this conflicts with the code, the code wins.\n- a\n${END}\n`);
 });
 
 test("CRLF files keep their line endings", () => {
@@ -142,17 +142,28 @@ test("broken markers never produce two blocks and never delete the person's text
   assert.ok(!dup.includes("- 1") && !dup.includes("- 2"));
 });
 
-test("lessonsTarget honours an explicit choice and otherwise looks for an existing file", () => {
+test("lessonsTarget names a file only on an explicit choice", () => {
   const root = tmp();
-  assert.equal(lessonsTarget(root, undefined), null, "neither file exists");
-  assert.ok(!existsSync(join(root, "CLAUDE.md")) && !existsSync(join(root, "AGENTS.md")), "nothing is created");
+  assert.equal(lessonsTarget(root, undefined), null);
   assert.equal(lessonsTarget(root, "claude"), "CLAUDE.md");
   assert.equal(lessonsTarget(root, "agents"), "AGENTS.md");
   assert.equal(lessonsTarget(root, "none"), null);
   writeFileSync(join(root, "AGENTS.md"), "x");
-  assert.equal(lessonsTarget(root, undefined), "AGENTS.md");
   writeFileSync(join(root, "CLAUDE.md"), "x");
-  assert.equal(lessonsTarget(root, undefined), "CLAUDE.md", "CLAUDE.md wins when both exist");
-  assert.equal(lessonsTarget(root, "none"), null, "explicit none wins over existing files");
+  assert.equal(lessonsTarget(root, undefined), null, "existing files are not picked up on their own");
+  assert.equal(lessonsTarget(root, "none"), null);
   assert.equal(lessonsTarget(root, "agents"), "AGENTS.md");
+  assert.equal(readFileSync(join(root, "CLAUDE.md"), "utf8"), "x");
+});
+
+test("the block carries the code-wins line once, right after the intro", () => {
+  const once = upsertLessonsBlock("# T\n", ["a"]);
+  const again = upsertLessonsBlock(once, ["a", "b"]);
+  for (const out of [once, again]) {
+    assert.equal(count(out, "If this conflicts with the code, the code wins."), 1);
+    assert.equal(count(out, START), 1);
+  }
+  const lines = again.split("\n");
+  const at = lines.indexOf(START);
+  assert.ok(lines[at + 1].startsWith("Measured by Synthe") && lines[at + 2] === "If this conflicts with the code, the code wins." && lines[at + 3] === "- a");
 });

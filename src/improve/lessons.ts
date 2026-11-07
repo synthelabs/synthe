@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { formatValue } from "./text.ts";
 
@@ -10,6 +10,7 @@ const BLOCK_MAX = 12;
 const START = "<!-- synthe:lessons:start -->";
 const END = "<!-- synthe:lessons:end -->";
 const INTRO = "Measured by Synthe in this repo (newest last). Keep or delete freely; Synthe rewrites only this block.";
+const CODE_WINS = "If this conflicts with the code, the code wins.";
 const HEADER = "# What Synthe measured in this repo\n\nWritten by `npx synthe improve`: one line per round, newest last, each from a measurement.\n";
 
 // Model text can hold newlines, and a stray comment opener could fake our block markers.
@@ -51,7 +52,7 @@ export function readLessons(gitRoot: string, max = 20): string[] {
 export function upsertLessonsBlock(fileText: string, lines: string[]): string {
   const eol = fileText.includes("\r\n") ? "\r\n" : "\n";
   const bullets = lines.map((l) => oneLine(l).replace(/^- /, "")).filter(Boolean).slice(-BLOCK_MAX).map((l) => `- ${l}`);
-  const block = [START, INTRO, ...bullets, END].join(eol);
+  const block = [START, INTRO, CODE_WINS, ...bullets, END].join(eol);
 
   // Replace the first complete block and drop any further ones, so there is never more than one.
   const MARK = "\u0000synthe-block\u0000";
@@ -69,12 +70,11 @@ export function upsertLessonsBlock(fileText: string, lines: string[]): string {
   return `${text}${text.endsWith("\n") ? "" : eol}${eol}${block}${eol}`;
 }
 
-// Returns a path relative to gitRoot (CLAUDE.md or AGENTS.md); the caller joins it. An explicit choice wins even if the file doesn't exist yet.
-export function lessonsTarget(gitRoot: string, choice: "claude" | "agents" | "none" | undefined): string | null {
-  if (choice === "none") return null;
+// Returns a path relative to gitRoot (CLAUDE.md or AGENTS.md); the caller joins it. Writing into files the team owns is opt-in:
+// only an explicit choice names one (even if it doesn't exist yet). Unset means no write, whatever files are there, because
+// LLM-written context files did worse than developer-written ones (Gloaguen et al., arXiv 2602.11988).
+export function lessonsTarget(_gitRoot: string, choice: "claude" | "agents" | "none" | undefined): string | null {
   if (choice === "claude") return "CLAUDE.md";
   if (choice === "agents") return "AGENTS.md";
-  if (existsSync(join(gitRoot, "CLAUDE.md"))) return "CLAUDE.md";
-  if (existsSync(join(gitRoot, "AGENTS.md"))) return "AGENTS.md";
   return null;
 }
