@@ -135,6 +135,13 @@ test("a full-content refusal downgrades every remaining batch even when the work
   assert.deepEqual(server.received.slice(1).flatMap((r) => r.body.events).map((e) => e.id), events.map((e) => e.id));
 });
 
+test("full scrubbing keeps prose and code after credential-looking names, and still removes real values", () => {
+  for (const line of ["Credential: Crimson Hacks event credit, with your team code from SYNTHE_TEAM_CODE.", "  token: string;", "const apiKey = process.env.ANTHROPIC_API_KEY;", "password = null"])
+    assert.equal(scrubEventText(line, {}), line);
+  for (const [line, value] of [["password: hunter2", "hunter2"], ["password: letmein", "letmein"], ["API_KEY=abcdefgh", "abcdefgh"], ['token = "string"', '"string"'], ["secret: Crimson", "Crimson"]])
+    assert.ok(!scrubEventText(line, {}).includes(value), line);
+});
+
 test("numbers/detail drop ids and content; full scrubs credentials, snake_case keys and excess depth", () => {
   const sensitive = "crim-abcd-1234-efgh-5678 sk-ant-12345678901234567890 ghp_123456789012345678901234 Authorization: Bearer something-private\nEVENT_CODE=customcode\nsecret=unknown_secret\nhttps://x.test/a?X-Amz-Signature=private_signature\n-----BEGIN PRIVATE KEY-----\nprivate key\n-----END PRIVATE KEY-----";
   const env = { SYNTHE_EVENT_CODE: "customcode", "INPUT_TEAM-CODE": "other-team-secret", "INPUT_ANTHROPIC-API-KEY": "arbitrary-private-key", ACTIONS_ID_TOKEN_REQUEST_TOKEN: "runner-secret" };

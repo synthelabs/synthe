@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { ACTION, CRIMSON_ACTION, init, RAW, type Io } from "../src/cli/init.ts";
+import { ACTION, CRIMSON_ACTION, init, RAW, SETUP_RECORD_NOTICE, type Io } from "../src/cli/init.ts";
 import { upgrade } from "../src/cli/upgrade.ts";
 import { DIAGNOSTICS_FILE } from "../src/cli/workflows.ts";
 import { parseGoal, parseScenarios } from "../src/core/goal.ts";
@@ -487,6 +487,12 @@ test("event codes are checked cheaply before storing, use the proxy for all setu
     assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).budget.max_usd, 4);
     assert.match(said.join("\n"), /Saved your event code and team code as the repo secrets SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE/);
     assert.ok(!ran.some((call) => call.args.includes("SYNTHE_ANTHROPIC_KEY")));
+    // The proxy keeps every setup call on event credit, code included, so setup says so before it reads any file.
+    const notice = said.indexOf(SETUP_RECORD_NOTICE);
+    assert.ok(notice >= 0, "event setup shows the record notice");
+    assert.ok(notice < said.findIndex((line) => line.includes("Reading your prompt")), "the notice comes before setup reads the repo");
+    assert.match(SETUP_RECORD_NOTICE, /keep and read .*the code file that holds it/);
+    assert.ok(said.some((line) => /sharing line above is about the workflow rounds.*including your code/.test(line)));
     for (const file of [".github/workflows/synthe.yml", DIAGNOSTICS_FILE]) {
       const yaml = readFileSync(join(dir, file), "utf8");
       assert.ok(yaml.includes(CRIMSON_ACTION) && !yaml.includes(TEAM) && !yaml.includes("crimson-code"));
@@ -497,11 +503,13 @@ test("event codes are checked cheaply before storing, use the proxy for all setu
 
 test("an explicit own key wins over an env event code, keeping the own-key budget", async () => {
   const dir = repoDir(PROMPT);
-  const { io, ran } = fakeIo(dir);
+  const { io, ran, said } = fakeIo(dir);
   io.askSecret = async () => { throw new Error("explicit env key must not prompt"); };
   io.proxy = () => { throw new Error("own key must win"); };
   assert.equal(await init(io, dir, undefined, "", { SYNTHE_ANTHROPIC_KEY: "sk-ant-own", SYNTHE_EVENT_CODE: "event" }), true);
   assert.equal(ran.find((call) => call.args[0] === "secret")!.stdin, "sk-ant-own");
+  assert.ok(!said.includes(SETUP_RECORD_NOTICE), "own-key setup calls never reach the proxy, so no record notice");
+  assert.ok(!said.some((line) => /sharing line above is about the workflow rounds/.test(line)));
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).budget.max_usd, 3);
 });
 
