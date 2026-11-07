@@ -1666,7 +1666,7 @@ var init_line = __esm({
           }
           const binaryChunk = chunk instanceof ArrayBuffer ? new Uint8Array(chunk) : typeof chunk === "string" ? encodeUTF8(chunk) : chunk;
           __classPrivateFieldSet(this, _LineDecoder_buffer, concatBytes([__classPrivateFieldGet(this, _LineDecoder_buffer, "f"), binaryChunk]), "f");
-          const lines = [];
+          const lines2 = [];
           let patternIndex;
           while ((patternIndex = findNewlineIndex(__classPrivateFieldGet(this, _LineDecoder_buffer, "f"), __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f"))) != null) {
             if (patternIndex.carriage && __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") == null) {
@@ -1674,18 +1674,18 @@ var init_line = __esm({
               continue;
             }
             if (__classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") != null && (patternIndex.index !== __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") + 1 || patternIndex.carriage)) {
-              lines.push(decodeUTF8(__classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(0, __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") - 1)));
+              lines2.push(decodeUTF8(__classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(0, __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") - 1)));
               __classPrivateFieldSet(this, _LineDecoder_buffer, __classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(__classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f")), "f");
               __classPrivateFieldSet(this, _LineDecoder_carriageReturnIndex, null, "f");
               continue;
             }
             const endIndex = __classPrivateFieldGet(this, _LineDecoder_carriageReturnIndex, "f") !== null ? patternIndex.preceding - 1 : patternIndex.preceding;
             const line = decodeUTF8(__classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(0, endIndex));
-            lines.push(line);
+            lines2.push(line);
             __classPrivateFieldSet(this, _LineDecoder_buffer, __classPrivateFieldGet(this, _LineDecoder_buffer, "f").subarray(patternIndex.index), "f");
             __classPrivateFieldSet(this, _LineDecoder_carriageReturnIndex, null, "f");
           }
-          return lines;
+          return lines2;
         }
         flush() {
           if (!__classPrivateFieldGet(this, _LineDecoder_buffer, "f").length) {
@@ -9536,11 +9536,11 @@ var init_SessionToolRunner = __esm({
                 signal: toolCtrl.signal
               });
               const sent = toSessionContent(toolOutcome.content);
-              const recorded = !this.client._tracer ? sent : sent.map((block, i) => {
+              const recorded2 = !this.client._tracer ? sent : sent.map((block, i) => {
                 const original = typeof toolOutcome.content === "string" ? void 0 : toolOutcome.content[i];
                 return original && original.type !== "text" && block.type === "text" ? original : block;
               });
-              return { sent, content: recorded, isError: toolOutcome.isError };
+              return { sent, content: recorded2, isError: toolOutcome.isError };
             });
             content = outcome.sent;
             isError = outcome.isError;
@@ -9859,10 +9859,10 @@ function assertSafeMemberNames(names) {
   }
 }
 function listingLines(listing) {
-  const lines = listing.split("\n");
-  if (lines[lines.length - 1] === "")
-    lines.pop();
-  return lines;
+  const lines2 = listing.split("\n");
+  if (lines2[lines2.length - 1] === "")
+    lines2.pop();
+  return lines2;
 }
 function canExcludeVerbatim(cmd, name) {
   return /^[\x20-\x7E]+$/.test(name) && !/[\\^#]/.test(name) && !(cmd === "unzip" && name.startsWith("-"));
@@ -11341,28 +11341,28 @@ function betaReadTool(ctx) {
       if (!view_range?.length)
         return data;
       const [startLine, endLine] = view_range;
-      const lines = data.split("\n");
+      const lines2 = data.split("\n");
       const start2 = Math.max(0, startLine - 1);
-      const end = endLine > 0 ? endLine : lines.length;
-      return lines.slice(start2, end).join("\n");
+      const end = endLine > 0 ? endLine : lines2.length;
+      return lines2.slice(start2, end).join("\n");
     }
   });
 }
 async function readRangeStreaming(abs, filePath, startLine, endLine, limit2) {
-  const lines = new LineRangeCollector(filePath, startLine, endLine, limit2);
-  if (lines.rangeIsEmpty())
+  const lines2 = new LineRangeCollector(filePath, startLine, endLine, limit2);
+  if (lines2.rangeIsEmpty())
     return "";
   const stream2 = fssync.createReadStream(abs, { highWaterMark: READ_STREAM_CHUNK_BYTES });
   try {
     for await (const chunk of stream2) {
-      lines.collectFrom(chunk);
-      if (lines.rangeIsCollected())
+      lines2.collectFrom(chunk);
+      if (lines2.rangeIsCollected())
         break;
     }
   } finally {
     stream2.destroy();
   }
-  return lines.text();
+  return lines2.text();
 }
 function betaWriteTool(ctx) {
   rejectUnrestrictedPaths(ctx.unrestrictedPaths);
@@ -28547,45 +28547,45 @@ var fmtPct = (n) => Number.isInteger(n) ? `${n}` : n.toFixed(1);
 var money = (r) => typeof r.costUsd === "number" ? ` \xB7 $${r.costUsd.toFixed(2)}` : "";
 function roundLines(r) {
   if (r.outcome === "merged") {
-    const lines2 = [`Round ${r.round} \xB7 merged${money(r)}`];
-    if (r.changed) lines2.push(`  What changed: ${r.changed}`);
+    const lines3 = [`Round ${r.round} \xB7 merged${money(r)}`];
+    if (r.changed) lines3.push(`  What changed: ${r.changed}`);
     if (r.examplePair) {
-      lines2.push(`  Example from a practice case, on: "${r.examplePair.input}"`);
-      lines2.push(`    Before: "${r.examplePair.beforeReply}"`);
-      lines2.push(`    After: "${r.examplePair.afterReply}"`);
-      if (r.examplePair.improvedChecks.length) lines2.push(`    Now passes: ${r.examplePair.improvedChecks.join(", ")}`);
+      lines3.push(`  Example from a practice case, on: "${r.examplePair.input}"`);
+      lines3.push(`    Before: "${r.examplePair.beforeReply}"`);
+      lines3.push(`    After: "${r.examplePair.afterReply}"`);
+      if (r.examplePair.improvedChecks.length) lines3.push(`    Now passes: ${r.examplePair.improvedChecks.join(", ")}`);
     }
-    if (typeof r.scorePct === "number") lines2.push(`  Score before this change: ${fmtPct(r.scorePct)}%`);
-    return lines2;
+    if (typeof r.scorePct === "number") lines3.push(`  Score before this change: ${fmtPct(r.scorePct)}%`);
+    return lines3;
   }
   if (r.outcome === "proposed") return [`Round ${r.round} \xB7 proposed${money(r)}`, ...r.plain ? [`  ${r.plain}`] : []];
   if (r.outcome === "reverted") return [`Round ${r.round} \xB7 reverted${money(r)}`, ...r.plain ? [`  ${r.plain}`] : []];
   if (r.outcome === "declined") return [`Round ${r.round} \xB7 declined${money(r)}`, "  The change was closed without merging, so nothing changed."];
   if (r.outcome === "failed") return [`Round ${r.round} \xB7 didn't finish${money(r)}`, ...r.plain ? [`  ${r.plain}`] : ["  The round didn't finish, so nothing changed."]];
-  const lines = [`Round ${r.round} \xB7 no change${money(r)}`];
-  if (r.tried?.length) lines.push(`  Tried ${r.tried.length} ${r.tried.length === 1 ? "change" : "changes"}, but none was clearly better, so nothing merged.`);
-  else if (r.plain) lines.push(`  ${r.plain}`);
-  else lines.push("  Nothing was clearly better, so nothing merged.");
-  if (typeof r.scorePct === "number") lines.push(`  Score this round: ${fmtPct(r.scorePct)}%`);
-  return lines;
+  const lines2 = [`Round ${r.round} \xB7 no change${money(r)}`];
+  if (r.tried?.length) lines2.push(`  Tried ${r.tried.length} ${r.tried.length === 1 ? "change" : "changes"}, but none was clearly better, so nothing merged.`);
+  else if (r.plain) lines2.push(`  ${r.plain}`);
+  else lines2.push("  Nothing was clearly better, so nothing merged.");
+  if (typeof r.scorePct === "number") lines2.push(`  Score this round: ${fmtPct(r.scorePct)}%`);
+  return lines2;
 }
 function renderDeltaBlock(goal, state, maxRounds = 3) {
   const series = scoreSeries(state);
   const measured = displaySeries(series).filter((p) => p.measured);
-  const lines = [];
+  const lines2 = [];
   if (measured.length === 1) {
-    lines.push(`Your prompt scores ${fmtPct(measured[0].pct)}% (checks passed on test cases Synthe never trains on)`);
-    lines.push(`Score by round: ${sparkline(series)}`);
+    lines2.push(`Your prompt scores ${fmtPct(measured[0].pct)}% (checks passed on test cases Synthe never trains on)`);
+    lines2.push(`Score by round: ${sparkline(series)}`);
   } else if (measured.length > 1) {
-    lines.push(`Your prompt: ${fmtPct(measured[0].pct)}% \u2192 ${fmtPct(measured.at(-1).pct)}% (checks passed on test cases Synthe never trains on)`);
-    lines.push(`Score by round: ${sparkline(series)}`);
+    lines2.push(`Your prompt: ${fmtPct(measured[0].pct)}% \u2192 ${fmtPct(measured.at(-1).pct)}% (checks passed on test cases Synthe never trains on)`);
+    lines2.push(`Score by round: ${sparkline(series)}`);
   }
   const latest = Math.max(0, state.rounds.length - Math.max(0, maxRounds));
   const shown = state.rounds.filter((r, i) => i >= latest || CHANGED.has(r.outcome));
-  for (const r of [...shown].reverse()) lines.push(...roundLines(r));
+  for (const r of [...shown].reverse()) lines2.push(...roundLines(r));
   const hidden = state.rounds.length - shown.length;
-  if (hidden > 0) lines.push(`Earlier: ${hidden} more ${hidden === 1 ? "round" : "rounds"} with no change.`);
-  return lines.join("\n");
+  if (hidden > 0) lines2.push(`Earlier: ${hidden} more ${hidden === 1 ? "round" : "rounds"} with no change.`);
+  return lines2.join("\n");
 }
 var CHANGED = /* @__PURE__ */ new Set(["merged", "reverted", "proposed"]);
 
@@ -28851,7 +28851,13 @@ function sdkModel(client) {
       const text2 = res.content.flatMap((b) => b.type === "text" ? [b.text] : []).join("");
       const finished = res.stop_reason === "end_turn" && text2.length > 0;
       const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text2.length > 0;
-      return { text: finished || cutOff ? text2 : null, costUsd: costUsd(model, res.usage), ...cutOff ? { truncated: true } : {} };
+      return {
+        text: finished || cutOff ? text2 : null,
+        costUsd: costUsd(model, res.usage),
+        ...cutOff ? { truncated: true } : {},
+        usage: { input: res.usage.input_tokens, output: res.usage.output_tokens },
+        stopReason: res.stop_reason ?? null
+      };
     }
   };
 }
@@ -28982,10 +28988,10 @@ function lessonText(state, prompt, train) {
   const cases2 = state.lessons.rows.flatMap((r) => {
     const s = byId.get(r.id);
     if (!s) return [];
-    const lines = [`- Situation: ${s.input}`, `  A good response: ${s.expected}`, `  The current prompt replied${r.violation ? " (and broke a guardrail)" : ""}:`, `  <reply>${r.reply}</reply>`];
-    if (r.failedChecks?.length) lines.push(`  It failed these checks: ${r.failedChecks.join("; ")}`);
-    if (r.better) lines.push(`  A rewrite the judge preferred replied:`, `  <reply>${r.better}</reply>`);
-    return [lines.join("\n")];
+    const lines2 = [`- Situation: ${s.input}`, `  A good response: ${s.expected}`, `  The current prompt replied${r.violation ? " (and broke a guardrail)" : ""}:`, `  <reply>${r.reply}</reply>`];
+    if (r.failedChecks?.length) lines2.push(`  It failed these checks: ${r.failedChecks.join("; ")}`);
+    if (r.better) lines2.push(`  A rewrite the judge preferred replied:`, `  <reply>${r.better}</reply>`);
+    return [lines2.join("\n")];
   });
   if (cases2.length === 0) return "";
   return `
@@ -29420,9 +29426,9 @@ async function measureNoise(goal, prompt, scenarios, model) {
   };
 }
 function explainNoise(noise) {
-  const lines = [noise.wins === null || noise.cases < 5 ? "Noise is inconclusive: too few training cases, missing marks, or reply-order disagreement. This does not show that the judge is steady." : `Your prompt against itself on ${noise.cases} training cases: better in ${noise.wins}, worse in ${noise.losses}, the same in ${noise.ties}. This is one sample of reply and marker variation, not proof of a steady judge or a merge threshold. Hidden cases were not used.`];
-  if (noise.guards) lines.push(noise.guards.spread === null ? "Guard noise is inconclusive. Keep the fallback guard_margin of 3; no setting was changed." : `Guard pass-rate spread: ${noise.guards.spread.toFixed(2)} points between independent samples. A measured guard_margin for review is ${noise.guards.margin.toFixed(2)}; no setting was changed. This sample does not establish the impact or cost gate.`);
-  return lines;
+  const lines2 = [noise.wins === null || noise.cases < 5 ? "Noise is inconclusive: too few training cases, missing marks, or reply-order disagreement. This does not show that the judge is steady." : `Your prompt against itself on ${noise.cases} training cases: better in ${noise.wins}, worse in ${noise.losses}, the same in ${noise.ties}. This is one sample of reply and marker variation, not proof of a steady judge or a merge threshold. Hidden cases were not used.`];
+  if (noise.guards) lines2.push(noise.guards.spread === null ? "Guard noise is inconclusive. Keep the fallback guard_margin of 3; no setting was changed." : `Guard pass-rate spread: ${noise.guards.spread.toFixed(2)} points between independent samples. A measured guard_margin for review is ${noise.guards.margin.toFixed(2)}; no setting was changed. This sample does not establish the impact or cost gate.`);
+  return lines2;
 }
 async function compareRunners(goal, prompt, scenarios, from, to, model, random = Math.random) {
   const on = (runner) => ({ ...goal, models: { ...goal.models, runner } });
@@ -30431,8 +30437,8 @@ Reading your prompt${context2.names.length ? ` and ${context2.names.join(" and "
   io2.say("  Rules it must never break:");
   guardrails.forEach((g) => io2.say(`    - ${g}`));
   if (policy) {
-    const lines = policy.split("\n").filter((l) => l.trim());
-    io2.say(`  Your business policy, copied from your prompt (${lines.length} line${lines.length === 1 ? "" : "s"}), starting: "${lines[0].slice(0, 80)}"`);
+    const lines2 = policy.split("\n").filter((l) => l.trim());
+    io2.say(`  Your business policy, copied from your prompt (${lines2.length} line${lines2.length === 1 ? "" : "s"}), starting: "${lines2[0].slice(0, 80)}"`);
   } else {
     io2.say('  No business rules found in your prompt. Adding them as "policy" in synthe.json makes judging fairer.');
   }
@@ -30689,36 +30695,36 @@ Scenarios: ${train} train + ${scenarios.length - train} holdout = ${scenarios.le
   const avg = (rows) => rows.reduce((n, r) => n + r.score, 0) / rows.length;
   const judgeBefore = avg(judged.map(([b]) => b)), judgeAfter = avg(judged.map(([, a]) => a));
   const count2 = (score) => judged.filter(([, a]) => a.score === score).length;
-  const lines = [];
-  lines.push(`Test cases: better on ${to} in ${count2(WIN)}, worse in ${count2(LOSS)}, the same in ${count2(TIE)}${judged.length < scenarios.length ? `. ${scenarios.length - judged.length} couldn't be judged and are left out` : ""}`, "");
-  lines.push("Judge score (all scenarios, head to head: 50 is even)", `  Before: ${judgeBefore.toFixed(1)}  After: ${judgeAfter.toFixed(1)}  Change: ${signed(judgeAfter - judgeBefore)}`, "");
+  const lines2 = [];
+  lines2.push(`Test cases: better on ${to} in ${count2(WIN)}, worse in ${count2(LOSS)}, the same in ${count2(TIE)}${judged.length < scenarios.length ? `. ${scenarios.length - judged.length} couldn't be judged and are left out` : ""}`, "");
+  lines2.push("Judge score (all scenarios, head to head: 50 is even)", `  Before: ${judgeBefore.toFixed(1)}  After: ${judgeAfter.toFixed(1)}  Change: ${signed(judgeAfter - judgeBefore)}`, "");
   let rateDrop = 0, rateChange = null;
   if (goal.checks?.some((c) => c.trim())) {
     const both = judged.filter(([b, a]) => [b, a].every((r) => typeof r.failed === "number" && typeof r.applicable === "number"));
     const rateBefore = checkRate(both.map(([b]) => b)), rateAfter = checkRate(both.map(([, a]) => a));
-    if (rateBefore === null || rateAfter === null) lines.push("Check pass rate", "  Couldn't be measured: no check applied to these test cases, or the checker's answers were incomplete.", "");
+    if (rateBefore === null || rateAfter === null) lines2.push("Check pass rate", "  Couldn't be measured: no check applied to these test cases, or the checker's answers were incomplete.", "");
     else {
       rateDrop = rateBefore - rateAfter;
       rateChange = rateAfter - rateBefore;
-      lines.push("Check pass rate", `  Before: ${rateBefore}%  After: ${rateAfter}%  Change: ${signed(rateChange, 0)}pp`, "");
+      lines2.push("Check pass rate", `  Before: ${rateBefore}%  After: ${rateAfter}%  Change: ${signed(rateChange, 0)}pp`, "");
     }
   }
   const costBefore = sumCosts(replyCosts.get(from)), costAfter = sumCosts(replyCosts.get(to));
-  lines.push(...costSection(costBefore, costAfter));
+  lines2.push(...costSection(costBefore, costAfter));
   const judgeDrop = judgeBefore - judgeAfter;
   const worse = [];
   if (judgeDrop > MAX_DROP) worse.push(`judge score dropped more than ${MAX_DROP} points`);
   if (rateDrop > MAX_DROP) worse.push(`check pass rate dropped more than ${MAX_DROP}pp`);
   const cheaper = costBefore !== null && costAfter !== null && costAfter < costBefore;
   const better = judgeAfter - judgeBefore > MAX_DROP || (rateChange ?? 0) > MAX_DROP;
-  if (parsed.dryRun) lines.push("Verdict: none from a dry run. Run again without --dry-run to compare real replies.");
-  else if (worse.length) lines.push(`Verdict: ${worse.join("; ")}. Review before switching.`);
-  else if (cheaper) lines.push(`Verdict: Looks good: ${better ? "better" : "similar"} quality, lower cost.`);
-  else lines.push(`Verdict: Review before switching. ${costBefore === null || costAfter === null ? "The cost couldn't be worked out." : "The new model doesn't cost less."}`);
-  lines.push("", "This is one run on each model, so small changes can be the judge varying. `npx synthe try --noise` shows how much it varies.");
+  if (parsed.dryRun) lines2.push("Verdict: none from a dry run. Run again without --dry-run to compare real replies.");
+  else if (worse.length) lines2.push(`Verdict: ${worse.join("; ")}. Review before switching.`);
+  else if (cheaper) lines2.push(`Verdict: Looks good: ${better ? "better" : "similar"} quality, lower cost.`);
+  else lines2.push(`Verdict: Review before switching. ${costBefore === null || costAfter === null ? "The cost couldn't be worked out." : "The new model doesn't cost less."}`);
+  lines2.push("", "This is one run on each model, so small changes can be the judge varying. `npx synthe try --noise` shows how much it varies.");
   const spent = sumCosts(costs);
-  lines.push(parsed.dryRun ? `Cost of this comparison: $0.00 (dry run). A real run would cost about ${money3(spent)}.` : `Cost of this comparison: ${money3(spent)}`);
-  say(lines.join("\n"));
+  lines2.push(parsed.dryRun ? `Cost of this comparison: $0.00 (dry run). A real run would cost about ${money3(spent)}.` : `Cost of this comparison: ${money3(spent)}`);
+  say(lines2.join("\n"));
   return 0;
 }
 
@@ -31542,8 +31548,8 @@ function lessonLine(l) {
   return clip3(`${head}${summary}${tail}`, LINE_MAX);
 }
 var lessonsFile = (gitRoot) => join12(gitRoot, ".synthe", "improve-lessons.md");
-function appendLessons(gitRoot, lines) {
-  const clean = lines.map((l) => oneLine2(l).replace(/^- /, "")).filter(Boolean);
+function appendLessons(gitRoot, lines2) {
+  const clean = lines2.map((l) => oneLine2(l).replace(/^- /, "")).filter(Boolean);
   if (!clean.length) return;
   const file = lessonsFile(gitRoot);
   mkdirSync5(join12(gitRoot, ".synthe"), { recursive: true });
@@ -31564,12 +31570,12 @@ function readLessons(gitRoot, max = 20) {
   } catch {
     return [];
   }
-  const lines = text2.split(/\r?\n/).filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim()).filter(Boolean);
-  return max > 0 ? lines.slice(-max) : [];
+  const lines2 = text2.split(/\r?\n/).filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim()).filter(Boolean);
+  return max > 0 ? lines2.slice(-max) : [];
 }
-function upsertLessonsBlock(fileText, lines) {
+function upsertLessonsBlock(fileText, lines2) {
   const eol = fileText.includes("\r\n") ? "\r\n" : "\n";
-  const bullets = lines.map((l) => oneLine2(l).replace(/^- /, "")).filter(Boolean).slice(-BLOCK_MAX).map((l) => `- ${l}`);
+  const bullets = lines2.map((l) => oneLine2(l).replace(/^- /, "")).filter(Boolean).slice(-BLOCK_MAX).map((l) => `- ${l}`);
   const block = [START, INTRO, CODE_WINS, ...bullets, END].join(eol);
   const MARK = "\0synthe-block\0";
   let found = false;
@@ -31658,9 +31664,9 @@ function presetsForRepo(top) {
 }
 var NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 function lastNumber(stdout) {
-  const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => NUMBER.test(l));
-  if (!lines.length) return null;
-  const n = Number(lines.at(-1));
+  const lines2 = stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => NUMBER.test(l));
+  if (!lines2.length) return null;
+  const n = Number(lines2.at(-1));
   return Number.isFinite(n) ? n : null;
 }
 var lastMatch = (text2, re2) => {
@@ -32025,7 +32031,7 @@ function checkEdits(dir, edits, shown, config) {
   if (!Array.isArray(edits) || edits.length === 0) return { problem: "no edits" };
   if (edits.length > MAX_EDITS2) return { problem: `${edits.length} edits; at most ${MAX_EDITS2} are allowed` };
   const texts = /* @__PURE__ */ new Map();
-  let lines = 0;
+  let lines2 = 0;
   for (const e of edits) {
     if (typeof e?.path !== "string" || typeof e.search !== "string" || typeof e.replace !== "string") return { problem: "an edit is malformed" };
     const path4 = cleanPath(e.path);
@@ -32050,7 +32056,7 @@ function checkEdits(dir, edits, shown, config) {
       if (entry.original !== null || entry.text !== "") return { problem: `the search text for ${path4} is empty, but that file already exists` };
       if (!replace.trim()) return { problem: `${path4} would be created empty` };
       entry.text = replace;
-      lines += changedLines("", replace);
+      lines2 += changedLines("", replace);
       continue;
     }
     if (entry.text.includes("\r\n") && !search.includes("\r")) {
@@ -32062,12 +32068,12 @@ function checkEdits(dir, edits, shown, config) {
     if (n > 1) return { problem: `the search text for ${path4} appears ${n} times; it must appear once` };
     const at = entry.text.indexOf(search);
     entry.text = entry.text.slice(0, at) + replace + entry.text.slice(at + search.length);
-    lines += changedLines(e.search, e.replace);
+    lines2 += changedLines(e.search, e.replace);
   }
   const writes = [...texts].filter(([, t]) => t.text !== t.original).map(([path4, t]) => ({ path: path4, text: t.text, created: t.original === null }));
   if (!writes.length) return { problem: "the edits change nothing" };
-  if (lines > MAX_CHANGED_LINES) return { problem: `the change is about ${lines} lines; the limit is ${MAX_CHANGED_LINES}` };
-  return { writes, changedLines: lines };
+  if (lines2 > MAX_CHANGED_LINES) return { problem: `the change is about ${lines2} lines; the limit is ${MAX_CHANGED_LINES}` };
+  return { writes, changedLines: lines2 };
 }
 
 // src/improve/loop.ts
@@ -32172,6 +32178,10 @@ async function runLoop(io2, o) {
     const line = lessonLine({ round: r.round, kept: r.kept, summary: r.summary, before: r.before, after: r.value, unit: config.metric.unit, ...r.kept ? {} : { why: r.why } });
     lessons.push(line);
     try {
+      o.hooks?.round?.(r, line);
+    } catch {
+    }
+    try {
       appendLessons(gitDir, [line]);
     } catch {
     }
@@ -32214,11 +32224,27 @@ async function runLoop(io2, o) {
         const reply = await proposeEdits(model, ctx, shown);
         spentThisRound.push(reply.costUsd);
         const paths = shown.map((f) => f.path);
-        if (!reply.proposal) return skip("nothing tried", "the model's reply was not usable", paths);
+        const tell = (summary2, edits2, refused, changedLines2) => {
+          try {
+            o.hooks?.candidate?.({ round: n, summary: summary2, shown, edits: edits2, refused, changedLines: changedLines2 });
+          } catch {
+          }
+        };
+        if (!reply.proposal) {
+          tell("(no usable reply)", [], "the model's reply was not usable", null);
+          return skip("nothing tried", "the model's reply was not usable", paths);
+        }
         const { summary, edits } = reply.proposal;
-        if (!edits.length) return skip(summary, "no change proposed", paths);
+        if (!edits.length) {
+          tell(summary, [], "no change proposed", null);
+          return skip(summary, "no change proposed", paths);
+        }
         const checked = checkEdits(dir, edits, new Set(paths), config);
-        if ("problem" in checked) return skip(summary, `edit refused: ${checked.problem}`, paths);
+        if ("problem" in checked) {
+          tell(summary, edits, checked.problem, null);
+          return skip(summary, `edit refused: ${checked.problem}`, paths);
+        }
+        tell(summary, edits, null, checked.changedLines);
         const changed = checked.writes.map((w) => w.path);
         io2.say(`Round ${n}: trying "${summary}" (${changed.join(", ")})`);
         for (const w of checked.writes) {
@@ -32240,6 +32266,10 @@ Proposed by Synthe (npx synthe improve), round ${n}. Kept only if it measures be
         continue;
       }
       const m = await measureAt(io2.exec, top, proposed.commit, config, io2.say);
+      try {
+        o.hooks?.measured?.({ ...m, round: n, commit: proposed.commit });
+      } catch {
+      }
       const record = { round: n, summary: proposed.summary, kept: false, value: m.measurement?.median ?? null, why: "", before, files: proposed.files, costUsd: sumCosts(spentThisRound), commit: proposed.commit };
       if (!m.measurement) record.why = `the metric gave no number: ${(m.reason ?? "no output").replace(/\.$/, "")}`;
       else {
@@ -32301,6 +32331,296 @@ async function publish(io2, a) {
     }
   }
   return out;
+}
+
+// src/improve/receipt.ts
+import { performance } from "node:perf_hooks";
+import { randomUUID as randomUUID3 } from "node:crypto";
+var RECORD_NOTICE = "Event credit: the organizers receive a record of this run \u2014 what this terminal shows, your settings, the code changes Claude proposes and the measurements; secrets are removed.";
+var RECORD_NOTICE_VERSION = "crimson-improve-2026-11-v1";
+var MAX_BATCH_BYTES = 64 * 1024;
+var MAX_BATCH_EVENTS = 200;
+var MAX_DIFF_CHARS = 20 * 1024;
+var MAX_TAIL_CHARS = 2048;
+var SEND_TIMEOUT_MS = 5e3;
+var GIVE_UP_AFTER = 2;
+var CLOSE_WAIT_MS = 6e3;
+var EVENT_BUDGET = 40 * 1024;
+var CONTROL2 = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f‎‏‪-‮⁦-⁩؜]/g;
+var SHAPES = [
+  [/\bcrim(-[a-z0-9]{4}){4}\b/gi, "[team code removed]"],
+  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "[token removed]"],
+  [/\bbearer[ \t]+[A-Za-z0-9._~+/=-]{8,}/gi, "Bearer [token removed]"],
+  [/\b(github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,})\b/g, "[key removed]"]
+];
+function cleanText(text2, env, max) {
+  let out = redactSecrets(String(text2)).replace(CONTROL2, "");
+  for (const [shape, replacement] of SHAPES) out = out.replace(shape, replacement);
+  for (const [name, replacement] of [["SYNTHE_EVENT_CODE", "[event code removed]"], ["SYNTHE_TEAM_CODE", "[team code removed]"], ["SYNTHE_ANTHROPIC_KEY", "[key removed]"], ["ANTHROPIC_API_KEY", "[key removed]"], ["GH_TOKEN", "[token removed]"], ["GITHUB_TOKEN", "[token removed]"]]) {
+    const value = env[name]?.trim();
+    if (value && value.length >= 4) out = out.split(value).join(replacement);
+  }
+  return out.length > max ? `${out.slice(0, max)}\u2026` : out;
+}
+var lines = (text2) => text2 === "" ? [] : text2.replace(/\n$/, "").split("\n");
+function unifiedDiff(path4, before, after) {
+  const a = lines(before), b = lines(after);
+  let start2 = 0;
+  while (start2 < a.length && start2 < b.length && a[start2] === b[start2]) start2++;
+  let end = 0;
+  while (end < a.length - start2 && end < b.length - start2 && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
+  const ctxBefore = Math.min(3, start2), ctxAfter = Math.min(3, end);
+  const removed = a.slice(start2, a.length - end), added = b.slice(start2, b.length - end);
+  const head = a.slice(start2 - ctxBefore, start2), tail = a.slice(a.length - end, a.length - end + ctxAfter);
+  const oldLen = ctxBefore + removed.length + ctxAfter, newLen = ctxBefore + added.length + ctxAfter;
+  const oldStart = before === "" ? 0 : start2 - ctxBefore + 1, newStart = after === "" ? 0 : start2 - ctxBefore + 1;
+  const body = [...head.map((l) => ` ${l}`), ...removed.map((l) => `-${l}`), ...added.map((l) => `+${l}`), ...tail.map((l) => ` ${l}`)];
+  return [`--- ${before === "" ? "/dev/null" : `a/${path4}`}`, `+++ ${after === "" ? "/dev/null" : `b/${path4}`}`, `@@ -${oldStart},${oldLen} +${newStart},${newLen} @@`, ...body].join("\n");
+}
+function candidateDiff(shown, edits) {
+  const texts = new Map(shown.map((f) => [f.path, { before: f.text, after: f.text }]));
+  for (const e of edits) {
+    if (typeof e?.path !== "string" || typeof e.search !== "string" || typeof e.replace !== "string") continue;
+    const path4 = e.path.trim().replace(/^\.\//, "");
+    const entry = texts.get(path4) ?? { before: "", after: "" };
+    if (e.search === "") entry.after = entry.after === "" ? e.replace : entry.after;
+    else {
+      const at = entry.after.indexOf(e.search);
+      entry.after = at === -1 ? `${entry.after}
+@@ edit not applied: search text not found @@
+-${e.search.split("\n").join("\n-")}
++${e.replace.split("\n").join("\n+")}` : entry.after.slice(0, at) + e.replace + entry.after.slice(at + e.search.length);
+    }
+    texts.set(path4, entry);
+  }
+  const files = [...texts].filter(([, t]) => t.before !== t.after).map(([path4]) => path4);
+  let diff = files.map((path4) => unifiedDiff(path4, texts.get(path4).before, texts.get(path4).after)).join("\n");
+  const cut = diff.length > MAX_DIFF_CHARS;
+  if (cut) diff = `${diff.slice(0, MAX_DIFF_CHARS)}
+... cut at ${Math.round(MAX_DIFF_CHARS / 1024)} KB`;
+  return { diff, cut, files };
+}
+var purposeOf = (a) => {
+  const props = a.schema?.properties ?? {};
+  return "paths" in props ? "pick" : "edits" in props ? "propose" : "other";
+};
+var firstLine2 = (e) => (e?.message ?? String(e)).trim().split("\n")[0];
+var tailOf = (text2) => text2.length > MAX_TAIL_CHARS ? text2.slice(-MAX_TAIL_CHARS) : text2;
+var RunRecord = class {
+  runId = randomUUID3();
+  summary = { metric: null, baseline: null, best: null, rounds: [], stop_reason: null, cost_usd: null, pr_url: null, mode: null, status: "running", outcome: null };
+  run;
+  sent = [];
+  pending = [];
+  pendingBytes = 0;
+  seq = 0;
+  count = 0;
+  chain = Promise.resolve();
+  failures = 0;
+  closed = false;
+  url;
+  headers;
+  o;
+  constructor(o) {
+    this.o = o;
+    const now = (o.now ?? (() => /* @__PURE__ */ new Date()))();
+    this.run = {
+      version: o.version ?? package_default.version,
+      node: o.node ?? process.version,
+      platform: o.platform ?? process.platform,
+      arch: o.arch ?? process.arch,
+      repo: null,
+      default_branch: null,
+      head: null,
+      agent: o.agent,
+      command: o.command,
+      notice: RECORD_NOTICE_VERSION,
+      started: now.toISOString()
+    };
+    this.url = `${(o.env.SYNTHE_PROXY_URL || PROXY_URL).replace(/\/+$/, "")}/improve`;
+    this.headers = {
+      "content-type": "application/json",
+      "x-synthe-event": o.env.SYNTHE_EVENT_CODE.trim(),
+      "x-synthe-team": normalizeTeamCode(o.env.SYNTHE_TEAM_CODE),
+      "x-synthe-install": (o.installId ?? (() => setupInstallId(process.env)))()
+    };
+  }
+  get dead() {
+    return this.failures >= GIVE_UP_AFTER;
+  }
+  get batches() {
+    return this.seq;
+  }
+  clean(text2, max) {
+    return text2 === null || text2 === void 0 ? null : cleanText(String(text2), this.o.env, max);
+  }
+  now() {
+    return (this.o.now ?? (() => /* @__PURE__ */ new Date()))().toISOString();
+  }
+  // One record of something that happened. Strings are cleaned here; numbers and booleans pass as they are.
+  event(type, data = {}) {
+    if (this.closed) return;
+    const out = { i: ++this.count, t: this.now(), type };
+    for (const [key, value] of Object.entries(data)) {
+      if (value === void 0) continue;
+      if (typeof value === "string") out[key] = this.clean(value, key === "diff" ? MAX_DIFF_CHARS + 100 : key === "text" || key === "tail" || key === "card" || key === "stack" || key === "goal" ? 4e3 : 500);
+      else if (Array.isArray(value)) out[key] = value.slice(0, 50).map((item) => typeof item === "string" ? this.clean(item, 500) : typeof item === "number" && Number.isFinite(item) ? item : null);
+      else if (typeof value === "number") out[key] = Number.isFinite(value) ? value : null;
+      else out[key] = value ?? null;
+    }
+    this.pending.push(out);
+    this.pendingBytes += JSON.stringify(out).length + 1;
+    if (this.pendingBytes >= EVENT_BUDGET || this.pending.length >= MAX_BATCH_EVENTS) this.flush();
+  }
+  setRepo(repo, defaultBranch, head) {
+    this.run.repo = repo && /^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[\w.-]{1,100}$/.test(repo) ? repo : null;
+    this.run.default_branch = defaultBranch ? cleanText(defaultBranch, this.o.env, 100) : null;
+    this.run.head = head && /^[0-9a-f]{40}$/.test(head) ? head : null;
+  }
+  configured(config) {
+    this.summary.metric = { label: cleanText(config.metric.label, this.o.env, 80), unit: cleanText(config.metric.unit, this.o.env, 20), direction: config.metric.direction, preset: config.metric.preset };
+    this.summary.mode = config.mode;
+    if (config.baseline.commit) this.baselined(config.baseline);
+  }
+  baselined(m) {
+    this.summary.baseline = { median: m.median, runs: m.runs.slice(0, 10) };
+    this.summary.best = { median: m.median };
+  }
+  round(r, best) {
+    if (this.summary.rounds.length < 40) this.summary.rounds.push({ n: r.round, kept: r.kept, summary: cleanText(r.summary, this.o.env, 200), value: r.value, why: cleanText(r.why, this.o.env, 200), cost_usd: r.costUsd });
+    if (best !== null) this.summary.best = { median: best };
+    const costs = this.summary.rounds.map((x) => x.cost_usd);
+    this.summary.cost_usd = costs.every((c) => c !== null) ? costs.reduce((a, b) => a + b, 0) : null;
+  }
+  finished(outcome, a = {}) {
+    this.summary.status = "finished";
+    this.summary.outcome = outcome;
+    if (a.stopReason !== void 0) this.summary.stop_reason = a.stopReason === null ? null : cleanText(a.stopReason, this.o.env, 300);
+    if (a.prUrl !== void 0) this.summary.pr_url = a.prUrl && /^https:\/\/github\.com\/[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[\w.-]{1,100}\/pull\/\d{1,10}$/.test(a.prUrl) ? a.prUrl : null;
+    if (a.costUsd !== void 0) this.summary.cost_usd = a.costUsd;
+  }
+  // Everything the person sees, asks and runs goes through the record on its way.
+  wrap(io2) {
+    return {
+      ...io2,
+      say: (t) => {
+        this.event("say", { text: t });
+        io2.say(t);
+      },
+      ask: async (q) => {
+        const answer = await io2.ask(q);
+        this.event("ask", { question: q, answer });
+        return answer;
+      },
+      exec: (async (cwd, command, timeoutMs) => {
+        const r = await io2.exec(cwd, command, timeoutMs);
+        this.event("command", { command, ok: r.ok, ms: r.ms, timed_out: r.timedOut, tail: r.ok ? null : tailOf([r.stdout.trimEnd(), r.stderr.trimEnd()].filter(Boolean).join("\n")) });
+        return r;
+      })
+    };
+  }
+  model(m) {
+    return {
+      ask: async (a) => {
+        const started = performance.now(), base = { purpose: purposeOf(a), model: a.model, effort: "low", max_tokens: a.maxTokens };
+        try {
+          const r = await m.ask(a);
+          this.event("model", { ...base, input_tokens: r.usage?.input ?? null, output_tokens: r.usage?.output ?? null, cost_usd: r.costUsd, stop_reason: r.stopReason ?? null, ms: Math.round(performance.now() - started), ok: r.text !== null, error: null });
+          return r;
+        } catch (e) {
+          this.event("model", { ...base, input_tokens: null, output_tokens: null, cost_usd: null, stop_reason: null, ms: Math.round(performance.now() - started), ok: false, error: firstLine2(e) });
+          throw e;
+        }
+      }
+    };
+  }
+  // Sends what is pending, in batches the proxy accepts, one after another in the background. Never throws.
+  flush(final = false) {
+    const batches = [];
+    let current = [], size = 0;
+    for (const event of this.pending) {
+      const length = JSON.stringify(event).length + 1;
+      if (current.length && (size + length > EVENT_BUDGET || current.length >= MAX_BATCH_EVENTS)) {
+        batches.push(current);
+        current = [];
+        size = 0;
+      }
+      current.push(event);
+      size += length;
+    }
+    if (current.length || final && !batches.length) batches.push(current);
+    this.pending = [];
+    this.pendingBytes = 0;
+    for (const [index, events] of batches.entries()) {
+      const seq = ++this.seq, body = JSON.stringify({ schema: 1, run_id: this.runId, seq, final: final && index === batches.length - 1, run: this.run, summary: this.summary, events });
+      this.chain = this.chain.then(() => this.send(seq, events.length, body));
+    }
+    return this.chain;
+  }
+  async send(seq, events, body) {
+    if (this.dead) {
+      this.sent.push({ seq, events, status: null });
+      return;
+    }
+    const fetcher = this.o.fetcher ?? fetch;
+    const once = async () => {
+      const response = await fetcher(this.url, { method: "POST", headers: this.headers, body, signal: AbortSignal.timeout(SEND_TIMEOUT_MS), redirect: "error" });
+      return response.status;
+    };
+    let status2 = null;
+    try {
+      status2 = await once();
+    } catch (e) {
+      if (e?.name !== "TimeoutError") {
+        try {
+          status2 = await once();
+        } catch {
+          status2 = null;
+        }
+      }
+    }
+    this.sent.push({ seq, events, status: status2 });
+    if (status2 !== null && status2 < 500) this.failures = 0;
+    else this.failures++;
+  }
+  // The last batch, waited for only briefly: a slow or dead proxy must not hold the exit.
+  async close() {
+    if (this.closed) return;
+    const done = this.flush(true);
+    this.closed = true;
+    await Promise.race([done, new Promise((resolve2) => setTimeout(resolve2, CLOSE_WAIT_MS).unref?.())]);
+  }
+  // Ctrl-C: nothing can be waited for; the caller races this against its own exit.
+  interrupt() {
+    this.event("interrupt");
+    if (this.summary.status === "running") this.finished("interrupted");
+    return this.close();
+  }
+};
+function startRecord(o) {
+  if (o.env.SYNTHE_ANTHROPIC_KEY?.trim()) return null;
+  if (!o.env.SYNTHE_EVENT_CODE?.trim() || !TEAM_CODE.test(normalizeTeamCode(o.env.SYNTHE_TEAM_CODE ?? ""))) return null;
+  try {
+    return new RunRecord(o);
+  } catch {
+    return null;
+  }
+}
+async function recorded(record, fn) {
+  if (!record) return fn();
+  try {
+    const ok = await fn();
+    if (record.summary.status === "running") record.finished(ok ? "win" : "early-exit");
+    record.event("exit", { ok, code: ok ? 0 : 1 });
+    return ok;
+  } catch (e) {
+    const error = e;
+    record.event("crash", { message: firstLine2(e), stack: (error?.stack ?? "").split("\n").slice(0, 6).join("\n") });
+    if (record.summary.status === "running") record.finished("crashed", { stopReason: firstLine2(e) });
+    throw e;
+  } finally {
+    await record.close();
+  }
 }
 
 // src/cli/improve.ts
@@ -32388,7 +32708,7 @@ function improveOptions(args) {
   }
   return o;
 }
-var firstLine2 = (e) => (e.message ?? String(e)).trim().split("\n")[0];
+var firstLine3 = (e) => (e.message ?? String(e)).trim().split("\n")[0];
 async function preflight(io2, dirtyMessage, more) {
   const problems = [];
   const tryRun = async (cmd, args) => {
@@ -32398,7 +32718,7 @@ async function preflight(io2, dirtyMessage, more) {
       return { error: e };
     }
   };
-  let top = "", head = "", gitDir = "", defaultBranch = "";
+  let top = "", head = "", gitDir = "", defaultBranch = "", slug = null;
   const topRun = await tryRun("git", ["rev-parse", "--show-toplevel"]);
   if ("error" in topRun) problems.push("This folder is not inside a git repository. Run this inside your project's folder.");
   else {
@@ -32416,13 +32736,16 @@ async function preflight(io2, dirtyMessage, more) {
     const view = await tryRun("gh", ["repo", "view", "--json", "nameWithOwner,defaultBranchRef"]);
     try {
       if ("error" in view) throw view.error;
-      defaultBranch = JSON.parse(view.out).defaultBranchRef?.name || "main";
+      const parsed = JSON.parse(view.out);
+      defaultBranch = parsed.defaultBranchRef?.name || "main";
+      slug = typeof parsed.nameWithOwner === "string" ? parsed.nameWithOwner : null;
     } catch {
       problems.push("GitHub can't find this repo. Push it to GitHub first (for example gh repo create --source . --push), then run this again.");
     }
   }
-  if (more) problems.push(...await more({ top, head, gitDir, defaultBranch }));
-  return problems.length ? { problems } : { problems, repo: { top, head, gitDir, defaultBranch } };
+  const found = { top, head, gitDir, defaultBranch, slug };
+  if (more) problems.push(...await more(found));
+  return problems.length ? { problems, found } : { problems, repo: found, found };
 }
 function loopCredential(env) {
   const key = env.SYNTHE_ANTHROPIC_KEY?.trim(), eventCode = env.SYNTHE_EVENT_CODE?.trim(), team = env.SYNTHE_TEAM_CODE?.trim();
@@ -32474,19 +32797,27 @@ function presetLine(p, i) {
   return `${i + 1}. ${p.id}: ${p.label} (${p.direction} is better; measures ${p.command}${p.guard ? `; regression check: ${p.guard}` : ""})`;
 }
 async function improve(io2, root, options) {
+  const record = startRecord({ env: io2.env ?? {}, command: options.handoff ? "improve --handoff" : options.list ? "improve --list" : "improve", agent: options.agent, fetcher: io2.fetcher });
+  return recorded(record, () => improveRun(record ? record.wrap(io2) : io2, root, options, record));
+}
+async function improveRun(io2, root, options, record) {
+  if (record) io2.say(RECORD_NOTICE);
+  record?.event("settings", { goal: options.goal ?? null, preset: options.metric ?? null, label: options.label ?? null, unit: options.unit ?? null, command: options.command ?? null, direction: options.direction ?? null, guard: options.guard ?? null, mode: options.mode ?? null, rounds: options.rounds, budget_usd: options.budgetUsd, protect: options.protect, lessons: options.lessons ?? null, agent: options.agent, handoff: options.handoff, list: options.list });
   const loop = !options.handoff && !options.list;
   const chosen = loop ? loopCredential(io2.env ?? {}) : null;
   let base = "";
-  const { problems, repo } = await preflight(io2, "Commit your changes first: Synthe measures committed code.", loop ? async (found) => {
+  const { problems, repo, found } = await preflight(io2, "Commit your changes first: Synthe measures committed code.", loop ? async (found2) => {
     const more = chosen && "problem" in chosen ? [chosen.problem] : [];
-    if (found.head && found.defaultBranch) {
-      const b = await pullRequestBase(io2, found.defaultBranch, found.head);
+    if (found2.head && found2.defaultBranch) {
+      const b = await pullRequestBase(io2, found2.defaultBranch, found2.head);
       if ("problem" in b) more.push(b.problem);
       else base = b.base;
     }
     return more;
   } : void 0);
+  record?.setRepo(found?.slug ?? null, found?.defaultBranch || null, found?.head || null);
   if (!repo) {
+    record?.event("preflight", { problems });
     io2.say("Synthe can't start yet. Fix these, then run npx synthe improve again:");
     for (const p of problems) io2.say(`- ${p}`);
     return false;
@@ -32494,6 +32825,7 @@ async function improve(io2, root, options) {
   const top = repo.top || root;
   const presets = presetsForRepo(top);
   if (options.list) {
+    record?.finished("early-exit");
     io2.say("Metrics this repo can measure:");
     presets.forEach((p, i) => io2.say(presetLine(p, i)));
     if (options.agent) io2.say(IMPROVE_LIST_NEXT);
@@ -32503,11 +32835,15 @@ async function improve(io2, root, options) {
   if (credential) io2.say(credential.line);
   const draft = await settle(io2, options, presets, loop ? base : repo.defaultBranch, top);
   if (!draft) return false;
+  record?.configured(draft);
+  record?.event("settings", { goal: draft.goal, preset: draft.metric.preset, label: draft.metric.label, unit: draft.metric.unit, command: draft.metric.command, direction: draft.metric.direction, guard: draft.guard.command, mode: draft.mode, rounds: options.rounds, budget_usd: options.budgetUsd, protect: draft.protect, handoff: options.handoff, agent: options.agent });
   let measured;
   try {
     measured = await measureAt(io2.exec, top, repo.head, draft, io2.say);
+    record?.event("measurement", { round: 0, commit: repo.head, median: measured.measurement?.median ?? null, runs: measured.measurement?.runs ?? [], guard_passed: measured.guardPassed, reason: measured.reason ?? null, metric_ms: measured.metricMs });
   } catch (e) {
-    io2.say(`${firstLine2(e)} Nothing was written.`);
+    record?.event("measurement", { round: 0, commit: repo.head, median: null, runs: [], guard_passed: null, reason: firstLine3(e), metric_ms: 0 });
+    io2.say(`${firstLine3(e)} Nothing was written.`);
     return false;
   }
   if (!measured.measurement) {
@@ -32522,29 +32858,53 @@ async function improve(io2, root, options) {
   const config = parseImproveConfig(JSON.stringify({ ...draft, baseline: measured.measurement }));
   writeFileSync7(improveFile(repo.gitDir), `${JSON.stringify(config, null, 2)}
 `);
+  record?.baselined(config.baseline);
   if (!credential) {
     const existing = (await io2.run("git", ["branch", "--list", "synthe/improve-*"])).split("\n").filter((l) => l.trim()).length;
+    const card = taskCard(config, IMPROVE_BRANCH(existing + 1));
+    record?.event("handoff", { card, branch: IMPROVE_BRANCH(existing + 1) });
+    record?.finished("handoff");
     io2.say("");
-    io2.say(taskCard(config, IMPROVE_BRANCH(existing + 1)));
+    io2.say(card);
     if (options.agent) io2.say(IMPROVE_NEXT);
     return true;
   }
-  return improveLoop(io2, options, { top, gitDir: repo.gitDir, base, config, credential });
+  return improveLoop(io2, options, { top, gitDir: repo.gitDir, base, config, credential, record });
 }
 async function improveLoop(io2, o, a) {
-  const { top, config, base } = a;
+  const { top, config, base, record } = a;
   const { metric } = config;
   io2.say(baselineLine(config));
   io2.say(`Synthe now proposes up to ${o.rounds} changes, one per round, measures each one the same way and keeps only wins (budget ${money4(o.budgetUsd)}). Your working tree is not touched. Press Ctrl-C to stop.`);
-  const model = (io2.makeModel ?? credentialModel2)(a.credential);
-  const stopWatching = io2.onInterrupt?.(() => removeScratchCheckouts(top));
+  const made = (io2.makeModel ?? credentialModel2)(a.credential);
+  const model = record ? record.model(made) : made;
+  const stopWatching = io2.onInterrupt?.(() => {
+    removeScratchCheckouts(top);
+    return record?.interrupt();
+  });
+  const hooks = record ? {
+    candidate: (c) => {
+      const { diff, cut, files } = candidateDiff(c.shown, c.edits);
+      record.event("candidate", { round: c.round, summary: c.summary, files, diff, cut, changed_lines: c.changedLines, refused: c.refused });
+    },
+    measured: (m) => record.event("measurement", { round: m.round, commit: m.commit, median: m.measurement?.median ?? null, runs: m.measurement?.runs ?? [], guard_passed: m.guardPassed, reason: m.reason ?? null, metric_ms: m.metricMs }),
+    round: (r, lesson) => {
+      record.round(r, r.kept ? r.value : null);
+      record.event("round", { n: r.round, kept: r.kept, summary: r.summary, value: r.value, why: r.why, cost_usd: r.costUsd, before: r.before, lesson, files: r.files });
+      record.flush();
+    }
+  } : void 0;
   try {
-    const result = await runLoop(io2, { top, gitDir: a.gitDir, config, model, rounds: o.rounds, budgetUsd: o.budgetUsd });
+    const result = await runLoop(io2, { top, gitDir: a.gitDir, config, model, rounds: o.rounds, budgetUsd: o.budgetUsd, hooks });
     const kept = result.rounds.filter((r) => r.kept).length;
     const total = result.costKnown ? money4(result.spentUsd) : `at least ${money4(result.spentUsd)} (some costs unknown)`;
     io2.say("");
     io2.say(result.stopped);
+    record?.event("stop", { reason: result.stopped });
+    const credit = /credit|Synthe table|proxy/i.test(result.stopped) && /Stopped in round/.test(result.stopped);
     if (!kept) {
+      record?.finished(credit ? "credit" : "no-win", { stopReason: result.stopped, costUsd: result.costKnown ? result.spentUsd : null });
+      record?.event("result", { outcome: credit ? "credit" : "no-win", kept: 0, rounds: result.rounds.length, before: config.baseline.median, after: result.best.median, cost_usd: result.spentUsd, cost_known: result.costKnown, pr_url: null, merged: null, problem: null, branch: null });
       io2.say(`No change beat the current code (${quantity(config.baseline.median, metric)}), so nothing was pushed and no pull request was opened.`);
       if (result.rounds.length) {
         io2.say("What was tried:");
@@ -32569,6 +32929,8 @@ async function improveLoop(io2, o, a) {
       title: loopPrTitle(config, result.best),
       body: (lessonsCommit, diffstat, lessonsFiles) => loopPrBody({ config, best: result.best, rows: result.rounds, spentUsd: result.spentUsd, costKnown: result.costKnown, stopped: result.stopped, base, lessonsCommit, lessonsFiles, diffstat, model: EDIT_MODEL })
     });
+    record?.finished(credit ? "credit" : "win", { stopReason: result.stopped, costUsd: result.costKnown ? result.spentUsd : null, prUrl: published.url ?? null });
+    record?.event("result", { outcome: credit ? "credit" : "win", kept, rounds: result.rounds.length, before: config.baseline.median, after: result.best.median, cost_usd: result.spentUsd, cost_known: result.costKnown, pr_url: published.url ?? null, merged: published.merged ?? null, problem: published.problem ?? null, branch });
     if (!published.url) {
       io2.say(published.problem);
       return false;
@@ -32649,10 +33011,18 @@ function submitOptions(args) {
   }
   return { agent };
 }
-var firstLine3 = (e) => (e.message ?? String(e)).trim().split("\n")[0];
-async function submit(io2, _root, options) {
-  const { problems, repo } = await preflight(io2, "Commit your change first.");
+var firstLine4 = (e) => (e.message ?? String(e)).trim().split("\n")[0];
+async function submit(io2, root, options) {
+  const record = startRecord({ env: io2.env ?? {}, command: "submit", agent: options.agent, fetcher: io2.fetcher });
+  return recorded(record, () => submitRun(record ? record.wrap(io2) : io2, root, options, record));
+}
+async function submitRun(io2, _root, options, record) {
+  if (record) io2.say(RECORD_NOTICE);
+  record?.event("settings", { agent: options.agent });
+  const { problems, repo, found } = await preflight(io2, "Commit your change first.");
+  record?.setRepo(found?.slug ?? null, found?.defaultBranch || null, found?.head || null);
   if (!repo) {
+    record?.event("preflight", { problems });
     io2.say("Synthe can't measure this yet. Fix these, then run npx synthe submit again:");
     for (const p of problems) io2.say(`- ${p}`);
     return false;
@@ -32675,6 +33045,7 @@ async function submit(io2, _root, options) {
     io2.say(`${e.message}. Run npx synthe improve again.`);
     return false;
   }
+  record?.configured(config);
   try {
     await io2.run("git", ["fetch", "--quiet", "origin", def]);
   } catch {
@@ -32722,7 +33093,7 @@ async function submit(io2, _root, options) {
     }
     candidate = await measureAt(io2.exec, repo.top, repo.head, config, io2.say);
   } catch (e) {
-    io2.say(`${firstLine3(e)} Nothing was opened.`);
+    io2.say(`${firstLine4(e)} Nothing was opened.`);
     return false;
   }
   if (!candidate.measurement) {
@@ -32731,8 +33102,13 @@ async function submit(io2, _root, options) {
   }
   const f = (n) => formatValue(n, config.metric.unit);
   const v = verdict(config.metric.direction, baseline, candidate.measurement, candidate.guardPassed);
+  record?.baselined(baseline);
+  record?.event("measurement", { round: 1, commit: repo.head, median: candidate.measurement.median, runs: candidate.measurement.runs, guard_passed: candidate.guardPassed, reason: null, metric_ms: candidate.metricMs });
+  record?.round({ round: 1, kept: v.win, summary: `${changed.length} changed file${changed.length === 1 ? "" : "s"} on ${branch}`, value: candidate.measurement.median, why: v.why, costUsd: 0 }, v.win ? candidate.measurement.median : null);
+  record?.event("submit", { branch, changed_files: changed, before: baseline.median, after: candidate.measurement.median, win: v.win, why: v.why });
   io2.say(`${config.metric.label}: ${f(baseline.median)} \u2192 ${f(candidate.measurement.median)} (${config.metric.direction} is better).`);
   if (!v.win) {
+    record?.finished("not-merged", { stopReason: v.why, costUsd: 0 });
     io2.say(`Not merged: ${v.why}`);
     io2.say(`Your branch ${branch} is unchanged; nothing was pushed.`);
     if (options.agent) io2.say(SUBMIT_NEXT_LOSS);
@@ -32741,7 +33117,7 @@ async function submit(io2, _root, options) {
   try {
     await io2.run("git", ["push", "-u", "origin", "HEAD"]);
   } catch (e) {
-    io2.say(`It won, but Synthe could not push ${branch} (${firstLine3(e)}). Nothing was opened. Check you can push to this repo, then run npx synthe submit again.`);
+    io2.say(`It won, but Synthe could not push ${branch} (${firstLine4(e)}). Nothing was opened. Check you can push to this repo, then run npx synthe submit again.`);
     return false;
   }
   const diffstat = await io2.run("git", ["diff", "--stat", `${base}..HEAD`]);
@@ -32751,9 +33127,10 @@ async function submit(io2, _root, options) {
     const out = await io2.run("gh", ["pr", "create", "--base", def, "--head", branch, "--title", prTitle(config, candidate.measurement, baseline), "--body-file", "-"], body);
     url = out.trim().split("\n").at(-1).trim();
   } catch (e) {
-    io2.say(`It won, but Synthe could not open the pull request (${firstLine3(e)}). ${branch} is pushed; open the pull request on GitHub.`);
+    io2.say(`It won, but Synthe could not open the pull request (${firstLine4(e)}). ${branch} is pushed; open the pull request on GitHub.`);
     return false;
   }
+  record?.finished("submitted", { stopReason: null, prUrl: url, costUsd: 0 });
   io2.say(`Pull request: ${url}`);
   io2.say(v.why);
   if (config.mode === "auto") {
@@ -32761,7 +33138,7 @@ async function submit(io2, _root, options) {
       await io2.run("gh", ["pr", "merge", url, "--squash", "--delete-branch"]);
       io2.say(`Merged into ${def}. Run git pull.`);
     } catch (e) {
-      io2.say(`Could not merge it (${firstLine3(e)}): the pull request is open for a person to merge.`);
+      io2.say(`Could not merge it (${firstLine4(e)}): the pull request is open for a person to merge.`);
     }
   } else {
     io2.say("Review it there; merge it to keep the change.");
@@ -32772,7 +33149,7 @@ async function submit(io2, _root, options) {
 
 // src/improve/exec.ts
 import { spawn as spawn2 } from "node:child_process";
-import { performance } from "node:perf_hooks";
+import { performance as performance2 } from "node:perf_hooks";
 var MAX_OUTPUT = 4 * 1024 * 1024;
 var HIDDEN = ["ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "NODE_TEST_CONTEXT"];
 function childEnv(env = process.env) {
@@ -32790,7 +33167,7 @@ function killRunning() {
 }
 var shellExec = (cwd, command, timeoutMs) => new Promise((resolve2) => {
   const win3 = process.platform === "win32";
-  const started = performance.now();
+  const started = performance2.now();
   const child = spawn2(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: childEnv(), stdio: ["ignore", "pipe", "pipe"], detached: !win3 });
   if (child.pid) live.add(child.pid);
   let stdout = "", stderr = "", timedOut = false, done = false;
@@ -32813,7 +33190,7 @@ var shellExec = (cwd, command, timeoutMs) => new Promise((resolve2) => {
     done = true;
     if (child.pid) live.delete(child.pid);
     clearTimeout(timer);
-    resolve2({ ok: code === 0 && !timedOut, stdout, stderr, ms: Math.round(performance.now() - started), timedOut });
+    resolve2({ ok: code === 0 && !timedOut, stdout, stderr, ms: Math.round(performance2.now() - started), timedOut });
   };
   child.on("error", (e) => {
     stderr += e.message;
@@ -32850,9 +33227,17 @@ function onInterrupt(cleanup) {
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
   const stop2 = () => {
     killRunning();
-    cleanup();
+    let pending;
+    try {
+      pending = cleanup();
+    } catch {
+      pending = void 0;
+    }
     console.log("\nStopped. Synthe stopped its measurements and removed its temporary checkouts; your working tree was never touched.");
-    process.exit(130);
+    const exit = () => process.exit(130);
+    if (pending && typeof pending.then === "function") Promise.race([pending.catch(() => {
+    }), new Promise((resolve2) => setTimeout(resolve2, 1500))]).then(exit, exit);
+    else exit();
   };
   for (const s of signals) process.once(s, stop2);
   return () => {
@@ -33061,7 +33446,7 @@ async function main() {
   if (command === "init") process.exitCode = await init(io, process.cwd(), void 0, void 0, process.env, agentOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "guide") console.log(guide);
   else if (command === "improve") process.exitCode = await improve({ say: console.log, ask, run, exec: shellExec, env: process.env, onInterrupt }, process.cwd(), improveOptions(process.argv.slice(3))) ? 0 : 1;
-  else if (command === "submit") process.exitCode = await submit({ say: console.log, ask, run, exec: shellExec }, process.cwd(), submitOptions(process.argv.slice(3))) ? 0 : 1;
+  else if (command === "submit") process.exitCode = await submit({ say: console.log, ask, run, exec: shellExec, env: process.env }, process.cwd(), submitOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
     process.exitCode = await setKey(io) ? 0 : 1;

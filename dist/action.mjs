@@ -28779,7 +28779,13 @@ function sdkModel(client) {
       const text = res.content.flatMap((b) => b.type === "text" ? [b.text] : []).join("");
       const finished = res.stop_reason === "end_turn" && text.length > 0;
       const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text.length > 0;
-      return { text: finished || cutOff ? text : null, costUsd: costUsd(model, res.usage), ...cutOff ? { truncated: true } : {} };
+      return {
+        text: finished || cutOff ? text : null,
+        costUsd: costUsd(model, res.usage),
+        ...cutOff ? { truncated: true } : {},
+        usage: { input: res.usage.input_tokens, output: res.usage.output_tokens },
+        stopReason: res.stop_reason ?? null
+      };
     }
   };
 }
