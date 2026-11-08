@@ -9,12 +9,12 @@ import type { Ask, Model } from "../src/model/client.ts";
 import { goal } from "./helpers.ts";
 
 // A small world. Training cases t1-t3 reward "Rule A", t4-t6 reward "Rule B"; the hidden cases reward both (or,
-// with hiddenPunishesBoth, punish a prompt that has both). Three hidden cases, so a composed candidate that wins all
-// of them passes the hidden-case sign test (3 wins, 0 losses: p 0.125). The agent's reply quotes its system prompt,
+// with hiddenPunishesBoth, punish a prompt that has both). Four hidden cases, so a composed candidate that wins all
+// of them passes the hidden-case sign test at the default limit 0.1 (4 wins, 0 losses: p 0.0625). The agent's reply quotes its system prompt,
 // so the fake judge can see which rules a prompt has.
 const BASE = "Old prompt.";
 const train: Scenario[] = [1, 2, 3, 4, 5, 6].map((n) => ({ id: `t${n}`, input: `train-q${n}`, expected: "good", split: "train" }));
-const hidden: Scenario[] = [1, 2, 3].map((n) => ({ id: `h${n}`, input: `HOLDOUT-SECRET question ${n}`, expected: "good", split: "holdout" }));
+const hidden: Scenario[] = [1, 2, 3, 4].map((n) => ({ id: `h${n}`, input: `HOLDOUT-SECRET question ${n}`, expected: "good", split: "holdout" }));
 const scenarios = [...train, ...hidden];
 const c1: Candidate = { id: "candidate-1", text: `${BASE}\n\nRule A.\n`, summary: "adds rule A", edits: [{ find: "", replace: "Rule A." }] };
 const c2: Candidate = { id: "candidate-2", text: `${BASE}\n\nRule B.\n`, summary: "adds rule B", edits: [{ find: "", replace: "Rule B." }] };

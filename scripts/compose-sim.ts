@@ -19,7 +19,7 @@ const draw = (id: string, lift: number): ScoreRow => {
   if (rnd() < TIE) return { id, score: 50, violation: false };
   return { id, score: rnd() < 0.5 + lift / 2 ? 100 : 0, violation: false };
 };
-const NT = 20, NH = 10;
+const NT = 20, NH = 20; // the setup default
 const tIds = Array.from({ length: NT }, (_, i) => "t" + i), hIds = Array.from({ length: NH }, (_, i) => "h" + i);
 
 // effect(caseIndex, isHidden) -> lift for one candidate
