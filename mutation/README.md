@@ -11,7 +11,7 @@ npm run mutation:compare                          # both kill rates, and what on
 ```
 
 On a machine where a test fails before any mutation, leave that file out with
-`MUTATION_SKIP=test/improve-worktree.test.ts` (the src-layout Python test fails on some Macs).
+`MUTATION_SKIP=test/some.test.ts` (a comma-separated list).
 
 How it stays fast (StrykerJS with its TAP runner):
 
