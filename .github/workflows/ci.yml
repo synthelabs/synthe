@@ -40,3 +40,59 @@ jobs:
       - run: npm test
       - name: Stress the differential test across seeds
         run: for s in 1 2 3; do LEAN_SPEC_CASES=20000 LEAN_SPEC_SEED=$s node --test test/lean-spec.test.ts; done
+
+  # Operator mutation testing for the decision code, on pull requests that touch it, its tests or the Lean spec.
+  mutation:
+    if: github.event_name == 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Skip unless the decision code, its tests or the spec changed
+        id: changed
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -qE '^(src/core/merge-rule\.ts|src/improve/verdict\.ts|src/core/goal\.ts|test/|spec/|mutation/)'; then echo "run=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/setup-node@v4
+        if: steps.changed.outputs.run == 'true'
+        with:
+          node-version: 24
+          cache: npm
+      - if: steps.changed.outputs.run == 'true'
+        run: npm ci
+      - name: Install Lean
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o elan-init.sh
+          sh elan-init.sh -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache@v4
+        if: steps.changed.outputs.run == 'true'
+        with:
+          path: |
+            ~/.elan/toolchains
+            spec/.lake
+          key: lean-${{ runner.os }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json') }}-${{ hashFiles('spec/**/*.lean') }}
+          restore-keys: lean-${{ runner.os }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json') }}-
+      - if: steps.changed.outputs.run == 'true'
+        working-directory: spec
+        run: lake build
+      - name: Restore the last mutation results (incremental)
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: mutation/reports
+          key: mutation-${{ github.head_ref }}-${{ github.sha }}
+          restore-keys: |
+            mutation-${{ github.head_ref }}-
+            mutation-
+      - name: Mutation testing (fails below the kill-rate floor in mutation/stryker.config.mjs)
+        if: steps.changed.outputs.run == 'true'
+        run: npm run mutation:operators
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.changed.outputs.run == 'true'
+        with:
+          name: mutation-report
+          path: mutation/reports/*.json
