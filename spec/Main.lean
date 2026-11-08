@@ -65,6 +65,7 @@ def ruleOf (j : Json) : Except String MergeRule := do
   pure {
     minImprovement := ← getRat j "min_improvement"
     maxP := ← getRat j "max_p"
+    holdoutMaxP := ← getRat j "holdout_max_p"
     noiseMargin := ← getRat j "noise_margin"
     guardMargin := ← getRat j "guard_margin"
     hasCounterChecks := ← (← j.getObjVal? "counterChecks").getBool? }

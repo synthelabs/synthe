@@ -21,6 +21,7 @@ deriving Repr, Inhabited
 structure MergeRule where
   minImprovement : Rat
   maxP : Rat
+  holdoutMaxP : Rat             -- merge_rule.holdout_max_p: the sign-test limit on the held-back split
   noiseMargin : Rat
   guardMargin : Rat
   hasCounterChecks : Bool       -- goal.counter_checks?.length > 0
@@ -173,8 +174,9 @@ def eligible (mr : MergeRule) (rd : Round) (c : Candidate) : Bool :=
   match c.holdout, mean rd.baselineHoldout with
   | some h, some bh =>
     match mean h, paired h rd.baselineHoldout with
-    | some held, some _ =>
+    | some held, some hs =>
       decide (held ≥ bh + mr.minImprovement) &&
+      decide (signP hs.wins hs.losses ≤ mr.holdoutMaxP) &&
       addedBreaks c.train rd.baselineTrain + addedBreaks h rd.baselineHoldout == 0 &&
       guardsOk mr rd c h &&
       attacksOk rd c

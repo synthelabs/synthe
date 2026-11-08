@@ -211,7 +211,8 @@ test("a judged round records its holdout score, saves the chart, and the report 
 });
 
 test("a merged round records an example pair from the practice cases, whose rows carry both replies", async () => {
-  const g = goal({ checks: CHECKS });
+  // Two or fewer held-back cases here, so the held-back sign test is off: this test is about the example pair.
+  const g = goal({ checks: CHECKS, merge_rule: { ...DEFAULTS.merge_rule, holdout_max_p: 1 } });
   const repo = new MemoryRepo("Old prompt.");
   repo.files.set("s.jsonl", scenarioText(["h0", "h1"]));
   const longAfter = `Order 9 is on its way. ${"x".repeat(400)}`;
@@ -253,7 +254,8 @@ test("a merged round records an example pair from the practice cases, whose rows
 });
 
 test("a merged round whose practice cases show no flipped check records no pair, even if held-back replies exist", async () => {
-  const g = goal({ checks: CHECKS });
+  // Two or fewer held-back cases here, so the held-back sign test is off: this test is about the example pair.
+  const g = goal({ checks: CHECKS, merge_rule: { ...DEFAULTS.merge_rule, holdout_max_p: 1 } });
   const repo = new MemoryRepo("Old prompt.");
   repo.files.set("s.jsonl", scenarioText(["h0"]));
   const trainRow = (i: number, over: Partial<ScoreRow>): ScoreRow => ({ id: `t${i}`, score: 50, violation: false, reply: "a reply", applicable: 2, failed: 0, ...over });

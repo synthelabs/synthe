@@ -191,6 +191,30 @@ theorem eligible_spec {mr : MergeRule} {rd : Round} {c : Candidate} (he : eligib
           simp only [hh, hb, hm, hp, Bool.and_eq_true, beq_iff_eq] at he
           exact ⟨hold, rfl, by omega, by omega, he.2.2⟩
 
+/-- The held-back win is not luck: whatever merges had a held-back split whose one-sided sign-test
+    p-value is at most `holdoutMaxP` (TS: merge_rule.holdout_max_p). -/
+theorem merge_hidden_significant (mr : MergeRule) (rd : Round) (rep : Option (List Row)) (id : String)
+    (h : judgeRound mr rd rep = .merge id) :
+    ∃ c ∈ rd.candidates, c.id = id ∧ ∃ hold s, c.holdout = some hold ∧
+      paired hold rd.baselineHoldout = some s ∧ signP s.wins s.losses ≤ mr.holdoutMaxP := by
+  obtain ⟨c, hc, hid, he⟩ := merge_sound mr rd rep id h
+  refine ⟨c, hc, hid, ?_⟩
+  unfold eligible at he
+  cases hh : c.holdout with
+  | none => simp [hh] at he
+  | some hold =>
+    cases hb : mean rd.baselineHoldout with
+    | none => simp [hh, hb] at he
+    | some bh =>
+      cases hm : mean hold with
+      | none => simp [hh, hb, hm] at he
+      | some held =>
+        cases hp : paired hold rd.baselineHoldout with
+        | none => simp [hh, hb, hm, hp] at he
+        | some sp =>
+          simp only [hh, hb, hm, hp, Bool.and_eq_true, decide_eq_true_eq] at he
+          exact ⟨hold, sp, rfl, hp, by simp_all⟩
+
 /-- The headline safety property. A merged candidate's rows, learned-from and held-back, were all
     checked, and every guardrail break is one the current prompt already had on that same test case. -/
 theorem merge_never_adds_break (mr : MergeRule) (rd : Round) (rep : Option (List Row)) (id : String)

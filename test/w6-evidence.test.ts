@@ -322,3 +322,29 @@ test("the prompt at the recorded commit is checked when the record names one", a
   write(root, 1, rehash(r));
   assert.match((check(root, 1) as { reason: string }).reason, /prompt at the recorded commit doesn't match/);
 });
+
+// A record written before the held-back sign test existed has no holdoutMaxP and is rechecked under the rule it ran
+// with; a record that names the limit is rechecked under that limit.
+test("an old record without holdoutMaxP still verifies; a record naming the limit is held to it", async () => {
+  const root = project();
+  const repo = new MemoryRepo("Old prompt.");
+  // A genuine merge under the old rule (no held-back sign test): a clear training win, and only two held-back
+  // wins with the rest even, so the held-back mean is ahead but p = 0.25.
+  const scores = scored("Old prompt.", 50, 50, 100, 50);
+  for (const h of scores.candidates[0].holdout!) if (h.id === "h0" || h.id === "h1") h.score = 100;
+  const old = goal({ merge_rule: { ...goal().merge_rule, holdout_max_p: 1 } });
+  await runDecide(old, repo, { candidates: [{ id: "c1", text: "Better prompt." }], scores, costUsd: 0.1 });
+  for (const [path, text] of repo.stateFiles) writeFileSync(join(root, path), text);
+  const r = read(root, 1);
+  assert.equal(r.verdict, "merge");
+  assert.equal(r.holdoutMaxP, 1);
+  delete r.holdoutMaxP; // as written before the field existed
+  write(root, 1, rehash(r));
+  assert.equal(check(root, 1).ok, true, JSON.stringify(check(root, 1)));
+  r.holdoutMaxP = 0.2; // the same scores do not merge under the new default
+  write(root, 1, rehash(r));
+  assert.match((check(root, 1) as { reason: string }).reason, /stored verdict is merge, but the recorded scores give skip/);
+  r.holdoutMaxP = 7;
+  write(root, 1, rehash(r));
+  assert.match((check(root, 1) as { reason: string }).reason, /holdoutMaxP/);
+});

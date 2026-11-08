@@ -1,6 +1,7 @@
 // Holds the decision code to the Lean model in spec/, whose guarantees are proved (spec/SyntheSpec/Proofs.lean).
 // Seeded random inputs go to both sides; any disagreement fails with the input that caused it. Skipped when the
-// Lean binary hasn't been built (`cd spec && lake build`), so a machine without Lean still runs everything else.
+// Lean binary hasn't been built (`cd spec && lake build`), so a machine without Lean still runs everything else,
+// except in CI (CI=true), where a missing binary fails instead: the merge rule must never ship unchecked.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -9,8 +10,13 @@ import { addedBreaks, guardRate, judgeRound, mean, paired, signP, trainingProble
 import { median, range, verdict } from "../src/improve/verdict.ts";
 
 const BIN = "spec/.lake/build/bin/synthe-spec";
-const CASES = Number(process.env.LEAN_SPEC_CASES ?? 400);
-const skip = existsSync(BIN) ? false : "Lean spec not built: run `cd spec && lake build`";
+// 3000 by default: at 400 the Lean check missed real merge-rule bugs (picking the worse of two passing candidates,
+// the improve-mode noise boundary) that it catches at 20000. Merges are rare in random rounds; see `clean` below.
+const CASES = Number(process.env.LEAN_SPEC_CASES ?? 3000);
+const built = existsSync(BIN);
+const inCI = !!process.env.CI && process.env.CI !== "false";
+const skip = built ? false : "Lean spec not built: run `cd spec && lake build`";
+if (!built && inCI) test("the Lean spec is built in CI", () => assert.fail(`${BIN} is missing: CI must run \`cd spec && lake build\` before the tests`));
 
 // Small, seeded, so a failure names an input that reproduces.
 function rng(seed: number) {
@@ -40,25 +46,28 @@ function ask(requests: object[]): unknown[] {
 // Scenario rows the way scoring makes them: head-to-head scores, guardrail marks, guard counts. Edges on purpose:
 // unknown scores and marks, repeated and missing ids, impossible guard counts.
 const SCORES = [0, 50, 100] as const;
-function rows(ids: string[], opts: { unknown?: number } = {}): ScoreRow[] {
+// clean: no unknowns, malformed guard counts, repeated or missing ids, and few rule breaks, so candidates can pass
+// every gate and the round reaches merge (and the choice between several passing candidates) often enough to test.
+function rows(ids: string[], opts: { unknown?: number; clean?: boolean } = {}): ScoreRow[] {
+  const clean = opts.clean ?? false;
   const out: ScoreRow[] = ids.map((id) => {
-    const r: ScoreRow = { id, score: chance(opts.unknown ?? 0.04) ? null : pick(SCORES), violation: chance(0.05) ? null : chance(0.15) };
-    if (!chance(0.05)) {
+    const r: ScoreRow = { id, score: !clean && chance(opts.unknown ?? 0.04) ? null : pick(SCORES), violation: clean ? chance(0.02) : chance(0.05) ? null : chance(0.15) };
+    if (clean || !chance(0.05)) {
       const a = int(0, 3);
-      r.guardApplicable = chance(0.02) ? -1 : a;
-      r.guardFailed = chance(0.02) ? a + 1 : int(0, a);
+      r.guardApplicable = !clean && chance(0.02) ? -1 : a;
+      r.guardFailed = !clean && chance(0.02) ? a + 1 : int(0, a);
     }
     return r;
   });
-  if (out.length && chance(0.04)) out.push({ ...out[0] }); // a repeated id
-  if (out.length > 1 && chance(0.04)) out.pop(); // a missing one
+  if (!clean && out.length && chance(0.04)) out.push({ ...out[0] }); // a repeated id
+  if (!clean && out.length > 1 && chance(0.04)) out.pop(); // a missing one
   return out.sort(() => rand() - 0.5);
 }
 const ids = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${i}`);
 
 // The same rows, nudged better or worse, so candidates sit near the merge rule's thresholds.
-function challenger(base: ScoreRow[], lean: number): ScoreRow[] {
-  const at = rows(base.map((r) => r.id));
+function challenger(base: ScoreRow[], lean: number, clean = false): ScoreRow[] {
+  const at = rows(base.map((r) => r.id), { clean });
   for (const r of at) if (r.score !== null) r.score = chance(lean) ? 100 : chance(0.5) ? 50 : 0;
   return at;
 }
@@ -67,33 +76,40 @@ function challenger(base: ScoreRow[], lean: number): ScoreRow[] {
 const rule = () => ({
   min_improvement: pick([0, 2, 2.5, 5]),
   max_p: pick([0.05, 0.1, 0.5, 11 / 1024, 1 / 64, 1]),
+  // 1/8 and 11/1024 are exact sign-test values, so held-back p-values land exactly on the limit.
+  holdout_max_p: pick([0.05, 0.2, 0.5, 1 / 8, 11 / 1024, 1]),
   noise_margin: pick([0, 3]),
   guard_margin: pick([0, 3, 0.5]),
   counterChecks: chance(0.4),
 });
 const goalOf = (r: ReturnType<typeof rule>) => ({
-  merge_rule: { mode: "auto", min_improvement: r.min_improvement, max_p: r.max_p, noise_margin: r.noise_margin, max_rounds: 12, stall_rounds: 3, guard_margin: r.guard_margin },
+  merge_rule: { mode: "auto", min_improvement: r.min_improvement, max_p: r.max_p, holdout_max_p: r.holdout_max_p, noise_margin: r.noise_margin, max_rounds: 12, stall_rounds: 3, guard_margin: r.guard_margin },
   ...(r.counterChecks ? { counter_checks: ["a guard"] } : {}),
 }) as never;
 
 function round() {
-  const trainIds = ids("t", int(1, 10));
-  const holdIds = ids("h", int(1, 6));
-  const baselineTrain = rows(trainIds, { unknown: 0.01 });
-  const baselineHoldout = rows(holdIds, { unknown: 0.01 });
+  // Half the rounds are clean and lean toward strong candidates, so merges, the held-back sign test and the
+  // choice between several passing candidates (including exact ties on the training mean) are all exercised.
+  const clean = chance(0.5);
+  const trainIds = ids("t", clean ? int(4, 12) : int(1, 10));
+  const holdIds = ids("h", clean ? int(2, 10) : int(1, 6));
+  const baselineTrain = rows(trainIds, { unknown: 0.01, clean });
+  const baselineHoldout = rows(holdIds, { unknown: 0.01, clean });
   const attackIds = ids("a", int(1, 4));
-  const failedSome = () => attackIds.filter(() => chance(0.25));
-  const candidates: CandidateScore[] = ids("c", int(0, 3)).map((id) => {
-    const lean = rand();
-    const c: CandidateScore = { id, train: challenger(baselineTrain, lean) };
-    if (!chance(0.1)) c.holdout = challenger(baselineHoldout, lean);
+  const failedSome = () => attackIds.filter(() => chance(clean ? 0.05 : 0.25));
+  const shared = 0.6 + 0.4 * rand();
+  const candidates: CandidateScore[] = ids("c", clean ? int(1, 3) : int(0, 3)).map((id) => {
+    const lean = clean ? (chance(0.5) ? shared : 0.6 + 0.4 * rand()) : rand();
+    const c: CandidateScore = { id, train: challenger(baselineTrain, lean, clean) };
+    if (!chance(clean ? 0.03 : 0.1)) c.holdout = challenger(baselineHoldout, lean, clean);
     const a = rand();
-    if (a < 0.08) c.attackFailed = null;
+    if (a < (clean ? 0.02 : 0.08)) c.attackFailed = null;
     else if (a < 0.9) c.attackFailed = failedSome();
     return c;
   });
+  if (clean && candidates.length > 1 && chance(0.3)) candidates[1].train = candidates[0].train.map((r) => ({ ...r })); // an exact tie
   const attacks = chance(0.4) ? { total: attackIds.length, baselineFailed: chance(0.08) ? null : failedSome(), inputs: {} } : undefined;
-  const replaced = chance(0.3) ? challenger([...baselineTrain, ...baselineHoldout], rand()) : null;
+  const replaced = chance(0.3) ? challenger([...baselineTrain, ...baselineHoldout], rand(), clean) : null;
   return { baselineTrain, baselineHoldout, candidates, attacks, replaced };
 }
 
