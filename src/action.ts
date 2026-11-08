@@ -13,6 +13,7 @@ import { roundSummary } from "./loop/report.ts";
 import { failureOf, type Failure } from "./loop/failure.ts";
 import { explainScores, runScore } from "./loop/score.ts";
 import { explainWrite, runWrite } from "./loop/write.ts";
+import { explainCompose, withComposed } from "./loop/compose.ts";
 import { captureCancel, captureFailure, observeRoundStep, startEventsWorker } from "./core/events.ts";
 import { deliverReceipt } from "./core/receipts.ts";
 
@@ -62,7 +63,7 @@ async function main() {
     const scenarios = startPrompt !== null ? await repo.readFile(goal.scenarios, branch) : null;
     const calibrationText = await repo.readFile(".synthe/calibration.json", branch);
     const calibration = calibrationText === null ? null : calibrationReadings(calibrationText);
-    const record = await observeRoundStep("decide", { candidates: written?.candidates }, () => runDecide(goal, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json"), calibration, caches: { attack: scored?.attackCache ?? null, score: scored?.scoreCache ?? null } }));
+    const record = await observeRoundStep("decide", { candidates: written?.candidates }, () => runDecide(goal, repo, { candidates: withComposed(written?.candidates, scored?.compose), scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json"), calibration, caches: { attack: scored?.attackCache ?? null, score: scored?.scoreCache ?? null } }));
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     const state = await repo.readState();
     if (record && state.chainReady && state.round === record.round && state.round < goal.merge_rule.max_rounds && !state.stopped && !state.proposal && !state.pending) {
@@ -162,6 +163,7 @@ async function main() {
     // The current prompt's fresh attack results and score ride in scores.json to the decide step, which keeps them
     // in state: this job's token can only read, so writing state here always failed (HTTP 403).
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
+    for (const line of explainCompose(scored.compose)) console.log(line);
     for (const line of explainScores(scored.scores, scenarios)) console.log(line);
     const { confirmed, dismissed, failed, excusedConfirmed } = scored.checks;
     if (confirmed + dismissed + failed + excusedConfirmed > 0) console.log(`guardrail re-checks: new breaks ${confirmed} confirmed, ${dismissed} dismissed, ${failed} failed (a failed check still blocks); ${excusedConfirmed} confirmed as already broken by the current prompt`);

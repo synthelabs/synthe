@@ -4,6 +4,7 @@ import { candidateProblem, sha256 } from "../core/safety.ts";
 import { sumCosts } from "../core/cost.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
 import { clip, type Candidate } from "./write.ts";
+import { composeCandidate, type ComposeResult } from "./compose.ts";
 
 const CONCURRENCY = 6;
 export const AGENT_MAX_TOKENS = 2000; // the agent's reply limit; every prompt gets the same one
@@ -321,6 +322,22 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
   }
   scores.baselineTrain = currentRows(train, trainReplies, trainDuels);
 
+  // Compose, only when synthe.json turns it on: one more candidate written from how the ones above behaved
+  // differently on the training cases (see compose.ts). It is dueled on the same cases and then judged by the same
+  // rule as every other candidate, so it can add an option but never loosen the gate.
+  let compose: ComposeResult | undefined;
+  if (goal.compose === true) {
+    compose = await composeCandidate({ goal, baseline, train, candidates: safe, scored: scores.candidates, currentReplies: trainReplies, model });
+    costs.push(compose.costUsd);
+    if (compose.candidate) {
+      safe.push(compose.candidate);
+      const duels = await challenge(compose.candidate.id, compose.candidate.text, train, trainReplies);
+      trainDuels.push(duels);
+      scores.candidates.push({ id: compose.candidate.id, train: duels.map((d) => d.row) });
+      scores.baselineTrain = currentRows(train, trainReplies, trainDuels);
+    }
+  }
+
   // Only the best candidate that passed training spends held-back scenarios; if none passed, none are spent.
   const leader = scores.candidates
     .filter((c) => trainingProblem(c, scores.baselineTrain, goal) === null)
@@ -402,7 +419,7 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
   // Held-back replies are never kept, so nothing about those scenarios can reach a writer.
   for (const c of scores.candidates) if (c.holdout) c.holdout = c.holdout.map((r) => ({ ...r, reply: undefined }));
   if (cutOffCount() > 0) scores.cutOff = cutOffCount();
-  return { scores, costUsd: sumCosts(costs), calls: costs.length, checks, attackCache: freshAttackCache, scoreCache: freshScoreCache };
+  return { scores, costUsd: sumCosts(costs), calls: costs.length, checks, attackCache: freshAttackCache, scoreCache: freshScoreCache, ...(compose ? { compose } : {}) };
 }
 
 // Pits the prompt against itself: two independent replies per scenario, judged head to head. Any lopsided split
