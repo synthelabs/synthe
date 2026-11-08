@@ -41,7 +41,8 @@ export async function runLocalTry(cwd: string, goal: Goal, prompt: string, scena
       try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     }
     const attacks: Attack[] = existsSync(join(cwd, ATTACKS_FILE)) ? parseAttacks(readFileSync(join(cwd, ATTACKS_FILE), "utf8")) : [];
-    const { scores, costUsd } = await runScore(goal, prompt, written.candidates, scenarios, model, null, Math.random, attacks);
+    const { scores, costUsd, compose } = await runScore(goal, prompt, written.candidates, scenarios, model, null, Math.random, attacks);
+    if (compose?.candidate) written.candidates.push(compose.candidate);
     return { written, costUsd, verdict: judgeRound(scores, goal, null) };
   } finally {
     closeSync(descriptor);
