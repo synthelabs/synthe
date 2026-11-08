@@ -72,7 +72,7 @@ const repoDir = () => {
 
 const scenarioReply = JSON.stringify({
   guardrails: ["Never invent a zoning rule"], policy: "", brief: "Site-planning helper for architects.", checks: LIVE,
-  scenarios: Array.from({ length: 30 }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })),
+  scenarios: Array.from({ length: 40 }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })),
 });
 
 function setup(answers: Record<string, string> = {}, conflictsReply: () => unknown = () => CONFLICT) {

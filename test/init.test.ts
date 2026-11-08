@@ -25,7 +25,7 @@ const repoDir = (prompt: string) => {
 const scenarioReply = JSON.stringify({
   guardrails: ["Never lie"],
   policy: "Returns within 30 days of delivery.",
-  scenarios: Array.from({ length: 30 }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })),
+  scenarios: Array.from({ length: 40 }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })),
 });
 
 const fakeIo = (dir: string, failing: string[] = [], answers: Record<string, string> = {}) => {
@@ -62,7 +62,7 @@ test("init sets up everything and starts the first run", async () => {
   assert.deepEqual(goal.prompt, { kind: "file", path: "prompt.md" });
   const rows = parseScenarios(readFileSync(join(dir, ".synthe/scenarios.jsonl"), "utf8"));
   assert.equal(rows.filter((r) => r.split === "train").length, 20);
-  assert.equal(rows.filter((r) => r.split === "holdout").length, 10);
+  assert.equal(rows.filter((r) => r.split === "holdout").length, 20);
   const workflow = readFileSync(join(dir, ".github/workflows/synthe.yml"), "utf8");
   assert.ok(workflow.includes(ACTION) && !workflow.includes("__ACTION__"));
   assert.ok(!workflow.includes("receipt-start"));
@@ -148,7 +148,7 @@ test("init shows what it inferred and what happens next, in plain words", async 
   const text = said.join("\n");
   assert.match(text, /Synthe will improve your agent's system prompt in o\/r, in a run of up to about half an hour\. It tests new versions .* puts the clear winners into o\/r, or into pull requests/);
   assert.match(text, /it can merge it into o\/r by itself\. If o\/r deploys your app, each change goes live/);
-  assert.match(text, /writing 30 test cases: 20 Synthe learns from and 10 it keeps hidden to check its changes/);
+  assert.match(text, /writing 40 test cases: 20 Synthe learns from and 20 it keeps hidden to check its changes/);
   assert.match(text, /Rules it must never break:\n    - Never lie/);
   assert.match(text, /Your business policy, copied from your prompt \(1 line\), starting: "Returns within 30 days of delivery\."/);
   assert.match(text, /Added to o\/r \(committed and pushed\): synthe\.json, \.synthe\/scenarios\.jsonl and \.github\/workflows\/synthe\.yml\. Saved your key as the repo secret SYNTHE_ANTHROPIC_KEY\./);
@@ -263,17 +263,17 @@ test("test cases still work when the model writes a few more or fewer than asked
     const { rows } = await generateScenarios({ async ask() { return { text: reply(n), costUsd: 0.01 }; } }, "x", "p");
     return [rows.filter((r) => r.split === "train").length, rows.filter((r) => r.split === "holdout").length];
   };
-  assert.deepEqual(await split(34), [20, 10]);
-  assert.deepEqual(await split(29), [19, 10]);
-  assert.deepEqual(await split(24), [16, 8]);
+  assert.deepEqual(await split(44), [20, 20]);
+  assert.deepEqual(await split(39), [19, 20]);
+  assert.deepEqual(await split(32), [16, 16]);
 });
 
 test("too few test cases asks once more, then says plainly that nothing changed", async () => {
   const { generateScenarios } = await import("../src/cli/init.ts");
   const reply = (n: number) => JSON.stringify({ guardrails: ["Never lie"], policy: "", scenarios: Array.from({ length: n }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })) });
   let calls = 0;
-  const { rows } = await generateScenarios({ async ask() { return { text: reply(calls++ === 0 ? 5 : 30), costUsd: 0.01 }; } }, "x", "p");
-  assert.equal(rows.length, 30);
+  const { rows } = await generateScenarios({ async ask() { return { text: reply(calls++ === 0 ? 5 : 40), costUsd: 0.01 }; } }, "x", "p");
+  assert.equal(rows.length, 40);
   assert.equal(calls, 2);
   calls = 0;
   await assert.rejects(generateScenarios({ async ask() { calls++; return { text: null, costUsd: 0.01 }; } }, "x", "p"), /Nothing in your repo was changed/);
@@ -366,7 +366,7 @@ test("when Actions is turned off, init says so instead of promising a first roun
 const briefReply = JSON.stringify({
   guardrails: ["Never lie"], policy: "", brief: "Order-help bot for a pizza shop.",
   checks: ["Asks for the order number first", "Stays under three sentences", "Offers a remake before a refund"],
-  scenarios: Array.from({ length: 30 }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })),
+  scenarios: Array.from({ length: 40 }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })),
 });
 
 test("init reads the README and the code that uses the prompt, says so, and never sends a key in them", async () => {
@@ -677,9 +677,9 @@ test("init narrates what it is doing while setup runs", async () => {
   const { io, said } = fakeIo(dir);
   assert.equal(await init(io, dir), true);
   // Drafting: the prompt and goal are read, then the cases are written with the run's real counts
-  // (the stub model returns 30 cases, which split 20 to learn from and 10 held back).
+  // (the stub model returns 40 cases, which split 20 to learn from and 20 held back).
   assert.match(said.join("\n"), /Drafting now: Synthe is reading your current prompt and your goal, "Answer returns correctly"\./);
-  assert.ok(said.includes("Writing 30 test cases: 20 Synthe can learn from, 10 held back to check its work."));
+  assert.ok(said.includes("Writing 40 test cases: 20 Synthe can learn from, 20 held back to check its work."));
   assert.ok(said.some((line) => line.startsWith("Drafting the checks:")));
   // Confirmation on the own-key path: the workflow file is added, the key is saved as a secret, the
   // files are committed, and the first round is queued. No event or team codes exist on this path,

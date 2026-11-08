@@ -261,7 +261,8 @@ test("a run stopped for another reason doesn't resume on new scenarios", async (
 
 // Scenarios whose inputs name themselves, so a fake judge can score each prompt per scenario.
 const named: Scenario[] = [..."abcdef"].map((id): Scenario => ({ id, input: `q-${id}`, expected: "good", split: "train" }))
-  .concat([{ id: "h", input: "q-h", expected: "good", split: "holdout" }]);
+  // Three held-back cases scored like "h", so a clear winner can pass the held-back sign test (3 wins: p 0.125).
+  .concat(["h", "h2", "h3", "h4"].map((id): Scenario => ({ id, input: "q-h", expected: "good", split: "holdout" })));
 type Check = (reply: string) => { breaks: boolean; guardrail: string; quote: string } | string;
 const scripted = (table: Record<string, Record<string, number>>, check?: Check): Model & { seen: Ask[] } => {
   const seen: Ask[] = [];

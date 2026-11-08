@@ -31,6 +31,9 @@ export interface Goal {
     mode: "auto" | "propose"; // propose: open the winning pull request and leave the merge to a person
     min_improvement: number; // points out of 100, on both training and held-back scenarios
     max_p: number; // how likely a win may be by chance, from scenario wins and losses
+    // The same sign-test limit on the held-back scenarios. Before this, the held-back check was only "the mean is
+    // ahead by min_improvement", which a change with no real effect passes about half the time.
+    holdout_max_p: number;
     noise_margin: number; // points below the replaced prompt before a merge is reverted
     max_rounds: number;
     stall_rounds: number; // rounds in a row without a winner before stopping
@@ -41,7 +44,7 @@ export interface Goal {
 
 export const DEFAULTS = {
   models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5", checker: "claude-sonnet-5-5" },
-  merge_rule: { mode: "auto" as "auto" | "propose", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
+  merge_rule: { mode: "auto" as "auto" | "propose", min_improvement: 2, max_p: 0.05, holdout_max_p: 0.1, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
   budget: { max_usd: 3 },
 };
 
@@ -77,6 +80,8 @@ export function parseGoal(text: string): Goal {
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== undefined && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
+  const holdP = g.merge_rule?.holdout_max_p;
+  if (holdP !== undefined && !(typeof holdP === "number" && Number.isFinite(holdP) && holdP > 0 && holdP <= 1)) bad("merge_rule.holdout_max_p must be above 0 and at most 1");
   const margin = g.merge_rule?.guard_margin;
   if (margin !== undefined && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad("merge_rule.guard_margin must be 0 or more");
   return {

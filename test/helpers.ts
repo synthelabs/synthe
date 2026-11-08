@@ -24,6 +24,11 @@ export const scored = (baseline: string, train: number, held: number, cand: numb
 export const scenarios: Scenario[] = [
   ...["a", "c", "d", "e", "f", "g"].map((id) => ({ id, input: "train question", expected: "good", split: "train" as const })),
   { id: "b", input: "HOLDOUT-SECRET question", expected: "good", split: "holdout" },
+  // Four held-back cases, because a clear win must now also pass the held-back sign test (holdout_max_p 0.1):
+  // one held-back win alone has p 0.5, four in a row 0.0625.
+  { id: "b2", input: "HOLDOUT-SECRET question two", expected: "good", split: "holdout" },
+  { id: "b3", input: "HOLDOUT-SECRET question three", expected: "good", split: "holdout" },
+  { id: "b4", input: "HOLDOUT-SECRET question four", expected: "good", split: "holdout" },
 ];
 
 export class MemoryRepo implements Repo {

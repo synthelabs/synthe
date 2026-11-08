@@ -2,3 +2,5 @@ node_modules
 .synthe-out
 .synthe/setup-draft.json
 .synthe-local
+mutation/reports
+.stryker-tmp

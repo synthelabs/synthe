@@ -41,12 +41,16 @@
     "prepublishOnly": "node scripts/check-release-tag.mjs",
     "version": "node scripts/version-pins.mjs && npm run build && git add README.md docs/AGENT-SETUP.md kit/HACKATHON.md src/cli/guide.ts dist",
     "mutation": "node scripts/mutation-check.mjs",
-    "simulate": "node scripts/simulate-gate.ts"
+    "simulate": "node scripts/simulate-gate.ts",
+    "mutation:operators": "stryker run mutation/stryker.config.mjs",
+    "mutation:compare": "node mutation/compare.mjs"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "1.3.0",
+    "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/tap-runner": "10.1.1",
+    "@types/node": "26.6.6",
     "esbuild": "0.28.2",
-    "typescript": "7.0.2",
-    "@types/node": "26.6.6"
+    "typescript": "7.0.2"
   }
 }

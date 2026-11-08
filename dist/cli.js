@@ -28058,7 +28058,7 @@ var GOAL_FILE = "synthe.json";
 var MAX_CHECKS = 5;
 var DEFAULTS = {
   models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5", checker: "claude-sonnet-5-5" },
-  merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
+  merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, holdout_max_p: 0.1, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
   budget: { max_usd: 3 }
 };
 function parseGoal(text2) {
@@ -28098,6 +28098,8 @@ function parseGoal(text2) {
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
   if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
+  const holdP = g.merge_rule?.holdout_max_p;
+  if (holdP !== void 0 && !(typeof holdP === "number" && Number.isFinite(holdP) && holdP > 0 && holdP <= 1)) bad("merge_rule.holdout_max_p must be above 0 and at most 1");
   const margin = g.merge_rule?.guard_margin;
   if (margin !== void 0 && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad("merge_rule.guard_margin must be 0 or more");
   return {
@@ -28402,6 +28404,13 @@ function judgeRound(scores, goal, replaced) {
     if (held < beforeHoldout + min_improvement) {
       reasons.push(`${c.id}: judge score ${held.toFixed(1)} on the hidden test cases, needs ${(beforeHoldout + min_improvement).toFixed(1)}`);
       notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
+      continue;
+    }
+    const holdoutMaxP = goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p;
+    const heldP = signP(heldSplit.w, heldSplit.l);
+    if (heldP > holdoutMaxP) {
+      reasons.push(`${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck (p ${heldP.toFixed(3)}, needs ${holdoutMaxP})`);
+      notes[c.id] = `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck, so it wasn't used.`;
       continue;
     }
     const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
@@ -29891,13 +29900,17 @@ var package_default = {
     prepublishOnly: "node scripts/check-release-tag.mjs",
     version: "node scripts/version-pins.mjs && npm run build && git add README.md docs/AGENT-SETUP.md kit/HACKATHON.md src/cli/guide.ts dist",
     mutation: "node scripts/mutation-check.mjs",
-    simulate: "node scripts/simulate-gate.ts"
+    simulate: "node scripts/simulate-gate.ts",
+    "mutation:operators": "stryker run mutation/stryker.config.mjs",
+    "mutation:compare": "node mutation/compare.mjs"
   },
   devDependencies: {
     "@anthropic-ai/sdk": "1.3.0",
+    "@stryker-mutator/core": "10.1.1",
+    "@stryker-mutator/tap-runner": "10.1.1",
+    "@types/node": "26.6.6",
     esbuild: "0.28.2",
-    typescript: "7.0.2",
-    "@types/node": "26.6.6"
+    typescript: "7.0.2"
   }
 };
 
@@ -29932,9 +29945,9 @@ var SCENARIO_SCHEMA = {
   additionalProperties: false
 };
 var TRAIN = 20;
-var HOLDOUT = 10;
+var HOLDOUT = 20;
 var ASK_FOR = TRAIN + HOLDOUT + 4;
-var ENOUGH = 24;
+var ENOUGH = 32;
 var CHECKS_WANTED = 3;
 async function generateScenarios(model, objective, promptText, context2 = "", seeds = []) {
   const repo = context2.trim() ? `
@@ -29962,7 +29975,7 @@ Write ${ASK_FOR} varied, realistic user messages for testing it, each with a one
     });
     if (!value || !Array.isArray(value.scenarios) || value.scenarios.length < ENOUGH) continue;
     const n = Math.min(value.scenarios.length, TRAIN + HOLDOUT);
-    const holdout = Math.round(n / 3);
+    const holdout = Math.round(n * HOLDOUT / (TRAIN + HOLDOUT));
     const rows = value.scenarios.slice(0, n).map((s, i) => ({
       id: `s${i + 1}`,
       ...s,
@@ -30930,6 +30943,7 @@ function recomputeProblem(r, goal, splits) {
   const present = new Set(r.scenarioScores.map((s) => s.id));
   const dropped = [...splits.keys()].find((id) => !present.has(id));
   if (dropped) return `the record has no scores for scenario ${dropped}, so it is incomplete and the verdict can't be rechecked`;
+  if (r.holdoutMaxP !== void 0 && !(typeof r.holdoutMaxP === "number" && r.holdoutMaxP > 0 && r.holdoutMaxP <= 1)) return "the record's held-back limit (holdoutMaxP) is not a number above 0 and at most 1";
   if (r.mergeMode === "propose" && r.verdict === "merge") return "the record says the round ran in review mode, where Synthe never merges by itself, but the verdict says it merged";
   const rowOf = (s, score, guard) => ({ id: s.id, score, violation: guard === void 0 ? null : guard > 0 });
   const side = (split, pick2) => r.scenarioScores.filter((s) => splits.get(s.id) === split).map(pick2);
@@ -30970,7 +30984,8 @@ function recomputeProblem(r, goal, splits) {
       return e.message;
     }
   }
-  const v = judgeRound(scores, goal, replaced);
+  const ranWith = { ...goal, merge_rule: { ...goal.merge_rule, holdout_max_p: r.holdoutMaxP ?? 1 } };
+  const v = judgeRound(scores, ranWith, replaced);
   const want = r.verdict === "propose" ? "merge" : r.verdict;
   if (v.action !== want) return `the stored verdict is ${r.verdict}, but the recorded scores give ${v.action}`;
   if (r.verdict !== "skip" && JSON.stringify(v.reasons) !== JSON.stringify(r.verdictReasons)) return "the recorded reasons don't match what the recorded scores give";
