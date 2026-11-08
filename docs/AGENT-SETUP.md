@@ -142,7 +142,7 @@ npx synthe key
 
 ## 9. Improve mode (no AI prompt needed)
 
-`npx synthe improve` is a loop. Synthe itself proposes one code change per round, through the event proxy or the person's own key. It measures each change in a throwaway checkout, next to the current code, the same way. It keeps a change only when it beats the best so far by more than the run-to-run noise and the regression check still passes. Each kept change builds on the one before. At the end it opens ONE pull request titled like `Synthe: valid signups 3 → 12`, with a table of every round. The person's working tree is never touched.
+`npx synthe improve` is a loop. Synthe itself proposes one code change per round, through the event proxy or the person's own key. It measures each change in a throwaway checkout, next to the current code, the same way. It keeps a change only when it beats the best so far by more than the run-to-run noise and the regression check still passes. With a tests-passing metric, a change that breaks a test that passed before is never kept, even when more tests pass overall. Each kept change builds on the one before. At the end it opens ONE pull request titled like `Synthe: valid signups 3 → 12`, with a table of every round. The person's working tree is never touched.
 
 It usually takes 5 to 20 minutes, depending on how long the metric and the check take, and stops sooner when nothing wins. A round usually costs a few cents of model time (more on a big repo, because Synthe sends up to about 60,000 characters of code). The default limits are 6 rounds and $1.50 of model cost, whichever comes first.
 
@@ -215,4 +215,4 @@ Use this when the person has no event code, team code or key. Nothing is sent to
    ```
 
    A win prints `Pull request: <url>`, and in auto mode `Merged into <branch>. Run git pull.` Show the person the result and the link as written.
-4. If it prints `Not merged:` and a reason (within noise, worse, or the regression check failed), show it as written. If the person wants another try, make a different small change on the same branch, commit, and run `npx synthe@latest submit --agent` again (at most 3 attempts in all, unless they ask for more).
+4. If it prints `Not merged:` and a reason (within noise, worse, the regression check failed, or it broke a test that passed before), show it as written. If the person wants another try, make a different small change on the same branch, commit, and run `npx synthe@latest submit --agent` again (at most 3 attempts in all, unless they ask for more).

@@ -5,7 +5,9 @@ export const improveFile = (gitDir: string) => join(gitDir, "synthe-improve.json
 
 export type Direction = "higher" | "lower";
 export type PresetId = "test-pass" | "pytest" | "bundle-size" | "build-time" | "custom";
-export interface Measurement { commit: string; median: number; runs: number[]; at: string }
+// `failing`: for metrics that count passing tests, every test that failed in any run (null when the output did not
+// name them); absent for every other metric, and in configs written before this field existed.
+export interface Measurement { commit: string; median: number; runs: number[]; at: string; failing?: string[] | null }
 export interface ImproveConfig {
   version: 1;
   goal: string;
@@ -53,5 +55,6 @@ export function parseImproveConfig(raw: string): ImproveConfig {
   if (!Array.isArray(b.runs) || !b.runs.length || b.runs.some((n: unknown) => typeof n !== "number" || !Number.isFinite(n))) bad("baseline.runs must list at least one number");
   if (typeof b.median !== "number" || !Number.isFinite(b.median)) bad("baseline.median must be a number");
   if (typeof b.at !== "string") bad("baseline.at is required");
+  if (b.failing !== undefined && b.failing !== null && (!Array.isArray(b.failing) || b.failing.some((t: unknown) => typeof t !== "string"))) bad("baseline.failing must be a list of test names or null");
   return c as ImproveConfig;
 }

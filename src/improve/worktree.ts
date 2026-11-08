@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { COMMAND_TIMEOUT_MS, type ImproveConfig, type Measurement } from "./config.ts";
 import type { Exec } from "./exec.ts";
-import { measureOnce } from "./presets.ts";
+import { countsTests, measureOnce } from "./presets.ts";
 import { median } from "./verdict.ts";
 
 const win = process.platform === "win32";
@@ -47,6 +47,8 @@ export interface MeasureResult { measurement: Measurement | null; guardPassed: b
 export async function measureAt(exec: Exec, root: string, commit: string, config: ImproveConfig, say: (line: string) => void = () => {}): Promise<MeasureResult> {
   return withWorktree(exec, root, commit, async (dir) => {
     const runs: number[] = [];
+    // Every test that failed in any run, so a flaky test that failed once counts as failing here (see verdict.ts).
+    let failing: Set<string> | null = new Set();
     let metricMs = 0;
     const n = config.metric.runs;
     for (let i = 1; i <= n; i++) {
@@ -55,12 +57,15 @@ export async function measureAt(exec: Exec, root: string, commit: string, config
       metricMs += once.ms;
       if (once.value === null) return { measurement: null, guardPassed: null, reason: once.reason, metricMs };
       runs.push(once.value);
+      if (!once.failing) failing = null;
+      else for (const t of once.failing) failing?.add(t);
     }
     let guardPassed: boolean | null = null;
     if (config.guard.command) {
       say(`Running the regression check (${config.guard.command})...`);
       guardPassed = (await exec(dir, config.guard.command, COMMAND_TIMEOUT_MS)).ok;
     }
-    return { measurement: { commit, median: median(runs), runs, at: new Date().toISOString() }, guardPassed, metricMs };
+    const tests = countsTests(config) ? { failing: failing ? [...failing].sort() : null } : {};
+    return { measurement: { commit, median: median(runs), runs, at: new Date().toISOString(), ...tests }, guardPassed, metricMs };
   });
 }
