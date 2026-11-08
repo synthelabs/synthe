@@ -40,6 +40,9 @@ export interface Goal {
     guard_margin: number; // points the guard pass rate may fall before a change is refused, when counter_checks are set
   };
   budget: { max_usd: number };
+  // Compose (prototype, off by default): after scoring, write one more candidate from how this round's candidates
+  // behaved differently, and judge it by the same merge rule. See src/loop/compose.ts.
+  compose?: boolean;
 }
 
 export const DEFAULTS = {
@@ -84,6 +87,7 @@ export function parseGoal(text: string): Goal {
   if (holdP !== undefined && !(typeof holdP === "number" && Number.isFinite(holdP) && holdP > 0 && holdP <= 1)) bad("merge_rule.holdout_max_p must be above 0 and at most 1");
   const margin = g.merge_rule?.guard_margin;
   if (margin !== undefined && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad("merge_rule.guard_margin must be 0 or more");
+  if (g.compose !== undefined && typeof g.compose !== "boolean") bad("compose must be true or false");
   return {
     ...g,
     guardrails: g.guardrails ?? [],
