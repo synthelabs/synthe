@@ -4,7 +4,13 @@
 import { judgeRound, trainingProblem, mean, type RoundScores, type ScoreRow, type CandidateScore } from "../src/core/merge-rule.ts";
 import { DEFAULTS, type Goal } from "../src/core/goal.ts";
 
-const goal = { version: 1, prompt: { kind: "file", path: "p" }, objective: "x", guardrails: [], scenarios: "s", ...DEFAULTS } as Goal;
+const baseGoal = { version: 1, prompt: { kind: "file", path: "p" }, objective: "x", guardrails: [], scenarios: "s", ...DEFAULTS } as Goal;
+// Each scenario runs under the old rule (no sign test on the hidden cases, holdout_max_p 1) and today's default.
+const RULES: [string, Goal][] = [
+  ["old rule, no hidden sign test", { ...baseGoal, merge_rule: { ...DEFAULTS.merge_rule, holdout_max_p: 1 } }],
+  [`hidden sign test p<=${DEFAULTS.merge_rule.holdout_max_p}`, baseGoal],
+];
+let goal = baseGoal;
 let seed = 12345; // mulberry32
 const rnd = () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
 const TIE = 0.4;
@@ -31,7 +37,8 @@ function run(name: string, off: Eff[], on: Eff[], good: (id: string, set: Eff[])
   const tally = (set: Eff[]) => { let m = 0, g = 0, comp = 0;
     for (let r = 0; r < n; r++) { const x = round(set); if (x.merged) { m++; if (good(x.merged, set)) g++; if (x.merged === "c" + (set.length - 1) && set.length > off.length) comp++; } }
     return { mergeRate: (100 * m / n).toFixed(1) + "%", goodMerges: (100 * g / n).toFixed(1) + "%", badMerges: (100 * (m - g) / n).toFixed(1) + "%", composedWon: (100 * comp / n).toFixed(1) + "%" }; };
-  console.log(name); console.log("  off:", JSON.stringify(tally(off))); console.log("  on: ", JSON.stringify(tally(on)));
+  console.log(name);
+  for (const [label, g] of RULES) { goal = g; console.log(`  ${label}`); console.log("    off:", JSON.stringify(tally(off))); console.log("    on: ", JSON.stringify(tally(on))); }
 }
 const nul: Eff = () => 0;
 const half = (lo: number, hi: number, lift: number): Eff => (i, h) => (h ? (i % 2 === (lo % 2) ? lift : 0) : (i >= lo && i < hi ? lift : 0));
