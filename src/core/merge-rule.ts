@@ -117,7 +117,7 @@ export function paired(after: ScoreRow[], before: ScoreRow[]) {
 // Never add a guardrail break: a candidate may still break a guardrail only on a scenario where the current prompt
 // already breaks it, so a merge is never less safe than what it replaces, and a prompt that already breaks
 // guardrails can be fixed a step at a time. Unknown counts as broken on the candidate's side.
-const addedBreaks = (rows: ScoreRow[], current: ScoreRow[]) => {
+export const addedBreaks = (rows: ScoreRow[], current: ScoreRow[]) => {
   const before = new Map(current.map((r) => [r.id, r.violation]));
   return rows.filter((r) => r.violation === null || (r.violation === true && before.get(r.id) !== true)).length;
 };
