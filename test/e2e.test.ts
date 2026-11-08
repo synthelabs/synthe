@@ -18,6 +18,11 @@ let dispatches = 0;
 let dispatchStatus = 204;
 let failStateWrite = false;
 let proxyRefusal = 0;
+// Credit refusals are held until this many requests are waiting (or 2s pass), so a step that sends its calls in
+// parallel has all of them counted before the first refusal makes it exit. Without this, a slow runner can cut off
+// the second request after the first refusal, and the count is 1 (seen once in CI).
+let refusalHold = 0;
+const heldRefusals: (() => void)[] = [];
 const proxyMessage = "This team's event credit is used up. Run `npx synthe key`.";
 const requestHeaders: any[] = [];
 let proxyTokens = 0;
@@ -76,7 +81,16 @@ const anthropic = createServer((req, res) => {
     if (req.method !== "POST") { res.statusCode = 404; return res.end(); }
     if (!["/v1/messages", "/api/claude/v1/messages"].includes(req.url!)) { res.statusCode = 404; return res.end(); }
     requestHeaders.push(req.headers);
-    if (proxyRefusal) { res.statusCode = proxyRefusal; res.setHeader("content-type", "application/json"); return res.end(JSON.stringify({ type: "error", error: { type: "synthe_credit", message: proxyMessage } })); }
+    if (proxyRefusal) {
+      const refuse = () => { res.statusCode = proxyRefusal; res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ type: "error", error: { type: "synthe_credit", message: proxyMessage } })); };
+      if (heldRefusals.length + 1 < refusalHold) {
+        heldRefusals.push(refuse);
+        setTimeout(() => { const i = heldRefusals.indexOf(refuse); if (i >= 0) heldRefusals.splice(i, 1)[0](); }, 2000);
+        return;
+      }
+      for (const held of heldRefusals.splice(0)) held();
+      return refuse();
+    }
     if (denyKey) { res.statusCode = 401; res.setHeader("content-type", "application/json"); return res.end('{"type":"error","error":{"type":"authentication_error","message":"bad key"}}'); }
     const b = JSON.parse(raw);
     bodies.push(b);
@@ -140,6 +154,7 @@ const reset = () => {
   dispatchStatus = 204;
   failStateWrite = false;
   proxyRefusal = 0;
+  refusalHold = 0;
   proxyTokens = 0;
   requestHeaders.length = 0;
   files.set("main:prompt.md", readFileSync(join(dir, "prompt.md"), "utf8"));
@@ -415,6 +430,7 @@ test("Action credit refusals reach the log and report verbatim and stop every la
   for (const code of [402, 403]) {
     reset();
     proxyRefusal = code;
+    refusalHold = 2;
     const written = await step("write", undefined, undefined, proxyEnv());
     assert.equal(written.code, 1);
     assert.ok(written.log.includes(proxyMessage));
