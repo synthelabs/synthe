@@ -28,6 +28,10 @@ test("verdict: a change that breaks a test that passed before is not kept, even 
   // Many broken tests: three named, the rest counted.
   const many = verdict("higher", m(1, []), m(9, ["a", "b", "c", "d", "e"]), null);
   assert.equal(many.why, "It breaks 5 tests that passed in every run before: a; b; c; and 2 more.");
+  assert.equal(verdict("higher", m(1, []), m(9, ["a", "b", "c"]), null).why, "It breaks 3 tests that passed in every run before: a; b; c.");
+  // A change exactly as big as the run-to-run spread is still within noise.
+  const edge: Measurement = { commit: "c", median: 10, runs: [8, 10, 13], at: "" };
+  assert.equal(verdict("higher", edge, { ...edge, median: 15, runs: [15, 15, 15] }, null).reason, "noise");
   // Worse anyway: the plain reason comes first.
   assert.equal(verdict("higher", m(5, []), m(4, ["x"]), null).reason, "worse");
   // A failed regression check still wins the explanation.
@@ -38,7 +42,7 @@ test("verdict: when the output does not say which tests fail, a change with fail
   const unknown = verdict("higher", m(2, ["double"]), m(3, null), null);
   assert.deepEqual([unknown.win, unknown.reason], [false, "tests"]);
   assert.equal(unknown.why, "Some tests still fail, and Synthe could not tell which ones from the test output, so a fixed test could be hiding a newly broken one.");
-  assert.equal(verdict("higher", m(2, null), m(3, ["double"]), null).reason, "tests");
+  assert.equal(verdict("higher", m(2, null), m(3, ["double"]), null).why, unknown.why);
   // Nothing fails any more: safe whatever the baseline said.
   assert.equal(verdict("higher", m(2, null), m(4, []), null).win, true);
   // A baseline saved before this field existed: say how to fix it.
