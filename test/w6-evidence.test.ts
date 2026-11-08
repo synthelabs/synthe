@@ -341,7 +341,7 @@ test("an old record without holdoutMaxP still verifies; a record naming the limi
   delete r.holdoutMaxP; // as written before the field existed
   write(root, 1, rehash(r));
   assert.equal(check(root, 1).ok, true, JSON.stringify(check(root, 1)));
-  r.holdoutMaxP = 0.2; // the same scores do not merge under the new default
+  r.holdoutMaxP = 0.1; // the same scores do not merge under the new default
   write(root, 1, rehash(r));
   assert.match((check(root, 1) as { reason: string }).reason, /stored verdict is merge, but the recorded scores give skip/);
   r.holdoutMaxP = 7;

@@ -109,7 +109,8 @@ test("scenarios changed since the merge can't trigger a revert", () => {
   assert.notEqual(judgeRound(scored("p", 40, 40, 40, 40), goal(), replaced).action, "revert");
 });
 
-// A fixed-seed stand-in for the model, run through the real rule: one candidate holds any real gain.
+// A fixed-seed stand-in for the model, run through the real rule: one candidate holds any real gain. Rounds use the
+// setup default of 20 training and 20 hidden cases.
 function simulator(seed: number, noise: number) {
   const random = () => {
     seed = (seed + 0x6d2b79f5) | 0;
@@ -125,7 +126,7 @@ function simulator(seed: number, noise: number) {
 }
 
 function round(sim: ReturnType<typeof simulator>, gain: number): { v: ReturnType<typeof judgeRound>; levels: [number[], number[]]; scores: RoundScores } {
-  const levels: [number[], number[]] = [sim.hard(20), sim.hard(10)];
+  const levels: [number[], number[]] = [sim.hard(20), sim.hard(20)];
   const trained = [gain, 0, 0].map((g, i) => ({ g, id: `c${i}`, train: sim.measure(levels[0], g, "s") }))
     .sort((a, b) => mean(b.train)! - mean(a.train)!);
   const scores: RoundScores = {

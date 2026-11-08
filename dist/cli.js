@@ -28058,7 +28058,7 @@ var GOAL_FILE = "synthe.json";
 var MAX_CHECKS = 5;
 var DEFAULTS = {
   models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5", checker: "claude-sonnet-5-5" },
-  merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, holdout_max_p: 0.2, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
+  merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, holdout_max_p: 0.1, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
   budget: { max_usd: 3 }
 };
 function parseGoal(text2) {
@@ -29945,9 +29945,9 @@ var SCENARIO_SCHEMA = {
   additionalProperties: false
 };
 var TRAIN = 20;
-var HOLDOUT = 10;
+var HOLDOUT = 20;
 var ASK_FOR = TRAIN + HOLDOUT + 4;
-var ENOUGH = 24;
+var ENOUGH = 32;
 var CHECKS_WANTED = 3;
 async function generateScenarios(model, objective, promptText, context2 = "", seeds = []) {
   const repo = context2.trim() ? `
@@ -29975,7 +29975,7 @@ Write ${ASK_FOR} varied, realistic user messages for testing it, each with a one
     });
     if (!value || !Array.isArray(value.scenarios) || value.scenarios.length < ENOUGH) continue;
     const n = Math.min(value.scenarios.length, TRAIN + HOLDOUT);
-    const holdout = Math.round(n / 3);
+    const holdout = Math.round(n * HOLDOUT / (TRAIN + HOLDOUT));
     const rows = value.scenarios.slice(0, n).map((s, i) => ({
       id: `s${i + 1}`,
       ...s,

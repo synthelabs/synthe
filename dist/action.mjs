@@ -28055,7 +28055,7 @@ var GOAL_FILE = "synthe.json";
 var MAX_CHECKS = 5;
 var DEFAULTS = {
   models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5", checker: "claude-sonnet-5-5" },
-  merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, holdout_max_p: 0.2, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
+  merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, holdout_max_p: 0.1, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
   budget: { max_usd: 3 }
 };
 function parseGoal(text) {

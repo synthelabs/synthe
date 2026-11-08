@@ -223,7 +223,7 @@ const repoDir = () => {
 const SETUP_CHECKS = ["Asks for the order number first", "Stays under three sentences", "Offers a remake before a refund"];
 const scenarioReply = JSON.stringify({
   guardrails: ["Never lie"], policy: "", brief: "Order-help bot for a pizza shop.", checks: SETUP_CHECKS,
-  scenarios: Array.from({ length: 30 }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })),
+  scenarios: Array.from({ length: 40 }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })),
 });
 const GUARD_REPLY = ["Asks only when the order number isn't already given", "Still answers the question fully", "Offers a remake only when the order was wrong"];
 

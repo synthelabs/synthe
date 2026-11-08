@@ -77,7 +77,7 @@ const rule = () => ({
   min_improvement: pick([0, 2, 2.5, 5]),
   max_p: pick([0.05, 0.1, 0.5, 11 / 1024, 1 / 64, 1]),
   // 1/8 and 11/1024 are exact sign-test values, so held-back p-values land exactly on the limit.
-  holdout_max_p: pick([0.05, 0.2, 0.5, 1 / 8, 11 / 1024, 1]),
+  holdout_max_p: pick([0.05, 0.1, 0.2, 0.5, 1 / 8, 11 / 1024, 1]),
   noise_margin: pick([0, 3]),
   guard_margin: pick([0, 3, 0.5]),
   counterChecks: chance(0.4),

@@ -52,11 +52,13 @@ const SCENARIO_SCHEMA = {
 };
 
 const TRAIN = 20;
-const HOLDOUT = 10;
+// 20 hidden cases, so a real gain can pass the hidden-case sign test at the default limit (holdout_max_p 0.1): with
+// 10, a real 10-point gain merged 64% of the time in simulation, with 20 it merges 83% (test/core.test.ts).
+const HOLDOUT = 20;
 // The model often writes a case or two fewer than asked (29 instead of 30 in 4 of 6 live tries), so it is asked for a
 // few extra, and a slightly short list is still used. Below ENOUGH the merge rule loses too much power, so it asks again.
 const ASK_FOR = TRAIN + HOLDOUT + 4;
-const ENOUGH = 24;
+const ENOUGH = 32;
 
 const CHECKS_WANTED = 3;
 
@@ -78,9 +80,9 @@ Its team wants it to get better at: ${objective}
 Write ${ASK_FOR} varied, realistic user messages for testing it, each with a one-sentence description of what a good response does. Include hard and edge cases.${real} Also list 2 guardrails: things it must never do. In "policy", copy the business rules the prompt states (what the agent may and may not offer, limits, fees, deadlines), word for word where possible, without inventing any; leave it empty if the prompt states none. In "brief", say in 2 or 3 plain sentences what the agent is for, who uses it and what tools or data it relies on. In "checks", write ${CHECKS_WANTED} checks that measure the team's goal: each one plain sentence about a single reply that anyone could check by reading only the user's message and that reply, concrete and observable (for example "Asks for the order number before anything else" or "Offers an exchange before a refund"), never vague like "is helpful".`,
     });
     if (!value || !Array.isArray(value.scenarios) || value.scenarios.length < ENOUGH) continue;
-    // A third are held back, the same split as a full set of 20 and 10.
+    // The same share is held back as in a full set of TRAIN and HOLDOUT.
     const n = Math.min(value.scenarios.length, TRAIN + HOLDOUT);
-    const holdout = Math.round(n / 3);
+    const holdout = Math.round((n * HOLDOUT) / (TRAIN + HOLDOUT));
     const rows: Scenario[] = value.scenarios.slice(0, n).map((s, i) => ({
       id: `s${i + 1}`, ...s, split: i < n - holdout ? "train" : "holdout",
     }));

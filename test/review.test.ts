@@ -19,7 +19,7 @@ import { goal, MemoryRepo } from "./helpers.ts";
 
 const prepare = agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Be helpful", "--mode", "review"]);
 const confirmation = agentOptions(["--agent", "--confirm", "--keep-checks"]);
-const scenarios = JSON.stringify({ guardrails: ["Never lie"], policy: "", checks: [], scenarios: Array.from({ length: 30 }, (_, index) => ({ input: `question ${index}`, expected: "A useful reply" })) });
+const scenarios = JSON.stringify({ guardrails: ["Never lie"], policy: "", checks: [], scenarios: Array.from({ length: 40 }, (_, index) => ({ input: `question ${index}`, expected: "A useful reply" })) });
 const cheap = { model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 };
 const TEAM = "crim-abcd-efgh-jkmn-pqrs";
 const teamPrompt = (question: string) => question.startsWith("Paste your team code");

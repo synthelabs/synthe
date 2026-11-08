@@ -14,16 +14,21 @@ const round = (held: number[]): RoundScores => ({
   candidates: [{ id: "c1", train: trainRows(100), holdout: rows(held, false, "h") as ScoreRow[] }],
 });
 
-test("the default limit is 0.2", () => {
-  assert.equal(DEFAULTS.merge_rule.holdout_max_p, 0.2);
+test("the default limit is 0.1", () => {
+  assert.equal(DEFAULTS.merge_rule.holdout_max_p, 0.1);
 });
 
-test("three held-back wins in a row merge (p 0.125); two do not (p 0.25), and the reason says it could be luck", () => {
-  assert.equal(judgeRound(round([100, 100, 100]), goal(), null).action, "merge");
-  const v = judgeRound(round([100, 100, 50]), goal(), null);
+test("four held-back wins in a row merge (p 0.0625); three do not (p 0.125), and the reason says it could be luck", () => {
+  assert.equal(judgeRound(round([100, 100, 100, 100]), goal(), null).action, "merge");
+  const v = judgeRound(round([100, 100, 100, 50]), goal(), null);
   assert.equal(v.action, "skip");
-  assert.match(v.reasons.join(), /better in 2 and worse in 0 hidden test cases, which could be luck \(p 0\.250, needs 0\.2\)/);
+  assert.match(v.reasons.join(), /better in 3 and worse in 0 hidden test cases, which could be luck \(p 0\.125, needs 0\.1\)/);
   assert.match(v.notes.c1, /not by enough to rule out luck/);
+});
+
+test("one loss needs six wins at the default (p 0.0625); five wins and one loss do not (p 0.109)", () => {
+  assert.equal(judgeRound(round([100, 100, 100, 100, 100, 100, 0, 50, 50, 50]), goal(), null).action, "merge");
+  assert.equal(judgeRound(round([100, 100, 100, 100, 100, 0, 50, 50, 50, 50]), goal(), null).action, "skip");
 });
 
 test("a held-back mean that is ahead but split close to even no longer merges", () => {
@@ -42,7 +47,7 @@ test("the limit is inclusive, like max_p: p exactly at the limit merges", () => 
 
 test("a goal file without the field gets the default; a bad value is refused", () => {
   const base = { version: 1, prompt: { kind: "file", path: "p.md" }, objective: "o", scenarios: "s.jsonl", budget: { max_usd: 1 } };
-  assert.equal(parseGoal(JSON.stringify(base)).merge_rule.holdout_max_p, 0.2);
+  assert.equal(parseGoal(JSON.stringify(base)).merge_rule.holdout_max_p, 0.1);
   assert.equal(parseGoal(JSON.stringify({ ...base, merge_rule: { holdout_max_p: 0.05 } })).merge_rule.holdout_max_p, 0.05);
   for (const bad of [0, -0.1, 1.5, "0.2", null]) {
     assert.throws(() => parseGoal(JSON.stringify({ ...base, merge_rule: { holdout_max_p: bad } })), /holdout_max_p must be above 0 and at most 1/, String(bad));
