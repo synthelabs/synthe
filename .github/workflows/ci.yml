@@ -21,11 +21,6 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Install Lean (elan, toolchain from spec/lean-toolchain)
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o elan-init.sh
-          sh elan-init.sh -y --default-toolchain none
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - uses: actions/cache@v4
         with:
           path: |
@@ -33,6 +28,8 @@ jobs:
             spec/.lake
           key: lean-${{ runner.os }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json') }}-${{ hashFiles('spec/**/*.lean') }}
           restore-keys: lean-${{ runner.os }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json') }}-
+      - name: Install Lean (pinned elan, toolchain from spec/lean-toolchain, with retries)
+        run: .github/scripts/install-lean.sh
       - name: Build and check the Lean spec (proofs included)
         working-directory: spec
         run: lake build
@@ -62,12 +59,6 @@ jobs:
           cache: npm
       - if: steps.changed.outputs.run == 'true'
         run: npm ci
-      - name: Install Lean
-        if: steps.changed.outputs.run == 'true'
-        run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o elan-init.sh
-          sh elan-init.sh -y --default-toolchain none
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - uses: actions/cache@v4
         if: steps.changed.outputs.run == 'true'
         with:
@@ -76,6 +67,9 @@ jobs:
             spec/.lake
           key: lean-${{ runner.os }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json') }}-${{ hashFiles('spec/**/*.lean') }}
           restore-keys: lean-${{ runner.os }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json') }}-
+      - name: Install Lean (pinned elan, with retries)
+        if: steps.changed.outputs.run == 'true'
+        run: .github/scripts/install-lean.sh
       - if: steps.changed.outputs.run == 'true'
         working-directory: spec
         run: lake build
