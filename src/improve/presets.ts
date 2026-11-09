@@ -125,6 +125,55 @@ function pytestAllFailed(output: string): number | null {
   return last && /\b\d+ failed\b/.test(last) ? 0 : null;
 }
 
+const countIn = (line: string, re: RegExp) => Number(re.exec(line)?.[1] ?? 0);
+
+// Failed tests from the same summary lines countPassed reads, in the same runner order. pytest errors count as
+// failures: a test that errors in setup did not pass. null when no runner summary is found.
+export function countFailed(output: string): number | null {
+  const node = lastMatch(output, /^\s*[ℹ#] fail (\d+)\s*$/gm);
+  if (node !== null) return node;
+  const jest = [...output.matchAll(/^\s*Tests:?\s.*\b(?:passed|failed)\b.*$/gm)].at(-1)?.[0];
+  if (jest) return countIn(jest, /(\d+) failed/);
+  if (/^\s*\d+ passing\b/m.test(output) || /^\s*\d+ failing\b/m.test(output)) return lastMatch(output, /^\s*(\d+) failing\b/gm) ?? 0;
+  const pytest = [...output.matchAll(/^=+ (.*\b(?:passed|failed|errors?)\b.*?) =+\s*$/gm)].at(-1)?.[1] ?? [...output.matchAll(PYTEST_SUMMARY)].at(-1)?.[0];
+  if (pytest && /\b\d+ (?:passed|failed|errors?)\b/.test(pytest)) return countIn(pytest, /(\d+) failed/) + countIn(pytest, /(\d+) errors?\b/);
+  return null;
+}
+
+// One failing test per line, for node:test (TAP and spec), jest, vitest, mocha and pytest. A name only has to read the
+// same from run to run: names are compared as text, never parsed further. Durations are cut so they can't differ.
+const FAILING_LINES: RegExp[] = [
+  /^\s*not ok \d+ - (.+)$/, // TAP (node --test when output is not a terminal)
+  /^\s*✖ (.+)$/, // node:test spec reporter
+  /^\s*● (.+)$/, // jest failure headers ("● Suite › name", "● Test suite failed to run")
+  /^\s*[✕×] (.+)$/, // jest verbose, vitest
+  /^\s*FAIL\s+(.+)$/, // jest and vitest file lines, so a test file that stops loading counts too
+  /^\s*\d+\) (.+?):?\s*$/, // mocha ("1) suite name")
+  /^(?:FAILED|ERROR) (\S+)/, // pytest short summary
+  /^(\S+::\S+) (?:FAILED|ERROR)\b/, // pytest -v
+];
+const DURATION = /\s+\(?\d+(?:\.\d+)?\s*(?:ms|s)\)?$/;
+
+// The failing tests in one run. null when the runner says tests failed but fewer were named than it counted, so a
+// newly broken test could be missing from the list. Extra names (a parent suite, a file line) are harmless: the same
+// lines appear in every run of the same code, and a change is judged only on names that were not failing before.
+export function failingTests(output: string): string[] | null {
+  const failed = countFailed(output);
+  if (failed === 0) return [];
+  const names = new Set<string>();
+  for (const line of output.split(/\r?\n/)) {
+    for (const re of FAILING_LINES) {
+      const m = re.exec(line);
+      if (!m) continue;
+      const name = m[1].replace(/\s+#\s*time=.*$/, "").replace(DURATION, "").trim();
+      // Not tests: TAP todo/skip lines, node's "✖ failing tests:" header, jest's "● Console" block for logged output.
+      if (name && !/#\s*(?:TODO|SKIP)\b/i.test(name) && !/^(?:failing tests:?|Console)$/i.test(name)) names.add(name);
+      break;
+    }
+  }
+  return failed !== null && names.size >= failed ? [...names].sort() : null;
+}
+
 const OUTPUT_DIRS = ["dist", "build", "out", ".next/static", "public/build"];
 
 function builtFiles(dir: string): string[] {
@@ -152,7 +201,10 @@ export const REASONS = {
   noBuild: "No built JS or CSS was found under dist, build, out, .next/static or public/build.",
 };
 
-export async function measureOnce(exec: Exec, cwd: string, config: ImproveConfig): Promise<{ value: number | null; ms: number; reason?: string }> {
+// The metrics where the number is a count of passing tests, so the tests are also the regression check (see verdict.ts).
+export const countsTests = (config: ImproveConfig) => config.metric.preset === "test-pass" || config.metric.preset === "pytest";
+
+export async function measureOnce(exec: Exec, cwd: string, config: ImproveConfig): Promise<{ value: number | null; ms: number; reason?: string; failing?: string[] | null }> {
   const r = await exec(cwd, config.metric.command, COMMAND_TIMEOUT_MS);
   const none = (reason: string) => ({ value: null, ms: r.ms, reason });
   if (r.timedOut) return none(REASONS.timedOut);
@@ -160,8 +212,9 @@ export async function measureOnce(exec: Exec, cwd: string, config: ImproveConfig
     case "test-pass":
     case "pytest": {
       // Failing tests exit non-zero but still count: fewer passing is a lower number, not a broken measurement.
-      const n = countPassed(`${r.stdout}\n${r.stderr}`);
-      return n === null ? none(REASONS.noTests) : { value: n, ms: r.ms };
+      const out = `${r.stdout}\n${r.stderr}`;
+      const n = countPassed(out);
+      return n === null ? none(REASONS.noTests) : { value: n, ms: r.ms, failing: failingTests(out) };
     }
     case "bundle-size": {
       if (!r.ok) return none(REASONS.failed);

@@ -197,6 +197,14 @@ const allMutations = [
   ["crimson: failure reported as success", "src/cli/workflows.ts", "contains(needs.*.result, 'failure') && 'failure' || 'success'", "'success'"],
   ["crimson: standard workflow gets a finish job", "src/cli/workflows.ts", '.replace("  # __CRIMSON_FINISH__\\n", enabled ? finishJob : "");', '.replace("  # __CRIMSON_FINISH__\\n", finishJob);'],
   ["attacks leaked into the writer input", SCORE, "const train = scenarios.filter((s) => s.split === \"train\");\n  const holdout", "const train = [...scenarios, ...attacks.map((a) => ({ id: a.id, input: a.input, expected: a.must, split: \"train\" as const }))].filter((s) => s.split === \"train\");\n  const holdout"],
+  ["improve: a change that breaks a passing test can still win", "src/improve/verdict.ts", '  if (broken) return result(false, broken, "tests");\n', ''],
+  ["improve: unnamed failing tests pass as clean", "src/improve/verdict.ts", 'if (candidate.failing === null || baseline.failing === null) return', 'if (false) return'],
+  ["improve: any test failing before excuses every failure", "src/improve/verdict.ts", 'candidate.failing.filter((t) => !before.has(t))', 'candidate.failing.filter(() => false)'],
+  ["improve: an old baseline without failing tests is trusted", "src/improve/verdict.ts", 'if (baseline.failing === undefined) return', 'if (false) return'],
+  ["improve: a half-named failure list is trusted", "src/improve/presets.ts", 'names.size >= failed', 'names.size > 0'],
+  ["improve: pytest errors are not failures", "src/improve/presets.ts", ' + countIn(pytest, /(\\d+) errors?\\b/)', ''],
+  ["improve: one run that names no failures is ignored", "src/improve/worktree.ts", '      if (!once.failing) failing = null;\n', ''],
+  ["improve: test metrics carry no failing tests", "src/improve/worktree.ts", 'const tests = countsTests(config) ?', 'const tests = false ?'],
 ];
 
 const selectedFiles = process.argv.slice(2);

@@ -95,10 +95,11 @@ export async function commitPaths(io: LoopIo, dir: string, paths: string[], mess
 function notKeptWhy(config: ImproveConfig, best: Measurement, candidate: Measurement, guardPassed: boolean | null): string | null {
   const v = verdict(config.metric.direction, best, candidate, guardPassed);
   if (v.win) return null;
-  if (guardPassed === false) return "the regression check did not pass";
-  const better = config.metric.direction === "higher" ? v.delta : -v.delta;
+  if (v.reason === "guard") return "the regression check did not pass";
   const moved = movement(best.median, candidate.median, config.metric);
-  if (better <= 0) return `not better: ${moved}`;
+  if (v.reason === "worse") return `not better: ${moved}`;
+  // The verdict's own sentence names the broken tests; lower-case it to fit after "not kept (".
+  if (v.reason === "tests") return `${moved}, but ${v.why.charAt(0).toLowerCase()}${v.why.slice(1).replace(/\.$/, "")}`;
   return `within noise: ${moved}, and runs vary by up to ${formatValue(v.noise, config.metric.unit)}`;
 }
 
