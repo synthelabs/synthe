@@ -129,7 +129,7 @@ const step = (name: string, outputs = join(dir, "out.txt"), event = "workflow_di
       GITHUB_EVENT_NAME: event,
       GITHUB_EVENT_PATH: join(dir, "event.json"),
       PATH: process.env.PATH, GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: `http://127.0.0.1:${port(github)}`, GITHUB_OUTPUT: outputs,
-      ANTHROPIC_BASE_URL: `http://127.0.0.1:${port(anthropic)}`, INPUT_STEP: name, "INPUT_GITHUB-TOKEN": "tok",
+      SYNTHE_ANTHROPIC_BASE_URL: `http://127.0.0.1:${port(anthropic)}`, INPUT_STEP: name, "INPUT_GITHUB-TOKEN": "tok",
       // The decide job must work with no model key at all.
       "INPUT_ANTHROPIC-API-KEY": name === "decide" ? "" : "key",
       ...extra,

@@ -29,7 +29,7 @@ test("a model failure is sorted into busy (retry on backup), key (needs a person
 
 test("key outside a setup repo refuses before credential validation", () => {
   const dir = mkdtempSync(join(tmpdir(), "synthe-key-unset-"));
-  const env = { ...process.env, SYNTHE_ANTHROPIC_KEY: "sk-ant-no-spend-test", ANTHROPIC_BASE_URL: "http://127.0.0.1:9" };
+  const env = { ...process.env, SYNTHE_ANTHROPIC_KEY: "sk-ant-no-spend-test", SYNTHE_ANTHROPIC_BASE_URL: "http://127.0.0.1:9" };
   const run = spawnSync(process.execPath, [join(import.meta.dirname, "../dist/cli.js"), "key"], { cwd: dir, env, encoding: "utf8", timeout: 5000 });
   assert.equal(run.status, 1);
   assert.match(run.stdout, /Synthe isn't set up in this folder/);

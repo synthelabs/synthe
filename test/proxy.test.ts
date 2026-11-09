@@ -45,7 +45,7 @@ test("proxy sends local install IDs, fresh Action OIDC, bounded requests, and ow
   context.after(() => rmSync(config, { recursive: true, force: true }));
   process.env.XDG_CONFIG_HOME = config;
   process.env.SYNTHE_PROXY_URL = `${base}/api/claude`;
-  process.env.ANTHROPIC_BASE_URL = base;
+  process.env.SYNTHE_ANTHROPIC_BASE_URL = base;
   process.env.ACTIONS_ID_TOKEN_REQUEST_URL = `${base}/oidc?existing=1`;
   process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN = "github-token";
   const ask = { model: "claude-haiku-5-5", user: "hi", maxTokens: 5 };

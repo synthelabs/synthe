@@ -28763,8 +28763,20 @@ function configuredModel(key, eventCode, action = false, teamCode) {
   if (eventCode?.trim()) return proxyModel(eventCode.trim(), action, teamCode?.trim() || void 0);
   throw new Error("No Anthropic key or event code is set. Set SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY.");
 }
+var ANTHROPIC_API_URL = "https://api.anthropic.com";
+var LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
+function ownKeyBaseUrl(env = process.env) {
+  const override = env.SYNTHE_ANTHROPIC_BASE_URL?.trim();
+  if (!override) return ANTHROPIC_API_URL;
+  try {
+    const url = new URL(override);
+    if ((url.protocol === "http:" || url.protocol === "https:") && LOOPBACK.has(url.hostname)) return override;
+  } catch {
+  }
+  return ANTHROPIC_API_URL;
+}
 function anthropicModel(apiKey) {
-  const client = new Anthropic({ apiKey, maxRetries: 4 });
+  const client = new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(), maxRetries: 4 });
   return sdkModel(client);
 }
 function sdkModel(client) {
