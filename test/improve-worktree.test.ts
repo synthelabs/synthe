@@ -130,10 +130,11 @@ test("a src-layout Python repo with an editable-style install measures the candi
   const after = git(dir, "rev-parse", "HEAD");
   git(dir, "checkout", "-q", before);   // the checkout the install points at has the OLD code; the candidate has the fix
   // An editable install: the venv's site-packages points at the ORIGINAL repo's src/ (plus pytest from the shared one).
-  const real = spawnSync(pytest!, ["-c", "import sys; print(sys.prefix)"], { encoding: "utf8" }).stdout.trim();
+  // Ask Python where pytest and its packages live: Homebrew keeps them in /opt/homebrew/lib/..., outside sys.prefix.
+  const shared: string[] = JSON.parse(spawnSync(pytest!, ["-c", "import json, os, site, pytest; print(json.dumps(site.getsitepackages() + [os.path.dirname(os.path.dirname(pytest.__file__))]))"], { encoding: "utf8" }).stdout);
   spawnSync(pytest!, ["-m", "venv", join(dir, ".venv")], { stdio: "ignore" });
   const site = (v: string) => readdirSync(join(v, "lib")).filter((n) => n.startsWith("python")).map((n) => join(v, "lib", n, "site-packages"))[0];
-  writeFileSync(join(site(join(dir, ".venv")), "editable.pth"), `${join(dir, "src")}\n${site(real)}\n`);
+  writeFileSync(join(site(join(dir, ".venv")), "editable.pth"), [join(dir, "src"), ...new Set(shared)].join("\n") + "\n");
 
   const preset = presetsForRepo(dir).find((p) => p.label.includes("pytest"))!;
   assert.equal(preset.command, "PYTHONPATH=src .venv/bin/python -m pytest -q");

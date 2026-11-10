@@ -271,7 +271,7 @@ function attackSetup(attacksReply: () => string | null) {
   const said: string[] = [];
   const scenarioReply = JSON.stringify({
     guardrails: ["Never lie"], policy: "", brief: "Order-help bot for a pizza shop.", checks: ["Asks for the order number first"],
-    scenarios: Array.from({ length: 30 }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })),
+    scenarios: Array.from({ length: 80 }, (_, i) => ({ input: `q${i}`, expected: `a${i}` })),
   });
   const io: Io = {
     say: (t) => said.push(t),

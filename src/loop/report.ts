@@ -185,6 +185,9 @@ function triedGroup(outcome: string): (typeof TRIED_GROUPS)[number] | null {
 // what became of the changes Synthe tried, and what Synthe needs from the team. Shown when the run
 // stopped because the last rounds found no winner, and when the budget ran out. Other stops keep the
 // report they already had.
+const TIE_SHARE = 0.6;
+const MIN_DUELS_FOR_TIES = 20;
+
 export function noWinSection(goal: Goal, state: State): string[] {
   if (!state.stopped || state.proposal) return [];
   const budget = /^budget/.test(state.stopped);
@@ -205,7 +208,14 @@ export function noWinSection(goal: Goal, state: State): string[] {
     if (g) groups.set(g, (groups.get(g) ?? 0) + 1);
   }
 
+  // Ties carry no evidence, so when most duels tie even a real gain has too few decisive cases to show (with 20 cases,
+  // a change that wins 2 of 3 decisive duels merges about 1 time in 9 at 25% ties, almost never at 80%).
+  const duels = recent.reduce((d, r) => r.duels ? { better: d.better + r.duels.better, worse: d.worse + r.duels.worse, same: d.same + r.duels.same } : d, { better: 0, worse: 0, same: 0 });
+  const duelTotal = duels.better + duels.worse + duels.same;
+  const mostlyEven = duelTotal >= MIN_DUELS_FOR_TIES && duels.same / duelTotal >= TIE_SHARE;
+
   const asks: string[] = [];
+  if (mostlyEven && !top.length) asks.push(`Add harder test cases to \`${goal.scenarios}\` and push: messages your agent gets wrong or only half right today. The format is under "What to do next" below.`);
   if (top.length) asks.push(`Add test cases your agent still gets wrong, especially ones where replies fail "${top[0][0]}", to \`${goal.scenarios}\` and push. The format is under "What to do next" below.`);
   const weak = (state.calibration ?? []).find((c) => c.reading === "disagrees with you" || c.reading === "unsure");
   if (weak) asks.push(weak.reading === "disagrees with you"
@@ -216,6 +226,9 @@ export function noWinSection(goal: Goal, state: State): string[] {
   const lines = ["### Why there was no win", ""];
   if (top.length) {
     lines.push(`**What failed most** in the last ${plural(recent.length, "round")}:`, ...top.map(([check, n]) => `- "${check}" failed in ${n} ${n === 1 ? "reply" : "replies"}, counting every reply Synthe scored.`), "");
+  }
+  if (mostlyEven) {
+    lines.push(`**Most test cases came out even:** in ${duels.same} of ${duelTotal} comparisons over the last ${plural(recent.length, "round")} (${Math.round((100 * duels.same) / duelTotal)}%), a change and your current prompt did equally well. Synthe counts only the cases where one reply is better, so a real improvement has too few cases left to show it. Harder test cases fix this.`, "");
   }
   const grouped = TRIED_GROUPS.filter((g) => groups.has(g));
   if (grouped.length) {

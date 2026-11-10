@@ -179,8 +179,12 @@ const scenarioText = (holdoutIds: string[]) => [
 const trainSide = (score: number, failed: number): ScoreRow[] =>
   Array.from({ length: 20 }, (_, i) => ({ id: `t${i}`, score, violation: false, reply: "a reply", applicable: 2, failed }));
 
+// These fixtures have three held-back cases (too few to pass the held-back sign test at the default 0.1), and the
+// tests are about what the record, report and pull request say, so the sign test is off (holdout_max_p 1).
+const NO_HELD_SIGN = { ...DEFAULTS.merge_rule, holdout_max_p: 1 };
+
 test("a judged round records its holdout score, saves the chart, and the report embeds it", async () => {
-  const g = goal({ checks: CHECKS });
+  const g = goal({ checks: CHECKS, merge_rule: NO_HELD_SIGN });
   const repo = new MemoryRepo("Old prompt.");
   (repo as Repo).slug = "acme/widgets";
   repo.files.set("s.jsonl", scenarioText(["h0", "h1", "h2"]));
@@ -211,7 +215,8 @@ test("a judged round records its holdout score, saves the chart, and the report 
 });
 
 test("a merged round records an example pair from the practice cases, whose rows carry both replies", async () => {
-  const g = goal({ checks: CHECKS });
+  // Two or fewer held-back cases here, so the held-back sign test is off: this test is about the example pair.
+  const g = goal({ checks: CHECKS, merge_rule: { ...DEFAULTS.merge_rule, holdout_max_p: 1 } });
   const repo = new MemoryRepo("Old prompt.");
   repo.files.set("s.jsonl", scenarioText(["h0", "h1"]));
   const longAfter = `Order 9 is on its way. ${"x".repeat(400)}`;
@@ -253,7 +258,8 @@ test("a merged round records an example pair from the practice cases, whose rows
 });
 
 test("a merged round whose practice cases show no flipped check records no pair, even if held-back replies exist", async () => {
-  const g = goal({ checks: CHECKS });
+  // Two or fewer held-back cases here, so the held-back sign test is off: this test is about the example pair.
+  const g = goal({ checks: CHECKS, merge_rule: { ...DEFAULTS.merge_rule, holdout_max_p: 1 } });
   const repo = new MemoryRepo("Old prompt.");
   repo.files.set("s.jsonl", scenarioText(["h0"]));
   const trainRow = (i: number, over: Partial<ScoreRow>): ScoreRow => ({ id: `t${i}`, score: 50, violation: false, reply: "a reply", applicable: 2, failed: 0, ...over });
@@ -305,7 +311,7 @@ const markedScores = (): RoundScores => ({
 });
 
 test("a merged round's pull request body ends with the delta block, including the round itself", async () => {
-  const g = goal({ checks: CHECKS });
+  const g = goal({ checks: CHECKS, merge_rule: NO_HELD_SIGN });
   const repo = new MemoryRepo("Old prompt.");
   repo.files.set("s.jsonl", scenarioText(["h0", "h1", "h2"]));
   const record = await runDecide(g, repo, { candidates: [{ id: "c1", text: "Better prompt.", summary: "States the order number" }], scores: markedScores(), costUsd: 0.1 });
@@ -322,7 +328,7 @@ test("a merged round's pull request body ends with the delta block, including th
 });
 
 test("a proposed round's pull request body carries the delta block, labelled as a proposal", async () => {
-  const g = goal({ checks: CHECKS, merge_rule: { ...DEFAULTS.merge_rule, mode: "propose" } });
+  const g = goal({ checks: CHECKS, merge_rule: { ...NO_HELD_SIGN, mode: "propose" } });
   const repo = new MemoryRepo("Old prompt.");
   repo.files.set("s.jsonl", scenarioText(["h0", "h1", "h2"]));
   const record = await runDecide(g, repo, { candidates: [{ id: "c1", text: "Better prompt.", summary: "States the order number" }], scores: markedScores(), costUsd: 0.1 });

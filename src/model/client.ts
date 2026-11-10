@@ -73,8 +73,25 @@ export interface Ask { model: string; system?: string; user: string; maxTokens: 
 export interface Reply { text: string | null; costUsd: number | null; truncated?: boolean; usage?: { input: number; output: number }; stopReason?: string | null }
 export interface Model { ask(a: Ask): Promise<Reply> }
 
+export const ANTHROPIC_API_URL = "https://api.anthropic.com";
+const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+// Where an own key is sent: Anthropic, always. Left to itself the SDK follows ANTHROPIC_BASE_URL, which Claude Code
+// and other tools set in the person's shell, so the key would go to that gateway instead. (Passing apiKey already
+// keeps ANTHROPIC_AUTH_TOKEN unread; the test checks both.) Tests reach a local fake with SYNTHE_ANTHROPIC_BASE_URL,
+// honoured only for a loopback address.
+export function ownKeyBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const override = env.SYNTHE_ANTHROPIC_BASE_URL?.trim();
+  if (!override) return ANTHROPIC_API_URL;
+  try {
+    const url = new URL(override);
+    if ((url.protocol === "http:" || url.protocol === "https:") && LOOPBACK.has(url.hostname)) return override;
+  } catch { /* not a URL: Anthropic */ }
+  return ANTHROPIC_API_URL;
+}
+
 export function anthropicModel(apiKey: string): Model {
-  const client = new Anthropic({ apiKey, maxRetries: 4 });
+  const client = new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(), maxRetries: 4 });
   return sdkModel(client);
 }
 

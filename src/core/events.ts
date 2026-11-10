@@ -23,16 +23,6 @@ export interface RoundEvent {
 }
 export interface EventConsent { share: Share; notice: string; source_sha: string; synthe_version: string }
 
-// A value after a credential-looking name that is plainly not a secret: a type or literal in code ("token: string"),
-// a read of the environment ("apiKey = process.env.KEY"), or the next word of a sentence ("Credential: Crimson Hacks
-// event credit"). Removing those hid what teams saw. Quoted values are always removed. The proxy's scrubLog matches.
-const NOT_SECRET = /^(?:string|number|boolean|null|undefined|true|false|any|unknown|never|void|(?:process\.env|import\.meta\.env|os\.environ|os\.getenv|env)\b[\w.[\]'"()]{0,200})[;,)]?$/;
-export function keepCredentialValue(separator: string, value: string, after: string): boolean {
-  if (/^["']/.test(value)) return false;
-  if (NOT_SECRET.test(value)) return true;
-  return separator.includes(":") && /^[A-Z]?[a-z]{1,30}$/.test(value) && /^ [A-Za-z]{2,}/.test(after);
-}
-
 // Scrub both known credential formats and the actual runner secrets, including arbitrary event codes.
 export function scrubEventText(text: string, env: Env): string {
   let clean = text;
@@ -44,9 +34,7 @@ export function scrubEventText(text: string, env: Env): string {
     .replace(/\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-synthe-event|x-synthe-team)[ \t]*[:=][ \t]*[^\r\n]*/gi, "$1: [removed]")
     .replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [removed]")
     .replace(/\b(?:npm_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,}|ya29\.[A-Za-z0-9_-]+|[srp]k_(?:live|test)_[A-Za-z0-9]+)/g, "[key removed]")
-    .replace(/(["']?)\b([\w.-]*(?:secret|token|password|credential|api[_-]?key|private[_-]?key|access[_-]?key|team[_-]?code|event[_-]?code)[\w.-]*)\1(\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s,}\]]+)/gi,
-      (match, _quote: string, name: string, separator: string, value: string, offset: number, whole: string) =>
-        keepCredentialValue(separator, value, whole.slice(offset + match.length, offset + match.length + 40)) ? match : `${name}=[removed]`)
+    .replace(/(["']?)\b([\w.-]*(?:secret|token|password|credential|api[_-]?key|private[_-]?key|access[_-]?key|team[_-]?code|event[_-]?code)[\w.-]*)\1\s*[:=]\s*("[^"\r\n]*"|'[^'\r\n]*'|[^\s,}\]]+)/gi, "$2=[removed]")
     .replace(/https?:\/\/[^\s"'<>]+[?&](?:token|sig|signature|X-Amz-[\w-]+|code|key|access_token)=[^\s"'<>]*/gi, "[signed URL removed]")
     .replace(/https?:\/\/[^\s/:@]+:[^\s/@]+@[^\s"'<>]*/g, "[credential URL removed]")
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "[private key removed]")

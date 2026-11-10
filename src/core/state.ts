@@ -28,6 +28,9 @@ export interface RoundRecord {
   // (the current prompt's and each change's, learned-from and hidden). The score rows themselves aren't
   // kept, so this count is what the report's "what failed most" has to work from.
   failedChecks?: Record<string, number>;
+  // Every training duel this round between a change and the current prompt: better, worse, or the same. Ties carry
+  // no evidence either way, so when most duels tie a real gain can't show; the report then asks for harder cases.
+  duels?: { better: number; worse: number; same: number };
   // The frozen attack set's result for the round, when the repo has one: how many attacks ran and the ids the
   // prompt that ended the round (the winning change, or the current prompt when nothing merged) failed.
   // unknown: the current prompt's attack results couldn't be measured, so no held count is claimed.

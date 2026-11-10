@@ -41,6 +41,9 @@ export interface EvidenceRecord {
   // The merge mode the round ran in. In review ("propose") mode Synthe never merges by itself, so a
   // record claiming a merge under that mode contradicts itself. Absent in older records.
   mergeMode?: "auto" | "propose";
+  // The held-back sign-test limit the round ran with. Absent in records written before the check existed, which
+  // are rechecked under the rule they ran with: no held-back sign test (a limit of 1).
+  holdoutMaxP?: number;
   modelIds: { writer: string; runner: string; judge: string; checker: string };
   scenarioScores: ScenarioScore[];
   checksBefore: number | null;
@@ -130,6 +133,7 @@ export function buildEvidence(p: EvidenceParams): EvidenceRecord {
     candidateId: p.candidateId,
     commit: p.commit ?? null,
     mergeMode: p.goal.merge_rule.mode,
+    holdoutMaxP: p.goal.merge_rule.holdout_max_p,
     modelIds: { ...p.goal.models },
     scenarioScores,
     checksBefore: p.checks?.before ?? null,
@@ -158,6 +162,7 @@ export function recomputeProblem(r: EvidenceRecord, goal: Goal, splits: Map<stri
   const present = new Set(r.scenarioScores.map((s) => s.id));
   const dropped = [...splits.keys()].find((id) => !present.has(id));
   if (dropped) return `the record has no scores for scenario ${dropped}, so it is incomplete and the verdict can't be rechecked`;
+  if (r.holdoutMaxP !== undefined && !(typeof r.holdoutMaxP === "number" && r.holdoutMaxP > 0 && r.holdoutMaxP <= 1)) return "the record's held-back limit (holdoutMaxP) is not a number above 0 and at most 1";
   if (r.mergeMode === "propose" && r.verdict === "merge") return "the record says the round ran in review mode, where Synthe never merges by itself, but the verdict says it merged";
   const rowOf = (s: ScenarioScore, score: number | null, guard: number | undefined): ScoreRow => ({ id: s.id, score, violation: guard === undefined ? null : guard > 0 });
   const side = (split: "train" | "holdout", pick: (s: ScenarioScore) => ScoreRow) => r.scenarioScores.filter((s) => splits.get(s.id) === split).map(pick);
@@ -204,7 +209,9 @@ export function recomputeProblem(r: EvidenceRecord, goal: Goal, splits: Map<stri
       return (e as Error).message;
     }
   }
-  const v: Verdict = judgeRound(scores, goal, replaced);
+  // Recheck under the held-back limit the round ran with; a record from before the check ran with none.
+  const ranWith: Goal = { ...goal, merge_rule: { ...goal.merge_rule, holdout_max_p: r.holdoutMaxP ?? 1 } };
+  const v: Verdict = judgeRound(scores, ranWith, replaced);
   const want = r.verdict === "propose" ? "merge" : r.verdict;
   if (v.action !== want) return `the stored verdict is ${r.verdict}, but the recorded scores give ${v.action}`;
   // A skip's reasons name every candidate and the record keeps only one, so only a landed change is compared word for word.

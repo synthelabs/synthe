@@ -55,12 +55,16 @@ const SCENARIO_SCHEMA = {
   required: ["guardrails", "policy", "brief", "checks", "scenarios"], additionalProperties: false,
 };
 
-const TRAIN = 20;
-const HOLDOUT = 10;
-// The model often writes a case or two fewer than asked (29 instead of 30 in 4 of 6 live tries), so it is asked for a
-// few extra, and a slightly short list is still used. Below ENOUGH the merge rule loses too much power, so it asks again.
-const ASK_FOR = TRAIN + HOLDOUT + 4;
-const ENOUGH = 24;
+// 40 to learn from and 40 hidden. Ties carry no evidence, so the gate's power comes from cases where one reply is
+// clearly better: a change that wins 2 of every 3 decisive duels merges about 1 time in 9 with 20/20 cases and about 1 in
+// 3 with 40/40, while false merges stay under 1% (notes research/reports/2026-11-10-gate-power-study.md; decided by Rohan
+// 2026-11-10). Each round duels about twice as many cases as at 20/20, so it costs about twice as much.
+const TRAIN = 40;
+const HOLDOUT = 40;
+// The model often writes a few cases fewer than asked (29 instead of 30 in 4 of 6 live tries), so it is asked for about
+// 10% extra, and a short list is still used. Below ENOUGH the merge rule loses too much power, so it asks again.
+const ASK_FOR = TRAIN + HOLDOUT + 8;
+const ENOUGH = 64;
 
 const CHECKS_WANTED = 3;
 
@@ -82,9 +86,9 @@ Its team wants it to get better at: ${objective}
 Write ${ASK_FOR} varied, realistic user messages for testing it, each with a one-sentence description of what a good response does. Include hard and edge cases.${real} Also list 2 guardrails: things it must never do. In "policy", copy the business rules the prompt states (what the agent may and may not offer, limits, fees, deadlines), word for word where possible, without inventing any; leave it empty if the prompt states none. In "brief", say in 2 or 3 plain sentences what the agent is for, who uses it and what tools or data it relies on. In "checks", write ${CHECKS_WANTED} checks that measure the team's goal: each one plain sentence about a single reply that anyone could check by reading only the user's message and that reply, concrete and observable (for example "Asks for the order number before anything else" or "Offers an exchange before a refund"), never vague like "is helpful".`,
     });
     if (!value || !Array.isArray(value.scenarios) || value.scenarios.length < ENOUGH) continue;
-    // A third are held back, the same split as a full set of 20 and 10.
+    // The same share is held back as in a full set of TRAIN and HOLDOUT.
     const n = Math.min(value.scenarios.length, TRAIN + HOLDOUT);
-    const holdout = Math.round(n / 3);
+    const holdout = Math.round((n * HOLDOUT) / (TRAIN + HOLDOUT));
     const rows: Scenario[] = value.scenarios.slice(0, n).map((s, i) => ({
       id: `s${i + 1}`, ...s, split: i < n - holdout ? "train" : "holdout",
     }));
@@ -557,7 +561,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
 
   io.say(`\nDrafting now: Synthe is reading your current prompt and your goal, "${objective}".`);
   const context = repoContext(tracked, location);
-  io.say(`\nReading your prompt${context.names.length ? ` and ${context.names.join(" and ")}` : ""}, and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
+  io.say(`\nReading your prompt${context.names.length ? ` and ${context.names.join(" and ")}` : ""}, and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes a minute or two...`);
   const generated = await generateScenarios(model, objective, promptText, context.text, seeds);
   const { guardrails, policy, brief, rows } = generated;
   const learnFrom = rows.filter((r) => r.split === "train").length;

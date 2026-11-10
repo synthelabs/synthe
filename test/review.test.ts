@@ -19,7 +19,7 @@ import { goal, MemoryRepo } from "./helpers.ts";
 
 const prepare = agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Be helpful", "--mode", "review"]);
 const confirmation = agentOptions(["--agent", "--confirm", "--keep-checks"]);
-const scenarios = JSON.stringify({ guardrails: ["Never lie"], policy: "", checks: [], scenarios: Array.from({ length: 30 }, (_, index) => ({ input: `question ${index}`, expected: "A useful reply" })) });
+const scenarios = JSON.stringify({ guardrails: ["Never lie"], policy: "", checks: [], scenarios: Array.from({ length: 80 }, (_, index) => ({ input: `question ${index}`, expected: "A useful reply" })) });
 const cheap = { model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 };
 const TEAM = "crim-abcd-efgh-jkmn-pqrs";
 const teamPrompt = (question: string) => question.startsWith("Paste your team code");
@@ -399,7 +399,7 @@ test("review: proxy 401/503/429 stay distinct, preserve advice, and proxy retrie
   process.env.XDG_CONFIG_HOME = config;
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   process.env.SYNTHE_PROXY_URL = base;
-  process.env.ANTHROPIC_BASE_URL = base;
+  process.env.SYNTHE_ANTHROPIC_BASE_URL = base;
   process.env.ANTHROPIC_LOG = "debug";
   for (const [code, message, kind] of [[401, PROXY_AUTH_MESSAGE, "key"], [503, "Credit is unavailable. Ask at the Synthe table.", "busy"], [429, "Synthe's proxy is busy. Wait a few minutes and try again.", "busy"]] as const) {
     status = code;

@@ -1,4 +1,4 @@
-import type { Goal } from "./goal.ts";
+import { DEFAULTS, type Goal } from "./goal.ts";
 
 // One scenario's result. A null score means it could not be measured.
 // reply is kept only for the current prompt's training rows, so the next writer can study what went wrong.
@@ -117,7 +117,7 @@ export function paired(after: ScoreRow[], before: ScoreRow[]) {
 // Never add a guardrail break: a candidate may still break a guardrail only on a scenario where the current prompt
 // already breaks it, so a merge is never less safe than what it replaces, and a prompt that already breaks
 // guardrails can be fixed a step at a time. Unknown counts as broken on the candidate's side.
-const addedBreaks = (rows: ScoreRow[], current: ScoreRow[]) => {
+export const addedBreaks = (rows: ScoreRow[], current: ScoreRow[]) => {
   const before = new Map(current.map((r) => [r.id, r.violation]));
   return rows.filter((r) => r.violation === null || (r.violation === true && before.get(r.id) !== true)).length;
 };
@@ -175,6 +175,15 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
     if (held < beforeHoldout + min_improvement) {
       reasons.push(`${c.id}: judge score ${held.toFixed(1)} on the hidden test cases, needs ${(beforeHoldout + min_improvement).toFixed(1)}`);
       notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
+      continue;
+    }
+    // The held-back win must also be unlikely to be luck. The mean check above alone passes a change with no real
+    // effect about half the time, and choosing the best of several candidates on training makes that worse.
+    const holdoutMaxP = goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p;
+    const heldP = signP(heldSplit.w, heldSplit.l);
+    if (heldP > holdoutMaxP) {
+      reasons.push(`${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck (p ${heldP.toFixed(3)}, needs ${holdoutMaxP})`);
+      notes[c.id] = `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck, so it wasn't used.`;
       continue;
     }
     const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
