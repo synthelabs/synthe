@@ -51,14 +51,16 @@ const SCENARIO_SCHEMA = {
   required: ["guardrails", "policy", "brief", "checks", "scenarios"], additionalProperties: false,
 };
 
-const TRAIN = 20;
-// 20 hidden cases, so a real gain can pass the hidden-case sign test at the default limit (holdout_max_p 0.1): with
-// 10, a real 10-point gain merged 64% of the time in simulation, with 20 it merges 83% (test/core.test.ts).
-const HOLDOUT = 20;
-// The model often writes a case or two fewer than asked (29 instead of 30 in 4 of 6 live tries), so it is asked for a
-// few extra, and a slightly short list is still used. Below ENOUGH the merge rule loses too much power, so it asks again.
-const ASK_FOR = TRAIN + HOLDOUT + 4;
-const ENOUGH = 32;
+// 40 to learn from and 40 hidden. Ties carry no evidence, so the gate's power comes from cases where one reply is
+// clearly better: a change that wins 2 of every 3 decisive duels merges about 1 time in 9 with 20/20 cases and about 1 in
+// 3 with 40/40, while false merges stay under 1% (notes research/reports/2026-11-10-gate-power-study.md; decided by Rohan
+// 2026-11-10). Each round duels about twice as many cases as at 20/20, so it costs about twice as much.
+const TRAIN = 40;
+const HOLDOUT = 40;
+// The model often writes a few cases fewer than asked (29 instead of 30 in 4 of 6 live tries), so it is asked for about
+// 10% extra, and a short list is still used. Below ENOUGH the merge rule loses too much power, so it asks again.
+const ASK_FOR = TRAIN + HOLDOUT + 8;
+const ENOUGH = 64;
 
 const CHECKS_WANTED = 3;
 
@@ -552,7 +554,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
 
   io.say(`\nDrafting now: Synthe is reading your current prompt and your goal, "${objective}".`);
   const context = repoContext(tracked, location);
-  io.say(`\nReading your prompt${context.names.length ? ` and ${context.names.join(" and ")}` : ""}, and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
+  io.say(`\nReading your prompt${context.names.length ? ` and ${context.names.join(" and ")}` : ""}, and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes a minute or two...`);
   const generated = await generateScenarios(model, objective, promptText, context.text, seeds);
   const { guardrails, policy, brief, rows } = generated;
   const learnFrom = rows.filter((r) => r.split === "train").length;
