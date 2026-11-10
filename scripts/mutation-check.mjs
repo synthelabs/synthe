@@ -212,6 +212,10 @@ const allMutations = [
   ["tie note: shown on too few comparisons", REPORT, 'duelTotal >= MIN_DUELS_FOR_TIES && ', ''],
   ["tie note: decide drops the round's duels", DECIDE, '    if (duels.better + duels.worse + duels.same) record.duels = duels;\n', ''],
   ["tie note: ties counted as wins", DECIDE, 'else if (row.score === TIE) duels.same++;', 'else if (row.score === TIE) duels.better++;'],
+  ["improve: metric-only helpers are not protected", "src/improve/protect.ts", '  if (helper) return', '  if (false) return'],
+  ["improve: product code the app imports counts as a metric helper", "src/improve/protect.ts", '    if (t !== null) for (const i of importsOf(f, t, known)) used.delete(i);\n', ''],
+  ["improve: setup never records metric-only helpers", "src/cli/improve.ts", 'return helpers.length ? { ...draft, metricOnly: helpers } : draft;', 'return draft;'],
+  ["improve: Python relative imports resolve from the repo root", "src/improve/protect.ts", 'for (const root of from ? [from] : roots)', 'for (const root of roots)'],
 ];
 
 const selectedFiles = process.argv.slice(2);

@@ -31507,6 +31507,10 @@ function parseImproveConfig(raw) {
     if (!Array.isArray(c.promptFiles) || c.promptFiles.some((p) => !text(p))) bad("promptFiles must be a list of paths");
     if (c.promptFiles.some((p) => p.startsWith("/") || p.split("/").includes(".."))) bad("promptFiles paths must stay inside the repo");
   }
+  if (c.metricOnly !== void 0) {
+    if (!Array.isArray(c.metricOnly) || c.metricOnly.some((p) => !text(p))) bad("metricOnly must be a list of paths");
+    if (c.metricOnly.some((p) => p.startsWith("/") || p.split("/").includes(".."))) bad("metricOnly paths must stay inside the repo");
+  }
   if (c.mode !== "auto" && c.mode !== "review") bad("mode must be auto or review");
   const b = c.baseline;
   if (!b || typeof b !== "object") bad("baseline is required");
@@ -31519,7 +31523,7 @@ function parseImproveConfig(raw) {
 }
 
 // src/improve/loop.ts
-import { execFileSync as execFileSync2 } from "node:child_process";
+import { execFileSync as execFileSync3 } from "node:child_process";
 import { existsSync as existsSync11, mkdirSync as mkdirSync6, mkdtempSync as mkdtempSync2, readFileSync as readFileSync13, realpathSync as realpathSync2, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { basename as basename2, dirname as dirname4, join as join17 } from "node:path";
@@ -31576,7 +31580,7 @@ var runsText = (runs) => `${runs.length} ${runs.length === 1 ? "run" : "runs"}: 
 var modeText = (mode) => mode === "auto" ? "auto (a winning change merges into the default branch by itself)." : "review (a pull request waits for you).";
 function taskCard(config, branch) {
   const { metric, baseline } = config;
-  const listed = [...config.protect, ...config.promptFiles ?? []];
+  const listed = [...config.protect, ...config.promptFiles ?? [], ...config.metricOnly ?? []];
   const extra = listed.length ? `, and: ${listed.join(", ")}` : "";
   return [
     `Goal: ${config.goal}`,
@@ -32004,8 +32008,9 @@ import { existsSync as existsSync10, lstatSync as lstatSync4, readFileSync as re
 import { dirname as dirname3, join as join16, sep } from "node:path";
 
 // src/improve/protect.ts
-import { existsSync as existsSync9, readFileSync as readFileSync11 } from "node:fs";
-import { join as join15 } from "node:path";
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { existsSync as existsSync9, readFileSync as readFileSync11, statSync as statSync3 } from "node:fs";
+import { join as join15, posix } from "node:path";
 var DEPENDENCY_FILES = /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pnpm-workspace\.yaml|bun\.lockb?|poetry\.lock|uv\.lock|Pipfile(\.lock)?|pyproject\.toml|pytest\.ini|tox\.ini|setup\.cfg|requirements[^/]*\.txt|Cargo\.(toml|lock)|go\.(mod|sum)|Gemfile(\.lock)?|composer\.(json|lock))$/i;
 var RULES = [
   [/(^|\/)\.synthe(\/|$)|(^|\/)synthe\.json$/i, "is Synthe's own setup; a measured change leaves it alone."],
@@ -32031,6 +32036,8 @@ function protectedPathProblem(path4, config) {
   for (const [rule, why] of RULES) if (rule.test(path4)) return `${path4} ${why}`;
   const named = commandPaths(config).find((w) => under(path4, w));
   if (named) return `${path4} is used by the metric or the regression check (${named}); Synthe measures with it as it is.`;
+  const helper = config.metricOnly?.find((e) => under(path4, e));
+  if (helper) return `${path4} is imported by the metric or the regression check and by no other file, so it is part of how the number is measured; Synthe measures with it as it is.`;
   const extra = config.protect.find((e) => under(path4, e));
   if (extra) return `${path4} is protected for this run (--protect ${extra}).`;
   const prompt = config.promptFiles?.find((e) => under(path4, e));
@@ -32055,6 +32062,75 @@ function promptModeProtect(top) {
   } catch {
     return [];
   }
+}
+var JS_FILE = /\.(?:m?js|cjs|ts|mts|cts|jsx|tsx)$/;
+var PY_FILE = /\.py$/;
+var JS_IMPORTS = [/\brequire\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)/g, /\bfrom\s+["'](\.{1,2}\/[^"']+)["']/g, /\bimport\s*\(?\s*["'](\.{1,2}\/[^"']+)["']/g];
+var JS_TRIES = ["", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx", "/index.js", "/index.ts"];
+var MAX_SCANNED = 5e3;
+var MAX_BYTES = 512 * 1024;
+function importsOf(file, text2, tracked) {
+  const dir = posix.dirname(file);
+  const found = /* @__PURE__ */ new Set();
+  const inRepo = (p) => p.startsWith("../") || p === ".." ? null : p;
+  if (JS_FILE.test(file)) {
+    for (const re2 of JS_IMPORTS) for (const m of text2.matchAll(re2)) {
+      const base = inRepo(posix.normalize(posix.join(dir, m[1])));
+      const hit = base === null ? void 0 : JS_TRIES.map((t) => base + t).find((p) => tracked.has(p));
+      if (hit) found.add(hit);
+    }
+  } else if (PY_FILE.test(file)) {
+    const roots = [.../* @__PURE__ */ new Set([dir, ".", "src"])];
+    const module = (from, name) => {
+      const rel = name.replace(/\./g, "/");
+      for (const root of from ? [from] : roots) {
+        const base = inRepo(posix.normalize(posix.join(root, rel)));
+        const hit = base === null ? void 0 : [`${base}.py`, `${base}/__init__.py`].find((p) => tracked.has(p));
+        if (hit) {
+          found.add(hit);
+          return;
+        }
+      }
+    };
+    for (const m of text2.matchAll(/^[ \t]*from[ \t]+(\.*)([\w.]*)[ \t]+import[ \t]+\(?([\w ,\t]+)/gm)) {
+      const dots = m[1].length;
+      const from = dots ? posix.normalize(posix.join(dir, ...Array(dots - 1).fill(".."))) : "";
+      if (m[2]) module(from, m[2]);
+      else for (const n of m[3].split(",")) module(from, n.trim().split(/\s+/)[0]);
+    }
+    for (const m of text2.matchAll(/^[ \t]*import[ \t]+([\w.]+(?:[ \t]*,[ \t]*[\w.]+)*)/gm)) for (const n of m[1].split(",")) module("", n.trim());
+  }
+  found.delete(file);
+  return [...found];
+}
+function metricOnlyFiles(top, config) {
+  let tracked;
+  try {
+    tracked = execFileSync2("git", ["-C", top, "ls-files", "-z"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).split("\0").filter(Boolean);
+  } catch {
+    return [];
+  }
+  const known = new Set(tracked);
+  const read = (f) => {
+    try {
+      return statSync3(join15(top, f)).size > MAX_BYTES ? null : readFileSync11(join15(top, f), "utf8");
+    } catch {
+      return null;
+    }
+  };
+  const scripts = commandPaths(config).filter((p) => known.has(p) && (JS_FILE.test(p) || PY_FILE.test(p)));
+  const used = new Set(scripts.flatMap((s) => {
+    const t = read(s);
+    return t === null ? [] : importsOf(s, t, known);
+  }));
+  for (const s of scripts) used.delete(s);
+  if (!used.size) return [];
+  for (const f of tracked.filter((f2) => (JS_FILE.test(f2) || PY_FILE.test(f2)) && !scripts.includes(f2)).slice(0, MAX_SCANNED)) {
+    const t = read(f);
+    if (t !== null) for (const i of importsOf(f, t, known)) used.delete(i);
+    if (!used.size) break;
+  }
+  return [...used].sort();
 }
 
 // src/improve/writer.ts
@@ -32323,7 +32399,7 @@ async function withScratch(io2, top, commit, fn) {
 }
 function removeScratchCheckouts(top) {
   try {
-    const list = execFileSync2("git", ["-C", top, "worktree", "list", "--porcelain"], { encoding: "utf8" });
+    const list = execFileSync3("git", ["-C", top, "worktree", "list", "--porcelain"], { encoding: "utf8" });
     const temp = realpathSync2(tmpdir2());
     const scratch = new RegExp(`^${SCRATCH_PREFIX}[A-Za-z0-9]{6}$`);
     const paths = list.split("\n").filter((l) => l.startsWith("worktree ")).map((l) => l.slice("worktree ".length));
@@ -32340,12 +32416,12 @@ function removeScratchCheckouts(top) {
       } catch {
       }
       try {
-        execFileSync2("git", ["-C", top, "worktree", "remove", "--force", path4], { stdio: "ignore" });
+        execFileSync3("git", ["-C", top, "worktree", "remove", "--force", path4], { stdio: "ignore" });
       } catch {
       }
       rmSync3(path4, { recursive: true, force: true });
     }
-    execFileSync2("git", ["-C", top, "worktree", "prune"], { stdio: "ignore" });
+    execFileSync3("git", ["-C", top, "worktree", "prune"], { stdio: "ignore" });
   } catch {
   }
 }
@@ -33199,7 +33275,7 @@ async function settle(io2, o, presets, defaultBranch, top) {
   if (guard === "none") guard = null;
   let mode = o.mode;
   if (!mode) mode = (await io2.ask(`Merge winning changes into ${defaultBranch} automatically? y/n (press Enter for n: review) `)).trim().toLowerCase() === "y" ? "auto" : "review";
-  return {
+  const draft = {
     version: 1,
     goal,
     metric: { preset: preset.id, label, unit, command, direction, runs },
@@ -33209,6 +33285,8 @@ async function settle(io2, o, presets, defaultBranch, top) {
     mode,
     baseline: { commit: "", median: 0, runs: [], at: "" }
   };
+  const helpers = metricOnlyFiles(top, draft);
+  return helpers.length ? { ...draft, metricOnly: helpers } : draft;
 }
 
 // src/cli/submit.ts
