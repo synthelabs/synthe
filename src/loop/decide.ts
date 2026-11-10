@@ -1,16 +1,25 @@
 import { parseScenarios, type Goal } from "../core/goal.ts";
-import { judgeRound, type RoundScores } from "../core/merge-rule.ts";
+import { buildEvidence, evidenceFile, evidencePath, hashEvidence, type EvidenceRecord } from "../core/evidence.ts";
+import { STATE_BRANCH } from "../core/goal.ts";
+import { holdoutScorePct, judgeRound, mean, type RoundScores, type ScoreRow } from "../core/merge-rule.ts";
+export { holdoutScorePct };
 import { readPrompt, writePrompt } from "../core/prompt.ts";
 import { candidateProblem, promptPathProblem, sha256 } from "../core/safety.ts";
 import { resumeIfScenariosChanged, stopReason, type Landing, type RoundRecord, type State } from "../core/state.ts";
 import { Refusal, type MergeProblem, type Repo } from "../github/repo.ts";
 import { ISSUE_TITLE, exampleText, notTested, renderReport } from "./report.ts";
+import { displaySeries, renderDeltaBlock, renderScoreSvg, scoreSeries } from "./delta.ts";
 import type { Candidate } from "./write.ts";
 import type { Failure } from "./failure.ts";
-import { WIN } from "./score.ts";
+import { LOSS, TIE, WIN } from "./score.ts";
+import { candidateScope, rememberCandidates } from "../core/candidate-history.ts";
+import { fromSyntheProxy, PROXY_REFUSED } from "../core/share.ts";
 
 export const BUSY_RETRIES = 2;
-export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null }
+export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null; calibration?: { check: string; reading: string }[] | null;
+  // The score step's reusable results for the current prompt. Only this job may write state (the score job's token
+  // can only read), so the score step hands them over in scores.json and they are kept here.
+  caches?: { attack?: { key: string; failed: string[] | null } | null; score?: { key: string; pct: number | null } | null } }
 
 const LESSONS = 6;
 
@@ -30,6 +39,43 @@ function pickExample(scores: RoundScores, candidateId: string, scenarioText: str
   return won && before && scenario ? { input: clipText(scenario.input, 200), before: clipText(before), after: clipText(won.reply!) } : undefined;
 }
 
+
+// The round's score as shown to the team: the score step's once-per-prompt measurement when it made one, else the
+// marks on the held-back rows. Display only: the merge rule always reads the rows.
+export const shownScorePct = (scores: RoundScores): number | null => scores.scorePct !== undefined ? scores.scorePct : holdoutScorePct(scores.baselineHoldout);
+
+const truncReply = (t: string) => (t.length > 300 ? t.slice(0, 300) : t);
+
+// One practice (learning) case a merged change visibly fixed, for the round record's examplePair. The
+// pair comes from the learning cases, not the held-back ones: runScore keeps no held-back replies, on
+// purpose, so nothing about those cases can reach a writer, while the learning rows keep both replies
+// and name the checks the current prompt's reply failed. The winning reply's failed checks are only
+// counted, not named, so a case is used only when the flipped checks are known exactly: the winning
+// row names the checks it still fails, or it failed none. Cases are ranked by how many of the current
+// prompt's failed checks the winning reply passes (ties: the first case). When no case qualifies, the
+// record simply carries no pair rather than an invented one.
+function pickExamplePair(scores: RoundScores, candidateId: string, scenarioText: string | null): RoundRecord["examplePair"] {
+  const winner = scores.candidates.find((c) => c.id === candidateId);
+  if (!winner || !scenarioText) return undefined;
+  let rows: { id: string; input: string; split: string }[] = [];
+  try { rows = parseScenarios(scenarioText); } catch { return undefined; }
+  const current = new Map(scores.baselineTrain.map((r) => [r.id, r]));
+  let best: RoundRecord["examplePair"];
+  for (const row of winner.train) {
+    const before = current.get(row.id);
+    if (!before?.failedChecks?.length) continue;
+    if (typeof before.reply !== "string" || typeof row.reply !== "string") continue;
+    if (typeof before.failed !== "number" || typeof row.failed !== "number" || row.failed >= before.failed) continue;
+    const stillFailed = Array.isArray(row.failedChecks) ? row.failedChecks : row.failed === 0 ? [] : null;
+    if (!stillFailed) continue; // which checks flipped isn't known exactly, so this case can't be named honestly
+    const flipped = before.failedChecks.filter((name) => !stillFailed.includes(name));
+    if (!flipped.length || (best && flipped.length <= best.improvedChecks.length)) continue;
+    const scenario = rows.find((s) => s.id === row.id && s.split === "train");
+    if (!scenario) continue;
+    best = { input: clipText(scenario.input, 200), beforeReply: truncReply(before.reply), afterReply: truncReply(row.reply), improvedChecks: flipped };
+  }
+  return best;
+}
 
 // Details a change adds that a business would have to really offer: amounts, percentages, time limits, web
 // addresses and emails that are nowhere in the old prompt or the policy. A reviewer should check they're real.
@@ -60,9 +106,25 @@ const NEEDS_A_PERSON: Partial<Record<MergeProblem, string>> = {
 // (Issues are off, as in a fresh fork, or the token can't write them) the run carries on and the state is saved
 // with a note on the latest round. It doesn't stop the run: merges and proposals still help, and each pull
 // request explains itself.
+// The score chart lives beside state.json on the state branch, where the report issue can embed it.
+const SCORE_PATH = "score.svg";
+
 async function writeReport(goal: Goal, repo: Repo, state: State) {
+  // The chart first, so the picture is on the branch when the issue that embeds it is written. Losing
+  // the chart mustn't lose the round: a failure is noted on the round, like a refused issue below.
+  const series = scoreSeries(state);
+  if (displaySeries(series).some((p) => p.measured)) {
+    try {
+      await repo.writeStateFile(SCORE_PATH, renderScoreSvg(series), `Synthe round ${state.round}: score chart`);
+    } catch (e) {
+      const note = `couldn't save the score chart: ${(e as Error).message.slice(0, 200)}`;
+      const last = state.rounds.at(-1);
+      if (last && !last.reasons.includes(note)) last.reasons.push(note);
+      console.log(`::warning::${note}`);
+    }
+  }
   try {
-    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state));
+    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state, new Date(), repo.slug));
   } catch (e) {
     if (!(e instanceof Refusal)) throw e;
     const note = `couldn't write the report issue: ${e.plain}`;
@@ -134,6 +196,17 @@ async function recover(goal: Goal, repo: Repo, state: State): Promise<boolean> {
 
 export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now = new Date()): Promise<RoundRecord | null> {
   const state = await repo.readState();
+  // The team's last calibration, read from .synthe/calibration.json by the caller: the readings belong in
+  // state, where the report's rewrite-a-check ask can see them. Readings for checks the goal no longer has
+  // are dropped, so the ask never names a check that isn't there any more.
+  if (input.calibration) {
+    const current = new Set(goal.checks ?? []);
+    state.calibration = input.calibration.filter((r) => current.has(r.check));
+  }
+  // Saved with whatever this round writes to state next. A malformed cache is ignored: it only saves calls.
+  const attack = input.caches?.attack, score = input.caches?.score;
+  if (attack && typeof attack.key === "string" && (attack.failed === null || Array.isArray(attack.failed))) state.attackCache = { key: attack.key, failed: attack.failed };
+  if (score && typeof score.key === "string" && (score.pct === null || (typeof score.pct === "number" && Number.isFinite(score.pct)))) state.scoreCache = { key: score.key, pct: score.pct };
   const { merge_rule, budget } = goal;
   const recovered = await recover(goal, repo, state);
   // While a proposal waits for review, nothing else happens: no candidates, no spend, no round.
@@ -176,6 +249,10 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   const round = state.round + 1;
   const record: RoundRecord = { round, at: now.toISOString(), outcome: "skipped", reasons: [...(input.rejected ?? [])], costUsd: input.costUsd, writeUsd: input.writeUsd ?? null };
   const scores = input.scores;
+  // Set when the round reaches a verdict, and to the winning candidate when a change lands: the score
+  // series below is only recorded for rounds that were actually judged.
+  let judged = false;
+  let winnerId: string | null = null;
 
   // Saved before anything touches the repo: this round's number and spend, and a stall that only a clean finish
   // can take back. If this step dies partway, the run still moves toward its limits instead of spending forever.
@@ -184,12 +261,26 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   state.spendUsd += input.costUsd ?? 0;
   state.stalls = priorStalls + 1;
   state.pending = { round, at: record.at, costUsd: input.costUsd };
+  if (current !== null) state.candidateHistory = rememberCandidates(state.candidateHistory ?? [], candidateScope(goal, current), (input.candidates ?? []).filter((candidate) => typeof candidate.text === "string").map((candidate) => candidate.text));
   await repo.writeState(state);
   let stall = true;
 
+  // The record of this decision goes on the state branch, not into the team's repo: the prompt stays the only file Synthe
+  // changes there. A record that can't be saved is noted and the round carries on, since the change itself is done.
+  const saveEvidence = async (rec: EvidenceRecord) => {
+    try {
+      await repo.writeStateFile(evidencePath(round), evidenceFile(rec), `Synthe round ${round}: evidence`);
+      state.evidenceHash = rec.sha256;
+      // Saved now, so a crash before the end of the round doesn't leave the next record chained to the wrong one.
+      await repo.writeState(state);
+    } catch (e) {
+      record.reasons.push(`couldn't save the evidence file: ${(e as Error).message.slice(0, 200)}`);
+    }
+  };
+
   // Opens the pull request, then merges it (auto mode) or leaves it for a person (propose mode, or a repo whose
   // branch rules require a review). Returns the pull request and whether it was only proposed, or null.
-  type Why = { changed: string; plain: string; technical: string; diff?: string[]; example?: Example; unverified?: string[] };
+  type Why = { changed: string; plain: string; technical: string; diff?: string[]; example?: Example; unverified?: string[]; evidence?: (proposed: boolean) => EvidenceRecord; delta?: (proposed: boolean) => string };
   const land = async (text: string, kind: "merge" | "revert", title: string, why: Why): Promise<{ pr: number; proposed: boolean } | null> => {
     const branch = `synthe/round-${round}`;
     const landing: Landing = { branch, kind, text, priorPrompt: current!, propose: merge_rule.mode === "propose" };
@@ -199,12 +290,13 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     const sha = await repo.commitFile({ branch, baseSha: head, path, content, message: title });
     const short = (h: string | null | undefined) => (h ? `\`sha256:${h.slice(0, 12)}\`` : "unknown");
     const { writer, runner, judge, checker } = goal.models;
-    const receipt = [
+    const receiptFor = (proposed: boolean) => [
       "Fingerprints of exactly what was tested, so anyone can check or reproduce this decision. You can ignore them.",
       `- Commit tested: \`${head.slice(0, 12)}\``,
       `- Prompt before: ${short(sha256(current!))}, after: ${short(sha256(text))}`,
       `- Test cases: ${short(scenariosHash)}, goal file: ${short(input.goalHash)}`,
       `- AI models: writer ${writer}, agent ${runner}, judge ${judge}, rule checker ${checker}`,
+      ...(why.evidence ? [`- Evidence: \`${evidencePath(round)}\` on the \`${STATE_BRANCH}\` branch, sha256 \`${why.evidence(proposed).sha256}\`. Check it with \`npx synthe verify\`.`] : []),
     ].join("\n");
     const when = `${now.toISOString().slice(0, 16).replace("T", " ")} UTC`;
     // Written for whoever opens the notification: what happened, what changed, why, what to do, and how to undo it.
@@ -224,8 +316,11 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
         ? "After merging, pull before you edit the prompt yourself."
         : "**Before you edit the prompt yourself, pull the latest changes,** so this change isn't overwritten. To undo it, click **Revert** on this pull request.",
       "Tested on simulated messages only. It can't tell you how real users will react.",
-      `<details><summary>Fingerprints of what was tested</summary>\n\n${receipt}\n\nThe judge's numbers: ${why.technical}\n\n</details>`,
+      `<details><summary>Fingerprints of what was tested</summary>\n\n${receiptFor(proposed)}\n\nThe judge's numbers: ${why.technical}\n\n</details>`,
       `<details><summary>What this did not test</summary>\n\n${notTested(goal).slice(1).join("\n")}\n\n</details>`,
+      // Last, where it survives the squash merge into the commit message: the score's movement and this
+      // round in plain words, so the change explains itself even to someone who never opens the report.
+      ...(why.delta ? [why.delta(proposed)] : []),
     ].join("\n\n");
     const body = bodyFor(Boolean(landing.propose));
     let pr: number;
@@ -242,11 +337,13 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     }
     if (landing.propose) {
       state.proposal = { ...landing, pr, round };
+      if (why.evidence) await saveEvidence(why.evidence(true));
       return { pr, proposed: true };
     }
     const merged = await repo.mergePr(pr, sha);
     if (merged.merged) {
       await repo.deleteBranch(branch);
+      if (why.evidence) await saveEvidence(why.evidence(false));
       return { pr, proposed: false };
     }
     if (merged.problem === "blocked") {
@@ -256,6 +353,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       await repo.writeState(state);
       state.proposal = { ...landing, pr, round };
       await repo.updatePrBody(pr, bodyFor(true, true));
+      if (why.evidence) await saveEvidence(why.evidence(true));
       return { pr, proposed: true };
     }
     await repo.closePr(pr);
@@ -280,15 +378,19 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     record.outcome = "failed";
     const error = input.error;
     if (error) record.failure = error.kind;
-    if (error?.kind === "busy") {
+    if (error?.kind === "credit") {
+      record.reasons.push(error.message);
+      record.plain = error.message;
+      state.stopped = "credit";
+      stall = false;
+    } else if (error?.kind === "busy") {
       // Overload or rate limits pass by themselves, so a busy hour mustn't use up the rounds allowed without a winner.
-      record.reasons.push(`Anthropic's API was busy during the ${error.step} step: ${error.message}`);
-      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
+      record.reasons.push(fromSyntheProxy(error.message) ? error.message : `Anthropic's API was busy during the ${error.step} step: ${error.message}`);
+      record.plain = fromSyntheProxy(error.message) ? error.message : "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
       stall = false;
     } else if (error?.kind === "key") {
-      record.reasons.push(`the ${error.step} step's key was refused: ${error.message}`);
-      const cause = error.message.split(/(?<=\.) /)[0];
-      record.plain = `This round didn't finish. ${cause} Get a new key from the Synthe table, then run \`gh secret set SYNTHE_ANTHROPIC_KEY\` in your repo and paste the key when it asks.`;
+      record.reasons.push(error.message.startsWith(PROXY_REFUSED) ? `the ${error.step} step was refused by the Synthe proxy: ${error.message.slice(PROXY_REFUSED.length)}` : `the ${error.step} step's key was refused: ${error.message}`);
+      record.plain = error.message.startsWith("The Synthe proxy") ? error.message : `This round didn't finish. ${error.message.split(/(?<=\.) /)[0]} Run \`npx synthe key\` to replace your Anthropic key.`;
     } else {
       record.reasons.push("the round did not finish; check the Actions log and the API key");
       record.plain = "This round didn't finish. If it keeps happening, check the Actions log and that your key still has credit.";
@@ -309,7 +411,29 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     const last = state.lastMerge;
     const replaced = last && !last.reverted && last.mergedHash === scores.baselineHash && scores.prior ? scores.prior : null;
     const verdict = judgeRound(scores, goal, replaced);
+    judged = true;
     record.reasons.push(...verdict.reasons);
+    // For a skip, the candidate that came closest: its rows are what a later check reruns the merge rule on.
+    const closest = scores.candidates.reduce<{ id: string; m: number } | null>((best, c) => {
+      const m = mean(c.train) ?? -Infinity;
+      return best === null || m > best.m ? { id: c.id, m } : best;
+    }, null)?.id ?? null;
+    // Chain to the newest evidence record actually on the state branch, not only to the hash kept in
+    // state: if an earlier run wrote the file and then died before saving state, the chain still links.
+    let prevEvidenceHash = state.evidenceHash ?? null;
+    for (let k = round - 1; k >= 1; k--) {
+      try {
+        const text = await repo.readFile(evidencePath(k), STATE_BRANCH);
+        if (text === null) continue;
+        const rec = JSON.parse(text) as EvidenceRecord;
+        if (typeof rec.sha256 === "string" && hashEvidence(rec) === rec.sha256) { prevEvidenceHash = rec.sha256; break; }
+      } catch { /* keep looking at earlier rounds */ }
+    }
+    const evidenceOf = (kind: EvidenceRecord["verdict"], candidateId: string | null, after: string, extra: { checks?: { before: number; after: number }; prior?: ScoreRow[] } = {}) =>
+      (proposed: boolean) => buildEvidence({
+        round, goal, promptBefore: current, promptAfter: after, verdict: kind === "merge" && proposed ? "propose" : kind,
+        verdictReasons: [...verdict.reasons], scores, candidateId, costUsd: input.costUsd, prevEvidenceHash, commit: head, ...extra,
+      });
     record.tried = [
       ...input.candidates.map((c) => ({
         summary: c.summary ?? "A change to the prompt",
@@ -317,20 +441,39 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       })),
       ...(input.rejected ?? []).map((r) => ({ summary: "An edit that couldn't be applied", outcome: `Not used: ${r.replace(/^candidate-\d+: /, "")}.` })),
     ];
-    if (verdict.action === "skip") record.plain = "Nothing was clearly better, so your prompt stayed the same.";
+    if (scores.attacks) {
+      const winner = verdict.action === "merge" ? scores.candidates.find((c) => c.id === verdict.candidateId) : undefined;
+      const failed = winner ? winner.attackFailed : scores.attacks.baselineFailed;
+      record.attacks = { total: scores.attacks.total, failed: failed ?? [], ...(failed === null || failed === undefined ? { unknown: true } : {}) };
+    }
+    if (verdict.action === "skip") {
+      record.plain = "Nothing was clearly better, so your prompt stayed the same.";
+      await saveEvidence(evidenceOf("skip", closest, current)(false));
+    }
     if (verdict.action === "merge") {
       const chosen = input.candidates.find((c) => c.id === verdict.candidateId);
       const text = chosen?.text;
       const problem = text === undefined ? "candidate missing" : candidateProblem(text, goal.prompt) ?? (text.trim() === current.trim() ? "candidate is the current prompt" : null);
       if (problem) {
         record.reasons.push(problem);
+        // Nothing landed, so the prompt that ended the round is still the current one: its attack results
+        // are the round's, not the refused candidate's.
+        if (scores.attacks) {
+          const failed = scores.attacks.baselineFailed;
+          record.attacks = { total: scores.attacks.total, failed: failed ?? [], ...(failed === null || failed === undefined ? { unknown: true } : {}) };
+        }
       } else {
         const changed = chosen?.summary ?? "A change to the prompt";
         const example = pickExample(scores, verdict.candidateId, scenarioText);
+        const pair = pickExamplePair(scores, verdict.candidateId, scenarioText);
         const unverified = newDetails(chosen?.edits, `${current}\n${goal.policy ?? ""}`);
         const name = chosen?.title ?? (changed.length > 60 ? `${changed.slice(0, 57)}...` : changed);
         const landed = await land(text!, "merge", `Synthe: ${name}`,
-          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified });
+          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified, evidence: evidenceOf("merge", verdict.candidateId, text!, { checks: verdict.checks }),
+            // The round's record only joins state.rounds at the end of the round, with its score
+            // recorded there too, so the block is rendered from a state carrying this round's record
+            // with the same score and pair that are about to be recorded on it.
+            delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "merged", changed, plain: verdict.plain, scorePct: shownScorePct(scores), ...(pair ? { examplePair: pair } : {}) }] }) });
         if (landed) {
           if (example) record.example = example;
           if (chosen?.title) record.title = chosen.title;
@@ -338,7 +481,8 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
           if (unverified.length) record.unverified = unverified;
         }
         if (landed) {
-          Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...(verdict.checks ? { checks: verdict.checks } : {}) });
+          winnerId = verdict.candidateId;
+          Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...(verdict.checks ? { checks: verdict.checks } : {}), ...(verdict.guards ? { guards: verdict.guards } : {}) });
           record.changed = chosen?.summary ?? "A change to the prompt";
           record.plain = verdict.plain;
           if (!landed.proposed) {
@@ -347,10 +491,17 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
           }
           stall = false;
         }
+        if (!landed && scores.attacks) {
+          // The merge didn't land, so the current prompt is still the one that ended the round: record its
+          // attack results, not the unmerged candidate's.
+          const failed = scores.attacks.baselineFailed;
+          record.attacks = { total: scores.attacks.total, failed: failed ?? [], ...(failed === null || failed === undefined ? { unknown: true } : {}) };
+        }
       }
     } else if (verdict.action === "revert") {
       const prior = state.lastMerge!.priorPrompt;
-      const landed = await land(prior, "revert", "Synthe: undo the last prompt change", { changed: "Puts back the prompt from before Synthe's last change.", plain: verdict.plain, technical: verdict.reasons.join(" ") });
+      const landed = await land(prior, "revert", "Synthe: undo the last prompt change", { changed: "Puts back the prompt from before Synthe's last change.", plain: verdict.plain, technical: verdict.reasons.join(" "), evidence: evidenceOf("revert", null, prior, { prior: replaced! }),
+        delta: (proposed) => renderDeltaBlock(goal, { ...state, rounds: [...state.rounds, { ...record, outcome: proposed ? "proposed" : "reverted", changed: "Put back the prompt from before the last change", plain: verdict.plain, scorePct: shownScorePct(scores) }] }) });
       if (landed) {
         Object.assign(record, { outcome: landed.proposed ? "proposed" : "reverted", pr: landed.pr });
         record.changed = "Put back the prompt from before the last change";
@@ -364,6 +515,29 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   }
 
   if (scores) {
+    // The round's place in the score series, from the held-back marks the score step already made: the
+    // current prompt's check-pass share, and, when a change landed, one practice case it visibly fixed.
+    if (judged) {
+      record.scorePct = shownScorePct(scores);
+      if (winnerId) {
+        const pair = pickExamplePair(scores, winnerId, scenarioText);
+        if (pair) record.examplePair = pair;
+      }
+    }
+    // Count check failures over every row scored this round, for the report's "what failed most". The rows
+    // themselves aren't kept in state, so the count has to be taken now.
+    const failed: Record<string, number> = {};
+    for (const row of [...scores.baselineTrain, ...scores.baselineHoldout, ...scores.candidates.flatMap((c) => [...c.train, ...(c.holdout ?? [])])]) {
+      for (const check of row.failedChecks ?? []) failed[check] = (failed[check] ?? 0) + 1;
+    }
+    if (Object.keys(failed).length) record.failedChecks = failed;
+    const duels = { better: 0, worse: 0, same: 0 };
+    for (const row of scores.candidates.flatMap((c) => c.train)) {
+      if (row.score === WIN) duels.better++;
+      else if (row.score === LOSS) duels.worse++;
+      else if (row.score === TIE) duels.same++;
+    }
+    if (duels.better + duels.worse + duels.same) record.duels = duels;
     // Training rows only: held-back scenarios are never in scores.baselineTrain, so the writer can't learn them.
     // A lesson is a scenario where the current prompt broke a guardrail, failed one of the team's checks, or a rewrite
     // beat it, with both replies.

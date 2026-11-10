@@ -8,6 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { renderWorkflow } from "../src/cli/init.ts";
 import { runDecide } from "../src/loop/decide.ts";
 import { failureOf, type Failure } from "../src/loop/failure.ts";
+import { PROXY_AUTH_MESSAGE } from "../src/core/share.ts";
 import { MemoryRepo, goal } from "./helpers.ts";
 
 const BUSY: Failure = { step: "score", kind: "busy", message: "Anthropic's API is busy right now. Wait a few minutes and try again." };
@@ -24,6 +25,15 @@ test("a model failure is sorted into busy (retry on backup), key (needs a person
   assert.equal(failureOf("write", { status: 400, message: "400 You have reached your specified workspace API usage limits." }).kind, "key");
   assert.equal(failureOf("write", { status: 403, message: "403 forbidden" }).kind, "key");
   assert.deepEqual(failureOf("score", new Error("candidates are missing\n    at main")), { step: "score", kind: "other", message: "candidates are missing" });
+});
+
+test("key outside a setup repo refuses before credential validation", () => {
+  const dir = mkdtempSync(join(tmpdir(), "synthe-key-unset-"));
+  const env = { ...process.env, SYNTHE_ANTHROPIC_KEY: "sk-ant-no-spend-test", SYNTHE_ANTHROPIC_BASE_URL: "http://127.0.0.1:9" };
+  const run = spawnSync(process.execPath, [join(import.meta.dirname, "../dist/cli.js"), "key"], { cwd: dir, env, encoding: "utf8", timeout: 5000 });
+  assert.equal(run.status, 1);
+  assert.match(run.stdout, /Synthe isn't set up in this folder/);
+  assert.doesNotMatch(run.stdout + run.stderr, /Synthe hit an error|Paste your own Anthropic key/);
 });
 
 test("a failed write step saves why it failed for the decide step, and still exits 1", () => {
@@ -85,7 +95,7 @@ test("a key failure says what to do: get a new key and update the repo secret", 
   const record = await runDecide(goal(), repo, failedRound(KEY));
   assert.equal(record!.failure, "key");
   assert.equal(repo.state.stalls, 1);
-  assert.match(record!.plain!, /Your Synthe key has no credit left\. Get a new key from the Synthe table, then run `gh secret set SYNTHE_ANTHROPIC_KEY` in your repo/);
+  assert.match(record!.plain!, /Your Synthe key has no credit left\. Run `npx synthe key`/);
   assert.doesNotMatch(record!.plain!, /Ask the Synthe table/);
   assert.match(repo.issue, /## Synthe needs you to fix something/);
   assert.match(repo.issue, /Run `npx synthe restart` after replacing the key/);
@@ -97,7 +107,7 @@ test("when the last rounds all failed, the headline names the cause instead of a
   for (let i = 0; i < 3; i++) await runDecide(goal(), key, failedRound(KEY));
   assert.ok(key.state.stopped);
   assert.match(key.issue, /## Stopped: your Synthe key stopped working/);
-  assert.match(key.issue, /gh secret set SYNTHE_ANTHROPIC_KEY.*Then run `npx synthe restart`/);
+  assert.match(key.issue, /npx synthe key.*Then run `npx synthe restart`/);
 
   // Busy rounds don't stall, so a busy run only stops at its round limit, and nothing needs fixing.
   const busy = new MemoryRepo("Old prompt.");
@@ -143,4 +153,15 @@ test("every job has a time limit, and write and score failures reach decide with
   assert.equal(new Set(names).size, names.length);
   // Decide downloads every artifact into .synthe-out, where action.ts loads error.json.
   assert.match(jobs.decide, /with: \{ path: \.synthe-out, merge-multiple: true \}/);
+});
+
+test("a proxy that can't verify the run is reported as a workflow problem, not a bad key", async () => {
+  const repo = new MemoryRepo("Old prompt.");
+  const auth: Failure = { step: "write", kind: "key", message: PROXY_AUTH_MESSAGE };
+  await runDecide(goal(), repo, failedRound(auth));
+  assert.match(repo.issue, /Run `npx synthe restart` after that\./);
+  assert.doesNotMatch(repo.issue, /after replacing the key/);
+  for (let i = 0; i < 2; i++) await runDecide(goal(), repo, failedRound(auth));
+  assert.match(repo.issue, /## Stopped: the Synthe proxy couldn't verify this run/);
+  assert.doesNotMatch(repo.issue, /your Synthe key stopped working/);
 });

@@ -91,7 +91,8 @@ test("the round record and report lead with the team's number", async () => {
   const record = await runDecide(g, repo, { candidates: [{ id: "c1", text: "New", summary: "Asks for the order number first" }], scores, costUsd: 0.05 });
   assert.equal(record?.outcome, "merged");
   assert.deepEqual(record?.checks, { before: 50, after: 100 });
-  assert.match(repo.issue, /Your checks now pass 100% of the time, up from 50%\./);
+  // Only the merge round is measured, and it measured the old prompt, so the practice-case gain stays, labelled.
+  assert.match(repo.issue, /On the practice cases Synthe learns from, your checks now pass 100% of the time, up from 50%\./);
   assert.match(repo.prs[0].body, /\*\*Why:\*\* Your checks passed 100% of the time, up from 50%\./);
   assert.deepEqual(repo.state.lessons?.rows.find((r) => r.id === "t0")?.failedChecks, ["Asks for the order number first"]);
 });
@@ -113,4 +114,105 @@ test("synthe.json checks must be a short list of sentences", () => {
   assert.throws(() => parseGoal(JSON.stringify({ ...base, checks: "be nice" })), /checks must be a list/);
   assert.throws(() => parseGoal(JSON.stringify({ ...base, checks: Array(6).fill("x") })), /up to 5/);
   assert.throws(() => parseGoal(JSON.stringify({ ...base, checks: [""] })), /checks must be a list/);
+});
+
+// A real run on Nov 6 found nothing better in three rounds, so the held-back cases were never run and the prompt's
+// score was never recorded: no headline, no graph. The current prompt is now marked there on its own.
+test("when no change passes the learned-from cases, the current prompt is still scored on the held-back cases", async () => {
+  const m = model({ newFails: 1 }); // New fails the same checks as Old and the judge prefers Old: nothing passes training
+  const { scores } = await runScore(withChecks(), "Old", [{ id: "c1", text: "New" }], cases, m);
+  assert.equal(scores.candidates[0].holdout, undefined, "no candidate is judged on the held-back cases");
+  assert.ok(scores.baselineHoldout.every((r) => r.applicable === 2 && r.failed === 1 && r.score === 50 && r.reply === undefined));
+  const { holdoutScorePct } = await import("../src/loop/decide.ts");
+  assert.equal(holdoutScorePct(scores.baselineHoldout), 50);
+  const held = m.asks.filter((a) => a.user.includes("my parcel"));
+  assert.equal(held.filter((a) => a.system === "Old").length, 10, "one current-prompt reply per held-back case");
+  assert.equal(held.filter((a) => JSON.stringify(a.schema ?? {}).includes('"results"')).length, 10, "one check call per held-back case");
+  assert.ok(!held.some((a) => a.system === "New" || JSON.stringify(a.schema ?? {}).includes('"better"')), "nothing is judged or run for a challenger there");
+  // The decision is unchanged, and the skipped round now records the score.
+  const repo = new MemoryRepo("Old");
+  repo.files.set("s.jsonl", cases.map((c) => JSON.stringify(c)).join("\n"));
+  const record = await runDecide(withChecks(), repo, { candidates: [{ id: "c1", text: "New", summary: "s" }], scores, costUsd: 0.05 });
+  assert.equal(record?.outcome, "skipped");
+  assert.equal(record?.scorePct, 50);
+  assert.match(repo.issue, /Your prompt scores 50% \(checks passed on test cases Synthe never trains on\)/);
+});
+
+test("without checks, a round with no winner still spends nothing on the held-back cases", async () => {
+  const m = model({ newFails: 1 });
+  await runScore(goal({ scenarios: "s.jsonl" }), "Old", [{ id: "c1", text: "New" }], cases, m);
+  assert.ok(!m.asks.some((a) => a.user.includes("my parcel")));
+});
+
+// One reading per prompt version: an unchanged prompt re-marked every round shows noise as movement (a real run read
+// 100%, 100%, then 95.7% for the same prompt), and pays for it.
+test("the held-back score is measured once per prompt version and reused while nothing it depends on changes", async () => {
+  const first = model({ newFails: 1 });
+  const one = await runScore(withChecks(), "Old", [{ id: "c1", text: "New" }], cases, first);
+  assert.equal(one.scores.scorePct, 50);
+  assert.ok(one.scoreCache && one.scoreCache.pct === 50 && typeof one.scoreCache.key === "string");
+
+  // Same prompt, cases, checks and models: no held-back calls, the same score, and nothing new to keep.
+  const again = model({ newFails: 1 });
+  const two = await runScore(withChecks(), "Old", [{ id: "c1", text: "New" }], cases, again, null, Math.random, [], null, one.scoreCache);
+  assert.equal(two.scores.scorePct, 50);
+  assert.equal(two.scoreCache, undefined);
+  assert.ok(!again.asks.some((a) => a.user.includes("my parcel")), "nothing is spent on the held-back cases");
+  const repo = new MemoryRepo("Old");
+  repo.files.set("s.jsonl", cases.map((c) => JSON.stringify(c)).join("\n"));
+  const record = await runDecide(withChecks(), repo, { candidates: [{ id: "c1", text: "New", summary: "s" }], scores: two.scores, costUsd: 0.05 });
+  assert.equal(record?.scorePct, 50);
+
+  // A round with no candidates at all still shows the known score.
+  const none = await runScore(withChecks(), "Old", [], cases, model(), null, Math.random, [], null, one.scoreCache);
+  assert.equal(none.scores.scorePct, 50);
+});
+
+test("a winning round shows the prompt's first reading, while decisions keep this round's own marks", async () => {
+  const cached = { key: (await import("../src/loop/score.ts")).scoreKey(withChecks(), "Old", cases.filter((c) => c.split === "holdout")), pct: 70 };
+  const { scores, scoreCache } = await runScore(withChecks(), "Old", [{ id: "c1", text: "New" }], cases, model(), null, Math.random, [], null, cached);
+  assert.ok(scores.candidates[0].holdout, "New wins on the learned-from cases, so the held-back cases are judged as usual");
+  assert.ok(scores.baselineHoldout.every((r) => r.failed === 1 && r.applicable === 2), "this round's marks stay on the rows");
+  assert.equal(scores.scorePct, 70, "the team sees the prompt's first reading");
+  assert.equal(scoreCache, undefined);
+  const { holdoutScorePct, shownScorePct } = await import("../src/loop/decide.ts");
+  assert.equal(holdoutScorePct(scores.baselineHoldout), 50);
+  assert.equal(shownScorePct(scores), 70);
+  assert.equal(judgeRound(scores, withChecks(), null).action, "merge", "the decision reads the rows, not the shown score");
+});
+
+test("a new prompt, new checks, new held-back cases or new models are measured again", async () => {
+  const { scoreKey } = await import("../src/loop/score.ts");
+  const held = cases.filter((c) => c.split === "holdout");
+  const base = scoreKey(withChecks(), "Old", held);
+  assert.equal(scoreKey(withChecks(), "Old", held), base);
+  assert.notEqual(scoreKey(withChecks(), "Old prompt, edited", held), base);
+  assert.notEqual(scoreKey(withChecks(["Asks for the order number first"]), "Old", held), base);
+  assert.notEqual(scoreKey(withChecks(), "Old", held.slice(1)), base);
+  assert.notEqual(scoreKey(withChecks(), "Old", held.map((c, i) => (i ? c : { ...c, input: "changed" }))), base);
+  const g = withChecks();
+  assert.notEqual(scoreKey({ ...g, models: { ...g.models, runner: "claude-sonnet-5-5" } }, "Old", held), base);
+  assert.notEqual(scoreKey({ ...g, models: { ...g.models, judge: "claude-sonnet-5-5" } }, "Old", held), base);
+  // A stale key is ignored: the prompt is measured again and a fresh reading is kept.
+  const m = model({ newFails: 1 });
+  const r = await runScore(withChecks(), "Old", [{ id: "c1", text: "New" }], cases, m, null, Math.random, [], null, { key: "stale", pct: 99 });
+  assert.equal(r.scores.scorePct, 50);
+  assert.equal(r.scoreCache?.pct, 50);
+  assert.ok(m.asks.some((a) => a.user.includes("my parcel")));
+});
+
+test("decide keeps the score step's caches in state, and ignores malformed ones", async () => {
+  const repo = new MemoryRepo("Old");
+  repo.files.set("s.jsonl", cases.map((c) => JSON.stringify(c)).join("\n"));
+  const { scores } = await runScore(withChecks(), "Old", [{ id: "c1", text: "New" }], cases, model({ newFails: 1 }));
+  await runDecide(withChecks(), repo, { candidates: [{ id: "c1", text: "New", summary: "s" }], scores, costUsd: 0.05,
+    caches: { score: { key: "k1", pct: 50 }, attack: { key: "a1", failed: ["x"] } } });
+  assert.deepEqual(repo.state.scoreCache, { key: "k1", pct: 50 });
+  assert.deepEqual(repo.state.attackCache, { key: "a1", failed: ["x"] });
+  await runDecide(withChecks(), repo, { candidates: [{ id: "c1", text: "New", summary: "s" }], scores, costUsd: 0.05,
+    caches: { score: { key: 7, pct: "high" } as never, attack: null } });
+  assert.deepEqual(repo.state.scoreCache, { key: "k1", pct: 50 }, "a malformed cache leaves the kept one");
+  await runDecide(withChecks(), repo, { candidates: [{ id: "c1", text: "New", summary: "s" }], scores, costUsd: 0.05,
+    caches: { score: { key: "k2", pct: "high" } as never } });
+  assert.deepEqual(repo.state.scoreCache, { key: "k1", pct: 50 }, "a score that isn't a number is ignored too");
 });

@@ -25,6 +25,9 @@ const classify = (res: Response, text: string): MergeProblem =>
     : "other";
 
 export interface Repo {
+  // The repo's owner/name, when the implementation knows it: the report embeds files from the state
+  // branch by their raw URL, which needs the slug. Local and test repos may not have one.
+  slug?: string;
   dispatchWorkflow(): Promise<void>;
   defaultBranch(): Promise<string>;
   headSha(branch: string): Promise<string>;
@@ -39,6 +42,8 @@ export interface Repo {
   upsertIssue(number: number | null, title: string, body: string): Promise<number>;
   readState(): Promise<State>;
   writeState(state: State): Promise<void>;
+  // Any other file on the state branch, such as an evidence record.
+  writeStateFile(path: string, content: string, message: string): Promise<void>;
 }
 
 const STATE_PATH = "state.json";
@@ -107,6 +112,7 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
   };
 
   const repo: Repo = {
+    slug,
     async dispatchWorkflow() {
       const res = await call("POST", "/actions/workflows/synthe.yml/dispatches", { ref: await repo.defaultBranch() });
       if (res.ok) return;
@@ -177,12 +183,33 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
       return text === null ? newState() : { ...newState(), ...JSON.parse(text) };
     },
     async writeState(state) {
-      const exists = await blobSha(STATE_PATH, STATE_BRANCH) !== undefined;
+      for (let attempt = 0; attempt <= RETRIES; attempt++) {
+        const current = await call("GET", `/contents/${STATE_PATH}?ref=${encodeURIComponent(STATE_BRANCH)}`);
+        if (!current.ok && current.status !== 404) throw new Error(`GitHub read state: ${current.status}`);
+        const file = current.ok ? await current.json() : null;
+        const saved = file ? JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) : newState();
+        const next = { ...state, ...(saved.ownKeyFromUsd !== undefined ? { ownKeyFromUsd: saved.ownKeyFromUsd } : {}) };
+        if (!file) {
+          const branch = await call("GET", `/git/ref/heads/${encodeURIComponent(STATE_BRANCH)}`);
+          if (branch.status === 404) await createBranch(STATE_BRANCH, await repo.headSha(await repo.defaultBranch()));
+        }
+        const result = await call("PUT", `/contents/${STATE_PATH}`, {
+          message: `Synthe round ${state.round}`, branch: STATE_BRANCH, sha: file?.sha,
+          content: Buffer.from(`${JSON.stringify(next, null, 2)}\n`, "utf8").toString("base64"),
+        });
+        if (result.status === 409 && attempt < RETRIES) continue;
+        if (!result.ok) throw new Error(`GitHub write state: ${result.status} ${(await result.text()).slice(0, 300)}`);
+        Object.assign(state, next);
+        return;
+      }
+    },
+    async writeStateFile(path, content, message) {
+      const exists = await blobSha(path, STATE_BRANCH) !== undefined;
       if (!exists) {
         const res = await call("GET", `/git/ref/heads/${encodeURIComponent(STATE_BRANCH)}`);
         if (res.status === 404) await createBranch(STATE_BRANCH, await repo.headSha(await repo.defaultBranch()));
       }
-      await putFile(STATE_BRANCH, STATE_PATH, `${JSON.stringify(state, null, 2)}\n`, `Synthe round ${state.round}`);
+      await putFile(STATE_BRANCH, path, content, message);
     },
   };
   return repo;

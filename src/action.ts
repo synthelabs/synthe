@@ -1,18 +1,21 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { GOAL_FILE, parseGoal, parseScenarios } from "./core/goal.ts";
+import { ATTACKS_FILE, GOAL_FILE, parseAttacks, parseGoal, parseScenarios, type Attack } from "./core/goal.ts";
 import { readPrompt } from "./core/prompt.ts";
 import { sumCosts } from "./core/cost.ts";
-import { resumeIfScenariosChanged, stopReason } from "./core/state.ts";
+import { calibrationReadings, resumeIfScenariosChanged, stopReason } from "./core/state.ts";
 import { sha256 } from "./core/safety.ts";
 import { githubRepo, type Repo } from "./github/repo.ts";
-import { anthropicModel } from "./model/client.ts";
+import { configuredModel, eventModels } from "./model/client.ts";
 import { runDecide } from "./loop/decide.ts";
-import { fullShareActive, sharePayload, shareRound, shouldShare } from "./core/share.ts";
+import { fullShareActive, requireOidc, sharePayload, shareRound, shouldShare } from "./core/share.ts";
 import packageJson from "../package.json" with { type: "json" };
 import { roundSummary } from "./loop/report.ts";
 import { failureOf, type Failure } from "./loop/failure.ts";
 import { explainScores, runScore } from "./loop/score.ts";
 import { explainWrite, runWrite } from "./loop/write.ts";
+import { explainCompose, withComposed } from "./loop/compose.ts";
+import { captureCancel, captureFailure, observeRoundStep, startEventsWorker } from "./core/events.ts";
+import { deliverReceipt } from "./core/receipts.ts";
 
 const OUT = ".synthe-out";
 // Only the hourly backup uses this gate. A queued chain round starts immediately.
@@ -35,6 +38,13 @@ async function stillWaiting(repo: Repo, branch: string): Promise<boolean> {
 
 async function main() {
   const step = input("step");
+  if (step === "receipt-start" || step === "receipt-finish") {
+    const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"), { conclusion: input("conclusion") });
+    console.log(acknowledged ? "Crimson tracking acknowledged this run." : "Crimson tracking does not apply to this run.");
+    return;
+  }
+  if (step === "cancel") return captureCancel();
+  if (step !== "decide" && !(input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() && (input("event-code") || process.env.SYNTHE_EVENT_CODE)?.trim()) requireOidc();
   const repo = githubRepo(process.env.GITHUB_REPOSITORY!, input("github-token"), process.env.GITHUB_API_URL);
 
   if (step === "decide") {
@@ -51,7 +61,9 @@ async function main() {
     const startSource = fullActive && beforeState?.round === 0 ? await repo.readFile(goal.prompt.path, branch) : null;
     const startPrompt = startSource === null || !beforeState ? null : readPrompt(startSource, goal, beforeState.prompt);
     const scenarios = startPrompt !== null ? await repo.readFile(goal.scenarios, branch) : null;
-    const record = await runDecide(goal, repo, { candidates: written?.candidates ?? null, scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json") });
+    const calibrationText = await repo.readFile(".synthe/calibration.json", branch);
+    const calibration = calibrationText === null ? null : calibrationReadings(calibrationText);
+    const record = await observeRoundStep("decide", { candidates: written?.candidates }, () => runDecide(goal, repo, { candidates: withComposed(written?.candidates, scored?.compose), scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json"), calibration, caches: { attack: scored?.attackCache ?? null, score: scored?.scoreCache ?? null } }));
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     const state = await repo.readState();
     if (record && state.chainReady && state.round === record.round && state.round < goal.merge_rule.max_rounds && !state.stopped && !state.proposal && !state.pending) {
@@ -128,10 +140,13 @@ async function main() {
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, state.prompt);
   if (prompt === null) throw new Error(`could not find the prompt in ${goal.prompt.path}`);
   const scenarios = parseScenarios(readFileSync(goal.scenarios, "utf8"));
-  const model = anthropicModel(input("anthropic-api-key"));
+  const key = input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY;
+  const eventCode = input("event-code") || process.env.SYNTHE_EVENT_CODE;
+  if (!key && eventCode) eventModels(goal.models);
+  const model = configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE);
 
   if (step === "write") {
-    const written = await runWrite(goal, state, prompt, scenarios, model);
+    const written = await observeRoundStep("write", { prompt }, () => runWrite(goal, state, prompt, scenarios, model));
     console.log(`Wrote ${written.candidates.length} candidates for ${written.costUsd === null ? "an unknown cost" : `$${written.costUsd.toFixed(4)}`}`);
     for (const line of explainWrite(written)) console.log(line);
     save("candidates.json", written);
@@ -141,8 +156,14 @@ async function main() {
     if (!written) throw new Error("candidates are missing");
     const last = state.lastMerge;
     const prior = last && !last.reverted && last.mergedHash === sha256(prompt) ? last.priorPrompt : null;
-    const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior);
+    // The frozen attack set, when the repo has one. It is loaded here, in the score step, so attack text can
+    // never reach the write step or the writer.
+    const attacks: Attack[] = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync(ATTACKS_FILE, "utf8")) : [];
+    const scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null, state.scoreCache ?? null));
+    // The current prompt's fresh attack results and score ride in scores.json to the decide step, which keeps them
+    // in state: this job's token can only read, so writing state here always failed (HTTP 403).
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
+    for (const line of explainCompose(scored.compose)) console.log(line);
     for (const line of explainScores(scored.scores, scenarios)) console.log(line);
     const { confirmed, dismissed, failed, excusedConfirmed } = scored.checks;
     if (confirmed + dismissed + failed + excusedConfirmed > 0) console.log(`guardrail re-checks: new breaks ${confirmed} confirmed, ${dismissed} dismissed, ${failed} failed (a failed check still blocks); ${excusedConfirmed} confirmed as already broken by the current prompt`);
@@ -152,14 +173,20 @@ async function main() {
   }
 }
 
-main().catch((e) => {
+if (!startEventsWorker()) main().catch((e) => {
+  const step = input("step");
+  if (step === "receipt-start" || step === "receipt-finish") {
+    console.log(`::error title=Crimson tracking::${e.message}`);
+    process.exit(1);
+  }
+  captureFailure(input("step"), e);
   console.error(e);
   // The decide step reads this to tell a busy API (try again next hour) from a key a person has to replace.
-  const step = input("step");
   if (step === "write" || step === "score") {
     try {
       const failure = failureOf(step, e);
       save("error.json", failure);
+      console.error(failure.message);
       // Shown at the top of the run's page, in words, instead of only a stack trace in the log.
       console.log(`::error title=Synthe::${failure.message.replace(/\r?\n/g, " ")}`);
     } catch (saveError) { console.error(saveError); }

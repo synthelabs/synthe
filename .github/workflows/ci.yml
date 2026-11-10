@@ -1,0 +1,92 @@
+# Tests on every push and pull request, with the Lean spec built first so the merge rule is always checked against
+# its proved model (test/lean-spec.test.ts fails instead of skipping when CI=true and the binary is missing).
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.elan/toolchains
+            spec/.lake
+          key: lean-${{ runner.os }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json') }}-${{ hashFiles('spec/**/*.lean') }}
+          restore-keys: lean-${{ runner.os }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json') }}-
+      - name: Install Lean (pinned elan, toolchain from spec/lean-toolchain, with retries)
+        run: .github/scripts/install-lean.sh
+      - name: Build and check the Lean spec (proofs included)
+        working-directory: spec
+        run: lake build
+      - run: npm run typecheck
+      - run: npm test
+      - name: Stress the differential test across seeds
+        run: for s in 1 2 3; do LEAN_SPEC_CASES=20000 LEAN_SPEC_SEED=$s node --test test/lean-spec.test.ts; done
+
+  # Operator mutation testing for the decision code, on pull requests that touch it, its tests or the Lean spec.
+  mutation:
+    if: github.event_name == 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Skip unless the decision code, its tests or the spec changed
+        id: changed
+        run: |
+          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -qE '^(src/core/merge-rule\.ts|src/improve/verdict\.ts|src/core/goal\.ts|test/|spec/|mutation/)'; then echo "run=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/setup-node@v4
+        if: steps.changed.outputs.run == 'true'
+        with:
+          node-version: 24
+          cache: npm
+      - if: steps.changed.outputs.run == 'true'
+        run: npm ci
+      - uses: actions/cache@v4
+        if: steps.changed.outputs.run == 'true'
+        with:
+          path: |
+            ~/.elan/toolchains
+            spec/.lake
+          key: lean-${{ runner.os }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json') }}-${{ hashFiles('spec/**/*.lean') }}
+          restore-keys: lean-${{ runner.os }}-${{ hashFiles('spec/lean-toolchain', 'spec/lake-manifest.json') }}-
+      - name: Install Lean (pinned elan, with retries)
+        if: steps.changed.outputs.run == 'true'
+        run: .github/scripts/install-lean.sh
+      - if: steps.changed.outputs.run == 'true'
+        working-directory: spec
+        run: lake build
+      - name: Restore the last mutation results (incremental)
+        if: steps.changed.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: mutation/reports
+          key: mutation-${{ github.head_ref }}-${{ github.sha }}
+          restore-keys: |
+            mutation-${{ github.head_ref }}-
+            mutation-
+      - name: Mutation testing (fails below the kill-rate floor in mutation/stryker.config.mjs)
+        if: steps.changed.outputs.run == 'true'
+        run: npm run mutation:operators
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.changed.outputs.run == 'true'
+        with:
+          name: mutation-report
+          path: mutation/reports/*.json

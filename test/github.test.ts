@@ -11,6 +11,7 @@ let mergeQueue: typeof merge[] = []; // answered first, one per call, to test re
 const waits: number[] = [];
 let failOnce: { path: string; status: number } | null = null; // the next request to this path fails once
 let dispatchStatus = 204;
+let concurrentState: string | null = null;
 
 const server = createServer((req, res) => {
   // Synthe only calls /repos/...; other local tools sometimes probe new ports with a bare GET /.
@@ -44,11 +45,16 @@ const server = createServer((req, res) => {
     if (path.startsWith("/contents/")) {
       const key = `${req.method === "PUT" ? body.branch : url.searchParams.get("ref")}:${path.slice(10)}`;
       if (req.method === "PUT") {
+        if (path === "/contents/state.json" && concurrentState !== null) {
+          files.set(key, concurrentState);
+          concurrentState = null;
+          return send(409, { message: "State changed" });
+        }
         files.set(key, Buffer.from(body.content, "base64").toString());
         return send(200, { commit: { sha: "newsha" } });
       }
       if (!files.has(key)) return send(404, {});
-      return req.headers.accept?.includes("raw") ? send(200, files.get(key)) : send(200, { sha: "blob" });
+      return req.headers.accept?.includes("raw") ? send(200, files.get(key)) : send(200, { sha: "blob", content: Buffer.from(files.get(key)!).toString("base64") });
     }
     if (path === "/pulls") return send(201, { number: 7 });
     if (path === "/pulls/7/merge") {
@@ -145,6 +151,18 @@ test("state starts new, then round-trips on its own branch", async () => {
   assert.deepEqual(await repo.readState(), newState());
   await repo.writeState({ ...newState(), round: 4 });
   assert.equal((await repo.readState()).round, 4);
+});
+
+test("state writes preserve a concurrent first-key budget offset after a conflict", async () => {
+  const state = { ...newState(), round: 5, spendUsd: 3.8 };
+  concurrentState = JSON.stringify({ ...newState(), ownKeyFromUsd: 3.5 });
+  await repo.writeState(state);
+  assert.equal((await repo.readState()).ownKeyFromUsd, 3.5);
+  assert.equal((await repo.readState()).round, 5);
+  assert.equal((await repo.readState()).spendUsd, 3.8);
+  assert.equal((state as ReturnType<typeof newState>).ownKeyFromUsd, 3.5);
+  await repo.writeState({ ...newState(), round: 6 });
+  assert.equal((await repo.readState()).ownKeyFromUsd, 3.5);
 });
 
 test("creates then updates the report issue", async () => {

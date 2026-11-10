@@ -1,6 +1,6 @@
 # Synthe
 
-Synthe improves an AI agent's system prompt. A team runs `npx synthe init`. A GitHub Actions workflow then runs rounds of write → score → decide and merges only clear wins. Only the team's prompt file ever changes.
+Synthe has two modes. With `npx synthe init`, a GitHub Actions workflow proposes and scores changes to an AI agent's system prompt. With `npx synthe improve`, Synthe proposes code changes and keeps measured gains. The team's configuration controls whether to open pull requests for review or merge automatically.
 
 ## 1. Stack
 
@@ -17,7 +17,8 @@ npm run mutation    # breaks the code on purpose and checks the tests notice
 
 ## 3. Where things live
 
-- `src/cli/`: the `npx synthe` commands (`init`, `try`, `calibrate`, `migrate`, `status`, `stop`, `restart`, `upgrade`)
+- `src/cli/`: the `npx synthe` commands (`init`, `improve`, `submit`, `try`, `calibrate`, `migrate`, `status`, `stop`, `restart`, `upgrade`)
+- `src/improve/`: code changes, metrics, regression checks, and the improve loop.
 - `src/loop/`: one round. `write.ts` proposes edits, `score.ts` runs the agent, checker and judge, `decide.ts` merges or proposes and writes the report.
 - `src/core/`: the goal file (`synthe.json`), test cases, merge rule (`merge-rule.ts`), cost and state
 - `src/model/`: the Anthropic client
@@ -30,7 +31,7 @@ npm run mutation    # breaks the code on purpose and checks the tests notice
 
 1. Work on a branch per task. Never push to `main`, move the `v1` tag, create releases or run `npm publish`. A maintainer merges and releases. `scripts/go-live.sh` pushes, force-moves `v1` and dispatches paid work: don't run it.
 2. Never read, edit or tune to holdout or frozen eval files.
-3. Never spend real API money without explicit approval. That covers `init`, `try`, `calibrate`, `migrate` (unless `--dry-run`), `key` against a real key, and `gh workflow run` on any repo.
+3. Never spend real API money without explicit approval. That covers `init`, `improve`, `try`, `calibrate`, `migrate` (unless `--dry-run`), `key` against a real key, and `gh workflow run` on any repo.
 4. No new dependency without asking.
 5. Never report a number you didn't just produce with a command.
 

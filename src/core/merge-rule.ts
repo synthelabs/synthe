@@ -1,9 +1,10 @@
-import type { Goal } from "./goal.ts";
+import { DEFAULTS, type Goal } from "./goal.ts";
 
 // One scenario's result. A null score means it could not be measured.
 // reply is kept only for the current prompt's training rows, so the next writer can study what went wrong.
 // failed and applicable count the team's checks on this reply; failedChecks names them for the next writer.
-export interface ScoreRow { id: string; score: number | null; violation: boolean | null; reply?: string; failed?: number; applicable?: number; failedChecks?: string[] }
+// guardFailed and guardApplicable count the team's guards the same way. Guards are measured, never used to score.
+export interface ScoreRow { id: string; score: number | null; violation: boolean | null; reply?: string; failed?: number; applicable?: number; failedChecks?: string[]; guardFailed?: number; guardApplicable?: number }
 
 // The share of the team's checks the replies passed, as a whole percentage, or null when no check applied or a reply
 // wasn't checked. The same rows must be compared on both sides.
@@ -13,7 +14,31 @@ export function checkRate(rows: ScoreRow[]): number | null {
   return applicable === 0 ? null : Math.round((100 * (applicable - rows.reduce((n, r) => n + r.failed!, 0))) / applicable);
 }
 
-export interface CandidateScore { id: string; train: ScoreRow[]; holdout?: ScoreRow[] }
+// The same measure for the team's guards: the share they passed, or null when none applied or a reply wasn't checked.
+export function guardRate(rows: ScoreRow[], rounded = true): number | null {
+  if (rows.length === 0 || new Set(rows.map((r) => r.id)).size !== rows.length || rows.some((r) => !Number.isSafeInteger(r.guardApplicable) || !Number.isSafeInteger(r.guardFailed) || r.guardApplicable! < 0 || r.guardFailed! < 0 || r.guardFailed! > r.guardApplicable!)) return null;
+  const applicable = rows.reduce((n, r) => n + r.guardApplicable!, 0);
+  if (applicable === 0) return null;
+  const rate = (100 * (applicable - rows.reduce((n, r) => n + r.guardFailed!, 0))) / applicable;
+  return rounded ? Math.round(rate) : rate;
+}
+
+// "Your guards held at 94%, down from 96%." in the report, wherever guard numbers are shown.
+export function guardSentence(g: { before: number; after: number }): string {
+  if (g.after > g.before) return `Your guards improved from ${g.before}% to ${g.after}%.`;
+  if (g.after === g.before) return `Your guards held at ${g.after}%.`;
+  return `Your guards held at ${g.after}%, down from ${g.before}%.`;
+}
+
+export interface CandidateScore {
+  id: string;
+  train: ScoreRow[];
+  holdout?: ScoreRow[];
+  // Ids of the frozen attack messages this candidate's replies failed, when attacks were run. Null or missing
+  // while attacks exist means the result is unknown, and an unknown result blocks a merge, like a duel that
+  // couldn't be judged. Only the round's winning candidate is measured (see runScore), so the others stay unset.
+  attackFailed?: string[] | null;
+}
 
 export interface RoundScores {
   baselineHash: string;
@@ -22,12 +47,19 @@ export interface RoundScores {
   candidates: CandidateScore[];
   // The prompt the last merge replaced, challenging the current one head to head, when that merge is still live.
   prior?: ScoreRow[];
+  // The frozen attack set's results, when the repo has one: how many attacks ran, which ones the current
+  // prompt's replies failed (null when that couldn't be measured), and each attack's message, so logs and
+  // reports can name a failed attack. Attack results never reach the writer: they live only in the scores.
+  attacks?: { total: number; baselineFailed: string[] | null; inputs: Record<string, string> };
+  // The current prompt's score as shown to the team, measured once per prompt version (see runScore's scoreCache).
+  // Display only: decisions read the rows above, never this.
+  scorePct?: number | null;
 }
 
 // reasons are technical, for logs and receipts. plain and notes say the same for the team, in everyday words:
 // plain explains the decision, notes says what happened to each candidate.
 export type Verdict =
-  | { action: "merge"; candidateId: string; before: number; after: number; heldBefore: number; heldAfter: number; wins: number; losses: number; heldWins: number; heldLosses: number; checks?: { before: number; after: number }; reasons: string[]; plain: string; notes: Record<string, string> }
+  | { action: "merge"; candidateId: string; before: number; after: number; heldBefore: number; heldAfter: number; wins: number; losses: number; heldWins: number; heldLosses: number; checks?: { before: number; after: number }; guards?: { before: number; after: number }; attacks?: { held: number; total: number }; reasons: string[]; plain: string; notes: Record<string, string> }
   | { action: "revert"; reasons: string[]; plain: string; notes: Record<string, string> }
   | { action: "skip"; reasons: string[]; notes: Record<string, string> };
 
@@ -85,7 +117,7 @@ export function paired(after: ScoreRow[], before: ScoreRow[]) {
 // Never add a guardrail break: a candidate may still break a guardrail only on a scenario where the current prompt
 // already breaks it, so a merge is never less safe than what it replaces, and a prompt that already breaks
 // guardrails can be fixed a step at a time. Unknown counts as broken on the candidate's side.
-const addedBreaks = (rows: ScoreRow[], current: ScoreRow[]) => {
+export const addedBreaks = (rows: ScoreRow[], current: ScoreRow[]) => {
   const before = new Map(current.map((r) => [r.id, r.violation]));
   return rows.filter((r) => r.violation === null || (r.violation === true && before.get(r.id) !== true)).length;
 };
@@ -145,18 +177,69 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
       notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
       continue;
     }
+    // The held-back win must also be unlikely to be luck. The mean check above alone passes a change with no real
+    // effect about half the time, and choosing the best of several candidates on training makes that worse.
+    const holdoutMaxP = goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p;
+    const heldP = signP(heldSplit.w, heldSplit.l);
+    if (heldP > holdoutMaxP) {
+      reasons.push(`${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck (p ${heldP.toFixed(3)}, needs ${holdoutMaxP})`);
+      notes[c.id] = `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck, so it wasn't used.`;
+      continue;
+    }
     const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
     if (added > 0) {
       reasons.push(`${c.id}: breaks a rule where the current prompt follows it, or couldn't be checked`);
       notes[c.id] = `Broke one of your rules in ${cases(added)} where your current prompt follows it, so it wasn't used.`;
       continue;
     }
+    // Guards catch a change that wins the checks by gaming them. They only measure, so they can refuse a merge but
+    // never pick a winner. Same rows on both sides, like the checks.
+    const currentHeld = scores.baselineHoldout.filter((r) => c.holdout!.some((h) => h.id === r.id));
+    const guardBefore = guardRate([...scores.baselineTrain, ...currentHeld]);
+    const guardAfter = guardRate([...c.train, ...c.holdout]);
+    if (goal.counter_checks?.length) {
+      if (guardBefore === null || guardAfter === null) {
+        reasons.push(`${c.id}: guard verdicts missing`);
+        notes[c.id] = "Your guards couldn't be checked on its replies, so it wasn't used.";
+        continue;
+      }
+      const exactBefore = guardRate([...scores.baselineTrain, ...currentHeld], false)!;
+      const exactAfter = guardRate([...c.train, ...c.holdout], false)!;
+      if (exactBefore - exactAfter > goal.merge_rule.guard_margin) {
+        // The reason reports the same unrounded drop the decision used, to one decimal when it isn't
+        // whole: a drop of 3.2 against a margin of 3 must not read as "a drop of 3 where 3 is allowed".
+        const drop = exactBefore - exactAfter;
+        const dropText = Number.isInteger(drop) ? `${drop}` : drop.toFixed(1);
+        reasons.push(`${c.id}: guards passed ${guardAfter}% against ${guardBefore}% for the current prompt, a drop of ${dropText} points where ${goal.merge_rule.guard_margin} is allowed`);
+        notes[c.id] = `Its replies looked better, but they pass your guards less often (${guardAfter}% against ${guardBefore}%), which can mean it is gaming your checks, so it wasn't used.`;
+        continue;
+      }
+    }
+    // Attacks work like guardrail breaks: only a new failure blocks. Failing an attack the current prompt
+    // already fails is no worse than what is live, but an attack that couldn't be marked is unknown, and an
+    // unknown result blocks the merge.
+    if (scores.attacks) {
+      const baseFailed = scores.attacks.baselineFailed;
+      const mine = c.attackFailed;
+      if (baseFailed === null || !Array.isArray(mine)) {
+        reasons.push(`${c.id}: attack results missing`);
+        notes[c.id] = "Its replies couldn't be checked against your attack messages, so it wasn't used.";
+        continue;
+      }
+      const baselineFailed = new Set(baseFailed);
+      const newAttacks = mine.filter((id) => !baselineFailed.has(id));
+      if (newAttacks.length) {
+        reasons.push(`${c.id}: fails ${newAttacks.map((id) => `attack ${id}`).join(", ")} that the current prompt passes`);
+        notes[c.id] = `It failed ${newAttacks.length === 1 ? "an attack message" : "attack messages"} (${newAttacks.join(", ")}) that your current prompt handles, so it wasn't used.`;
+        continue;
+      }
+    }
+    const guards = goal.counter_checks?.length ? { before: guardBefore!, after: guardAfter! } : undefined;
     const stillBroken = breaks(c.train) + breaks(c.holdout);
     const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout!.some((h) => h.id === r.id)));
     notes[c.id] = "Also looked better, but another change did better still.";
     if (best === null || after > best.after) {
       // The team's own number first, when they set checks: it is what they asked Synthe to improve.
-      const currentHeld = scores.baselineHoldout.filter((r) => c.holdout!.some((h) => h.id === r.id));
       const rateBefore = checkRate([...scores.baselineTrain, ...currentHeld]);
       const rateAfter = checkRate([...c.train, ...c.holdout]);
       const rates = rateBefore !== null && rateAfter !== null ? { before: rateBefore, after: rateAfter } : undefined;
@@ -164,14 +247,30 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
       const rules = wasBroken > 0
         ? stillBroken > 0 ? ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in ${stillBroken}.` : ` Your old prompt broke your rules in ${cases(wasBroken)}; this one in none.`
         : " It follows your rules in every test case.";
+      const guardLine = guards ? ` ${guardSentence(guards)}` : "";
+      const attacks = scores.attacks ? { held: scores.attacks.total - (c.attackFailed?.length ?? 0), total: scores.attacks.total } : undefined;
+      const attackLine = attacks ? ` Attacks: ${attacks.held} of ${attacks.total} held.` : "";
       best = {
         action: "merge", candidateId: c.id, before, after, heldBefore: beforeHoldout, heldAfter: held, wins: split.wins, losses: split.losses,
-        heldWins: heldSplit.w, heldLosses: heldSplit.l, notes, ...(rates ? { checks: rates } : {}),
-        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}`,
+        heldWins: heldSplit.w, heldLosses: heldSplit.l, notes, ...(rates ? { checks: rates } : {}), ...(guards ? { guards } : {}), ...(attacks ? { attacks } : {}),
+        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}${guardLine}${attackLine}`,
         reasons: [`judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`],
       };
     }
   }
   if (best) best.notes[best.candidateId] = "Merged.";
   return best ?? { action: "skip", reasons: reasons.length ? reasons : ["no candidates"], notes };
+}
+
+// The current prompt's score for the round: the share of the team's checks its replies passed on the
+// held-back cases, from the marks the score step already made. Passed applicable checks over applicable
+// checks (a check that doesn't apply to a message is in neither), to one decimal. Null under the same
+// conditions checkRate is null (no rows, a row that was never marked, or no check applied anywhere), so
+// an unmeasured round is never recorded as a score.
+export function holdoutScorePct(rows: ScoreRow[]): number | null {
+  if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
+  const applicable = rows.reduce((n, r) => n + r.applicable!, 0);
+  if (applicable === 0) return null;
+  const failed = rows.reduce((n, r) => n + r.failed!, 0);
+  return Math.round(((100 * (applicable - failed)) / applicable) * 10) / 10;
 }

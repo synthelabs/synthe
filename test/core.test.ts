@@ -109,7 +109,8 @@ test("scenarios changed since the merge can't trigger a revert", () => {
   assert.notEqual(judgeRound(scored("p", 40, 40, 40, 40), goal(), replaced).action, "revert");
 });
 
-// A fixed-seed stand-in for the model, run through the real rule: one candidate holds any real gain.
+// A fixed-seed stand-in for the model, run through the real rule: one candidate holds any real gain. Rounds use the
+// setup default of 20 training and 20 hidden cases.
 function simulator(seed: number, noise: number) {
   const random = () => {
     seed = (seed + 0x6d2b79f5) | 0;
@@ -125,7 +126,7 @@ function simulator(seed: number, noise: number) {
 }
 
 function round(sim: ReturnType<typeof simulator>, gain: number): { v: ReturnType<typeof judgeRound>; levels: [number[], number[]]; scores: RoundScores } {
-  const levels: [number[], number[]] = [sim.hard(20), sim.hard(10)];
+  const levels: [number[], number[]] = [sim.hard(20), sim.hard(20)];
   const trained = [gain, 0, 0].map((g, i) => ({ g, id: `c${i}`, train: sim.measure(levels[0], g, "s") }))
     .sort((a, b) => mean(b.train)! - mean(a.train)!);
   const scores: RoundScores = {
@@ -166,8 +167,19 @@ test("a lucky merge rarely reverts, and a real drop does", () => {
 test("cost is unknown for unlisted models and missing usage", () => {
   assert.equal(costUsd("mystery", { input_tokens: 1, output_tokens: 1 }), null);
   assert.equal(costUsd("claude-haiku-5-5", null), null);
-  assert.ok(Math.abs(costUsd("claude-haiku-5-5", { input_tokens: 1_000_000, output_tokens: 1_000_000 })! - 0.6) < 1e-9);
+  assert.ok(Math.abs(costUsd("claude-haiku-5-5", { input_tokens: 1_000_000, output_tokens: 1_000_000 })! - 3) < 1e-9);
   assert.equal(sumCosts([1, null, 2]), null);
+});
+
+test("Haiku cost matches the proxy's long-context tier including cached input", () => {
+  assert.equal(costUsd("claude-haiku-5-5", { input_tokens: 100_000, output_tokens: 0 }), 0.01);
+  assert.equal(costUsd("claude-haiku-5-5", { input_tokens: 100_001, output_tokens: 10 }), (100_001 * 0.5 + 10 * 2.5) / 1_000_000);
+  for (const cacheField of ["cache_creation_input_tokens", "cache_read_input_tokens"] as const) {
+    const usage = { input_tokens: 99_999, output_tokens: 10, [cacheField]: 2 };
+    const weightedInput = 99_999 + 2 * (cacheField === "cache_creation_input_tokens" ? 1.25 : 0.1);
+    assert.equal(costUsd("claude-haiku-5-5", usage), (weightedInput * 0.5 + 10 * 2.5) / 1_000_000);
+  }
+  assert.equal(costUsd("claude-sonnet-5-5", { input_tokens: 100_001, output_tokens: 10 }), (100_001 * 2 + 10 * 10) / 1_000_000);
 });
 
 test("stops on budget, rounds, stalls, and unknown spend", () => {

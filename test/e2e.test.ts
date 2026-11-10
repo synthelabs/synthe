@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -17,8 +17,21 @@ let denyKey = false;
 let dispatches = 0;
 let dispatchStatus = 204;
 let failStateWrite = false;
+let proxyRefusal = 0;
+// Credit refusals are held until this many requests are waiting (or 2s pass), so a step that sends its calls in
+// parallel has all of them counted before the first refusal makes it exit. Without this, a slow runner can cut off
+// the second request after the first refusal, and the count is 1 (seen once in CI).
+let refusalHold = 0;
+const heldRefusals: (() => void)[] = [];
+const proxyMessage = "This team's event credit is used up. Run `npx synthe key`.";
+const requestHeaders: any[] = [];
+let proxyTokens = 0;
 
 const github = createServer((req, res) => {
+  if (req.url?.startsWith("/oidc?") && req.method === "GET") {
+    assert.equal(new URL(req.url, "http://local").searchParams.get("audience"), "synthe-proxy");
+    return res.end(JSON.stringify({ value: `proxy-${++proxyTokens}` }));
+  }
   // Synthe only calls /repos/...; other local tools sometimes probe new ports with a bare GET /.
   if (!req.url?.startsWith("/repos/")) { res.statusCode = 404; return res.end(); }
   let raw = "";
@@ -45,7 +58,7 @@ const github = createServer((req, res) => {
       const key = `${req.method === "PUT" ? body.branch : url.searchParams.get("ref")!.replace(/-head$/, "")}:${name}`;
       if (req.method === "PUT") { if (failStateWrite && key === "synthe/state:state.json") return send(403, { message: "blocked" }); files.set(key, Buffer.from(body.content, "base64").toString()); return send(200, { commit: { sha: `sha-${files.size}` } }); }
       if (!files.has(key)) return send(404, {});
-      return req.headers.accept?.includes("raw") ? send(200, files.get(key)) : send(200, { sha: "blob" });
+      return req.headers.accept?.includes("raw") ? send(200, files.get(key)) : send(200, { sha: "blob", content: Buffer.from(files.get(key)!).toString("base64") });
     }
     if (path === "/pulls" && req.method === "GET") return send(200, pulls);
     if (path === "/pulls") { files.set("pr:head", body.head); return send(201, { number: 1 }); }
@@ -66,6 +79,18 @@ const anthropic = createServer((req, res) => {
   req.on("end", () => {
     // Only the SDK's POSTs are Anthropic calls. Other local tools sometimes probe new ports with a bare GET.
     if (req.method !== "POST") { res.statusCode = 404; return res.end(); }
+    if (!["/v1/messages", "/api/claude/v1/messages"].includes(req.url!)) { res.statusCode = 404; return res.end(); }
+    requestHeaders.push(req.headers);
+    if (proxyRefusal) {
+      const refuse = () => { res.statusCode = proxyRefusal; res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ type: "error", error: { type: "synthe_credit", message: proxyMessage } })); };
+      if (heldRefusals.length + 1 < refusalHold) {
+        heldRefusals.push(refuse);
+        setTimeout(() => { const i = heldRefusals.indexOf(refuse); if (i >= 0) heldRefusals.splice(i, 1)[0](); }, 2000);
+        return;
+      }
+      for (const held of heldRefusals.splice(0)) held();
+      return refuse();
+    }
     if (denyKey) { res.statusCode = 401; res.setHeader("content-type", "application/json"); return res.end('{"type":"error","error":{"type":"authentication_error","message":"bad key"}}'); }
     const b = JSON.parse(raw);
     bodies.push(b);
@@ -77,6 +102,12 @@ const anthropic = createServer((req, res) => {
       const good = (tag: string) => new RegExp(`<${tag}>\\n[^<]*policy-aware`).test(user);
       const a = good("reply_a"), b = good("reply_b");
       text = JSON.stringify({ better: a === b ? "tie" : a ? "A" : "B", a_guardrail_ok: true, b_guardrail_ok: true });
+    }
+    else if (schema.includes('"results"')) {
+      // Check marking: a policy-aware reply passes every check, any other reply fails them.
+      const listed = (user.split("The team's checks:\n")[1] ?? "").split("\n").filter((line: string) => /^\d+\. /.test(line)).length;
+      const pass = /<reply>\n[^<]*policy-aware/.test(user);
+      text = JSON.stringify({ results: Array.from({ length: listed }, (_, i) => ({ check: i + 1, applies: true, passes: pass })) });
     }
     else if (schema.includes("edits")) {
       const current = /<prompt>\n([\s\S]*?)\n<\/prompt>/.exec(user)![1];
@@ -91,16 +122,17 @@ const anthropic = createServer((req, res) => {
 const port = (s: any) => s.address().port;
 let dir: string;
 
-const step = (name: string, outputs = join(dir, "out.txt"), event = "workflow_dispatch") => new Promise<{ code: number; log: string }>((done) => {
+const step = (name: string, outputs = join(dir, "out.txt"), event = "workflow_dispatch", extra: NodeJS.ProcessEnv = {}) => new Promise<{ code: number; log: string }>((done) => {
   const child = spawn("node", [bundle], {
     cwd: dir,
     env: {
       GITHUB_EVENT_NAME: event,
       GITHUB_EVENT_PATH: join(dir, "event.json"),
       PATH: process.env.PATH, GITHUB_REPOSITORY: "o/r", GITHUB_API_URL: `http://127.0.0.1:${port(github)}`, GITHUB_OUTPUT: outputs,
-      ANTHROPIC_BASE_URL: `http://127.0.0.1:${port(anthropic)}`, INPUT_STEP: name, "INPUT_GITHUB-TOKEN": "tok",
+      SYNTHE_ANTHROPIC_BASE_URL: `http://127.0.0.1:${port(anthropic)}`, INPUT_STEP: name, "INPUT_GITHUB-TOKEN": "tok",
       // The decide job must work with no model key at all.
       "INPUT_ANTHROPIC-API-KEY": name === "decide" ? "" : "key",
+      ...extra,
     },
   });
   let log = "";
@@ -121,6 +153,10 @@ const reset = () => {
   dispatches = 0;
   dispatchStatus = 204;
   failStateWrite = false;
+  proxyRefusal = 0;
+  refusalHold = 0;
+  proxyTokens = 0;
+  requestHeaders.length = 0;
   files.set("main:prompt.md", readFileSync(join(dir, "prompt.md"), "utf8"));
   files.set("main:synthe.json", readFileSync(join(dir, "synthe.json"), "utf8"));
 };
@@ -309,6 +345,16 @@ test("a backup replacing a proposal-close run can resume review immediately", as
   assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/);
 });
 
+test("status after manual stop overrides a still-running report headline", async () => {
+  reset();
+  const gh = join(dir, "gh");
+  writeFileSync(gh, `#!/bin/sh\ncase "$*" in\n*"repo view"*) echo 'o/r';;\n*"actions/workflows"*) echo disabled_manually;;\n*) echo '{"round":1,"rounds":[],"spendUsd":0.1}';;\nesac\n`);
+  chmodSync(gh, 0o700);
+  const output = execFileSync("node", [resolve("dist/cli.js"), "status"], { cwd: dir, env: { PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8" });
+  assert.match(output, /Stopped with npx synthe stop/);
+  assert.doesNotMatch(output, /Synthe is working|getting better|updates after each round/);
+});
+
 test("a closed PR starts a round only for the current same-repo Synthe proposal", async () => {
   reset();
   pulls = [{ number: 1, state: "closed", merged_at: null }];
@@ -361,3 +407,126 @@ test("merging Synthe's setup pull request starts round 1; closing it, a fork's, 
   files.set("synthe/state:state.json", JSON.stringify({ round: 2, rounds: [{ round: 2, at: "2026-11-03T00:00:00Z", outcome: "skipped", reasons: [], costUsd: 0.1 }] }));
   assert.equal(await go(setup(true)), false, "a setup branch merged again later doesn't start an extra round");
 });
+
+const proxyEnv = () => ({ "INPUT_ANTHROPIC-API-KEY": "", "INPUT_EVENT-CODE": "crimson", SYNTHE_PROXY_URL: `http://127.0.0.1:${port(anthropic)}/api/claude`, ACTIONS_ID_TOKEN_REQUEST_URL: `http://127.0.0.1:${port(github)}/oidc?`, ACTIONS_ID_TOKEN_REQUEST_TOKEN: "github-token" });
+
+test("the real Action routes event calls through OIDC proxy, but an own input key wins", async () => {
+  reset();
+  for (const name of ["write", "score"]) {
+    const result = await step(name, undefined, undefined, proxyEnv());
+    assert.equal(result.code, 0, result.log);
+  }
+  assert.ok(requestHeaders.length > 2);
+  assert.equal(proxyTokens, requestHeaders.length);
+  assert.ok(requestHeaders.every((headers) => headers["x-synthe-event"] === "crimson" && headers.authorization?.startsWith("Bearer proxy-") && !headers["x-synthe-install"]));
+  reset();
+  const own = await step("write", undefined, undefined, { ...proxyEnv(), "INPUT_ANTHROPIC-API-KEY": "own-key" });
+  assert.equal(own.code, 0, own.log);
+  assert.equal(proxyTokens, 0);
+  assert.ok(requestHeaders.every((headers) => headers.authorization === "Bearer own-key" && !headers["x-synthe-event"]));
+});
+
+test("Action credit refusals reach the log and report verbatim and stop every later dispatch", async () => {
+  for (const code of [402, 403]) {
+    reset();
+    proxyRefusal = code;
+    refusalHold = 2;
+    const written = await step("write", undefined, undefined, proxyEnv());
+    assert.equal(written.code, 1);
+    assert.ok(written.log.includes(proxyMessage));
+    const error = JSON.parse(readFileSync(join(dir, ".synthe-out/error.json"), "utf8"));
+    assert.deepEqual(error, { step: "write", kind: "credit", message: proxyMessage });
+    assert.equal(requestHeaders.length, 2, "two parallel writer calls, without retries");
+    const decided = await step("decide");
+    assert.equal(decided.code, 0, decided.log);
+    const state = JSON.parse(files.get("synthe/state:state.json")!);
+    assert.equal(state.stopped, "credit");
+    assert.equal(state.chainReady, false);
+    assert.equal(dispatches, 0);
+    assert.ok(issues.at(-1)!.includes(proxyMessage));
+    const stopped = await step("write", undefined, undefined, proxyEnv());
+    assert.equal(stopped.code, 0, stopped.log);
+    assert.equal(requestHeaders.length, 2);
+  }
+});
+
+test("event mode refuses a goal naming another model before model requests", async () => {
+  reset();
+  const goal = JSON.parse(readFileSync(join(dir, "synthe.json"), "utf8"));
+  goal.models = { runner: "claude-other" };
+  writeFileSync(join(dir, "synthe.json"), JSON.stringify(goal));
+  const result = await step("write", undefined, undefined, proxyEnv());
+  assert.equal(result.code, 1);
+  assert.match(result.log, /your goal names claude-other/);
+  assert.equal(requestHeaders.length, 0);
+});
+
+test("the npx bundle includes guide, help commands, and one-line agent errors with closed stdin", async () => {
+  const cli = resolve("dist/cli.js");
+  assert.equal(execFileSync("node", [cli, "guide"], { encoding: "utf8" }).trim(), readFileSync("docs/AGENT-SETUP.md", "utf8").trim());
+  const help = execFileSync("node", [cli, "--help"], { encoding: "utf8" });
+  assert.match(help, /synthe guide/);
+  assert.match(help, /synthe key/);
+  const result = await new Promise<{ code: number; error: string }>((done) => {
+    const child = spawn("node", [cli, "init", "--agent"], { stdio: ["ignore", "pipe", "pipe"] });
+    let error = "";
+    child.stderr.on("data", (chunk) => { error += chunk; });
+    child.on("exit", (code) => done({ code: code!, error }));
+  });
+  assert.equal(result.code, 1);
+  assert.equal(result.error.trim(), "--prompt is missing or invalid. Ask the person; don't guess.");
+});
+
+test("local try and calibrate print credit refusals, exit nonzero and leave every repo file unchanged", async () => {
+  for (const command of ["try", "calibrate"]) {
+    reset();
+    proxyRefusal = 403;
+    const goal = JSON.parse(readFileSync(join(dir, "synthe.json"), "utf8"));
+    goal.checks = ["Answers the question"];
+    writeFileSync(join(dir, "synthe.json"), JSON.stringify(goal));
+    const before = readdirSync(dir, { recursive: true }).map(String).sort();
+    const promptBefore = readFileSync(join(dir, "prompt.md"), "utf8");
+    const goalBefore = readFileSync(join(dir, "synthe.json"), "utf8");
+    const result = await new Promise<{ code: number; output: string }>((done) => {
+      const child = spawn("node", [resolve("dist/cli.js"), command], { cwd: dir, stdio: ["ignore", "pipe", "pipe"], env: { PATH: process.env.PATH, SYNTHE_EVENT_CODE: "crimson", SYNTHE_PROXY_URL: proxyEnv().SYNTHE_PROXY_URL } });
+      let output = "";
+      child.stdout.on("data", (chunk) => { output += chunk; });
+      child.stderr.on("data", (chunk) => { output += chunk; });
+      child.on("close", (code) => done({ code: code!, output }));
+    });
+    assert.equal(result.code, 1);
+    assert.ok(result.output.includes(proxyMessage));
+    assert.ok(result.output.includes("Credential: Crimson Hacks event credit. SYNTHE_TEAM_CODE isn't set"), "local commands say which credential they use");
+    // Local try holds its history lock in the ignored .synthe-local/ folder; a refused call leaves it empty.
+    assert.deepEqual(readdirSync(dir, { recursive: true }).map(String).filter((path) => path !== ".synthe-local").sort(), before.filter((path) => path !== ".synthe-local"));
+    if (existsSync(join(dir, ".synthe-local"))) assert.deepEqual(readdirSync(join(dir, ".synthe-local")), []);
+    assert.equal(readFileSync(join(dir, "prompt.md"), "utf8"), promptBefore);
+    assert.equal(readFileSync(join(dir, "synthe.json"), "utf8"), goalBefore);
+    assert.ok(requestHeaders.every((headers) => headers["x-synthe-event"] === "crimson" && headers["x-synthe-install"] && !headers.authorization));
+  }
+});
+
+// On GitHub the score job's token can only read the repo, so a state write there fails with 403 (seen live on
+// Nov 6). The score step hands its caches to decide in scores.json, and decide keeps them.
+test("the held-back score reaches state through the decide step, never a write from the score step", async () => {
+  reset();
+  const goal = JSON.parse(readFileSync(join(dir, "synthe.json"), "utf8"));
+  goal.checks = ["Uses the store policy"];
+  writeFileSync(join(dir, "synthe.json"), JSON.stringify(goal));
+  files.set("main:synthe.json", JSON.stringify(goal));
+  for (const s of ["write", "score"]) {
+    const before = files.get("synthe/state:state.json");
+    const r = await step(s);
+    assert.equal(r.code, 0, r.log);
+    if (s === "score") {
+      assert.equal(files.get("synthe/state:state.json"), before, "the score step writes no state");
+      assert.doesNotMatch(r.log, /Could not keep/);
+    }
+  }
+  const r = await step("decide");
+  assert.equal(r.code, 0, r.log);
+  const state = JSON.parse(files.get("synthe/state:state.json")!);
+  assert.ok(state.scoreCache && typeof state.scoreCache.key === "string" && state.scoreCache.pct === 0, JSON.stringify(state.scoreCache)); // the vague prompt fails the check
+  assert.equal(state.rounds.at(-1).scorePct, 0);
+});
+
