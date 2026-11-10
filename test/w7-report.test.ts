@@ -4,7 +4,7 @@ import { noWinSection, renderReport } from "../src/loop/report.ts";
 import { newState, type RoundRecord, type State } from "../src/core/state.ts";
 import { runDecide } from "../src/loop/decide.ts";
 import type { RoundScores } from "../src/core/merge-rule.ts";
-import { MemoryRepo, goal, heldRows, trainRows } from "./helpers.ts";
+import { MemoryRepo, goal, heldRows, rows, trainRows } from "./helpers.ts";
 import { sha256 } from "../src/core/safety.ts";
 
 const NOT_CLEAR = "Not clearly better: better in 3 test cases, worse in 2, the same in 5.";
@@ -156,4 +156,40 @@ test("calibration readings handed to decide land in state, and the no-win ask ca
   ]);
   const stalledState = stalled([skipped(1), skipped(2), skipped(3)], { calibration: repo.state.calibration });
   assert.match(noWinSection(g, stalledState).join("\n"), /Rewrite the check "Asks for the order number first" in plainer words/);
+});
+
+// Ties carry no evidence for the sign test, so a run where most duels came out even can't show a real gain.
+test("a stalled report says when most test cases came out even, and asks for harder cases", () => {
+  const even = { better: 2, worse: 3, same: 21 };
+  const noCounts = stalled([skipped(1, { tried: [], duels: even }), skipped(2, { tried: [], duels: even }), skipped(3, { tried: [], duels: even })]);
+  const section = noWinSection(goal(), noCounts).join("\n");
+  assert.match(section, /\*\*Most test cases came out even:\*\* in 63 of 78 comparisons over the last 3 rounds \(81%\), a change and your current prompt did equally well\./);
+  assert.match(section, /- Add harder test cases to `s\.jsonl` and push: messages your agent gets wrong or only half right today\./);
+  // With failure counts, the ask already names the failing check: no second, overlapping ask.
+  const withCounts = stalled([1, 2, 3].map((n) => skipped(n, { tried: [], duels: even, failedChecks: { "Asks for the order number first": 2 } })));
+  const both = noWinSection(goal(), withCounts).join("\n");
+  assert.match(both, /Most test cases came out even/);
+  assert.match(both, /Add test cases your agent still gets wrong, especially ones where replies fail "Asks for the order number first"/);
+  assert.doesNotMatch(both, /Add harder test cases/);
+});
+
+test("the tie note stays out when ties are not the problem or there are too few comparisons", () => {
+  const show = (duels: RoundRecord["duels"][]) => noWinSection(goal(), stalled(duels.map((d, i) => skipped(i + 1, { tried: [], ...(d ? { duels: d } : {}) })))).join("\n");
+  // Exactly 60% ties over 20 comparisons is the edge that shows it.
+  assert.match(show([{ better: 4, worse: 4, same: 12 }]), /Most test cases came out even:\*\* in 12 of 20 comparisons over the last 1 round \(60%\)/);
+  assert.doesNotMatch(show([{ better: 5, worse: 4, same: 11 }]), /came out even/);
+  assert.doesNotMatch(show([{ better: 1, worse: 1, same: 17 }]), /came out even/, "19 comparisons are too few to say");
+  assert.doesNotMatch(show([undefined, undefined, undefined]), /came out even/, "rounds recorded before this field existed");
+});
+
+test("decide records the round's training duels between each change and the current prompt", async () => {
+  const scores: RoundScores = {
+    baselineHash: sha256("Old prompt."), baselineTrain: trainRows(50), baselineHoldout: heldRows(50),
+    candidates: [
+      { id: "c1", train: rows([100, 100, 0, ...Array(17).fill(50)]) },
+      { id: "c2", train: rows([0, 0, 0, 100, null, ...Array(15).fill(50)]) },
+    ],
+  };
+  const record = await runDecide(goal(), new MemoryRepo("Old prompt."), { candidates: [{ id: "c1", text: "A." }, { id: "c2", text: "B." }], scores, costUsd: 0.1 });
+  assert.deepEqual(record?.duels, { better: 3, worse: 4, same: 32 });
 });
