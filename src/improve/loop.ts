@@ -182,11 +182,20 @@ export async function runLoop(io: LoopIo, o: LoopOptions): Promise<LoopResult> {
       const m = await measureAt(io.exec, top, proposed.commit, config, io.say);
       try { o.hooks?.measured?.({ ...m, round: n, commit: proposed.commit }); } catch { /* never stops the run */ }
       const record: RoundRecord = { round: n, summary: proposed.summary, kept: false, value: m.measurement?.median ?? null, why: "", before, files: proposed.files, costUsd: sumCosts(spentThisRound), commit: proposed.commit };
+      const firstWhy = m.measurement ? notKeptWhy(config, best, m.measurement, m.guardPassed) : null;
       if (!m.measurement) record.why = `the metric gave no number: ${(m.reason ?? "no output").replace(/\.$/, "")}`;
+      else if (firstWhy !== null) record.why = firstWhy;
       else {
-        const why = notKeptWhy(config, best, m.measurement, m.guardPassed);
-        if (why === null) { record.kept = true; record.why = "kept"; best = m.measurement; }
-        else record.why = why;
+        // A change that wins once may have measured high by luck: picking the winner picks the lucky runs. Measure it
+        // again and judge it on the fresh runs. Only a change that still wins is kept, and the fresh runs become the
+        // best, so a lucky median can neither flatter the pull request nor block the next round's real gain.
+        io.say(`Measuring round ${n}'s change again to confirm it...`);
+        const again = await measureAt(io.exec, top, proposed.commit, config, io.say);
+        try { o.hooks?.measured?.({ ...again, round: n, commit: proposed.commit }); } catch { /* never stops the run */ }
+        const confirmed = again.measurement && notKeptWhy(config, best, again.measurement, again.guardPassed);
+        if (!again.measurement) record.why = `did not hold when measured again: the metric gave no number (${(again.reason ?? "no output").replace(/\.$/, "")})`;
+        else if (confirmed) { record.why = `did not hold when measured again: ${confirmed}`; record.value = again.measurement.median; }
+        else { record.kept = true; record.why = "kept"; record.value = again.measurement.median; best = again.measurement; }
       }
       finish(record);
     } catch (e) {

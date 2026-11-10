@@ -12,7 +12,7 @@ Setup reads your README and the code around your prompt, asks what your agent sh
 
 ## Improve mode (no AI prompt needed)
 
-No prompt in your app yet? `npx synthe improve` raises a number you choose: tests passing, bundle size, build time, or your own command that prints one number. Synthe proposes a code change each round, measures it in a throwaway checkout next to the current code, and keeps it only if it wins by more than the run-to-run noise and your regression check (default `npm test`) still passes. Each kept change builds on the one before. At the end it opens ONE pull request, titled like `Synthe: valid signups 3 → 12`, with a table of every round.
+No prompt in your app yet? `npx synthe improve` raises a number you choose: tests passing, bundle size, build time, or your own command that prints one number. Synthe proposes a code change each round, measures it in a throwaway checkout next to the current code, and keeps it only if it wins by more than the run-to-run noise, still wins when measured a second time, and your regression check (default `npm test`) still passes. Each kept change builds on the one before. At the end it opens ONE pull request, titled like `Synthe: valid signups 3 → 12`, with a table of every round.
 
 It needs an event code and team code, or your own Anthropic key, in the environment: `SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe improve`, or `SYNTHE_ANTHROPIC_KEY=<key> npx synthe improve`. `ANTHROPIC_API_KEY` is never used. Run it inside your repo, with the code committed and pushed and `gh` signed in. It asks what should get better, which number measures it, which check must keep passing, and whether to merge wins automatically (Enter means a pull request waits for you).
 

@@ -212,6 +212,9 @@ const allMutations = [
   ["tie note: shown on too few comparisons", REPORT, 'duelTotal >= MIN_DUELS_FOR_TIES && ', ''],
   ["tie note: decide drops the round's duels", DECIDE, '    if (duels.better + duels.worse + duels.same) record.duels = duels;\n', ''],
   ["tie note: ties counted as wins", DECIDE, 'else if (row.score === TIE) duels.same++;', 'else if (row.score === TIE) duels.better++;'],
+  ["improve: a win is kept without measuring again", "src/improve/loop.ts", 'const confirmed = again.measurement && notKeptWhy(config, best, again.measurement, again.guardPassed);', 'const confirmed = null;'],
+  ["improve: the lucky first runs become the best", "src/improve/loop.ts", 'best = again.measurement;', 'best = m.measurement;'],
+  ["improve: an unmeasurable confirmation still keeps", "src/improve/loop.ts", 'if (!again.measurement) record.why', 'if (false) record.why'],
 ];
 
 const selectedFiles = process.argv.slice(2);
