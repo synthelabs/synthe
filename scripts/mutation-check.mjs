@@ -205,6 +205,9 @@ const allMutations = [
   ["improve: pytest errors are not failures", "src/improve/presets.ts", ' + countIn(pytest, /(\\d+) errors?\\b/)', ''],
   ["improve: one run that names no failures is ignored", "src/improve/worktree.ts", '      if (!once.failing) failing = null;\n', ''],
   ["improve: test metrics carry no failing tests", "src/improve/worktree.ts", 'const tests = countsTests(config) ?', 'const tests = false ?'],
+  ["own key follows ANTHROPIC_BASE_URL", "src/model/client.ts", 'new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(), maxRetries: 4 })', 'new Anthropic({ apiKey, maxRetries: 4 })'],
+  ["any host counts as loopback for an own key", "src/model/client.ts", ' && LOOPBACK.has(url.hostname)', ''],
+  ["a non-web scheme reaches the own-key override", "src/model/client.ts", '(url.protocol === "http:" || url.protocol === "https:") && ', ''],
 ];
 
 const selectedFiles = process.argv.slice(2);
