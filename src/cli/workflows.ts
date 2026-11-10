@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 export const DIAGNOSTICS_FILE = ".github/workflows/synthe-diagnostics.yml";
 const DIAGNOSTICS_HEADER = "# Synthe Crimson event completion workflow.";
-export const CRIMSON_NOTICE = "Crimson Hacks requires workflow tracking for enrolled teams, even when your own key pays for model calls. The organizers receive the repository name and ID, workflow run ID and attempt, start and finish times, and the workflow-reported outcome. Your sharing settings still control prompt, test case, and other research data.";
+export const CRIMSON_NOTICE = "Crimson Hacks requires workflow tracking for enrolled teams, even when your own key pays for model calls. The organizers receive the repository name and ID, workflow run ID and attempt, start and finish times, and the workflow-reported outcome. Your sharing settings still control the prompt, test case and other research data that workflow rounds send.";
 
 const receiptInputs = `        uses: __ACTION__
         with:

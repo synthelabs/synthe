@@ -29931,7 +29931,7 @@ import { lstatSync as lstatSync2, readFileSync as readFileSync3 } from "node:fs"
 import { join as join5 } from "node:path";
 var DIAGNOSTICS_FILE = ".github/workflows/synthe-diagnostics.yml";
 var DIAGNOSTICS_HEADER = "# Synthe Crimson event completion workflow.";
-var CRIMSON_NOTICE = "Crimson Hacks requires workflow tracking for enrolled teams, even when your own key pays for model calls. The organizers receive the repository name and ID, workflow run ID and attempt, start and finish times, and the workflow-reported outcome. Your sharing settings still control prompt, test case, and other research data.";
+var CRIMSON_NOTICE = "Crimson Hacks requires workflow tracking for enrolled teams, even when your own key pays for model calls. The organizers receive the repository name and ID, workflow run ID and attempt, start and finish times, and the workflow-reported outcome. Your sharing settings still control the prompt, test case and other research data that workflow rounds send.";
 var receiptInputs = `        uses: __ACTION__
         with:
           github-token: \${{ github.token }}
@@ -30055,6 +30055,7 @@ var SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 var WORKFLOW_FILE = ".github/workflows/synthe.yml";
 var DRAFT_FILE = ".synthe/setup-draft.json";
 var EVENT_BUDGET_USD = 4;
+var SETUP_RECORD_NOTICE = "Event credit: the organizers keep and read a copy of everything setup sends to Claude and every reply \u2014 your prompt, the code file that holds it, part of your README, and the test cases and checks Claude writes. This applies whatever your sharing setting is. Keys and other secrets in your files are removed first.";
 var AGENT_NEXT = 'NEXT: Synthe is NOT installed yet. This step wrote only a local draft: no workflow, no secrets, no commit. Finish confirm before any other work in this repo, and do not edit the prompt file until then. Tell the person which credential and budget will be used. Show all of this to the person, including the notices, proposed checks and calibration examples. The notices need no answer. Ask which checks to keep or reword and whether the marks look right. Then run `npx synthe init --agent --confirm --check "final sentence"`, repeating `--check` for each final check, or use `--keep-checks` if they keep the proposed checks.';
 var SETUP_BRANCH = "synthe/setup";
 var SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds with a local run budget of $3. Available provider or event credit can stop it sooner; this budget is not a credit allowance. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
@@ -30499,6 +30500,7 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
   const credentialName = event ? "Crimson Hacks event code" : key === env.SYNTHE_ANTHROPIC_KEY?.trim() ? "your own key from SYNTHE_ANTHROPIC_KEY" : key === envKey?.trim() ? "your own key from ANTHROPIC_API_KEY" : "your own Anthropic key";
   io2.say(`Credential: ${credentialName}, $${event ? EVENT_BUDGET_USD : 3} ${event ? "local run budget (not a credit allowance). Event credit is limited by organizer-configured caps and shared availability; it can stop sooner." : "budget on your Anthropic account."}`);
   if (enrollment) io2.say(CRIMSON_NOTICE);
+  if (event) io2.say(SETUP_RECORD_NOTICE);
   const tracked = repoTextFiles(await io2.run("git", ["ls-files"]), root);
   const prompts = findPrompts(tracked);
   let location;
@@ -30569,6 +30571,7 @@ When Synthe finds a clearly better prompt, it can merge it into ${branch} by its
   const share = sharingOff ? "none" : agent?.share ?? (now().getTime() < Date.parse(FULL_SHARE_UNTIL) ? "full" : "detail");
   if (agent) io2.say("Tell the person (no answer needed):");
   io2.say(sharingOff ? "Sharing with Synthe: off (DO_NOT_TRACK, SYNTHE_TELEMETRY or --share none)." : share === "full" ? "During Crimson Hacks (until November 9 at 23:59 UTC), by using Synthe you share this run with the Synthe team so we can improve it: your prompt, your test cases, your goal and checks, Synthe's prompt edits, example replies, and rounds, checks and spend. Never your code, and keys, emails and phone numbers are removed first. After November 9 it stops sending your prompt and test cases." : share === "numbers" ? "By using Synthe, you share numbers only with the Synthe team so we can improve it: rounds, checks and spend." : "By using Synthe, you share how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first.");
+  if (event) io2.say("The sharing line above is about the workflow rounds. Setup on event credit is recorded as the event-credit line said, including your code.");
   io2.say(`
 Drafting now: Synthe is reading your current prompt and your goal, "${objective}".`);
   const context2 = repoContext(tracked, location);
