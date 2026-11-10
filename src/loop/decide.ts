@@ -11,7 +11,7 @@ import { ISSUE_TITLE, exampleText, notTested, renderReport } from "./report.ts";
 import { displaySeries, renderDeltaBlock, renderScoreSvg, scoreSeries } from "./delta.ts";
 import type { Candidate } from "./write.ts";
 import type { Failure } from "./failure.ts";
-import { WIN } from "./score.ts";
+import { LOSS, TIE, WIN } from "./score.ts";
 import { candidateScope, rememberCandidates } from "../core/candidate-history.ts";
 import { fromSyntheProxy, PROXY_REFUSED } from "../core/share.ts";
 
@@ -531,6 +531,13 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       for (const check of row.failedChecks ?? []) failed[check] = (failed[check] ?? 0) + 1;
     }
     if (Object.keys(failed).length) record.failedChecks = failed;
+    const duels = { better: 0, worse: 0, same: 0 };
+    for (const row of scores.candidates.flatMap((c) => c.train)) {
+      if (row.score === WIN) duels.better++;
+      else if (row.score === LOSS) duels.worse++;
+      else if (row.score === TIE) duels.same++;
+    }
+    if (duels.better + duels.worse + duels.same) record.duels = duels;
     // Training rows only: held-back scenarios are never in scores.baselineTrain, so the writer can't learn them.
     // A lesson is a scenario where the current prompt broke a guardrail, failed one of the team's checks, or a rewrite
     // beat it, with both replies.

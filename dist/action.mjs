@@ -29364,6 +29364,8 @@ function triedGroup(outcome2) {
   if (outcome2.includes("hidden")) return "did not hold on the hidden test cases";
   return "not clearly better";
 }
+var TIE_SHARE = 0.6;
+var MIN_DUELS_FOR_TIES = 20;
 function noWinSection(goal, state) {
   if (!state.stopped || state.proposal) return [];
   const budget = /^budget/.test(state.stopped);
@@ -29378,7 +29380,11 @@ function noWinSection(goal, state) {
     const g = triedGroup(t.outcome);
     if (g) groups.set(g, (groups.get(g) ?? 0) + 1);
   }
+  const duels = recent.reduce((d, r) => r.duels ? { better: d.better + r.duels.better, worse: d.worse + r.duels.worse, same: d.same + r.duels.same } : d, { better: 0, worse: 0, same: 0 });
+  const duelTotal = duels.better + duels.worse + duels.same;
+  const mostlyEven = duelTotal >= MIN_DUELS_FOR_TIES && duels.same / duelTotal >= TIE_SHARE;
   const asks = [];
+  if (mostlyEven && !top.length) asks.push(`Add harder test cases to \`${goal.scenarios}\` and push: messages your agent gets wrong or only half right today. The format is under "What to do next" below.`);
   if (top.length) asks.push(`Add test cases your agent still gets wrong, especially ones where replies fail "${top[0][0]}", to \`${goal.scenarios}\` and push. The format is under "What to do next" below.`);
   const weak = (state.calibration ?? []).find((c) => c.reading === "disagrees with you" || c.reading === "unsure");
   if (weak) asks.push(weak.reading === "disagrees with you" ? `Rewrite the check "${weak.check}" in plainer words. When the team marked replies by hand with \`npx synthe calibrate\`, the AI marked them differently from the team, so the check may not say what you mean.` : `Rewrite the check "${weak.check}" in plainer words. When the team marked replies by hand with \`npx synthe calibrate\`, the AI's marking was unsure against the team's, so the check may be hard to mark either way.`);
@@ -29386,6 +29392,9 @@ function noWinSection(goal, state) {
   const lines = ["### Why there was no win", ""];
   if (top.length) {
     lines.push(`**What failed most** in the last ${plural(recent.length, "round")}:`, ...top.map(([check, n]) => `- "${check}" failed in ${n} ${n === 1 ? "reply" : "replies"}, counting every reply Synthe scored.`), "");
+  }
+  if (mostlyEven) {
+    lines.push(`**Most test cases came out even:** in ${duels.same} of ${duelTotal} comparisons over the last ${plural(recent.length, "round")} (${Math.round(100 * duels.same / duelTotal)}%), a change and your current prompt did equally well. Synthe counts only the cases where one reply is better, so a real improvement has too few cases left to show it. Harder test cases fix this.`, "");
   }
   const grouped = TRIED_GROUPS.filter((g) => groups.has(g));
   if (grouped.length) {
@@ -30643,6 +30652,13 @@ ${goal.policy ?? ""}`);
       for (const check of row.failedChecks ?? []) failed[check] = (failed[check] ?? 0) + 1;
     }
     if (Object.keys(failed).length) record.failedChecks = failed;
+    const duels = { better: 0, worse: 0, same: 0 };
+    for (const row of scores.candidates.flatMap((c) => c.train)) {
+      if (row.score === WIN) duels.better++;
+      else if (row.score === LOSS) duels.worse++;
+      else if (row.score === TIE) duels.same++;
+    }
+    if (duels.better + duels.worse + duels.same) record.duels = duels;
     const lessons = scores.baselineTrain.flatMap((r) => {
       if (typeof r.reply !== "string") return [];
       const winner = scores.candidates.map((c) => c.train.find((x) => x.id === r.id)).find((x) => x?.score === WIN && typeof x.reply === "string");

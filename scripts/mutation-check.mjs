@@ -208,6 +208,10 @@ const allMutations = [
   ["own key follows ANTHROPIC_BASE_URL", "src/model/client.ts", 'new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(), maxRetries: 4 })', 'new Anthropic({ apiKey, maxRetries: 4 })'],
   ["any host counts as loopback for an own key", "src/model/client.ts", ' && LOOPBACK.has(url.hostname)', ''],
   ["a non-web scheme reaches the own-key override", "src/model/client.ts", '(url.protocol === "http:" || url.protocol === "https:") && ', ''],
+  ["tie note: any tie share counts as mostly even", REPORT, ' && duels.same / duelTotal >= TIE_SHARE', ''],
+  ["tie note: shown on too few comparisons", REPORT, 'duelTotal >= MIN_DUELS_FOR_TIES && ', ''],
+  ["tie note: decide drops the round's duels", DECIDE, '    if (duels.better + duels.worse + duels.same) record.duels = duels;\n', ''],
+  ["tie note: ties counted as wins", DECIDE, 'else if (row.score === TIE) duels.same++;', 'else if (row.score === TIE) duels.better++;'],
 ];
 
 const selectedFiles = process.argv.slice(2);
