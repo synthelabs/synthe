@@ -30078,10 +30078,10 @@ var SCENARIO_SCHEMA = {
   required: ["guardrails", "policy", "brief", "checks", "scenarios"],
   additionalProperties: false
 };
-var TRAIN = 20;
-var HOLDOUT = 20;
-var ASK_FOR = TRAIN + HOLDOUT + 4;
-var ENOUGH = 32;
+var TRAIN = 40;
+var HOLDOUT = 40;
+var ASK_FOR = TRAIN + HOLDOUT + 8;
+var ENOUGH = 64;
 var CHECKS_WANTED = 3;
 async function generateScenarios(model, objective, promptText, context2 = "", seeds = []) {
   const repo = context2.trim() ? `
@@ -30573,7 +30573,7 @@ When Synthe finds a clearly better prompt, it can merge it into ${branch} by its
 Drafting now: Synthe is reading your current prompt and your goal, "${objective}".`);
   const context2 = repoContext(tracked, location);
   io2.say(`
-Reading your prompt${context2.names.length ? ` and ${context2.names.join(" and ")}` : ""}, and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
+Reading your prompt${context2.names.length ? ` and ${context2.names.join(" and ")}` : ""}, and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes a minute or two...`);
   const generated = await generateScenarios(model, objective, promptText, context2.text, seeds);
   const { guardrails, policy, brief, rows } = generated;
   const learnFrom = rows.filter((r) => r.split === "train").length;

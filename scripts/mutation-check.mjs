@@ -212,6 +212,9 @@ const allMutations = [
   ["tie note: shown on too few comparisons", REPORT, 'duelTotal >= MIN_DUELS_FOR_TIES && ', ''],
   ["tie note: decide drops the round's duels", DECIDE, '    if (duels.better + duels.worse + duels.same) record.duels = duels;\n', ''],
   ["tie note: ties counted as wins", DECIDE, 'else if (row.score === TIE) duels.same++;', 'else if (row.score === TIE) duels.better++;'],
+  ["init: too few test cases accepted", "src/cli/init.ts", "const ENOUGH = 64;", "const ENOUGH = 32;"],
+  ["init: back to 20 hidden cases", "src/cli/init.ts", "const HOLDOUT = 40;", "const HOLDOUT = 20;"],
+  ["init: asks for no spare cases", "src/cli/init.ts", "const ASK_FOR = TRAIN + HOLDOUT + 8;", "const ASK_FOR = TRAIN + HOLDOUT;"],
 ];
 
 const selectedFiles = process.argv.slice(2);
