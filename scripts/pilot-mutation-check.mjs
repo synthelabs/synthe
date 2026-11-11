@@ -1,0 +1,156 @@
+// Breaks each rule of the enterprise pilot (src/pilot/) on purpose and checks that a pilot test fails.
+// Same layout as scripts/mutation-check.mjs, kept separate so the two never edit the same list: this one runs only
+// the pilot's tests, so it is quick, and it never touches files outside src/pilot/.
+//
+//   node scripts/pilot-mutation-check.mjs                      every mutation
+//   node scripts/pilot-mutation-check.mjs src/pilot/experiment.ts   only that file's
+//   MUTATION_MATCH='keep|revert' node scripts/pilot-mutation-check.mjs
+//
+// Run it in its own worktree and never two at once: each mutation rewrites a source file for a moment.
+import { spawnSync } from "node:child_process";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+
+const EXPERIMENT = "src/pilot/experiment.ts";
+const TELEMETRY = "src/pilot/telemetry.ts";
+const REPLAY = "src/pilot/replay.ts";
+const DISCOVER = "src/pilot/discover.ts";
+const PACK = "src/pilot/pack.ts";
+const EGRESS = "src/pilot/egress.ts";
+const PUBLISH = "src/pilot/publish.ts";
+const APPROVAL = "src/pilot/approval.ts";
+const PROMOTE = "src/pilot/promote.ts";
+const STORE = "src/pilot/store.ts";
+const IO = "src/pilot/io.ts";
+const LIVE = "src/pilot/live.ts";
+const MODEL = "src/pilot/model.ts";
+const COMMANDS = "src/pilot/commands.ts";
+const CONFIG = "src/pilot/config.ts";
+
+const TESTS = readdirSync("test").filter((f) => /^pilot-.*\.test\.ts$/.test(f)).map((f) => `test/${f}`);
+
+const allMutations = [
+  // Decision boundaries: keep, hold, revert.
+  ["keep: an effect below the minimum is kept", EXPERIMENT, "benefit >= p.min_effect - EPS && bCi.lo > EPS", "bCi.lo > EPS"],
+  ["keep: an effect that may be zero is kept", EXPERIMENT, "benefit >= p.min_effect - EPS && bCi.lo > EPS", "benefit >= p.min_effect - EPS"],
+  ["keep: guards need not pass", EXPERIMENT, 'guards.every((g) => g.readout.status === "pass")', "true"],
+  ["keep: allowed before the cutoff", EXPERIMENT, "} else if (!final || holdFlags.length > 0) {", "} else if (holdFlags.length > 0) {"],
+  ["keep: allowed with data problems", EXPERIMENT, "} else if (!final || holdFlags.length > 0) {", "} else if (!final) {"],
+  ["keep: the cutoff is ignored", EXPERIMENT, "const final = ms(asOf) >= ms(spec.analysis_cutoff);", "const final = true;"],
+  ["revert: the early stop never fires", EXPERIMENT, "if (!final && earlyStops.length > 0) {", "if (false) {"],
+  ["revert: a final guard breach is ignored", EXPERIMENT, '} else if (final && (finalBreaches.length > 0 || primary.status === "breach")) {', "} else if (false) {"],
+  ["revert: a significantly worse primary is ignored", EXPERIMENT, '(finalBreaches.length > 0 || primary.status === "breach")', "(finalBreaches.length > 0)"],
+  ["revert: any guard stops early at the nominal level", EXPERIMENT, "if (g.critical && g.early_stop && base.n >= g.early_stop.min_per_arm && cand.n >= g.early_stop.min_per_arm && diff !== null) {", "if (diff !== null) {"],
+  ["guard: harm inside the margin counts as a breach", EXPERIMENT, "harm > g.max_harm + EPS && hCi.lo > EPS", "hCi.lo > EPS"],
+  ["hold: too few samples are not flagged", EXPERIMENT, 'if (pm.base.n < spec.required_per_arm || pm.cand.n < spec.required_per_arm) flags.push("insufficient_samples");', ""],
+  ["hold: a sample ratio mismatch is not flagged", EXPERIMENT, 'if (srmP !== null && srmP < spec.integrity_alpha) flags.push("sample_ratio_mismatch");', ""],
+  ["hold: a cohort imbalance is not flagged", EXPERIMENT, 'if (cohortP !== null && cohortP < spec.integrity_alpha) flags.push("cohort_imbalance");', ""],
+  ["hold: missing events are not flagged", EXPERIMENT, 'if (missingRates.some((r) => r.rate > spec.max_missing_rate + EPS)) flags.push("missing_events");', ""],
+  ["hold: ambiguous attribution is not flagged", EXPERIMENT, 'if (unattributedRate > spec.max_unattributed_rate + EPS) flags.push("attribution_ambiguous");', ""],
+  ["hold: observational data is not flagged", EXPERIMENT, 'if (merged.observational) flags.push("observational");', ""],
+  ["hold: a runtime change is not flagged", EXPERIMENT, 'if (models > 1) flags.push("runtime_changed");', ""],
+  ["analysis accepts another experiment's telemetry", EXPERIMENT, "if (imp.value.scope_id !== input.experiment_id) fail(", "if (false) fail("],
+
+  // Telemetry: tags, windows, units, denominators, duplicates, completeness.
+  ["telemetry: the same import counts twice", TELEMETRY, "for (const imp of imports) if (!unique.has(imp.id)) unique.set(imp.id, imp);", "imports.forEach((imp, i) => unique.set(`${imp.id}${i}`, imp));"],
+  ["telemetry: a later export may change a recorded value", TELEMETRY, "if (old === null && v !== null) values[k] = v; else ok = false;", "values[k] = v;"],
+  ["telemetry: rows and aggregates are combined", TELEMETRY, 'if (forms.size > 1) fail("telemetry_conflict"', 'if (false) fail("telemetry_conflict"'],
+  ["telemetry: a unit mismatch is accepted", TELEMETRY, "if (units[m.name] !== m.unit) fail(", "if (false) fail("],
+  ["telemetry: a truncated export is accepted", TELEMETRY, 'if (x.expected_rows === undefined) fail("telemetry_incomplete"', 'if (false) fail("telemetry_incomplete"'],
+  ["telemetry: a repeated conversation with other values is accepted", TELEMETRY, 'if (conflicting > 0) fail("telemetry_duplicate"', 'if (false) fail("telemetry_duplicate"'],
+  ["telemetry: rows outside the export window are accepted", TELEMETRY, 'if (outside > 0) fail("telemetry_window_mismatch"', 'if (false) fail("telemetry_window_mismatch"'],
+
+  // Replay gate, coverage and held-out hygiene.
+  ["replay: a new blocking guard failure does not block", REPLAY, "  for (const f of newBlocking) {\n    reasons.push(", "  for (const f of newBlocking) {\n    if (false) reasons.push("],
+  ["replay: an unknown baseline excuses the candidate", REPLAY, 'kr.pass === false && br.pass !== false) newBlocking.push(ref);', 'kr.pass === false && br.pass === true) newBlocking.push(ref);'],
+  ["replay: low coverage does not block", REPLAY, "const lowCoverage = coverage.paired_cases < gate.min_paired_coverage;", "const lowCoverage = false;"],
+  ["replay: too few paired cases do not block", REPLAY, "const fewCases = tally.all.paired < gate.min_paired_cases;", "const fewCases = false;"],
+  ["replay: held-out losses do not block", REPLAY, "if (tally.heldout.wins < tally.heldout.losses) {", "if (false) {"],
+  ["replay: a missing recorded result is invented", REPLAY, 'if (!hit) { problem = { why: "unsupported"', 'if (false) { problem = { why: "unsupported"'],
+  ["replay: turns after a divergence are still scored", REPLAY, 'if (diverged && n < userAt.length) stopped = { turn: n, why: "diverged", detail: diverged };', ""],
+  ["replay: arms on different models are compared", REPLAY, "if (baseline.model_destination !== candidate.model_destination) conflict(", "if (false) conflict("],
+  ["replay: held-out cases are named to the proposer", REPLAY, "    if (disc(f)) feedback.push(`Blocking guard check ${f.check_id} newly fails on case ${f.case_id} at turn ${f.turn}. Do not weaken that behaviour.`);\n    else hidden = true;", "    feedback.push(`Blocking guard check ${f.check_id} newly fails on case ${f.case_id} at turn ${f.turn}. Do not weaken that behaviour.`);"],
+  ["discover: held-out failures become findings", DISCOVER, "    if (!discovery.has(pc.id)) continue;\n", ""],
+  ["discover: a held-out case reaches the proposer", DISCOVER, 'if (!allowed.has(f.case_id)) throw new PilotError("holdout_leak"', 'if (false) throw new PilotError("holdout_leak"'],
+  ["pack: unredacted text is accepted", PACK, 'if (kinds.length > 0) throw new PilotError("pack_not_redacted"', 'if (false) throw new PilotError("pack_not_redacted"'],
+  ["pack: an export not approved for replay is accepted", PACK, '!source.approved_uses.includes("replay")', "false"],
+
+  // Egress, review authority and approvals.
+  ["egress: copied conversation wording passes", EGRESS, "for (const r of runs) if (index.phrases.has(r)) copied++;", ""],
+  ["egress: a conversation identifier passes", EGRESS, "for (const t of tokens) if (index.phrases.has(t)) ids++;", ""],
+  ["publish: no explicit --publish needed", PUBLISH, "if (operator.publish !== true) {", "if (false) {"],
+  ["publish: any confirmation is accepted", PUBLISH, "if (operator.confirm !== b.candidate_id) {", "if (false) {"],
+  ["publish: another repo is accepted", PUBLISH, "if (slugs.some((s) => s !== config.repo.slug)) {", "if (false) {"],
+  ["publish: a failed replay gate is published", PUBLISH, "if (b.replay.gate.eligible !== true) {", "if (false) {"],
+  ["publish: the body is not checked before it leaves", PUBLISH, 'assertEgressSafe(input.body, input.sensitive, "pull request body");', ""],
+  ["publish: the candidate prompt is not checked before it leaves", PUBLISH, 'assertEgressSafe(input.candidate_prompt, input.sensitive, "candidate prompt");', ""],
+  ["publish: a changed base prompt is overwritten", PUBLISH, "if (promptId(current) !== b.baseline_prompt_id) {", "if (false) {"],
+  ["publish: a retry opens a second pull request", PUBLISH, "if (existing !== null) return { pr: existing.number, branch, adopted: true };", ""],
+  ["publish: an ambient GitHub token is used", COMMANDS, "const token = deps.env[GITHUB_TOKEN_ENV]?.trim();", "const token = (deps.env[GITHUB_TOKEN_ENV] ?? deps.env.GITHUB_TOKEN)?.trim();"],
+  ["review: a local bundle is written without the egress check", COMMANDS, 'assertEgressSafe(body, sensitive, "review bundle");', ""],
+  ["review: a published review is published again", COMMANDS, "  if (published) {\n", "  if (false) {\n"],
+  ["approval: a rejection counts as approval", APPROVAL, 'if (latest.value.decision === "rejected") throw', "if (false) throw"],
+  ["approval: a short id is accepted", COMMANDS, "if (!isSha256(candidateId) || !isSha256(experimentId)) throw", "if (false) throw"],
+  ["analysis: runs without an approval", COMMANDS, "const approval = requireApproval(approvals(store), spec.arms.candidate.prompt_id, experimentId);", "const approval = approvals(store)[0] ?? { id: '0'.repeat(64) };"],
+  ["experiment: a rejected candidate gets a specification", COMMANDS, "  eligibleReplay(store, candidate.id, active.id);\n  const start", "  const start"],
+  ["experiment: two changes in flight", COMMANDS, 'if (latest?.value.decision === "approved") {\n      throw new PilotError("experiment_in_flight"', 'if (false) {\n      throw new PilotError("experiment_in_flight"'],
+  ["promote: a held-out case can be re-added as discovery", PROMOTE, 'if (heldOutIds.has(id)) throw new PilotError("holdout_leak"', 'if (false) throw new PilotError("holdout_leak"'],
+  ["pack: a later pack may move a held-out case to discovery", COMMANDS, "  if (leaked.length) {\n", "  if (false) {\n"],
+  ["init: a frozen contract can be replaced", COMMANDS, "if (earlier && (earlier.refs.config !== configId || earlier.refs.baseline_prompt !== promptId || earlier.refs.commit !== commit)) {", "if (false) {"],
+
+  // Records and retries.
+  ["store: a stored record can be replaced", IO, 'if (readFileSync(path, "utf8") === content) return "already there";\n    throw new PilotError("conflict"', 'return "already there";\n    throw new PilotError("conflict"'],
+  ["store: an edited record is used", STORE, "if (contentId(value) !== id) throw new PilotError(\"tampered\"", "if (false) throw new PilotError(\"tampered\""],
+  ["store: an edited journal is accepted", STORE, "if (e.seq !== entries.length + 1 || e.prev !== prev || entryHash(rest) !== hash) {", "if (false) {"],
+  ["store: a retried step is recorded twice", STORE, "      if (same) {\n", "      if (false) {\n"],
+  ["io: a file name can leave its directory", IO, 'if (isAbsolute(name) || rel === "" || rel.startsWith("..") || isAbsolute(rel)) throw', "if (false) throw"],
+  ["io: an input of any size is read", IO, "if (size > maxBytes) throw", "if (false) throw"],
+  ["verify: a decision that does not follow from its evidence passes", COMMANDS, "if (!same(stored, again)) throw new Error(`the stored recommendation", "if (false) throw new Error(`the stored recommendation"],
+
+  // Model providers.
+  ["live: runs without the opt-in flag", LIVE, 'if (!optIn.live) return refuse("A live model runs only with --live.");', ""],
+  ["live: runs without a recorded approval", LIVE, "if (approval === null) return refuse(", "if (approval === null && false) return refuse("],
+  ["live: any endpoint confirmation is accepted", LIVE, "if (optIn.endpoint !== approval.endpoint) return refuse(", "if (false) return refuse("],
+  ["live: any data class confirmation is accepted", LIVE, "if (optIn.data_class !== approval.data_class) return refuse(", "if (false) return refuse("],
+  ["live: falls back to another key variable", LIVE, "const key = env[approval.key_env]?.trim();", "const key = (env[approval.key_env] ?? env.ANTHROPIC_API_KEY)?.trim();"],
+  ["live: the destination is not announced", LIVE, '  say(`Sending "${approval.data_class}" to ${approval.provider} at ${approval.endpoint} (model ${approval.model}).`);\n', ""],
+  ["live: the assistant turn is rebuilt instead of repeated", LIVE, "if (kept) { out.push({ role: \"assistant\", content: kept }); continue; }", ""],
+  ["live: another model than the approved one runs", LIVE, "if (request.model !== approval.model) return refuse(", "if (false) return refuse("],
+  ["model: the call limit is not enforced", MODEL, "if (calls + 1 > limits.max_calls) throw", "if (false) throw"],
+  ["model: the character limit is not enforced", MODEL, "if (chars + size > limits.max_input_chars) throw", "if (false) throw"],
+  ["config: a review may go to any host", CONFIG, "if (api !== GITHUB_API && !isLoopback(api)) bad(", "if (false) bad("],
+  ["config: a provider endpoint may be plain http", CONFIG, 'if (url.protocol !== "https:" && !isLoopback(endpoint)) bad(', "if (false) bad("],
+  ["config: unknown fields are ignored", CONFIG, "if (extra !== undefined) bad(", "if (false) bad("],
+];
+
+const selectedFiles = process.argv.slice(2);
+const nameFilter = process.env.MUTATION_MATCH ? new RegExp(process.env.MUTATION_MATCH) : null;
+const mutations = allMutations.filter(([name, file]) => (selectedFiles.length === 0 || selectedFiles.includes(file)) && (!nameFilter || nameFilter.test(name)));
+if (!mutations.length) throw new Error("No mutations match the requested files");
+console.log(`Checking ${mutations.length} pilot mutations${selectedFiles.length ? ` in ${selectedFiles.join(", ")}` : ""}`);
+const run = (stdio) => spawnSync(process.execPath, [...process.execArgv, "--test", ...TESTS], { stdio, timeout: 180000 });
+if (run("ignore").status !== 0) throw new Error("The unmutated pilot tests must pass before checking mutations");
+
+// Every mutated file as it was before the run, restored at the end whatever happened in between.
+const before = new Map([...new Set(mutations.map(([, file]) => file))].map((f) => [f, readFileSync(f, "utf8")]));
+
+let survived = 0;
+for (const [name, file, from, to] of mutations) {
+  const original = readFileSync(file, "utf8");
+  if (!original.includes(from)) { console.log(`STALE     ${name}`); survived++; continue; }
+  const restore = () => writeFileSync(file, original);
+  process.once("SIGINT", restore);
+  try {
+    writeFileSync(file, original.replace(from, to));
+    const { status } = run("ignore");
+    if (status === 0 || status === null) survived++;
+    console.log(`${status === null ? "TIMED OUT" : status === 0 ? "SURVIVED " : "killed   "} ${name}`);
+  } finally {
+    restore();
+    process.removeListener("SIGINT", restore);
+  }
+}
+const changed = [...before].filter(([f, text]) => readFileSync(f, "utf8") !== text).map(([f]) => f);
+for (const f of changed) writeFileSync(f, before.get(f));
+if (changed.length) console.log(`RESTORED  ${changed.join(", ")}: a file differed from before the run; check no other mutation run was going at the same time`);
+console.log(survived ? `FAILED: ${survived} of ${mutations.length} not killed` : `OK: ${mutations.length} of ${mutations.length} killed`);
+process.exitCode = survived || changed.length ? 1 : 0;
