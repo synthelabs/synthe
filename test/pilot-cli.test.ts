@@ -453,6 +453,76 @@ test("a second publication of the same candidate waits for the first", async () 
   } finally { await ctx.stop(); }
 });
 
+test("the first pack is refused when a discovery case is a held-out conversation under another id", async () => {
+  const ctx = await workspace();
+  try {
+    assert.equal(await ctx.run(["init", "--config", ctx.put("pilot.json", json(demoConfig())), "--repo-dir", ctx.repoDir]), 0);
+    const pack = demoPack();
+    const heldOut = pack.cases.find((c) => c.id === "ret-h02")!;
+    // An exact copy, and a copy with the customer's words reformatted and the agent's side rewritten. No
+    // promotion is involved, so only the rule for the first pack can stop these.
+    const exact = { ...heldOut, id: "ret-d99", split: "discovery" as const };
+    const reformatted = { ...exact, messages: heldOut.messages.map((m) => (m.role === "user" ? { ...m, text: `  ${m.text.toUpperCase().replaceAll(",", " ;")}  ` } : m.role === "assistant" && !m.tool_calls ? { ...m, text: `${m.text} Thank you.` } : m)) };
+    assert.notDeepEqual(reformatted.messages, heldOut.messages);
+    for (const [name, extra] of [["exact.json", exact], ["reformatted.json", reformatted]] as const) {
+      assert.equal(await ctx.run(["pack", "--file", ctx.put(name, json({ ...pack, cases: [...pack.cases, extra] }))]), 1, name);
+      assert.ok(refused(ctx.lines.slice(-1), "holdout_leak") && (ctx.lines.at(-1) ?? "").includes("ret-d99"), `${name}: ${ctx.lines.at(-1) ?? ""}`);
+    }
+    assert.equal(ctx.store.find("pack.frozen").length, 0);
+    assert.equal(await ctx.run(["pack", "--file", ctx.put("pack.v1.json", json(pack))]), 0, "the pack without the copy is frozen");
+  } finally { await ctx.stop(); }
+});
+
+test("two experiments written before any approval: once one is approved, the other cannot be", async () => {
+  const ctx = await replayedPilot();
+  try {
+    const { eligible } = ctx;
+    assert.equal(await ctx.run(["propose", "--finding", ctx.finding, "--file", ctx.put("c.md", HUMAN_CANDIDATE_PROMPT), "--author", "Imogen Hartley", "--rationale", "A second idea."]), 0);
+    const second = ctx.last("candidate.created");
+    assert.equal(await ctx.run(["replay", "--candidate", second, "--model", ctx.model]), 0);
+    const specs: Record<string, string> = {};
+    for (const [candidate, start] of [[eligible, DEMO.experiment_b_start], [second, DEMO.experiment_c_start]] as const) {
+      assert.equal(await ctx.run(["experiment", "--candidate", candidate, "--start", start]), 0, "nothing is approved yet, so both may be written");
+      specs[candidate] = ctx.last("experiment.specified");
+      assert.equal(await ctx.run(["review", "--candidate", candidate]), 0);
+    }
+    assert.equal(await ctx.run(["approve", "--candidate", eligible, "--experiment", specs[eligible], "--approver", "Tomas Lindqvist"]), 0);
+    assert.equal(await ctx.run(["approve", "--candidate", second, "--experiment", specs[second], "--approver", "Tomas Lindqvist"]), 1);
+    assert.ok(refused(ctx.lines.slice(-1), "experiment_in_flight"), ctx.lines.at(-1) ?? "");
+    assert.equal(ctx.store.find("approval.recorded").length, 1);
+    // A rejection of the second is still recorded: it starts nothing.
+    assert.equal(await ctx.run(["approve", "--candidate", second, "--experiment", specs[second], "--approver", "Tomas Lindqvist", "--reject"]), 0);
+  } finally { await ctx.stop(); }
+});
+
+test("an email address in the contract is not written into a review, local or published", async () => {
+  const ctx = await workspace();
+  try {
+    // The sign-off names a person by address. The review prints the sign-off, so the review as a whole is refused,
+    // although the candidate's own text is clean.
+    const config = structuredClone(demoConfig()) as Record<string, unknown> & { metric: { signed_off: { by: string } } };
+    config.metric.signed_off.by = "Tomas Lindqvist (tomas.lindqvist@fernhill.example)";
+    const must = async (argv: string[]) => { assert.equal(await ctx.run(argv), 0, `${argv[0]}: ${ctx.lines.slice(-2).join(" | ")}`); };
+    await must(["init", "--config", ctx.put("pilot.json", json(config)), "--repo-dir", ctx.repoDir]);
+    await must(["baseline", "--telemetry", writeExport(ctx, "baseline.json", baselineExport())]);
+    await must(["pack", "--file", ctx.put("pack.v1.json", json(demoPack()))]);
+    await must(["discover", "--model", ctx.model]);
+    const finding = ctx.last("finding.found");
+    await must(["propose", "--finding", finding, "--proposer", ctx.proposer]);
+    await must(["propose", "--finding", finding, "--proposer", ctx.proposer]);
+    const candidate = ctx.last("candidate.created");
+    await must(["replay", "--candidate", candidate, "--model", ctx.model]);
+    await must(["experiment", "--candidate", candidate, "--start", DEMO.experiment_b_start]);
+    assert.equal(await ctx.run(["review", "--candidate", candidate]), 1);
+    const said = ctx.lines.at(-1) ?? "";
+    assert.ok(refused([said], "egress_blocked") && /the review bundle contains what looks like an email address/.test(said), said);
+    assert.ok(!said.includes("fernhill.example"), "the refusal does not repeat the address");
+    assert.equal(ctx.store.find("review.bundled").length, 0);
+    assert.ok(!existsSync(join(ctx.dir, "reports", `review-${candidate.slice(0, 12)}`)), "no review file was written");
+    assert.equal(ctx.github.requests.length, 0);
+  } finally { await ctx.stop(); }
+});
+
 test("baseline imports are idempotent, and a wrong export is refused before anything is stored", async () => {
   const ctx = await frozenPilot();
   try {

@@ -118,7 +118,7 @@ test("an identifier the reports print passes only as a whole: it does not make i
 test("a name is caught however many conversations it is in, with look-alike letters, and when it is short", () => {
   const repeat = (id: string) => makeCase(id, "discovery", { messages: [
     { role: "user", text: "Hello, this is Philippa Wraxall-Thorne of 14 Larkspur Mews again. Please call Zoe Fong or ask for Hope Carey. My ticket is TKT-4471." },
-    { role: "assistant", text: "Let me look.", tool_calls: [{ id: "t1", name: "lookup_order", input: { customer: "Philippa Wraxall-Thorne" } }] },
+    { role: "assistant", text: "Let me look.", tool_calls: [{ id: "t1", name: "lookup_order", input: { customer: "Philippa Wraxall-Thorne", agent: "Marguerite" } }] },
     { role: "tool", tool_call_id: "t1", name: "lookup_order", result: "Account of Thaddeus Quillfeather, order ORD-REPEAT-88 shipped" },
     { role: "assistant", text: "Your order shipped." },
   ] });
@@ -131,7 +131,9 @@ test("a name is caught however many conversations it is in, with look-alike lett
   assert.deepEqual(egressProblems("Норе", null), []);
   assert.ok(flagged("ask Норе", i), "a whole word in Cyrillic look-alikes");
   assert.ok(flagged("ticket 4471", i), "a token with a digit, in four conversations");
-  assert.ok(flagged("the Philippa account", i), "a name at the start of a tool input");
+  // A tool input is a value, not a sentence: its first word has a capital because it is a name. This one is
+  // nowhere else in the conversations.
+  assert.ok(flagged("ask Marguerite", i), "a name that is only ever the first word of a tool input");
   assert.ok(egressProblems("Тhaddeus", null).some((p) => /mixes alphabets/.test(p)));
   assert.deepEqual(egressProblems("Привет, мир. Καλημέρα.", null), [], "text wholly in another alphabet is not a mixed word");
   // The first word of a sentence has a capital whatever it is; so do the words other conversations write in lowercase.
