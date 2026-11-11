@@ -192,8 +192,22 @@ export class PilotStore {
 
   // One writer at a time. A lock left by a process that died is taken over, so a crash never blocks the retry.
   private locked<T>(fn: () => T): T {
+    // A journal write takes milliseconds. A lock this old was left behind, even if its process id is in use
+    // again by something else.
+    const release = this.acquire("journal.lock", LOCK_STALE_MS);
+    try { return fn(); } finally { release(); }
+  }
+
+  // One run at a time of a step that talks to the outside (publishing a review): two runs at once could both find
+  // nothing published yet and both publish.
+  async exclusive<T>(name: string, staleMs: number, fn: () => Promise<T>): Promise<T> {
+    const release = this.acquire(`${name}.lock`, staleMs);
+    try { return await fn(); } finally { release(); }
+  }
+
+  private acquire(file: string, staleMs: number): () => void {
     mkdirSync(this.dir, { recursive: true });
-    const lock = join(this.dir, "journal.lock");
+    const lock = join(this.dir, file);
     for (let attempt = 0; ; attempt++) {
       try {
         const fd = openSync(lock, "wx", 0o600);
@@ -204,14 +218,12 @@ export class PilotStore {
         const owner = Number(readFileSync(lock, "utf8").trim());
         let alive = Number.isInteger(owner) && owner > 0 && owner !== process.pid;
         if (alive) { try { process.kill(owner, 0); } catch { alive = false; } }
-        // A journal write takes milliseconds. A lock this old was left behind, even if its process id is in use
-        // again by something else.
-        try { if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) alive = false; } catch { alive = false; }
-        if (alive || attempt >= 2) throw new PilotError("conflict", `Another pilot command (process ${owner}) is writing to ${this.dir}. Wait for it to finish and run this again.`);
+        try { if (Date.now() - statSync(lock).mtimeMs > staleMs) alive = false; } catch { alive = false; }
+        if (alive || attempt >= 2) throw new PilotError("conflict", `Another pilot command (process ${owner}) is working in ${this.dir} (${file}). Wait for it to finish and run this again.`);
         try { unlinkSync(lock); } catch { /* another process removed it first */ }
       }
     }
-    try { return fn(); } finally { try { unlinkSync(lock); } catch { /* already gone */ } }
+    return () => { try { unlinkSync(lock); } catch { /* already gone */ } };
   }
 
   // A rendering of stored records. Safe to overwrite: the records, not the report, are the evidence.

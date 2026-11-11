@@ -5,6 +5,7 @@
 //   node scripts/pilot-mutation-check.mjs                      every mutation
 //   node scripts/pilot-mutation-check.mjs src/pilot/experiment.ts   only that file's
 //   MUTATION_MATCH='keep|revert' node scripts/pilot-mutation-check.mjs
+//   MUTATION_STALE=1 node scripts/pilot-mutation-check.mjs     list mutations that no longer match the source
 //
 // Run it in its own worktree and never two at once: each mutation rewrites a source file for a moment.
 import { spawnSync } from "node:child_process";
@@ -109,8 +110,17 @@ const allMutations = [
   ["pack: a field named __proto__ is accepted", PACK, "if (unsafeKey(raw) !== null) bad(", "if (false) bad("],
 
   // Egress, review authority and approvals.
-  ["egress: copied conversation wording passes", EGRESS, 'if (item.includes(" ")) copied++; else single++;', 'if (!item.includes(" ")) single++;'],
-  ["egress: a single word or identifier from a conversation passes", EGRESS, 'if (item.includes(" ")) copied++; else single++;', 'if (item.includes(" ")) copied++;'],
+  ["egress: copied conversation wording passes", EGRESS, "copied: new Set(runsOf(w).filter((r) => index.phrases.has(r)))", "copied: new Set()"],
+  ["egress: a single word or identifier from a conversation passes", EGRESS, "single: new Set(w.filter((x) => index.phrases.has(x)))", "single: new Set()"],
+  ["egress: a name that is in many conversations passes", EGRESS, "for (const word of capital) if (!lower.has(word) && !allowed.has(word)) phrases.add(word);", ""],
+  ["egress: an order token that is in many conversations passes", EGRESS, "for (const word of always) if (!allowed.has(word)) phrases.add(word);", ""],
+  ["egress: look-alike letters are not read as Latin ones", EGRESS, ".replace(/[\\u0370-\\u03ff\\u0400-\\u052f]/g, (ch) => LOOKALIKES.get(ch) ?? ch)", ""],
+  ["egress: a word that mixes alphabets passes", EGRESS, 'if (MIXED.test(text.normalize("NFKD").replace(/\\p{Cf}/gu, ""))) problems.push', "if (false) problems.push"],
+  ["egress: a word inside a case id or catalog sentence is allowed everywhere", EGRESS, "const w = words(withoutIdentifiers(t, identifiers));", "const w = words(t);"],
+  ["egress: an identifier the reports print is refused in free text", EGRESS, "const rest = withoutIdentifiers(text, index.identifiers);", "const rest = text;"],
+  ["egress: the first word of a sentence is read as a name", EGRESS, "else if ((!isProse || !tok.starts) && tok.lower.length >= NAME_MIN) capital.add(tok.lower);", "else if (tok.lower.length >= NAME_MIN) capital.add(tok.lower);"],
+  ["egress: a name at the start of a tool input is not read as a name", EGRESS, "else if ((!isProse || !tok.starts) && tok.lower.length >= NAME_MIN) capital.add(tok.lower);", "else if (!tok.starts && tok.lower.length >= NAME_MIN) capital.add(tok.lower);"],
+  ["egress: a redaction placeholder is read as a name", EGRESS, 'const toks = tokens(t.replace(PLACEHOLDER, " "));', "const toks = tokens(t);"],
   ["egress: hidden characters and accents break the match", EGRESS, '.replace(/[\\p{M}\\p{Cf}]/gu, "")', ""],
   ["egress: only runs of six words are matched", EGRESS, "const RUN = 3;", "const RUN = 6;"],
   ["egress: nothing particular to a conversation is indexed", EGRESS, "if (count <= few && !allowed.has(item)) phrases.add(item);", "if (count <= 0 && !allowed.has(item)) phrases.add(item);"],
@@ -132,14 +142,25 @@ const allMutations = [
   ["analysis: an export dated in the future is accepted", COMMANDS, "if (ms(imported.exported_at) > now.getTime() + CLOCK_SKEW_MS) {", "if (false) {"],
   ["analysis: the experiment may use another query than the baseline", COMMANDS, "if (importsFor(store, f.config_id).length && baselineHash !== (imported.query_hash ?? null)) {", "if (false) {"],
   ["pack: a hand-made successor replaces the frozen pack", COMMANDS, "  if (current && current.refs.pack !== id) {", "  if (false) {"],
-  ["pack: a held-out conversation copied under a new id becomes discovery", COMMANDS, "(heldIds.has(c.id) || heldConversations.has(contentId(c.messages)))", "(heldIds.has(c.id))"],
+  ["pack: a held-out conversation copied under a new id becomes discovery", COMMANDS, "(heldIds.has(c.id) || conversationKeys(c).some((k) => heldConversations.has(k)))", "(heldIds.has(c.id))"],
   ["init: git follows the shell's GIT_DIR", COMMANDS, ' && !k.startsWith("GIT_")', ""],
-  ["init: a repo on another host passes the origin check", COMMANDS, ' || (api === GITHUB_API && remote.host.toLowerCase() !== "github.com")', ""],
+  ["init: a repo on another host passes the origin check", COMMANDS, " || (api === GITHUB_API && !GITHUB_HOSTS.has(remote.host.toLowerCase()))", ""],
   ["verify: a replay built from unrecorded arm runs passes", COMMANDS, "if (!armRecorded(stored.baseline) || !armRecorded(stored.candidate)) throw", "if (false) throw"],
   ["approval: a short id is accepted", COMMANDS, "if (!isSha256(candidateId) || !isSha256(experimentId)) throw", "if (false) throw"],
   ["analysis: runs without an approval", COMMANDS, "const approval = requireApproval(approvals(store), spec.arms.candidate.prompt_id, experimentId);", "const approval = approvals(store)[0] ?? { id: '0'.repeat(64) };"],
   ["experiment: a rejected candidate gets a specification", COMMANDS, "  eligibleReplay(store, candidate.id, active.id);\n  const start", "  const start"],
-  ["experiment: two changes in flight", COMMANDS, 'if (latest?.value.decision === "approved") {\n      throw new PilotError("experiment_in_flight"', 'if (false) {\n      throw new PilotError("experiment_in_flight"'],
+  ["experiment: two changes in flight", COMMANDS, 'if (approved.filter((a) => a.value.experiment_id === e.key).at(-1)?.value.decision === "approved") {\n      throw new PilotError("experiment_in_flight"', 'if (false) {\n      throw new PilotError("experiment_in_flight"'],
+  ["experiment: a second experiment for the same candidate is allowed", COMMANDS, "    if (e.key === experimentId) continue;\n    const ended = settledBy(store, e.key);", "    if (e.key === experimentId || e.refs.candidate === candidateId) continue;\n    const ended = settledBy(store, e.key);"],
+  ["experiment: a decided candidate is measured again", COMMANDS, '      if (e.refs.candidate === candidateId) {\n        throw new PilotError("conflict", `Candidate', '      if (false) {\n        throw new PilotError("conflict", `Candidate'],
+  ["approval: an experiment that already ended can be approved", COMMANDS, 'if (ended) throw new PilotError("conflict", `Experiment ${shortId(experimentId)} already ended with ${ended.refs.recommendation}. There is nothing left to approve.`);', ""],
+  ["approval: a replaced specification can be approved", COMMANDS, "if (newest && newest.key !== experimentId) {", "if (false) {"],
+  ["approval: a second experiment can be approved while one is in flight", COMMANDS, "    assertMayRun(store, candidateId, experimentId);\n  }\n  const approval = makeApproval(", "  }\n  const approval = makeApproval("],
+  ["verify: an import whose summary does not follow from its rows passes", COMMANDS, "if (problem) throw new Error(`${problem}, so it was not written by an import`);", ""],
+  ["verify: an export imported after the decision passes", COMMANDS, '} else if (e.step === "telemetry.imported" && ended.has(e.refs.scope)) {', "} else if (false) {"],
+  ["verify: a decision recorded after the experiment ended passes", COMMANDS, "if (ended.has(e.refs.experiment)) problems.push(", "if (false) problems.push("],
+  ["verify: a noted journal head that is gone passes", COMMANDS, "if (!store.journal().some((e) => e.hash === noted)) problems.push(", "if (false) problems.push("],
+  ["pack: a reformatted copy of a held-out conversation becomes discovery", COMMANDS, 'return said.length >= COPY_MIN_WORDS ? [`said:${said.join(" ")}`, all] : [all];', "return [all];"],
+  ["publish: two publications of one candidate run at once", STORE, "    const release = this.acquire(`${name}.lock`, staleMs);\n    try { return await fn(); } finally { release(); }", "    return await fn();"],
   ["promote: a held-out case can be re-added as discovery", PROMOTE, 'if (heldOutIds.has(id)) throw new PilotError("holdout_leak"', 'if (false) throw new PilotError("holdout_leak"'],
   ["pack: a later pack may move a held-out case to discovery", COMMANDS, "  if (leaked.length) {\n", "  if (false) {\n"],
   ["init: a frozen contract can be replaced", COMMANDS, "if (earlier && (earlier.refs.config !== configId || earlier.refs.baseline_prompt !== promptId || earlier.refs.commit !== commit)) {", "if (false) {"],
@@ -152,7 +173,7 @@ const allMutations = [
   ["store: entries cut off the end of the journal pass", STORE, "if (head && (entries.length < head.seq || entries[head.seq - 1].hash !== head.hash)) {", "if (false) {"],
   ["store: a missing journal head passes", STORE, 'if (!head && entries.length > 1) throw', "if (false) throw"],
   ["store: a damaged record blocks every retry", STORE, 'if (!(e instanceof PilotError) || e.code !== "conflict") throw e;', "throw e;"],
-  ["store: an old lock blocks for ever", STORE, "try { if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) alive = false; } catch { alive = false; }", ""],
+  ["store: an old lock blocks for ever", STORE, "try { if (Date.now() - statSync(lock).mtimeMs > staleMs) alive = false; } catch { alive = false; }", ""],
   ["main: an unexpected error prints its message", "src/pilot/main.ts", 'if (deps.env.SYNTHE_PILOT_DEBUG === "1")', "if (true)"],
   ["io: a file name can leave its directory", IO, 'if (isAbsolute(name) || rel === "" || rel.startsWith("..") || isAbsolute(rel)) throw', "if (false) throw"],
   ["io: an input of any size is read", IO, "if (size > maxBytes) throw", "if (false) throw"],
@@ -177,12 +198,27 @@ const allMutations = [
   ["config: a review may go to any host", CONFIG, "if (api !== GITHUB_API && !isLoopback(api)) bad(", "if (false) bad("],
   ["config: a provider endpoint may be plain http", CONFIG, 'if (url.protocol !== "https:" && !isLoopback(endpoint)) bad(', "if (false) bad("],
   ["config: unknown fields are ignored", CONFIG, "if (extra !== undefined) bad(", "if (false) bad("],
+  // Added after the second review.
+  ["telemetry: one conversation under two ids is counted twice", TELEMETRY, 'if (twins > 0) fail("telemetry_duplicate"', 'if (false) fail("telemetry_duplicate"'],
+  ["telemetry: an aggregate count may fall by any amount", TELEMETRY, "const moved = Math.max(0, n.unattributed - o.unattributed);", "const moved = Infinity;"],
+  ["telemetry: conversations moved to unattributed refuse an honest update", TELEMETRY, "const moved = Math.max(0, n.unattributed - o.unattributed);", "const moved = 0;"],
+  ["telemetry: a conversation an earlier export missed is not noticed", TELEMETRY, "if (started >= span.from && started < span.to && started <= span.at) missed = span.at;", ""],
+  ["hold: conversations that turn up late do not hold the result", EXPERIMENT, 'if (lateRows > Math.max(LATE_ROWS_MIN, LATE_ROWS_SHARE * onTime)) flags.push("late_rows");', ""],
+  ["hold: a conversation that was inside the lag counts as late", EXPERIMENT, "return missed !== null && ms(r.started_at) + lag <= missed;", "return missed !== null;"],
+  ["live: a call may wait for the SDK's ten minutes", LIVE, "maxRetries: 0, timeout: timeoutMs, logLevel", "maxRetries: 0, logLevel"],
 ];
 
 const selectedFiles = process.argv.slice(2);
 const nameFilter = process.env.MUTATION_MATCH ? new RegExp(process.env.MUTATION_MATCH) : null;
 const mutations = allMutations.filter(([name, file]) => (selectedFiles.length === 0 || selectedFiles.includes(file)) && (!nameFilter || nameFilter.test(name)));
 if (!mutations.length) throw new Error("No mutations match the requested files");
+// MUTATION_STALE=1: only list the mutations whose text is no longer in the source, without running any test.
+if (process.env.MUTATION_STALE) {
+  const stale = mutations.filter(([, file, from]) => !readFileSync(file, "utf8").includes(from));
+  for (const [name] of stale) console.log(`STALE     ${name}`);
+  console.log(`${mutations.length} mutations, ${stale.length} stale`);
+  process.exit(stale.length ? 1 : 0);
+}
 console.log(`Checking ${mutations.length} pilot mutations${selectedFiles.length ? ` in ${selectedFiles.join(", ")}` : ""}`);
 const run = (files) => spawnSync(process.execPath, [...process.execArgv, "--test", ...files], { stdio: "ignore", timeout: 300000 }).status;
 if (run(TESTS) !== 0) throw new Error("The unmutated pilot tests must pass before checking mutations");

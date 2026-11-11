@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
+import { tmp } from "./pilot-cli-helpers.ts";
 
 const ROOT = join(import.meta.dirname, "..");
 const sha = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
 
 test("the pilot bundles into one runnable file, the same bytes every time, without touching dist/", () => {
-  const dir = mkdtempSync(join(tmpdir(), "pilot-build-"));
+  const dir = tmp("pilot-build-");
   const one = join(dir, "a", "synthe-pilot.mjs");
   const two = join(dir, "b", "nested", "synthe-pilot.mjs");
   const distBefore = execFileSync("git", ["status", "--porcelain", "--", "dist"], { cwd: ROOT, encoding: "utf8" });

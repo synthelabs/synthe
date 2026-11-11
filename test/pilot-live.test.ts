@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PilotError } from "../src/pilot/errors.ts";
-import { liveModel } from "../src/pilot/live.ts";
+import { CALL_TIMEOUT_MS, liveModel } from "../src/pilot/live.ts";
 import type { ChatRequest, ProviderApproval } from "../src/pilot/types.ts";
 
 // The live path is proven against a stand-in transport. No request leaves the test process.
@@ -168,5 +168,30 @@ test("settings in the shell cannot add headers, turn on logging, or make the SDK
   } finally {
     console.log = realLog; console.debug = realDebug; console.info = realInfo; console.warn = realWarn;
     process.env = saved;
+  }
+});
+
+test("a provider that never answers is given up on after the time limit, and the call is not sent again", async () => {
+  let sent = 0;
+  const pending: ((e: Error) => void)[] = [];
+  // Never answers; ends only when the client gives up and aborts the request, or when the test lets go of it.
+  const stalled = ((_url: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    sent++;
+    pending.push(reject);
+    init?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })));
+  })) as typeof fetch;
+  const model = liveModel(approval, optIn, { FERNHILL_PILOT_KEY: KEY }, () => {}, stalled, 50);
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const outcome = await Promise.race([
+      model.chat(request()).then(() => "answered", (e: unknown) => (e as Error).message),
+      new Promise<string>((resolve) => { timer = setTimeout(() => resolve("still waiting after 3 seconds"), 3000); }),
+    ]);
+    assert.match(outcome, /^The provider request failed \(no response, \w+\)\.$/);
+    assert.equal(sent, 1, "a timed-out call is not retried");
+    assert.ok(CALL_TIMEOUT_MS <= 120_000, "the default limit for one call is two minutes or less");
+  } finally {
+    clearTimeout(timer);
+    for (const reject of pending) reject(new Error("test over"));
   }
 });

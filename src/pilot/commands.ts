@@ -6,7 +6,7 @@ import { githubRepo, type Repo } from "../github/repo.ts";
 import { makeApproval, requireApproval } from "./approval.ts";
 import { CONFIG_FILE, GITHUB_API, parsePilotConfig } from "./config.ts";
 import { discoverFailures, makeCandidate, proposerContext, renderFindings } from "./discover.ts";
-import { assertEgressSafe, sensitiveIndex } from "./egress.ts";
+import { assertEgressSafe, sensitiveIndex, words } from "./egress.ts";
 import { PilotError } from "./errors.ts";
 import { analyzeExperiment, buildExperimentSpec, renderDecision, renderExperimentSpec } from "./experiment.ts";
 import { candidateTag, contentId, isSha256, ms, shortId } from "./ids.ts";
@@ -19,10 +19,10 @@ import { publishMessage, publishReview } from "./publish.ts";
 import { pairArms, renderReplay, replayArm } from "./replay.ts";
 import { renderPilotReport } from "./report.ts";
 import { buildReviewBundle, MAX_REVIEW_CHARS, renderReview } from "./review.ts";
-import { OBJECT_KINDS, PilotStore } from "./store.ts";
-import { baselineReport, importTelemetry, renderBaseline } from "./telemetry.ts";
+import { OBJECT_KINDS, PilotStore, type JournalEntry } from "./store.ts";
+import { baselineReport, importProblem, importTelemetry, renderBaseline } from "./telemetry.ts";
 import type {
-  Approval, ArmRun, BaselineReport, Candidate, ChatModel, ExperimentAnalysis, ExperimentSpec, FailureFinding, IsoTime, Pack, PilotConfig,
+  Approval, ArmRun, BaselineReport, Candidate, ChatModel, ExperimentAnalysis, ExperimentSpec, FailureFinding, IsoTime, Pack, PackCase, PilotConfig,
   PromotionRecord, PromotionRequest, Proposer, ReplayReport, ReviewBundle, Sha256, Stored, TelemetryImport,
 } from "./types.ts";
 
@@ -76,6 +76,8 @@ function originOf(url: string): { host: string; slug: string } | null {
   return parts.length >= 2 ? { host: m[1], slug: parts.slice(-2).join("/") } : null;
 }
 
+const GITHUB_HOSTS = new Set(["github.com", "ssh.github.com"]);
+
 export interface Frozen { config_id: Sha256; config: PilotConfig; baseline_prompt_id: Sha256; commit: string }
 
 export function frozen(store: PilotStore): Frozen {
@@ -117,13 +119,24 @@ function approvals(store: PilotStore): Stored<Approval>[] {
 
 // A case that was ever held out stays held out: no pack may show it to a proposer, under its own id or as a copy
 // of its conversation under another id.
+// What makes two cases the same conversation, with case, spacing, punctuation and accents removed. When the
+// customer said enough to identify the conversation, their words alone decide: a copy that reformats the text or
+// changes the agent's side is still that conversation. A few words ("where is my order") are said by many
+// customers, so a short conversation is a copy only when every message is the same.
+const COPY_MIN_WORDS = 8;
+function conversationKeys(c: PackCase): string[] {
+  const said = words(c.messages.flatMap((m) => (m.role === "user" ? [m.text] : [])).join(" "));
+  const all = `all:${words(c.messages.map((m) => (m.role === "tool" ? m.result : m.text)).join(" ")).join(" ")}`;
+  return said.length >= COPY_MIN_WORDS ? [`said:${said.join(" ")}`, all] : [all];
+}
+
 function assertNoHoldoutLeak(store: PilotStore, pack: Pack): void {
   const heldIds = new Set<string>();
   const heldConversations = new Set<string>();
   for (const p of [...allPacks(store).map((x) => x.value), pack]) {
-    for (const c of p.cases) if (c.split === "heldout") { heldIds.add(c.id); heldConversations.add(contentId(c.messages)); }
+    for (const c of p.cases) if (c.split === "heldout") { heldIds.add(c.id); for (const k of conversationKeys(c)) heldConversations.add(k); }
   }
-  const leaked = pack.cases.filter((c) => c.split === "discovery" && (heldIds.has(c.id) || heldConversations.has(contentId(c.messages)))).map((c) => c.id);
+  const leaked = pack.cases.filter((c) => c.split === "discovery" && (heldIds.has(c.id) || conversationKeys(c).some((k) => heldConversations.has(k)))).map((c) => c.id);
   if (leaked.length) {
     throw new PilotError("holdout_leak", `${leaked.length} discovery case(s) in this pack are held-out cases, or copies of a held-out conversation (${leaked.slice(0, 5).join(", ")}). A held-out conversation must stay held out, or the proposer would see it.`);
   }
@@ -207,9 +220,9 @@ export async function init(store: PilotStore, flags: Flags, deps: PilotDeps): Pr
   if (origin) {
     const remote = originOf(origin);
     const api = config.repo.api ?? GITHUB_API;
-    // The checkout must be the repo the review will go to: same owner and name, on github.com unless the config
-    // points the API at a loopback stand-in.
-    if (!remote || remote.slug.toLowerCase() !== config.repo.slug.toLowerCase() || (api === GITHUB_API && remote.host.toLowerCase() !== "github.com")) {
+    // The checkout must be the repo the review will go to: same owner and name, on github.com (ssh.github.com is
+    // its SSH-over-443 name) unless the config points the API at a loopback stand-in.
+    if (!remote || remote.slug.toLowerCase() !== config.repo.slug.toLowerCase() || (api === GITHUB_API && !GITHUB_HOSTS.has(remote.host.toLowerCase()))) {
       throw new PilotError("wrong_repo", `${repoDir} is a checkout of a different repo than repo.slug (${config.repo.slug}). Point --repo-dir at the right checkout, or fix repo.slug.`);
     }
   } else {
@@ -379,6 +392,9 @@ export async function replay(store: PilotStore, flags: Flags, deps: PilotDeps): 
   return 0;
 }
 
+// A publication is a handful of GitHub calls. A lock older than this was left by a run that died.
+const PUBLISH_LOCK_STALE_MS = 10 * 60_000;
+
 const eligibleReplay = (store: PilotStore, candidateId: Sha256, packId: Sha256): Stored<ReplayReport> => {
   const latest = replaysFor(store, candidateId, packId).at(-1);
   if (!latest) throw new PilotError("replay_gate_failed", `Candidate ${shortId(candidateId)} has no replay on the active pack ${shortId(packId)}. Run \`replay --candidate ${shortId(candidateId)}\` first.`);
@@ -390,8 +406,29 @@ const eligibleReplay = (store: PilotStore, candidateId: Sha256, packId: Sha256):
 };
 
 // A decision that ends an experiment: after it, the next change may start.
-const settled = (store: PilotStore, experimentId: Sha256): boolean =>
-  store.find("analysis.decided").some((e) => e.refs.experiment === experimentId && (e.refs.recommendation === "keep" || e.refs.recommendation === "revert"));
+const settledBy = (store: PilotStore, experimentId: Sha256): JournalEntry | undefined =>
+  store.find("analysis.decided").find((e) => e.refs.experiment === experimentId && (e.refs.recommendation === "keep" || e.refs.recommendation === "revert"));
+const settled = (store: PilotStore, experimentId: Sha256): boolean => settledBy(store, experimentId) !== undefined;
+
+// One change in flight per agent: two live changes at once cannot be told apart in the telemetry. That holds for
+// two experiments on the same candidate too, because both would read the same tagged conversations, and a
+// candidate that already has a keep or a revert is not measured again under a second experiment.
+function assertMayRun(store: PilotStore, candidateId: Sha256, experimentId: Sha256): void {
+  const approved = approvals(store);
+  for (const e of store.find("experiment.specified")) {
+    if (e.key === experimentId) continue;
+    const ended = settledBy(store, e.key);
+    if (ended) {
+      if (e.refs.candidate === candidateId) {
+        throw new PilotError("conflict", `Candidate ${shortId(candidateId)} already has a ${ended.refs.recommendation} decision (experiment ${shortId(e.key)}). A decided candidate is not measured again: its exports would feed both experiments. Propose a new candidate.`);
+      }
+      continue;
+    }
+    if (approved.filter((a) => a.value.experiment_id === e.key).at(-1)?.value.decision === "approved") {
+      throw new PilotError("experiment_in_flight", `Experiment ${shortId(e.key)} is approved and has no keep or revert decision yet. Only one change may be in flight for an agent; finish it with \`analyze\` first, or record \`approve --reject\` for it if it will not run.`);
+    }
+  }
+}
 
 export async function experiment(store: PilotStore, flags: Flags, deps: PilotDeps): Promise<number> {
   const f = frozen(store);
@@ -402,15 +439,6 @@ export async function experiment(store: PilotStore, flags: Flags, deps: PilotDep
   if (Number.isNaN(ms(start))) throw new PilotError("usage", "--start must be a UTC time like 2026-11-16T00:00:00Z.");
   const baselineEntry = store.last("baseline.reported");
   if (!baselineEntry) throw new PilotError("not_found", "No baseline report yet. Run `baseline --telemetry <export.json>` first: the experiment is sized from it.");
-  // One change in flight per agent: two live changes at once cannot be told apart in the telemetry.
-  const approved = approvals(store);
-  for (const e of store.find("experiment.specified")) {
-    if (e.refs.candidate === candidate.id || settled(store, e.key)) continue;
-    const latest = approved.filter((a) => a.value.experiment_id === e.key).at(-1);
-    if (latest?.value.decision === "approved") {
-      throw new PilotError("experiment_in_flight", `Experiment ${shortId(e.key)} is approved and has no keep or revert decision yet. Only one change may be in flight for an agent; finish it with \`analyze\` first.`);
-    }
-  }
   const baselineReported = store.get<BaselineReport>("baseline", baselineEntry.refs.baseline);
   // The experiment's baseline arm must be the prompt the baseline was measured on.
   if (baselineReported.tag !== f.config.agent.baseline_tag || baselineReported.config_id !== f.config_id) {
@@ -424,6 +452,7 @@ export async function experiment(store: PilotStore, flags: Flags, deps: PilotDep
     baseline_report: baselineReported, start,
     ...(share !== undefined ? { candidate_share: Number(share) } : {}),
   });
+  assertMayRun(store, candidate.id, contentId(spec));
   const id = store.put("experiment", spec);
   store.record("experiment.specified", id, { experiment: id, candidate: candidate.id }, iso(deps.now()));
   const path = store.report(`experiment-${shortId(id)}.md`, renderExperimentSpec(spec, id));
@@ -462,6 +491,9 @@ export async function review(store: PilotStore, flags: Flags, deps: PilotDeps): 
   // two parts add is checked against the conversations.
   const frame = renderReview({ ...bundle, rationale: "", diff: "" }, id, active.value, replayed.value.target_check_id);
   const sensitive = sensitiveIndex(allPacks(store).map((p) => p.value), [baselinePrompt, frame, publishMessage(bundle)]);
+  // The two free-text parts first, so a refusal names the part and the line to change.
+  assertEgressSafe(candidate.value.rationale, sensitive, "candidate's rationale");
+  assertEgressSafe(candidatePrompt, sensitive, "candidate prompt");
   assertEgressSafe(body, sensitive, "review bundle");
   store.put("review", bundle);
   store.record("review.bundled", id, { review: id, candidate: candidate.id, experiment: bundle.experiment_id }, iso(deps.now()));
@@ -485,11 +517,13 @@ export async function review(store: PilotStore, flags: Flags, deps: PilotDeps): 
   const token = deps.env[GITHUB_TOKEN_ENV]?.trim();
   if (!token) throw new PilotError("unauthorized_publish", `Nothing was published. Put a GitHub token for ${f.config.repo.slug} in ${GITHUB_TOKEN_ENV}; no other variable is read.`);
   const repo = (deps.github ?? githubRepo)(f.config.repo.slug, token, f.config.repo.api ?? GITHUB_API);
-  const result = await publishReview(repo, {
-    config: f.config, bundle: { id, value: bundle }, body, candidate_prompt: candidatePrompt, sensitive, fault: deps.fault,
-    operator: { publish: true, repo: need(flags, "repo", "repeat the destination repo, owner/name"), base: need(flags, "base", "repeat the base branch"), confirm: need(flags, "confirm", "repeat the full candidate id") },
+  const operator = { publish: true, repo: need(flags, "repo", "repeat the destination repo, owner/name"), base: need(flags, "base", "repeat the base branch"), confirm: need(flags, "confirm", "repeat the full candidate id") };
+  // One publication of a candidate at a time: two runs at once could both find no pull request and both commit.
+  const result = await store.exclusive(`publish-${shortId(candidate.id)}`, PUBLISH_LOCK_STALE_MS, async () => {
+    const r = await publishReview(repo, { config: f.config, bundle: { id, value: bundle }, body, candidate_prompt: candidatePrompt, sensitive, fault: deps.fault, operator });
+    store.record("review.published", id, { review: id, pr: String(r.pr), branch: r.branch }, iso(deps.now()));
+    return r;
   });
-  store.record("review.published", id, { review: id, pr: String(result.pr), branch: result.branch }, iso(deps.now()));
   deps.say(`${result.adopted ? "Found the existing" : "Opened"} pull request #${result.pr} on ${f.config.repo.slug}, branch ${result.branch} into ${f.config.repo.base}.`);
   deps.say("Merging it, and starting the experiment, are a person's decisions. Record the approval with `approve`.");
   return 0;
@@ -509,6 +543,17 @@ export async function approve(store: PilotStore, flags: Flags, deps: PilotDeps):
   if (same && same.value.decision === decision && same.value.approver === approver) {
     deps.say(`Already recorded: ${approver} ${decision} candidate ${shortId(candidateId)} for experiment ${shortId(experimentId)} (${same.id}).`);
     return 0;
+  }
+  if (decision === "approved") {
+    // An approval starts traffic, so it must name the experiment that will run: not one that already ended, not
+    // one a newer specification replaced, and not a second one while another is in flight.
+    const ended = settledBy(store, experimentId);
+    if (ended) throw new PilotError("conflict", `Experiment ${shortId(experimentId)} already ended with ${ended.refs.recommendation}. There is nothing left to approve.`);
+    const newest = store.find("experiment.specified").filter((e) => e.refs.candidate === candidateId).at(-1);
+    if (newest && newest.key !== experimentId) {
+      throw new PilotError("conflict", `Experiment ${shortId(experimentId)} was replaced by a newer specification for this candidate (${shortId(newest.key)}). Run \`review\` again and approve the experiment that review names.`);
+    }
+    assertMayRun(store, candidateId, experimentId);
   }
   const approval = makeApproval({ pilot_id: f.config.pilot_id, bundle: store.stored<ReviewBundle>("review", entry.key), candidate_id: candidateId, experiment_id: experimentId, approver, decision, at: iso(deps.now()) });
   const id = store.put("approval", approval);
@@ -539,7 +584,7 @@ export async function analyze(store: PilotStore, flags: Flags, deps: PilotDeps):
     else {
       // A keep or a revert ends the experiment. After a revert the traffic went back to the baseline, so later
       // numbers are not a continuation of it, and a stopped experiment must not come back as a keep.
-      const decided = store.find("analysis.decided").filter((e) => e.refs.experiment === experimentId && (e.refs.recommendation === "keep" || e.refs.recommendation === "revert")).at(-1);
+      const decided = settledBy(store, experimentId);
       if (decided) {
         throw new PilotError("conflict", `Experiment ${shortId(experimentId)} already ended with ${decided.refs.recommendation} (analysis ${shortId(decided.key)}). A decided experiment takes no more exports. Run \`analyze --experiment ${shortId(experimentId)}\` without --telemetry to see that decision again, or start a new experiment.`);
       }
@@ -575,6 +620,8 @@ export async function analyze(store: PilotStore, flags: Flags, deps: PilotDeps):
   if (analysis.recommendation === "revert") deps.say(`Rollback target: tag ${analysis.rollback.tag}, prompt ${analysis.rollback.prompt_id}. ${analysis.rollback.instructions}`);
   deps.say("This is a recommendation for the rollout owner. Synthe does not change traffic.");
   deps.say(`Decision: ${path}`);
+  const head = store.journal().at(-1);
+  if (head) deps.say(`Journal head: entry ${head.seq}, ${head.hash} (note it outside this directory; \`verify --head\` checks against it).`);
   return 0;
 }
 
@@ -615,7 +662,7 @@ export async function promotePack(store: PilotStore, flags: Flags, deps: PilotDe
     promoted: validated.cases.filter((c) => promotedIds.has(c.id)).map((c) => ({ case_id: c.id, split: c.split, kind: added.has(c.id) ? "added" as const : "existing" as const })),
   };
   const recordId = store.put("promotion", record);
-  store.record("pack.promoted", newId, { pack: newId, parent: active.id, promotion: recordId }, iso(deps.now()));
+  store.record("pack.promoted", newId, { pack: newId, parent: active.id, promotion: recordId, request: requestId }, iso(deps.now()));
   // Reading the old pack back proves it still matches its id: promotion wrote a new record and changed nothing.
   store.get<Pack>("pack", active.id);
   const path = store.report(`promotion-${shortId(newId)}.md`, renderPromotion(record, packSummary(active.value, active.id), packSummary(validated, newId)));
@@ -635,13 +682,20 @@ export async function report(store: PilotStore, _flags: Flags, deps: PilotDeps):
 }
 
 // Checks that nothing stored was changed and that every decision still follows from its evidence.
-export async function verify(store: PilotStore, _flags: Flags, deps: PilotDeps): Promise<number> {
+export async function verify(store: PilotStore, flags: Flags, deps: PilotDeps): Promise<number> {
   const problems: string[] = [];
   const attempt = (what: string, fn: () => void) => { try { fn(); } catch (e) { problems.push(`${what}: ${(e as Error).message}`); } };
   let entries = 0;
   attempt("journal", () => { entries = store.journal().length; });
+  // The journal's own head file sits beside it, so someone who cuts entries off the end can rewrite both. A head
+  // noted outside the directory cannot be rewritten with them.
+  const noted = opt(flags, "head");
+  if (noted !== undefined && !problems.length) {
+    if (!isSha256(noted)) throw new PilotError("usage", "--head must be the 64-character journal head that `verify` or `analyze` printed earlier.");
+    if (!store.journal().some((e) => e.hash === noted)) problems.push(`journal: no entry has the hash given with --head (${shortId(noted)}), so entries were removed or rewritten after that head was noted`);
+  }
   let records = 0;
-  for (const kind of ["config", "pack", "arm", "finding", "candidate", "replay", "telemetry", "baseline", "experiment", "review", "approval", "analysis", "promotion-request", "promotion"] as const) {
+  for (const kind of OBJECT_KINDS) {
     for (const id of store.list(kind)) { records++; attempt(`${kind} ${shortId(id)}`, () => { store.get(kind, id); }); }
   }
   for (const id of store.list("prompt")) { records++; attempt(`prompt ${shortId(id)}`, () => { store.getPrompt(id); }); }
@@ -656,6 +710,35 @@ export async function verify(store: PilotStore, _flags: Flags, deps: PilotDeps):
       journal.filter((x) => x.step === "telemetry.imported" && x.refs.scope === scope && x.seq < seq).map((x) => store.stored<TelemetryImport>("telemetry", x.refs.telemetry));
     const armRecorded = (arm: ArmRun) => journal.some((x) => x.step === "arm.replayed" && x.refs.arm === contentId(arm) && x.refs.prompt === arm.prompt_id && x.refs.pack === arm.pack_id);
     const validApprovals = new Set(approvals(store).map((a) => a.id));
+    // Every import the journal names must be one an import could have written: its summary follows from its rows.
+    for (const e of journal.filter((x) => x.step === "telemetry.imported")) {
+      attempt(`telemetry ${shortId(e.key)}`, () => {
+        const imported = store.get<TelemetryImport>("telemetry", e.refs.telemetry);
+        if (e.key !== e.refs.telemetry || imported.purpose !== e.refs.purpose || imported.scope_id !== e.refs.scope) throw new Error("the journal describes a different import than the stored one");
+        const problem = importProblem(imported, f.config.metric.outcome_lag_days);
+        if (problem) throw new Error(`${problem}, so it was not written by an import`);
+      });
+    }
+    // The journal must be in an order the commands can produce. A keep or a revert ends an experiment: nothing is
+    // imported or decided for it afterwards, and its candidate gets no second experiment.
+    const ended = new Map<string, string>();
+    const candidateOfExperiment = new Map<string, string>();
+    const endedCandidates = new Set<string>();
+    for (const e of journal) {
+      if (e.step === "experiment.specified") {
+        if (endedCandidates.has(e.refs.candidate)) problems.push(`experiment ${shortId(e.key)}: specified after its candidate ${shortId(e.refs.candidate)} already had a keep or revert decision`);
+        candidateOfExperiment.set(e.key, e.refs.candidate);
+      } else if (e.step === "telemetry.imported" && ended.has(e.refs.scope)) {
+        problems.push(`telemetry ${shortId(e.key)}: imported after experiment ${shortId(e.refs.scope)} had ended with ${ended.get(e.refs.scope)}`);
+      } else if (e.step === "analysis.decided") {
+        if (ended.has(e.refs.experiment)) problems.push(`analysis ${shortId(e.key)}: recorded after experiment ${shortId(e.refs.experiment)} had ended with ${ended.get(e.refs.experiment)}`);
+        else if (e.refs.recommendation === "keep" || e.refs.recommendation === "revert") {
+          ended.set(e.refs.experiment, e.refs.recommendation);
+          const candidate = candidateOfExperiment.get(e.refs.experiment);
+          if (candidate) endedCandidates.add(candidate);
+        }
+      }
+    }
     for (const e of store.find("replay.paired")) {
       attempt(`replay ${shortId(e.key)}`, () => {
         const stored = store.get<ReplayReport>("replay", e.key);
@@ -697,15 +780,21 @@ export async function verify(store: PilotStore, _flags: Flags, deps: PilotDeps):
     return 1;
   }
   deps.say(`Verified: ${entries} journal entries in order, ${records} records match their ids, ${recomputed} reports and decisions recomputed from their evidence with the same result.`);
-  // Records no journal entry names: left by an interrupted or refused step. They are not evidence of anything.
+  // Records no journal entry names. An interrupted step leaves one behind, and so does cutting entries off the
+  // end of the journal, so they are listed by kind: a decision or an import nobody recorded deserves a look.
   const journal = store.journal();
   const named = new Set(journal.flatMap((e) => [e.key, ...Object.values(e.refs)]));
-  const orphans = OBJECT_KINDS.flatMap((kind) => store.list(kind)).filter((id) => !named.has(id)).length;
-  if (orphans) deps.say(`Note: ${orphans} stored record(s) are not named by any journal entry (left by an interrupted or refused step). They are not part of the evidence.`);
+  const orphans = OBJECT_KINDS.map((kind) => ({ kind, n: store.list(kind).filter((id) => !named.has(id)).length })).filter((x) => x.n > 0);
+  if (orphans.length) {
+    deps.say(`Note: ${orphans.reduce((sum, x) => sum + x.n, 0)} stored record(s) are not named by any journal entry: ${orphans.map((x) => `${x.n} ${x.kind}`).join(", ")}. They are not part of the evidence. An interrupted step leaves such records; so does a journal that was cut back. If no step was interrupted, check the journal against a head you noted earlier (\`verify --head <hash>\`).`);
+  }
   const head = journal.at(-1);
   if (head) {
     deps.say(`Journal head: entry ${head.seq}, ${head.hash}`);
-    deps.say("This check shows the records agree with each other and were not changed by accident. It cannot show that an export is truthful, or detect someone rewriting the whole directory consistently: to guard against that, keep the journal head somewhere outside this directory, for example in the pull request.");
+    deps.say(noted !== undefined
+      ? "The journal still holds the entry given with --head, so nothing recorded up to it was removed or rewritten."
+      : "Note this head outside the directory (for example in the pull request). `verify --head <hash>` then shows that nothing recorded up to it was removed or rewritten.");
+    deps.say("This check shows the records agree with each other and follow from their evidence. It cannot show that an export is truthful. Someone who can write to this directory can add a made-up export and its decision, or cut entries off the end and rewrite journal.head; only a head noted elsewhere shows the second.");
   }
   return 0;
 }

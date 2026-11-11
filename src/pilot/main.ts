@@ -34,7 +34,8 @@ Review and experiment
 Close the loop
   promote     --list | --request <request.json>         approved failures become regression cases in a new pack version
   report                                                rebuild the evidence summary (reports/PILOT.md)
-  verify                                                recheck every record and recompute every decision
+  verify      [--head <journal head>]                   recheck every record and recompute every decision; with --head,
+                                                        also check the journal still holds the entry you noted earlier
   status                                                where the pilot stands
 
   demo        --out <directory>                         run the whole loop on synthetic data (no credentials, no network)
@@ -49,7 +50,7 @@ const OPTIONS = {
   finding: { type: "string" }, author: { type: "string" }, rationale: { type: "string" }, candidate: { type: "string" },
   start: { type: "string" }, share: { type: "string" }, repo: { type: "string" }, base: { type: "string" }, confirm: { type: "string" },
   experiment: { type: "string" }, approver: { type: "string" }, request: { type: "string" }, out: { type: "string" },
-  "confirm-endpoint": { type: "string" }, "confirm-data": { type: "string" },
+  "confirm-endpoint": { type: "string" }, "confirm-data": { type: "string" }, head: { type: "string" },
   publish: { type: "boolean" }, live: { type: "boolean" }, reject: { type: "boolean" }, list: { type: "boolean" }, help: { type: "boolean" },
 } as const;
 

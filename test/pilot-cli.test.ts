@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { main } from "../src/pilot/main.ts";
@@ -9,7 +9,8 @@ import {
   experimentFailureCases, HUMAN_CANDIDATE_PROMPT,
 } from "../src/pilot/demo-data.ts";
 import { candidateTag, contentId } from "../src/pilot/ids.ts";
-import type { Approval, ExperimentAnalysis, Pack, PromotionRequest } from "../src/pilot/types.ts";
+import { pairArms } from "../src/pilot/replay.ts";
+import type { Approval, ExperimentAnalysis, Pack, PilotConfig, PromotionRequest, ReplayReport, TelemetryImport } from "../src/pilot/types.ts";
 import { asAggregates, frozenPilot, git, json, replayedPilot, tmp, workspace, writeExport } from "./pilot-cli-helpers.ts";
 
 const CLI = join(import.meta.dirname, "..", "src", "pilot", "cli.ts");
@@ -128,8 +129,12 @@ test("a frozen pack is never replaced: new versions come only from promote, whic
     const experiment = ctx.last("experiment.specified");
     const { provenance: _p, regression: _r, ...copy } = { ...heldOut, id: "copy-of-h02", split: "discovery" as const };
     const request = (added: PromotionRequest["added"]): PromotionRequest => ({ version: 1, base_pack_id: first, approver: "Imogen Hartley", at: "2026-10-17T10:00:00Z", existing: [], added });
+    // A copy that only reformats what the customer said, and rewrites the agent's side, is still that conversation.
+    const reformatted = { ...copy, id: "reformatted-h02", messages: copy.messages.map((m) => (m.role === "user" ? { ...m, text: `  ${m.text.toUpperCase().replaceAll(",", " ;")}  ` } : m.role === "assistant" && !m.tool_calls ? { ...m, text: `${m.text} Thank you.` } : m)) };
     const attempts: [string, PromotionRequest][] = [
       ["copy.json", request([{ case: copy, reason: "copied", evidence: { experiment_id: experiment } }])],
+      ["reformatted.json", request([{ case: reformatted, reason: "reformatted", evidence: { experiment_id: experiment } }])],
+      ["trailing-space.json", request([{ case: { ...copy, id: "spaced-h02", messages: copy.messages.map((m, i) => (i === 0 && m.role === "user" ? { ...m, text: `${m.text} ` } : m)) }, reason: "one space added", evidence: { experiment_id: experiment } }])],
       ["same-id.json", request([{ case: { ...copy, id: "ret-h02" }, reason: "same id", evidence: { experiment_id: experiment } }])],
     ];
     for (const [name, value] of attempts) {
@@ -255,7 +260,7 @@ test("an analysis needs an approval of exactly that candidate and experiment, an
     assert.match(ctx.lines.at(-1) ?? "", /full 64-character candidate and experiment ids/);
 
     // A record written straight into the store is not an approval: it answers no review bundle of this pilot.
-    const forged: Approval = { version: 1, pilot_id: DEMO.pilot_id, candidate_id: eligible, experiment_id: experiment, review_id: "0".repeat(64), scope: "experiment", decision: "approved", approver: "", at: "2026-10-24T08:00:00Z" };
+    const forged: Approval = { version: 1, pilot_id: DEMO.pilot_id, candidate_id: eligible, experiment_id: experiment, review_id: "0".repeat(64), scope: "experiment", decision: "approved", approver: "Nobody Real", at: "2026-10-24T08:00:00Z" };
     ctx.store.record("approval.recorded", ctx.store.put("approval", forged), { approval: contentId(forged), candidate: eligible, experiment, decision: "approved" }, "2026-10-24T08:00:00Z");
     assert.equal(await ctx.run(["analyze", "--experiment", experiment, "--telemetry", exported]), 1);
     assert.ok(refused(ctx.lines.slice(-1), "unknown_approval"), ctx.lines.at(-1) ?? "");
@@ -307,6 +312,137 @@ test("an analysis needs an approval of exactly that candidate and experiment, an
     ctx.store.record("analysis.decided", ctx.store.put("analysis", rosy), { analysis: contentId(rosy), experiment, recommendation: "keep", final: "false" }, "2026-11-12T10:00:00Z");
     assert.equal(await ctx.run(["verify"]), 1);
     assert.ok(ctx.lines.some((l) => l.includes("does not follow from its telemetry imports")), ctx.lines.slice(-4).join(" | "));
+  } finally { await ctx.stop(); }
+});
+
+test("one experiment at a time, for the same candidate too, and a decided candidate is not measured again", async () => {
+  const ctx = await replayedPilot();
+  try {
+    const { eligible } = ctx;
+    // A specification that is replaced before anyone approved it: only the newest one can be approved.
+    assert.equal(await ctx.run(["experiment", "--candidate", eligible, "--start", "2026-10-18T00:00:00Z"]), 0);
+    const replaced = ctx.last("experiment.specified");
+    assert.equal(await ctx.run(["review", "--candidate", eligible]), 0);
+    assert.equal(await ctx.run(["experiment", "--candidate", eligible, "--start", DEMO.experiment_b_start]), 0);
+    const experiment = ctx.last("experiment.specified");
+    assert.notEqual(experiment, replaced);
+    assert.equal(await ctx.run(["review", "--candidate", eligible]), 0);
+    assert.equal(await ctx.run(["approve", "--candidate", eligible, "--experiment", replaced, "--approver", "Tomas Lindqvist"]), 1);
+    assert.ok(refused(ctx.lines.slice(-1), "conflict") && /replaced by a newer specification/.test(ctx.lines.at(-1) ?? ""), ctx.lines.at(-1) ?? "");
+    assert.equal(await ctx.run(["approve", "--candidate", eligible, "--experiment", experiment, "--approver", "Tomas Lindqvist"]), 0);
+
+    // While it is approved and undecided, the same candidate gets no second experiment: both would read the same
+    // tagged conversations. Repeating the command for the approved experiment changes nothing.
+    assert.equal(await ctx.run(["experiment", "--candidate", eligible, "--start", DEMO.experiment_c_start]), 1);
+    assert.ok(refused(ctx.lines.slice(-1), "experiment_in_flight"), ctx.lines.at(-1) ?? "");
+    assert.equal(await ctx.run(["experiment", "--candidate", eligible, "--start", DEMO.experiment_b_start]), 0);
+    assert.equal(ctx.store.find("experiment.specified").length, 2);
+
+    ctx.on("2026-10-24");
+    assert.equal(await ctx.run(["analyze", "--experiment", experiment, "--telemetry", writeExport(ctx, "day5.json", experimentBInterim(candidateTag(eligible)))]), 0);
+    assert.equal(ctx.store.get<ExperimentAnalysis>("analysis", ctx.last("analysis.decided")).recommendation, "revert");
+    assert.ok(ctx.lines.some((l) => /^Journal head: entry \d+, [0-9a-f]{64} /.test(l)), "the head to note outside the directory");
+
+    // After the revert: no second experiment for that candidate, and no late approval of anything about it.
+    assert.equal(await ctx.run(["experiment", "--candidate", eligible, "--start", DEMO.experiment_c_start]), 1);
+    assert.ok(refused(ctx.lines.slice(-1), "conflict") && /already has a revert decision/.test(ctx.lines.at(-1) ?? ""), ctx.lines.at(-1) ?? "");
+    assert.equal(await ctx.run(["approve", "--candidate", eligible, "--experiment", experiment, "--approver", "Someone Else"]), 1);
+    assert.match(ctx.lines.at(-1) ?? "", /already ended with revert/);
+    assert.equal(ctx.store.find("experiment.specified").length, 2);
+    assert.equal(await ctx.run(["verify"]), 0, ctx.lines.slice(-4).join(" | "));
+  } finally { await ctx.stop(); }
+});
+
+test("verify refuses records that no command could have written, and a noted head shows a journal that was cut back", async () => {
+  const ctx = await replayedPilot();
+  try {
+    const { eligible } = ctx;
+    await ctx.run(["experiment", "--candidate", eligible, "--start", DEMO.experiment_b_start]);
+    const experiment = ctx.last("experiment.specified");
+    await ctx.run(["review", "--candidate", eligible]);
+    await ctx.run(["approve", "--candidate", eligible, "--experiment", experiment, "--approver", "Tomas Lindqvist"]);
+    ctx.on("2026-10-24");
+    assert.equal(await ctx.run(["verify"]), 0);
+    const notedHead = ctx.store.journal().at(-1)!.hash;
+    assert.equal(await ctx.run(["analyze", "--experiment", experiment, "--telemetry", writeExport(ctx, "day5.json", experimentBInterim(candidateTag(eligible)))]), 0);
+    const decided = ctx.last("analysis.decided");
+    const real = ctx.store.get<ExperimentAnalysis>("analysis", decided);
+    assert.equal(real.recommendation, "revert");
+    assert.equal(await ctx.run(["verify", "--head", notedHead]), 0);
+    assert.ok(ctx.lines.some((l) => l.includes("still holds the entry given with --head")));
+    assert.ok(!ctx.lines.some((l) => l.includes("not named by any journal entry")), "an honest pilot has no stray records");
+    assert.equal(await ctx.run(["verify", "--head", "f".repeat(64)]), 1);
+    assert.ok(ctx.lines.at(-1)?.includes("removed or rewritten after that head was noted"), ctx.lines.at(-1) ?? "");
+    assert.equal(await ctx.run(["verify", "--head", "abc"]), 1, "a head must be a whole hash");
+
+    const journalPath = join(ctx.dir, "journal.jsonl");
+    const headPath = join(ctx.dir, "journal.head");
+    const honest = { journal: readFileSync(journalPath, "utf8"), head: readFileSync(headPath, "utf8") };
+    const restore = () => { writeFileSync(journalPath, honest.journal); writeFileSync(headPath, honest.head); };
+
+    // The decision and its export cut off the end, with journal.head rewritten to match: the directory agrees with
+    // itself again, so only the stray records and a head noted earlier give it away.
+    const entries = honest.journal.trimEnd().split("\n");
+    const kept = entries.slice(0, -2);
+    const last = JSON.parse(kept.at(-1)!) as { seq: number; hash: string };
+    writeFileSync(journalPath, `${kept.join("\n")}\n`);
+    writeFileSync(headPath, `${JSON.stringify({ seq: last.seq, hash: last.hash })}\n`);
+    assert.equal(await ctx.run(["verify"]), 0);
+    assert.ok(ctx.lines.some((l) => /not named by any journal entry: .*1 telemetry.*1 analysis/.test(l)), ctx.lines.slice(-5).join(" | "));
+    assert.equal(await ctx.run(["verify", "--head", JSON.parse(entries.at(-1)!).hash]), 1, "the head noted after the decision is gone");
+    restore();
+
+    // Appended through the store after the revert: a made-up export and a keep. Each is intact in itself.
+    const imported = ctx.store.get<TelemetryImport>("telemetry", real.telemetry_ids[0]);
+    const madeUp: TelemetryImport = { ...imported, export_id: "made-up", arms: [] };
+    const madeUpId = ctx.store.put("telemetry", madeUp);
+    ctx.store.record("telemetry.imported", madeUpId, { telemetry: madeUpId, purpose: "experiment", scope: experiment }, "2026-10-25T10:00:00Z");
+    const rosy = { ...real, recommendation: "keep" as const, stopped_by: null, telemetry_ids: [...real.telemetry_ids, madeUpId] };
+    ctx.store.record("analysis.decided", ctx.store.put("analysis", rosy), { analysis: contentId(rosy), experiment, recommendation: "keep", final: "true" }, "2026-10-25T10:01:00Z");
+    assert.equal(await ctx.run(["verify"]), 1);
+    const said = ctx.lines.slice(-8).join(" | ");
+    assert.match(said, /telemetry [0-9a-f]{12}: imported after experiment [0-9a-f]{12} had ended with revert/);
+    assert.match(said, /analysis [0-9a-f]{12}: recorded after experiment [0-9a-f]{12} had ended with revert/);
+    assert.match(said, /per-arm counts do not follow from its rows, so it was not written by an import/);
+    restore();
+    assert.equal(await ctx.run(["verify"]), 0);
+
+    // A replay report built from arm runs this pilot never made: it follows from its own arms, and from nothing
+    // this pilot recorded.
+    const paired = ctx.store.find("replay.paired").filter((e) => e.refs.candidate === eligible).at(-1)!;
+    const report = ctx.store.get<ReplayReport>("replay", paired.key);
+    // The baseline is made to fail every primary check, so the candidate looks better than it measured.
+    const worse = structuredClone(report.baseline);
+    for (const c of worse.cases) for (const t of c.turns) for (const check of t.checks) if (check.role === "primary" && check.pass === true) check.pass = false;
+    const pack = ctx.store.get<Pack>("pack", report.pack_id);
+    const config = ctx.store.get<PilotConfig>("config", ctx.last("config.frozen"));
+    const forgedReplay = pairArms({ pack, baseline: worse, candidate: report.candidate, target_check_id: report.target_check_id, gate: config.replay.gate });
+    assert.ok(forgedReplay.tally.all.wins > report.tally.all.wins);
+    assert.notEqual(contentId(forgedReplay), paired.key);
+    const forgedId = ctx.store.put("replay", forgedReplay);
+    ctx.store.record("replay.paired", forgedId, { replay: forgedId, candidate: eligible, pack: report.pack_id, eligible: String(forgedReplay.gate.eligible) }, "2026-10-25T10:02:00Z");
+    assert.equal(await ctx.run(["verify"]), 1);
+    assert.ok(ctx.lines.some((l) => l.includes("arm runs are not the ones recorded")), ctx.lines.slice(-4).join(" | "));
+  } finally { await ctx.stop(); }
+});
+
+test("a second publication of the same candidate waits for the first", async () => {
+  const ctx = await replayedPilot();
+  try {
+    const { eligible } = ctx;
+    await ctx.run(["experiment", "--candidate", eligible, "--start", DEMO.experiment_b_start]);
+    const publish = ["review", "--candidate", eligible, "--publish", "--repo", DEMO.slug, "--base", DEMO.base, "--confirm", eligible];
+    // Another run holds the publication lock (process 1 always exists).
+    const lock = join(ctx.dir, `publish-${eligible.slice(0, 12)}.lock`);
+    writeFileSync(lock, "1");
+    const before = ctx.github.requests.length;
+    assert.equal(await ctx.run(publish), 1);
+    assert.ok(refused(ctx.lines.slice(-1), "conflict") && /Another pilot command/.test(ctx.lines.at(-1) ?? ""), ctx.lines.at(-1) ?? "");
+    assert.equal(ctx.github.requests.length, before, "nothing was sent while another run was publishing");
+    rmSync(lock);
+    assert.equal(await ctx.run(publish), 0, ctx.lines.slice(-2).join(" | "));
+    assert.equal(ctx.github.pulls.length, 1);
+    assert.ok(!existsSync(lock), "the lock is released");
   } finally { await ctx.stop(); }
 });
 
@@ -502,6 +638,7 @@ test("init reads the repo it was pointed at, whatever git settings the shell car
   // The origin must be this repo on GitHub: the same path on another host, or another name, is refused.
   for (const [origin, ok] of [
     ["https://github.com/Fernhill/Support-Agent.git", true], ["git@github.com:fernhill/support-agent.git", true], ["ssh://git@github.com/fernhill/support-agent", true],
+    ["ssh://git@ssh.github.com:443/fernhill/support-agent.git", true],
     ["https://evil.example/fernhill/support-agent.git", false], ["https://github.com/fernhill/support-agent-fork.git", false], ["https://github.com/other/fernhill/support-agent-x", false],
   ] as const) {
     const c = await workspace();

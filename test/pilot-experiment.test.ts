@@ -432,14 +432,15 @@ test("a lower-is-better primary: a fall is the benefit", () => {
 test("a later export that overlaps an earlier one, with some outcomes matured from null, does not double any count", () => {
   const s = spec();
   const full = makeRows(GOOD_BASE, GOOD_CAND);
-  // Interim export: the first 1200 conversations, 150 of them still without a resolved outcome.
-  const early = full.slice(0, 1200).map((r, k) => (k % 8 === 0 ? { ...r, values: { ...r.values, resolved: null } } : r));
+  // Interim export: every conversation started so far, one in eight still without a resolved outcome.
+  const early = full.filter((r) => r.started_at < "2026-10-12T00:00:00Z").map((r, k) => (k % 8 === 0 ? { ...r, values: { ...r.values, resolved: null } } : r));
+  assert.ok(early.length > 1000 && early.length < full.length);
   const earlyImport = imp(exportOf(early, "2026-10-12T00:00:00Z"));
   const finalImport = imp(exportOf(full, FINAL_AT));
   const both = analyze(s, [earlyImport, finalImport]);
   const alone = analyze(s, [finalImport]);
   assert.equal(both.coverage.rows, 2000);
-  assert.equal(both.coverage.duplicates_dropped, 1200);
+  assert.equal(both.coverage.duplicates_dropped, early.length);
   assert.deepEqual({ ...both, telemetry_ids: [], coverage: { ...both.coverage, duplicates_dropped: 0 } }, { ...alone, telemetry_ids: [], coverage: { ...alone.coverage, duplicates_dropped: 0 } });
   assert.deepEqual(both.telemetry_ids, [earlyImport.id, finalImport.id]);
   // Order of the imports given does not matter.
@@ -493,6 +494,59 @@ test("a newer aggregate export that counts less than an older one is refused", (
   assert.equal(analyze(s, [small]).recommendation, "keep", "on its own the smaller export reads as a clean win");
   refusal(() => analyze(s, [big, small]), "telemetry_conflict", /not cumulative/);
   refusal(() => analyze(s, [small, big]), "telemetry_conflict", /not cumulative/);
+});
+
+test("an aggregate update may move a unit's conversations to unattributed, and nothing else may shrink", () => {
+  const c = contract();
+  const { s, rows } = run(GOOD_BASE, GOOD_CAND);
+  const older = aggregatesOf(rows, c, s, "2026-10-17T12:00:00Z");
+  // A unit turned up in both arms after the first export: 10 baseline conversations, 4 of them resolved, leave the
+  // counted ones and become unattributed.
+  const moved = structuredClone(older);
+  const base = moved.find((a) => a.prompt_version === BASE_TAG)!;
+  base.n -= 10;
+  base.unattributed += 10;
+  const resolved = base.metrics.resolved;
+  if (resolved.kind === "rate") resolved.successes -= 4;
+  const first = imp(baseExport({ export_id: "agg-1", exported_at: "2026-10-17T12:00:00Z", window: s.window, assignment: "randomized", aggregates: older }));
+  const update = imp(baseExport({ export_id: "agg-2", exported_at: FINAL_AT, window: s.window, assignment: "randomized", aggregates: moved }));
+  assert.equal(analyze(s, [first, update]).arms.baseline.unattributed, 10);
+  // The same fall with nothing moved to unattributed is a smaller population, not an update.
+  const shrunk = structuredClone(moved);
+  shrunk.find((a) => a.prompt_version === BASE_TAG)!.unattributed -= 10;
+  const bad = imp(baseExport({ export_id: "agg-3", exported_at: FINAL_AT, window: s.window, assignment: "randomized", aggregates: shrunk }));
+  refusal(() => analyze(s, [first, bad]), "telemetry_conflict", /not cumulative/);
+  // Resolved conversations that became unresolved, with every total unchanged: a rewritten outcome, not an update.
+  const rewritten = structuredClone(older);
+  const r = rewritten.find((a) => a.prompt_version === BASE_TAG)!.metrics.resolved;
+  if (r.kind === "rate") r.successes -= 50;
+  const worse = imp(baseExport({ export_id: "agg-4", exported_at: FINAL_AT, window: s.window, assignment: "randomized", aggregates: rewritten }));
+  refusal(() => analyze(s, [first, worse]), "telemetry_conflict", /fewer resolved = 1 conversations/);
+});
+
+test("conversations that turn up in a later export for a period an earlier export called complete hold the result", () => {
+  const s = spec();
+  const small = makeRows({ n: 400, resolved: 160, escalated: 40 }, { n: 400, resolved: 200, escalated: 36 });
+  const early = small.filter((r) => r.started_at < "2026-10-12T00:00:00Z");
+  const first = imp(exportOf(early, "2026-10-12T00:00:00Z"));
+  // Honest: the final export holds the first export's conversations and the ones that started after it.
+  const honest = analyze(s, [first, imp(exportOf(small, FINAL_AT))]);
+  assert.deepEqual(honest.flags, ["insufficient_samples"]);
+  // The final export also holds every conversation a second time under a new id: 800 each arm reads as enough.
+  const copies = small.map((r, k) => ({ ...r, conversation_id: `rekeyed-${k}` }));
+  const doubled = analyze(s, [first, imp(exportOf([...small, ...copies], FINAL_AT))]);
+  assert.equal(doubled.arms.baseline.mature, 800);
+  assert.equal(doubled.recommendation, "hold");
+  assert.ok(doubled.flags.includes("late_rows") && !doubled.flags.includes("insufficient_samples"));
+  assert.match(doubled.reasons.join(" "), /conversations are in a later export only/);
+  // A conversation that was inside the outcome lag at the first export may have been unfinished then: not late.
+  const young = small.slice(0, 30).map((r, k) => ({ ...r, conversation_id: `young-${k}`, started_at: isoAt("2026-10-10T12:00:00Z", k * 60) }));
+  assert.deepEqual(analyze(s, [first, imp(exportOf([...small, ...young], FINAL_AT))]).flags, ["insufficient_samples"]);
+  // A handful of conversations that reach the source late are not a reason to hold.
+  const few = small.slice(0, 5).map((r, k) => ({ ...r, conversation_id: `late-${k}` }));
+  assert.deepEqual(analyze(s, [first, imp(exportOf([...small, ...few], FINAL_AT))]).flags, ["insufficient_samples"]);
+  const six = small.slice(0, 20).map((r, k) => ({ ...r, conversation_id: `late-${k}` }));
+  assert.ok(analyze(s, [first, imp(exportOf([...small, ...six], FINAL_AT))]).flags.includes("late_rows"));
 });
 
 test("exports made with different metric queries are refused, and one-sided segments hold", () => {

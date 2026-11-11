@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PilotError } from "../src/pilot/errors.ts";
 import { contentId } from "../src/pilot/ids.ts";
-import { baselineReport, importTelemetry, parseCsv, renderBaseline, type ImportInput } from "../src/pilot/telemetry.ts";
+import { baselineReport, importProblem, importTelemetry, parseCsv, renderBaseline, type ImportInput } from "../src/pilot/telemetry.ts";
 import { sampleSizeProportions, wilsonInterval } from "../src/pilot/stats.ts";
 import type { PilotErrorCode, Stored, TelemetryExport, TelemetryImport, TelemetryRow } from "../src/pilot/types.ts";
 import { BASE_TAG, CAND_TAG, CONFIG_ID, EXPERIMENT_ID, UNITS, baseExport, contract, isoAt, row } from "./pilot-metric-helpers.ts";
@@ -73,6 +73,32 @@ test("exact duplicate rows are dropped and counted", () => {
 test("the same conversation twice with different content is telemetry_duplicate", () => {
   const rows = tenRows();
   refused(exp({ rows: [...rows, { ...rows[2], values: { ...rows[2].values, resolved: 0 } }] }), "telemetry_duplicate", /1 row repeat/);
+});
+
+test("the same conversation under a second id is telemetry_duplicate when the rows carry a unit id", () => {
+  const rows = tenRows().map((r, i) => ({ ...r, unit_id: `u-${i}` }));
+  const again = { ...rows[2], conversation_id: "c-rekeyed" };
+  refused(exp({ rows: [...rows, again], expected_rows: 11 }), "telemetry_duplicate", /1 row is the same conversation under a different conversation_id/);
+  // Another conversation of the same unit, at another time or with another outcome, is not a copy.
+  const later = { ...rows[2], conversation_id: "c-later", started_at: isoAt(rows[2].started_at, 1) };
+  assert.equal(run(exp({ rows: [...rows, later], expected_rows: 11 })).rows!.length, 11);
+  // Without a unit id two conversations can start in the same second with the same outcome, so nothing is refused.
+  const anonymous = tenRows();
+  assert.equal(run(exp({ rows: [...anonymous, { ...anonymous[2], conversation_id: "c-rekeyed" }], expected_rows: 11 })).rows!.length, 11);
+});
+
+test("a stored import must agree with itself", () => {
+  const good = run(exp());
+  assert.equal(importProblem(good, C.outcome_lag_days), null);
+  assert.match(importProblem({ ...good, arms: [] }, C.outcome_lag_days) ?? "", /per-arm counts do not follow from its rows/);
+  assert.match(importProblem({ ...good, expected_rows: 11 }, C.outcome_lag_days) ?? "", /row count/);
+  assert.match(importProblem({ ...good, rows: [...good.rows!, good.rows![0]], expected_rows: 11 }, C.outcome_lag_days) ?? "", /appears twice/);
+  // A value on a conversation that was inside the outcome lag is never stored by an import.
+  const young = run(exp({ exported_at: "2026-09-11T00:00:00Z" }));
+  assert.ok(young.provisional_values_dropped > 0);
+  assert.equal(importProblem(young, C.outcome_lag_days), null);
+  const forged = { ...young, rows: young.rows!.map((r) => ({ ...r, values: { ...r.values, resolved: 1 } })) };
+  assert.match(importProblem(forged, C.outcome_lag_days) ?? "", /inside the outcome lag|per-arm counts/);
 });
 
 test("CSV rows import with RFC 4180 quoting and give the same content id as inline rows", () => {

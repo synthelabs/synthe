@@ -368,6 +368,16 @@ export function importTelemetry(input: ImportInput): TelemetryImport {
   }
   if (conflicting > 0) fail("telemetry_duplicate", `${conflicting} row${conflicting === 1 ? "" : "s"} repeat a conversation_id with different content. Each conversation must appear once; fix the export query and export again.`);
   const rows = [...byId.values()].map((v) => v.row).sort((a, b) => byString(a.conversation_id, b.conversation_id));
+  // The same conversation exported under two ids would be counted twice. With a unit id it can be recognised: one
+  // unit does not start two conversations in the same second with the same version, segment and outcomes.
+  const twinKeys = new Set<string>();
+  let twins = 0;
+  for (const r of rows) {
+    if (r.unit_id === undefined) continue;
+    const key = canonicalJson({ ...r, conversation_id: null });
+    if (twinKeys.has(key)) twins++; else twinKeys.add(key);
+  }
+  if (twins > 0) fail("telemetry_duplicate", `${twins} row${twins === 1 ? " is" : "s are"} the same conversation under a different conversation_id (same unit, start time, version and values). Each conversation must appear once; fix the export query and export again.`);
 
   versionCheck(rows.map((r) => r.prompt_version), input.tags, "row");
   const outside = rows.filter((r) => ms(r.started_at) < ms(window.start) || ms(r.started_at) >= ms(window.end)).length;
@@ -401,6 +411,26 @@ export function importTelemetry(input: ImportInput): TelemetryImport {
   };
 }
 
+// Why a stored import does not agree with itself, or null. An import is written once by importTelemetry, so its
+// summary always follows from its rows; a record where it does not was not made by an import.
+export function importProblem(imp: TelemetryImport, lagDays: number): string | null {
+  if (imp.form === "rows") {
+    const rows = imp.rows ?? [];
+    if (imp.aggregates !== null) return "it has both rows and aggregates";
+    if (rows.length === 0 || rows.length !== imp.expected_rows) return "its row count is not the expected_rows it records";
+    if (new Set(rows.map((r) => r.conversation_id)).size !== rows.length) return "a conversation appears twice in its rows";
+    const classes = classifyRows(rows, lagDays, imp.exported_at);
+    const tags = [...new Set(rows.map((r) => r.prompt_version))].sort(byString);
+    if (canonicalJson(tags.map((t) => armCountsFromRows(rows, classes, t))) !== canonicalJson(imp.arms)) return "its per-arm counts do not follow from its rows";
+    if (rows.some((r, i) => classes[i] === "immature" && Object.values(r.values).some((v) => v !== null))) return "it holds values for conversations that were inside the outcome lag";
+    return null;
+  }
+  const aggs = imp.aggregates ?? [];
+  if (imp.rows !== null) return "it has both rows and aggregates";
+  if (canonicalJson(aggs.map((a) => armCountsFromAggregate(a, a.prompt_version))) !== canonicalJson(imp.arms)) return "its per-arm counts do not follow from its aggregates";
+  return null;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Merging imports. Shared with the experiment analysis.
 // ---------------------------------------------------------------------------------------------------------------
@@ -414,6 +444,9 @@ export interface MergedTelemetry {
   rows: TelemetryRow[] | null;
   // rows form: for each row, the export time (ms) of the newest export that carried it.
   row_as_of: number[] | null;
+  // rows form: for each row, the export time (ms) of the newest earlier export that covered the row's start time
+  // but did not have the row; null when every export that could have held it did.
+  row_missed_at: (number | null)[] | null;
   aggregates: TelemetryAggregate[] | null;
   duplicates_dropped: number;
   as_of: IsoTime;
@@ -429,14 +462,17 @@ function notCumulative(older: TelemetryImport, newer: TelemetryImport): string |
   for (const o of older.aggregates ?? []) {
     const n = (newer.aggregates ?? []).find((a) => a.prompt_version === o.prompt_version);
     if (!n) return `it has no summary for ${o.prompt_version}`;
-    if (n.n < o.n) return `${o.prompt_version} has fewer mature conversations (${n.n}, was ${o.n})`;
+    // A unit that turns up in the other arm later moves its conversations from the counted ones to the
+    // unattributed ones, so a count may fall by as much as the unattributed count rose, and no further.
+    const moved = Math.max(0, n.unattributed - o.unattributed);
+    if (n.n + moved < o.n) return `${o.prompt_version} has fewer mature conversations (${n.n}, was ${o.n})`;
     if (n.n + n.immature + n.unattributed < o.n + o.immature + o.unattributed) return `${o.prompt_version} has fewer conversations in total`;
     for (const [name, was] of Object.entries(o.metrics)) {
       const now = n.metrics[name];
       if (!now || now.kind !== was.kind) return `${o.prompt_version} has no ${name} of the same kind`;
       if (was.kind === "rate" && now.kind === "rate") {
-        if (now.successes < was.successes) return `${o.prompt_version} has fewer ${name} = 1 conversations (${now.successes}, was ${was.successes})`;
-        if (n.n - now.missing - now.successes < o.n - was.missing - was.successes) return `${o.prompt_version} has fewer ${name} = 0 conversations than before`;
+        if (now.successes + moved < was.successes) return `${o.prompt_version} has fewer ${name} = 1 conversations (${now.successes}, was ${was.successes})`;
+        if (n.n - now.missing - now.successes + moved < o.n - was.missing - was.successes) return `${o.prompt_version} has fewer ${name} = 0 conversations than before`;
       }
     }
   }
@@ -470,7 +506,7 @@ export function mergeImports(imports: Stored<TelemetryImport>[]): MergedTelemetr
       if (shrunk) fail("telemetry_conflict", `The newest aggregate export is not cumulative over an older one: ${shrunk}. Each aggregate export must count everything since the start, including what earlier exports counted.`);
     }
     return {
-      form: "aggregates", used: [newest], superseded: all.slice(0, -1), rows: null, row_as_of: null, aggregates: newest.value.aggregates ?? [],
+      form: "aggregates", used: [newest], superseded: all.slice(0, -1), rows: null, row_as_of: null, row_missed_at: null, aggregates: newest.value.aggregates ?? [],
       duplicates_dropped: newest.value.duplicates_dropped, as_of: asOf, window: newest.value.window,
       observational: newest.value.assignment === "observational",
     };
@@ -519,8 +555,21 @@ export function mergeImports(imports: Stored<TelemetryImport>[]): MergedTelemetr
   }
   const ordered = [...merged.values()].sort((a, b) => byString(a.row.conversation_id, b.row.conversation_id));
   const rows = ordered.map((v) => v.row);
+  // An export says it holds every conversation of its window (expected_rows). A conversation that started before
+  // an export was made, inside that export's window, and is only in a later export, was missed by the first or
+  // is a second copy under a new id. The analysis counts these and decides what that means.
+  const spans = all.map((i) => ({ from: ms(i.value.window.start), to: ms(i.value.window.end), at: ms(i.value.exported_at), ids: new Set((i.value.rows ?? []).map((r) => r.conversation_id)) }));
+  const missedAt = rows.map((r) => {
+    const started = ms(r.started_at);
+    let missed: number | null = null;
+    for (const span of spans) {
+      if (span.ids.has(r.conversation_id)) break;
+      if (started >= span.from && started < span.to && started <= span.at) missed = span.at;
+    }
+    return missed;
+  });
   return {
-    form: "rows", used: all, superseded: [], rows, row_as_of: ordered.map((v) => v.at), aggregates: null, duplicates_dropped: duplicates, as_of: asOf,
+    form: "rows", used: all, superseded: [], rows, row_as_of: ordered.map((v) => v.at), row_missed_at: missedAt, aggregates: null, duplicates_dropped: duplicates, as_of: asOf,
     window: {
       start: all.map((i) => i.value.window.start).sort((a, b) => ms(a) - ms(b))[0],
       end: all.map((i) => i.value.window.end).sort((a, b) => ms(b) - ms(a))[0],

@@ -18,6 +18,10 @@ export interface LiveOptIn {
   data_class: string | undefined;
 }
 
+// One call may take this long. The SDK's own default is ten minutes for each call, which a stalled endpoint would
+// use in full for every case.
+export const CALL_TIMEOUT_MS = 120_000;
+
 const refuse = (why: string): never => { throw new PilotError("live_not_approved", `No data was sent. ${why}`); };
 
 // Tool ids in a recorded pack are the customer's; the API accepts only letters, digits, dashes and underscores.
@@ -29,6 +33,7 @@ export function liveModel(
   env: Record<string, string | undefined>,
   say: (line: string) => void,
   fetchImpl?: typeof fetch,
+  timeoutMs: number = CALL_TIMEOUT_MS,
 ): ChatModel {
   if (!optIn.live) return refuse("A live model runs only with --live.");
   if (approval === null) return refuse("pilot.json has provider: null, so only scripted models may run. Record the customer's approval in pilot.json (provider) and start a new pilot directory.");
@@ -44,13 +49,13 @@ export function liveModel(
   // (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN). The SDK also reads ANTHROPIC_CUSTOM_HEADERS when a client is
   // built, which could add headers, another credential among them, so it is taken out of the environment for
   // that moment. Logging and tracing are off: both can carry prompt and conversation text. Retries are off too,
-  // so one counted call is one request and the approved limits mean what they say.
+  // so one counted call is one request and the approved limits mean what they say, and each call has a time limit.
   const savedHeaders = process.env.ANTHROPIC_CUSTOM_HEADERS;
   delete process.env.ANTHROPIC_CUSTOM_HEADERS;
   let client: Anthropic;
   try {
     client = new Anthropic({
-      apiKey: key, authToken: null, baseURL: approval.endpoint, maxRetries: 0, logLevel: "off",
+      apiKey: key, authToken: null, baseURL: approval.endpoint, maxRetries: 0, timeout: timeoutMs, logLevel: "off",
       openTelemetry: { traces: false, propagation: false }, ...(fetchImpl ? { fetch: fetchImpl } : {}),
     });
   } finally {

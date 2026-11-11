@@ -154,6 +154,9 @@ export async function demo(flags: Flags, deps: PilotDeps): Promise<number> {
     await run("Import the same export again (a retry)", ["analyze", "--experiment", expB, "--telemetry", exportB]);
     const again = store.get<ExperimentAnalysis>("analysis", lastOf("analysis.decided").key);
     expect("the retry counts nothing twice and gives the same decision record", store.find("analysis.decided").length === analysesBefore && again.arms.candidate.rows === decisionB.arms.candidate.rows && again.coverage.rows === decisionB.coverage.rows);
+    // The head of the journal after the revert, as a reviewer would note it in the pull request.
+    const headAfterRevert = store.journal().at(-1)?.hash ?? "";
+    expect("the reverted candidate gets no second experiment", await run("Try to measure the reverted candidate again under a new experiment", ["experiment", "--candidate", candB, "--start", DEMO.experiment_c_start]) === 1 && store.find("experiment.specified").length === 1);
     outcomes.push(`Candidate ${shortId(candB)} (proposer, attempt 2): passed replay, pull request #${github.pulls[0]?.number}, experiment ${shortId(expB)}: REVERT (early stop: ${decisionB.guards.find((g) => g.status === "breach" || g.early_ci)?.name ?? "guard"} breached). Rollback target ${decisionB.rollback.tag}.`);
 
     // ---- 5. Close the loop ----
@@ -205,6 +208,7 @@ export async function demo(flags: Flags, deps: PilotDeps): Promise<number> {
     // ---- Evidence, and what left the machine ----
     expect("evidence summary written", await run("Rebuild the evidence summary", ["report"]) === 0);
     expect("every record matches its id and every decision recomputes to the same result", await run("Verify the records and recompute the decisions", ["verify"]) === 0);
+    expect("the journal still holds the head that was noted after the revert", await run("Verify against the journal head noted after the revert", ["verify", "--head", headAfterRevert]) === 0);
 
     say("");
     say("Privacy checks (synthetic sensitive strings planted in the pack):");
