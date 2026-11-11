@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFile
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { main } from "../src/pilot/cli.ts";
+import { main } from "../src/pilot/main.ts";
 import {
   BASELINE_PROMPT, CANARIES, DEMO, demoConfig, demoPack, experimentBInterim, experimentCFinal, HUMAN_CANDIDATE_PROMPT,
 } from "../src/pilot/demo-data.ts";

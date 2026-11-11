@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { githubRepo } from "../github/repo.ts";
-import { main } from "./cli.ts";
+import { main } from "./main.ts";
 import { activePack, GITHUB_TOKEN_ENV, type Flags, type PilotDeps } from "./commands.ts";
 import {
   agentScript, BASELINE_PROMPT, baselineExport, CANARIES, DEMO, demoConfig, demoPack, experimentBInterim, experimentBMistagged, experimentCFinal,

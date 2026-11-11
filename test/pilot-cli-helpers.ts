@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { githubRepo } from "../src/github/repo.ts";
-import { main } from "../src/pilot/cli.ts";
+import { main } from "../src/pilot/main.ts";
 import { GITHUB_TOKEN_ENV, type PilotDeps } from "../src/pilot/commands.ts";
 import { agentScript, BASELINE_PROMPT, baselineExport, DEMO, demoConfig, demoPack, proposerScript } from "../src/pilot/demo-data.ts";
 import { FakeGitHub } from "../src/pilot/fake-github.ts";
