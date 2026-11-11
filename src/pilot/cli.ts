@@ -10,5 +10,5 @@ import { defaultDeps, main } from "./main.ts";
 
 main(process.argv.slice(2), defaultDeps()).then(
   (code) => { process.exitCode = code; },
-  (e) => { console.error(`The pilot command hit an error: ${(e as Error).message}`); process.exitCode = 1; },
+  () => { console.error("The pilot command hit an unexpected error and stopped."); process.exitCode = 1; },
 );

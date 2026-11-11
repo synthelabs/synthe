@@ -143,3 +143,30 @@ test("the approved limits stop a run, a different model is refused, and a reject
   const rejected = liveModel(approval, optIn, { FERNHILL_PILOT_KEY: KEY }, () => {}, denied.fetcher);
   assert.equal(await codeOf(() => rejected.chat(request())), "live_not_approved");
 });
+
+test("settings in the shell cannot add headers, turn on logging, or make the SDK resend a request", async () => {
+  const saved = { ...process.env };
+  process.env.ANTHROPIC_CUSTOM_HEADERS = "X-Injected: from-the-shell\nx-api-key: a-second-credential";
+  process.env.ANTHROPIC_LOG = "debug";
+  process.env.ANTHROPIC_BASE_URL = "https://gateway.example.com";
+  const printed: string[] = [];
+  const realLog = console.log, realDebug = console.debug, realInfo = console.info, realWarn = console.warn;
+  console.log = console.debug = console.info = console.warn = (...a: unknown[]) => { printed.push(a.map(String).join(" ")); };
+  try {
+    const t = transport([{ status: 529, body: { type: "error", error: { type: "overloaded_error", message: "CANARY-PROVIDER-ECHO You are Juniper. Where is ORD-7Q4Z?" } } }]);
+    const model = liveModel(approval, optIn, { FERNHILL_PILOT_KEY: KEY }, () => {}, t.fetcher);
+    assert.equal(process.env.ANTHROPIC_CUSTOM_HEADERS, "X-Injected: from-the-shell\nx-api-key: a-second-credential", "the shell's own setting is left as it was");
+    let message = "";
+    try { await model.chat(request()); } catch (e) { message = (e as Error).message; }
+    assert.equal(t.seen.length, 1, "one counted call is one request: the SDK does not retry behind the limit");
+    assert.equal(t.seen[0].headers.get("x-injected"), null);
+    assert.equal(t.seen[0].headers.get("x-api-key"), null);
+    assert.ok(t.seen[0].url.startsWith(ENDPOINT));
+    assert.match(message, /^The provider request failed \(HTTP 529, \w+\)\.$/, "status and error class only");
+    assert.ok(!message.includes("CANARY-PROVIDER-ECHO") && !message.includes("Juniper"), "the provider's echo of the request is not passed on");
+    assert.deepEqual(printed.filter((l) => l.includes("Juniper") || l.includes("ORD-7Q4Z")), [], "nothing about the request was logged");
+  } finally {
+    console.log = realLog; console.debug = realDebug; console.info = realInfo; console.warn = realWarn;
+    process.env = saved;
+  }
+});

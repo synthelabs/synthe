@@ -40,9 +40,22 @@ export function liveModel(
   say(`Sending "${approval.data_class}" to ${approval.provider} at ${approval.endpoint} (model ${approval.model}).`);
   say(`Approved by ${approval.approved_by} on ${approval.approved_at}. Limits for this command: ${approval.max_calls} calls, ${approval.max_input_chars} characters.`);
 
-  // baseURL and apiKey are passed explicitly and authToken is nulled, so nothing in the shell (ANTHROPIC_BASE_URL,
-  // ANTHROPIC_AUTH_TOKEN) can redirect the request or add a second credential.
-  const client = new Anthropic({ apiKey: key, authToken: null, baseURL: approval.endpoint, maxRetries: 2, ...(fetchImpl ? { fetch: fetchImpl } : {}) });
+  // Nothing in the shell may shape the request. baseURL and apiKey are passed explicitly and authToken is nulled
+  // (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN). The SDK also reads ANTHROPIC_CUSTOM_HEADERS when a client is
+  // built, which could add headers, another credential among them, so it is taken out of the environment for
+  // that moment. Logging and tracing are off: both can carry prompt and conversation text. Retries are off too,
+  // so one counted call is one request and the approved limits mean what they say.
+  const savedHeaders = process.env.ANTHROPIC_CUSTOM_HEADERS;
+  delete process.env.ANTHROPIC_CUSTOM_HEADERS;
+  let client: Anthropic;
+  try {
+    client = new Anthropic({
+      apiKey: key, authToken: null, baseURL: approval.endpoint, maxRetries: 0, logLevel: "off",
+      openTelemetry: { traces: false, propagation: false }, ...(fetchImpl ? { fetch: fetchImpl } : {}),
+    });
+  } finally {
+    if (savedHeaders !== undefined) process.env.ANTHROPIC_CUSTOM_HEADERS = savedHeaders;
+  }
 
   // A reply's content blocks as the provider returned them, kept for the rest of the turn: when the model asks
   // for a tool and the recorded result is sent back, the assistant turn must be repeated unchanged (it can carry
@@ -95,7 +108,9 @@ export function liveModel(
         if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) {
           throw new PilotError("live_not_approved", `The provider rejected the key in ${approval.key_env} (HTTP ${e.status}). Nothing was scored. Fix the key and run the command again.`);
         }
-        throw e;
+        // A provider error can echo the request back. Only its status and class go on from here.
+        const status = e instanceof Anthropic.APIError && typeof e.status === "number" ? `HTTP ${e.status}` : "no response";
+        throw new Error(`The provider request failed (${status}, ${e instanceof Error ? e.name : "error"}).`);
       }
       const text = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
       const calls = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");

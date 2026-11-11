@@ -1,4 +1,5 @@
 import { PilotError } from "./errors.ts";
+import { contentId, shortId } from "./ids.ts";
 import type { ChatMessage, ChatModel, ChatReply, ChatRequest, Proposer, ProposerContext, ToolCall } from "./types.ts";
 
 // Models the pilot can run without sending anything anywhere: a scripted agent and a scripted proposer, both read
@@ -79,7 +80,8 @@ function fill(value: unknown, values: Record<string, string>): unknown {
 export function scriptedModel(script: ModelScript): ChatModel {
   let calls = 0;
   return {
-    destination: `scripted:${script.name}`,
+    // The name alone would let two different scripts share cached replays, so the content is part of it.
+    destination: `scripted:${script.name}@${shortId(contentId(script))}`,
     async chat(request: ChatRequest): Promise<ChatReply> {
       const messages = request.messages;
       let lastUserAt = -1;
@@ -155,7 +157,7 @@ export function parseProposerScript(source: string): ProposerScript {
 
 export function scriptedProposer(script: ProposerScript): Proposer {
   return {
-    destination: `scripted:${script.name}`,
+    destination: `scripted:${script.name}@${shortId(contentId(script))}`,
     async propose(context: ProposerContext) {
       const attempts = script.findings[context.finding.check_id];
       const attempt = attempts?.[context.attempt];
@@ -199,8 +201,9 @@ export function modelProposer(model: ChatModel, modelName: string, maxTokens: nu
   };
 }
 
+// Everything in a request that carries text: the prompt, the conversation and the tool definitions.
 const requestChars = (r: ChatRequest): number =>
-  r.system.length + r.messages.reduce((n, m) => n + (m.role === "user" ? m.text.length : m.role === "assistant" ? m.text.length + JSON.stringify(m.tool_calls).length : m.result.length), 0);
+  r.system.length + JSON.stringify(r.tools).length + r.messages.reduce((n, m) => n + (m.role === "user" ? m.text.length : m.role === "assistant" ? m.text.length + JSON.stringify(m.tool_calls).length : m.result.length), 0);
 
 // Hard limits on what one command may send. The call that would pass a limit is refused before it is sent.
 export function bounded(model: ChatModel, limits: { max_calls: number; max_input_chars: number }): ChatModel & { calls(): number; chars(): number } {

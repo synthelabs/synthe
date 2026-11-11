@@ -2,6 +2,7 @@
 import { canonicalJson } from "../core/evidence.ts";
 import { PilotError } from "./errors.ts";
 import { isSha256, ms } from "./ids.ts";
+import { unsafeKey } from "./io.ts";
 import { personalDataKinds } from "./pii.ts";
 import type { Pack, PackCase, PackSummary, Sha256 } from "./types.ts";
 
@@ -32,6 +33,8 @@ export function parsePack(text: string): Pack {
   let raw: unknown;
   try { raw = JSON.parse(text); } catch { return bad("The pack file is not valid JSON."); }
   if (!isObj(raw)) return bad("The pack file must be a JSON object.");
+  // Outcome names, catalog ids and tool arguments are used as lookup keys later on.
+  if (unsafeKey(raw) !== null) bad("The pack has a field named __proto__, constructor or prototype, which no pack needs. Rename it and export again.");
   onlyKeys(raw, ["version", "name", "pack_version", "parent_pack_id", "source", "tools", "check_catalog", "cases"], "The pack");
 
   if (raw.version !== 1) bad("The pack version field must be 1.");

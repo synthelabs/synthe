@@ -52,7 +52,7 @@ test("a multi-step turn is scored from recorded tool results, with the recorded 
   assert.equal(turn2.model, "scripted-model");
 });
 
-test("a tool call with different arguments is unsupported at that turn, later turns are not reached, nothing is invented", async () => {
+test("a tool call with different arguments is unsupported at that turn, later turns no longer count, nothing is invented", async () => {
   const pack = makePack([threeTurnCase()]);
   const model = scripted((req) => {
     const m = req.messages[req.messages.length - 1];
@@ -63,15 +63,17 @@ test("a tool call with different arguments is unsupported at that turn, later tu
   });
   const arm = await run(pack, model);
   const c = arm.cases[0];
-  assert.deepEqual(c.turns.map((t) => t.status), ["scored", "unsupported", "not_reached"]);
+  assert.deepEqual(c.turns.map((t) => t.status), ["scored", "unsupported", "after_stop"]);
   assert.deepEqual(c.stopped, { turn: 2, why: "unsupported", detail: "requested check_return_eligibility with arguments the recording has no result for" });
   assert.deepEqual(c.turns[1].tools_requested, ["check_return_eligibility"]);
   assert.equal(c.turns[1].reply_sha256, null);
-  assert.deepEqual(c.turns[2], { turn: 3, status: "not_reached", tools_requested: [], reply_sha256: null, checks: c.turns[2].checks });
+  // Turn 3 is still replayed against the recorded history (the fake gives no usable reply there), but it is
+  // marked as outside the comparison.
+  assert.deepEqual(c.turns[2], { turn: 3, status: "after_stop", tools_requested: [], reply_sha256: null, checks: c.turns[2].checks });
   assert.ok(c.turns[2].checks.every((k) => k.pass === null));
-  // turn 1: 2 calls, turn 2: 1 call, then nothing
-  assert.equal(model.requests.length, 3);
-  assert.equal(arm.model_calls, 3);
+  // turn 1: 2 calls, turn 2: 1 call, turn 3: 1 call (replayed for its guard checks, outside the comparison)
+  assert.equal(model.requests.length, 4);
+  assert.equal(arm.model_calls, 4);
   // every tool result the model ever saw is a recorded one
   const recorded = new Set(pack.cases[0].messages.filter((m) => m.role === "tool").map((m) => (m as { result: string }).result));
   for (const r of model.requests) for (const m of r.messages) if (m.role === "tool") assert.ok(recorded.has(m.result));
@@ -109,7 +111,7 @@ test("cut-off, refused, empty, step-limit and erroring replies are inconclusive"
     const pack = makePack([threeTurnCase()]);
     const arm = await run(pack, mk());
     const c = arm.cases[0];
-    assert.deepEqual(c.turns.map((t) => t.status), ["inconclusive", "not_reached", "not_reached"], name);
+    assert.deepEqual(c.turns.map((t) => t.status), ["inconclusive", "after_stop", "after_stop"], name);
     assert.equal(c.stopped?.turn, 1, name);
     assert.equal(c.stopped?.why, "inconclusive", name);
     assert.ok(!/secret detail|Your order/.test(c.stopped?.detail ?? ""), `${name}: detail must not echo model output`);
@@ -126,7 +128,7 @@ test("running out of steps in one turn is inconclusive", async () => {
   const model = scripted(() => toolUse(call("s", "lookup_order", { order_id: "ORD-7Q4Z" })));
   const arm = await run(pack, model, "P", { max_steps_per_turn: 1 });
   assert.equal(arm.cases[0].turns[0].status, "inconclusive");
-  assert.equal(model.requests.length, 1);
+  assert.equal(model.requests.length, 2, "one call for each of the two turns: the step limit holds inside every turn");
   assert.match(arm.cases[0].stopped?.detail ?? "", /1 model call/);
 });
 
@@ -136,7 +138,8 @@ test("the same recorded result is not served twice in one turn", async () => {
   const model = scripted(() => (++n <= 2 ? toolUse(call(`r${n}`, "lookup_order", { order_id: "ORD-7Q4Z" })) : text("x")));
   const arm = await run(pack, model);
   assert.equal(arm.cases[0].turns[0].status, "unsupported");
-  assert.equal(model.requests.length, 2);
+  assert.deepEqual(arm.cases[0].turns[0].tools_requested, ["lookup_order", "lookup_order"]);
+  assert.equal(model.requests.length, 3, "two calls in turn 1, then turn 2 from the recorded history");
 });
 
 test("argument order does not matter when matching a recorded result", async () => {
@@ -156,11 +159,15 @@ test("diverging tool calls stop later turns", async () => {
   // answers turn 1 straight away without looking up the order: tool multiset differs from the recording
   const model = scripted(() => text("Your order ORD-7Q4Z was delivered 12 days ago. Do you want me to start a return?"));
   const c = (await run(pack, model)).cases[0];
-  assert.deepEqual(c.turns.map((t) => t.status), ["scored", "not_reached"]);
+  assert.deepEqual(c.turns.map((t) => t.status), ["scored", "after_stop"]);
   assert.equal(c.stopped?.turn, 1);
   assert.equal(c.stopped?.why, "diverged");
   assert.match(c.stopped?.detail ?? "", /lookup_order/);
-  assert.equal(model.requests.length, 1);
+  // The later turn is still replayed, from the recorded history, so its guard checks are not skipped.
+  assert.equal(model.requests.length, 2);
+  const recorded = pack.cases[0].messages;
+  const secondUser = recorded.map((m, i) => (m.role === "user" ? i : -1)).filter((i) => i >= 0)[1];
+  assert.equal(model.requests[1].messages.length, secondUser + 1, "the later turn starts from the recorded history, not the replayed reply");
 });
 
 test("a different result on a check also counts as divergence", async () => {
@@ -171,7 +178,7 @@ test("a different result on a check also counts as divergence", async () => {
     return text("It is on its way to you."); // same tool calls as recorded, but no "shipped"
   });
   const c = (await run(pack, model)).cases[0];
-  assert.deepEqual(c.turns.map((t) => t.status), ["scored", "not_reached", "not_reached"]);
+  assert.deepEqual(c.turns.map((t) => t.status), ["scored", "after_stop", "after_stop"]);
   assert.equal(c.stopped?.why, "diverged");
   assert.equal(c.stopped?.turn, 1);
   assert.equal(c.turns[0].checks[0].pass, false);
@@ -292,10 +299,10 @@ test("a regression reports the exact turn, check and the fix list", () => {
 
 test("coverage counts turns: an early stop leaves later turns uncommon", () => {
   const pack = makePack([threeTurnCase(), simpleCase("S-1", "discovery", [P("says_shipped")])]);
-  const turn = (n: number, status: "scored" | "not_reached", pass: boolean | null, id = "says_shipped") => ({ turn: n, status, tools_requested: [], reply_sha256: null, checks: n === 1 ? [{ id, role: "primary" as const, blocking: false, pass }] : [] });
+  const turn = (n: number, status: "scored" | "after_stop", pass: boolean | null, id = "says_shipped") => ({ turn: n, status, tools_requested: [], reply_sha256: null, checks: n === 1 ? [{ id, role: "primary" as const, blocking: false, pass }] : [] });
   const tri = (stopped: ArmRun["cases"][0]["stopped"], scored2: boolean) => ({
     case_id: "TRI-001", split: "discovery" as const, stopped,
-    turns: [turn(1, "scored", true), { turn: 2, status: scored2 ? "scored" as const : "not_reached" as const, tools_requested: [], reply_sha256: null, checks: [] }, { turn: 3, status: scored2 ? "scored" as const : "not_reached" as const, tools_requested: [], reply_sha256: null, checks: [
+    turns: [turn(1, "scored", true), { turn: 2, status: scored2 ? "scored" as const : "after_stop" as const, tools_requested: [], reply_sha256: null, checks: [] }, { turn: 3, status: scored2 ? "scored" as const : "after_stop" as const, tools_requested: [], reply_sha256: null, checks: [
       { id: "checks_before_return", role: "primary" as const, blocking: false, pass: scored2 ? true : null }, { id: "offers_label", role: "primary" as const, blocking: false, pass: scored2 ? true : null }] }],
   });
   const s1 = { case_id: "S-1", split: "discovery" as const, stopped: null, turns: [turn(1, "scored", true)] };
@@ -331,10 +338,61 @@ test("a baseline that already fails the same guard is not counted as new, and un
   const r = pair(pack, base, cand);
   assert.deepEqual(r.new_blocking_guard_failures.map((x) => x.case_id), ["D-2"]);
   // a non-blocking guard never blocks
-  const pack2 = makePack([simpleCase("D-1", "discovery", [P("says_shipped"), G("no_promise_refund", false)]), simpleCase("D-2", "discovery", [P("says_shipped")])]);
-  const r2 = pair(pack2, { "D-1": [false, true], "D-2": [false] }, { "D-1": [true, false], "D-2": [true] });
+  const pack2 = makePack([simpleCase("D-1", "discovery", [P("says_shipped"), G("no_promise_refund", false)]), simpleCase("D-2", "discovery", [P("says_shipped")]), simpleCase("H-1", "heldout", [P("says_shipped")])]);
+  const r2 = pair(pack2, { "D-1": [false, true], "D-2": [false], "H-1": [true] }, { "D-1": [true, false], "D-2": [true], "H-1": [true] });
   assert.deepEqual(r2.new_blocking_guard_failures, []);
   assert.equal(r2.gate.eligible, true);
+});
+
+test("a blocking guard the candidate could not be checked on keeps it out of review", () => {
+  const pack = bigPack();
+  const base: Spec = {};
+  const cand: Spec = {};
+  for (let i = 1; i <= 8; i++) { base[`D-${i}`] = [false, true]; cand[`D-${i}`] = [true, true]; }
+  // The candidate's reply on one held-out case never finished: its guard there is undecided, the baseline's passed.
+  cand["HELDOUT-CANARY-01"] = [true, null];
+  const r = pair(pack, base, cand);
+  assert.deepEqual(r.unchecked_blocking_guards.map((u) => [u.case_id, u.turn, u.check_id]), [["HELDOUT-CANARY-01", 1, "no_promise_refund"]]);
+  assert.deepEqual(r.new_blocking_guard_failures, []);
+  assert.equal(r.gate.eligible, false);
+  assert.match(r.gate.reasons.join("\n"), /could not be checked for the candidate/);
+  assert.ok(!r.gate.proposer_feedback.join("\n").includes("HELDOUT-CANARY"), "the held-out case is not named to the proposer");
+  // The team may tolerate a stated number of unchecked guards.
+  assert.equal(pair(pack, base, cand, { ...GATE, max_unchecked_blocking_guards: 1 }).gate.eligible, true);
+  // Undecided on both sides is not the candidate's gap.
+  base["HELDOUT-CANARY-01"] = [true, null];
+  assert.deepEqual(pair(pack, base, cand).unchecked_blocking_guards, []);
+});
+
+test("guard checks are compared on turns after a prompt left the recording; primary checks are not", () => {
+  const pack = makePack([threeTurnCase(), simpleCase("S-1", "discovery", [P("says_shipped")]), simpleCase("H-1", "heldout", [P("says_shipped")])]);
+  const checks = (primary: boolean | null, guard: boolean | null) => [{ id: "says_shipped", role: "primary" as const, blocking: false, pass: primary }, { id: "no_promise_refund", role: "guard" as const, blocking: true, pass: guard }];
+  const tri = (turn1: boolean, stopped: boolean, laterPrimary: boolean, laterGuard: boolean) => ({
+    case_id: "TRI-001", split: "discovery" as const, stopped: stopped ? { turn: 1, why: "diverged" as const, detail: "a check result differs" } : null,
+    turns: [
+      { turn: 1, status: "scored" as const, tools_requested: [], reply_sha256: null, checks: checks(turn1, true) },
+      { turn: 2, status: stopped ? "after_stop" as const : "scored" as const, tools_requested: [], reply_sha256: null, checks: checks(laterPrimary, laterGuard) },
+      { turn: 3, status: stopped ? "after_stop" as const : "scored" as const, tools_requested: [], reply_sha256: null, checks: [] },
+    ],
+  });
+  const one = (id: string, split: "discovery" | "heldout", pass: boolean) => ({ case_id: id, split, stopped: null, turns: [{ turn: 1, status: "scored" as const, tools_requested: [], reply_sha256: null, checks: [{ id: "says_shipped", role: "primary" as const, blocking: false, pass }] }] });
+  const base: ArmRun = { prompt_id: BASE_ID, pack_id: PACK_ID, settings: SETTINGS, model_destination: "scripted:test", model_calls: 1, cases: [tri(false, false, true, true), one("S-1", "discovery", false), one("H-1", "heldout", true)] };
+  // The candidate fixes turn 1, so it leaves the recording there. At turn 2 it breaks the blocking guard and a primary check.
+  const cand: ArmRun = { ...base, prompt_id: CAND_ID, cases: [tri(true, true, false, false), one("S-1", "discovery", true), one("H-1", "heldout", true)] };
+  const r = pairArms({ pack, baseline: base, candidate: cand, target_check_id: null, gate: GATE });
+  assert.deepEqual(r.new_blocking_guard_failures.map((x) => [x.case_id, x.turn, x.check_id]), [["TRI-001", 2, "no_promise_refund"]]);
+  assert.equal(r.gate.eligible, false, "a guard broken on a turn after the fix still blocks");
+  assert.deepEqual(r.regressions.map((x) => [x.turn, x.check_id]), [[2, "no_promise_refund"]], "the primary check on that turn is not compared");
+  assert.equal(r.paired.find((p) => p.case_id === "TRI-001")?.common_turns, 1);
+  assert.equal(r.paired.find((p) => p.case_id === "TRI-001")?.outcome, "win");
+});
+
+test("a pack with no held-out case compared cannot pass the gate", () => {
+  const pack = makePack([simpleCase("D-1", "discovery", [P("says_shipped")]), simpleCase("D-2", "discovery", [P("says_shipped")])]);
+  const r = pair(pack, { "D-1": [false], "D-2": [false] }, { "D-1": [true], "D-2": [true] });
+  assert.equal(r.gate.eligible, false);
+  assert.match(r.gate.reasons.join("\n"), /No held-out case was scored on both prompts/);
+  assert.deepEqual(r.gate.proposer_feedback.filter((f) => f.includes("cannot see")).length, 1);
 });
 
 test("inadequate coverage blocks", () => {
@@ -343,11 +401,11 @@ test("inadequate coverage blocks", () => {
   const cand: Spec = {};
   for (let i = 1; i <= 8; i++) { base[`D-${i}`] = [false, true]; cand[`D-${i}`] = [true, true]; }
   for (let i = 1; i <= 4; i++) { cand[`HELDOUT-CANARY-0${i}`] = { status: "unsupported" }; }
-  const r = pair(pack, base, cand, { min_paired_cases: 2, min_paired_coverage: 0.8, min_net_wins: 1 });
+  const r = pair(pack, base, cand, { ...GATE, min_paired_cases: 2, min_paired_coverage: 0.8 });
   assert.equal(r.coverage.paired_cases, 8 / 12);
   assert.equal(r.gate.eligible, false);
   assert.match(r.gate.reasons.join("\n"), /8 of 12/);
-  const few = pair(pack, base, cand, { min_paired_cases: 9, min_paired_coverage: 0.1, min_net_wins: 1 });
+  const few = pair(pack, base, cand, { ...GATE, min_paired_cases: 9, min_paired_coverage: 0.1 });
   assert.equal(few.gate.eligible, false);
   assert.match(few.gate.reasons.join("\n"), /at least 9/);
 });
@@ -430,9 +488,13 @@ test("observed outcomes are counted but never used by the gate", () => {
   assert.deepEqual(r.observed_outcomes.resolved, { cases: 12, true_or_positive: 4 + 4 });
   assert.deepEqual(r.observed_outcomes.csat, { cases: 8, true_or_positive: 8 });
   const none = makePack([simpleCase("D-1", "discovery", [P("says_shipped")], { resolved: null })]);
-  const r2 = pair(none, { "D-1": [false] }, { "D-1": [true] }, { min_paired_cases: 1, min_paired_coverage: 1, min_net_wins: 1 });
+  const r2 = pair(none, { "D-1": [false] }, { "D-1": [true] }, { ...GATE, min_paired_cases: 1, min_paired_coverage: 1 });
   assert.deepEqual(r2.observed_outcomes.resolved, { cases: 0, true_or_positive: 0 });
-  assert.equal(r2.gate.eligible, true);
+  // An outcome name that is also a property every object has must stay a plain name.
+  const odd = makePack([simpleCase("D-1", "discovery", [P("says_shipped")], { toString: true, hasOwnProperty: 3 })]);
+  const r3 = pair(odd, { "D-1": [false] }, { "D-1": [true] });
+  assert.deepEqual(r3.observed_outcomes, { hasOwnProperty: { cases: 1, true_or_positive: 1 }, toString: { cases: 1, true_or_positive: 1 } });
+  assert.equal(({} as Record<string, unknown>).cases, undefined);
 });
 
 test("pairing refuses arms that cannot be compared", () => {

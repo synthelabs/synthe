@@ -50,10 +50,6 @@ async function replayCase(c: PackCase, input: ReplayArmInput, counter: { calls: 
 
   for (let n = 1; n <= userAt.length; n++) {
     const checks = c.checks.filter((k) => k.turn === n);
-    if (stopped) {
-      turns.push({ turn: n, status: "not_reached", tools_requested: [], checks: checks.map((k) => ({ id: k.id, role: k.role, blocking: k.blocking === true, pass: null })), reply_sha256: null });
-      continue;
-    }
     const start = userAt[n - 1];
     const end = userAt[n] ?? c.messages.length;
     const recordedTurn = c.messages.slice(start + 1, end);
@@ -108,14 +104,22 @@ async function replayCase(c: PackCase, input: ReplayArmInput, counter: { calls: 
     if (!reply && !problem) problem = { why: "inconclusive", detail: `the turn used all ${settings.max_steps_per_turn} model call${settings.max_steps_per_turn === 1 ? "" : "s"} allowed without a final reply` };
 
     const graded = gradeChecks(checks, { reply, tools_requested: requested, tools_before: toolsBefore });
+    const digest = reply === null ? null : sha256(reply);
+    if (stopped) {
+      // The case already left the recording, so this turn is not part of the paired comparison. It is still
+      // replayed, against the recorded history, so that a guard on a later turn is never skipped just because
+      // an earlier turn changed.
+      turns.push({ turn: n, status: "after_stop", tools_requested: requested, checks: graded, reply_sha256: digest });
+      continue;
+    }
     if (problem) {
       turns.push({ turn: n, status: problem.why, tools_requested: requested, checks: graded, reply_sha256: null });
       stopped = { turn: n, why: problem.why, detail: problem.detail };
       continue;
     }
-    turns.push({ turn: n, status: "scored", tools_requested: requested, checks: graded, reply_sha256: sha256(reply as string) });
+    turns.push({ turn: n, status: "scored", tools_requested: requested, checks: graded, reply_sha256: digest });
 
-    // Later recorded turns only make sense if this one still follows the recording.
+    // Later recorded turns only count in the comparison if this one still follows the recording.
     const diverged = divergence(checks, graded, requestedKeys, recordedCalls, recordedTurn, toolsBefore);
     if (diverged && n < userAt.length) stopped = { turn: n, why: "diverged", detail: diverged };
   }
@@ -201,6 +205,7 @@ export function pairArms(input: PairInput): ReplayReport {
   const regressions: TurnRef[] = [];
   const fixes: TurnRef[] = [];
   const newBlocking: TurnRef[] = [];
+  const unchecked: TurnRef[] = [];
   let commonTotal = 0;
   let turnsTotal = 0;
 
@@ -223,16 +228,20 @@ export function pairArms(input: PairInput): ReplayReport {
         for (const r of bt.checks) if (r.role === "primary") { primaryChecks++; if (r.pass === true) basePassed++; }
         for (const r of kt.checks) if (r.role === "primary" && r.pass === true) candPassed++;
       }
-      // Check by check, wherever both arms have a result (a candidate turn that stopped as unsupported still has
-      // the tool checks it decided).
+      // Check by check. Primary checks are compared only on turns scored for both prompts. Guard checks are
+      // compared wherever both prompts were replayed, including turns after one of them left the recording:
+      // harm seen there is still harm, and a guard nobody could check is not a pass.
       if (bt && kt) {
+        const both = bt.status === "scored" && kt.status === "scored";
         kt.checks.forEach((kr, i) => {
           const br = bt.checks[i];
           if (!br || br.id !== kr.id) return;
+          if (!both && kr.role !== "guard") return;
           const ref: TurnRef = { case_id: pc.id, split: pc.split, turn: n, check_id: kr.id, role: kr.role, blocking: kr.blocking };
           if (br.pass === true && kr.pass === false) regressions.push(ref);
           if (br.pass === false && kr.pass === true) fixes.push(ref);
           if (kr.role === "guard" && kr.blocking && kr.pass === false && br.pass !== false) newBlocking.push(ref);
+          if (kr.role === "guard" && kr.blocking && kr.pass === null && br.pass !== null) unchecked.push(ref);
         });
       }
     }
@@ -265,16 +274,19 @@ export function pairArms(input: PairInput): ReplayReport {
     }
   }
 
-  const observed: ReplayReport["observed_outcomes"] = {};
+  // A Map, not a plain object: the outcome names come from the pack file, and a name such as "__proto__" must
+  // stay a name.
+  const observed = new Map<string, { cases: number; true_or_positive: number }>();
   for (const pc of pack.cases) {
     for (const [key, value] of Object.entries(pc.observed ?? {})) {
-      const o = (observed[key] ??= { cases: 0, true_or_positive: 0 });
+      const o = observed.get(key) ?? { cases: 0, true_or_positive: 0 };
+      observed.set(key, o);
       if (value === null) continue;
       o.cases++;
       if (value === true || (typeof value === "number" && value > 0)) o.true_or_positive++;
     }
   }
-  const sortedObserved = Object.fromEntries(Object.keys(observed).sort().map((key) => [key, observed[key]]));
+  const sortedObserved: ReplayReport["observed_outcomes"] = Object.fromEntries([...observed].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
 
   const coverage: ReplayReport["coverage"] = {
     paired_cases: tally.all.cases === 0 ? 0 : tally.all.paired / tally.all.cases,
@@ -282,7 +294,7 @@ export function pairArms(input: PairInput): ReplayReport {
     excluded, diverged,
   };
 
-  const verdict = judge({ pack, gate, tally, coverage, fixes, newBlocking, regressions, paired, target: input.target_check_id, p: signP(tally.all.wins, tally.all.losses) });
+  const verdict = judge({ pack, gate, tally, coverage, fixes, newBlocking, unchecked, regressions, paired, target: input.target_check_id, p: signP(tally.all.wins, tally.all.losses) });
 
   return {
     version: 1, pack_id: baseline.pack_id, baseline_prompt_id: baseline.prompt_id, candidate_id: candidate.prompt_id,
@@ -290,13 +302,14 @@ export function pairArms(input: PairInput): ReplayReport {
     model_destination: baseline.model_destination,
     baseline, candidate, paired, tally, coverage,
     sign_p: signP(tally.all.wins, tally.all.losses), regressions, fixes, new_blocking_guard_failures: newBlocking,
+    unchecked_blocking_guards: unchecked,
     observed_outcomes: sortedObserved, gate: verdict,
   };
 }
 
 interface Judged {
   pack: Pack; gate: ReplayGateConfig; tally: ReplayReport["tally"]; coverage: ReplayReport["coverage"]; fixes: TurnRef[];
-  newBlocking: TurnRef[]; regressions: TurnRef[]; paired: PairedCase[]; target: string | null; p: number;
+  newBlocking: TurnRef[]; unchecked: TurnRef[]; regressions: TurnRef[]; paired: PairedCase[]; target: string | null; p: number;
 }
 
 const pct = (x: number): string => `${Math.round(x * 100)}%`;
@@ -315,6 +328,14 @@ function judge(j: Judged): ReplayReport["gate"] {
     reasons.push(`Blocking guard check ${f.check_id} newly fails on case ${f.case_id} at turn ${f.turn}.`);
     if (disc(f)) feedback.push(`Blocking guard check ${f.check_id} newly fails on case ${f.case_id} at turn ${f.turn}. Do not weaken that behaviour.`);
     else hidden = true;
+  }
+
+  // 1b. A blocking guard that could not be checked for the candidate is not a pass.
+  if (j.unchecked.length > gate.max_unchecked_blocking_guards) {
+    reasons.push(`${j.unchecked.length} blocking guard check${j.unchecked.length === 1 ? "" : "s"} could not be checked for the candidate (the gate allows ${gate.max_unchecked_blocking_guards}): ${j.unchecked.slice(0, 5).map((u) => `${u.check_id} on case ${u.case_id} at turn ${u.turn}`).join("; ")}${j.unchecked.length > 5 ? "; and more in the replay record" : ""}.`);
+    const seen = j.unchecked.filter(disc);
+    for (const u of seen.slice(0, 5)) feedback.push(`Blocking guard check ${u.check_id} could not be checked on case ${u.case_id} at turn ${u.turn}: the reply did not finish or asked for a tool call the conversation does not show.`);
+    if (seen.length < j.unchecked.length) hidden = true;
   }
 
   const discExcluded = coverage.excluded.filter(disc);
@@ -344,6 +365,12 @@ function judge(j: Judged): ReplayReport["gate"] {
   // 5. Held-out cases must not lose.
   if (tally.heldout.wins < tally.heldout.losses) {
     reasons.push(`On held-out cases the candidate lost ${tally.heldout.losses} and won ${tally.heldout.wins}; held-out wins must be at least held-out losses.`);
+    hidden = true;
+  }
+
+  // 5b. With no held-out case compared, nothing shows the change holds beyond the cases the proposer saw.
+  if (tally.heldout.paired === 0) {
+    reasons.push("No held-out case was scored on both prompts, so nothing checks the change on cases the proposer did not see. Add held-out cases to the pack.");
     hidden = true;
   }
 
@@ -414,6 +441,8 @@ export function renderReplay(report: ReplayReport, pack: Pack, replayId: Sha256)
   }
   out.push("", report.new_blocking_guard_failures.length === 0 ? "New blocking guard failures: none." : "New blocking guard failures:");
   out.push(...report.new_blocking_guard_failures.map(ref));
+  out.push("", report.unchecked_blocking_guards.length === 0 ? "Blocking guard checks that could not be checked for the candidate: none." : "Blocking guard checks that could not be checked for the candidate:");
+  out.push(...report.unchecked_blocking_guards.map(ref));
   out.push("", "## Gate", "", `Verdict: ${report.gate.eligible ? "eligible for review" : "not eligible for review"}`, "");
   out.push(...report.gate.reasons.map((r) => `- ${r}`));
   out.push("", "## Historical outcomes of the real conversations (not replay results)", "");

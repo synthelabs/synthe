@@ -45,21 +45,25 @@ export function makeConfig(): PilotConfig {
     },
     replay: {
       model: "scripted", max_tokens: 1000, temperature: null, max_steps_per_turn: 4,
-      gate: { min_paired_cases: 2, min_paired_coverage: 0.5, min_net_wins: 1 }, min_recurring_cases: 2, max_changed_lines: 10,
+      gate: { min_paired_cases: 2, min_paired_coverage: 0.5, min_net_wins: 1, max_unchecked_blocking_guards: 0 }, min_recurring_cases: 2, max_changed_lines: 10,
     },
     provider: null,
   };
 }
 
+// Case c1 carries the planted customer text; the other cases share only the agent's and the tool's boilerplate, as
+// real conversations do.
 export function makeCase(id: string, split: "discovery" | "heldout", extra: Partial<PackCase> = {}): PackCase {
+  const planted = id === "c1";
+  const order = planted ? CANARY_ORDER : `ORD-${id.toUpperCase()}-88`;
   return {
     id, split,
     provenance: { kind: "export", ref: `export-${id}`, added_in_pack_version: 1 },
     intent: "refund",
     messages: [
-      { role: "user", text: `${CANARY_SENTENCE} please help [EMAIL_1]` },
-      { role: "assistant", text: "I am sorry about that, let me look.", tool_calls: [{ id: "t1", name: "lookup_order", input: { order: CANARY_ORDER, note: { deep: CANARY_TOOL_ARG } } }] },
-      { role: "tool", tool_call_id: "t1", name: "lookup_order", result: `order ${CANARY_ORDER} shipped on a Tuesday afternoon` },
+      { role: "user", text: `${planted ? CANARY_SENTENCE : `parcel for case ${id} has not turned up`} please help [EMAIL_1]` },
+      { role: "assistant", text: "I am sorry about that, let me look.", tool_calls: [{ id: "t1", name: "lookup_order", input: { order, note: { deep: planted ? CANARY_TOOL_ARG : "none" } } }] },
+      { role: "tool", tool_call_id: "t1", name: "lookup_order", result: `order ${order} shipped on a Tuesday afternoon` },
       { role: "assistant", text: "Your order shipped on Tuesday and I can offer a replacement." },
     ],
     checks: [
@@ -120,6 +124,7 @@ export function makeReplay(pack: Stored<Pack>, over: Partial<ReplayReport> = {})
       { case_id: "c2", split: "discovery", turn: 1, check_id: "looks_up_order", role: "primary", blocking: false },
     ],
     new_blocking_guard_failures: [],
+    unchecked_blocking_guards: [],
     observed_outcomes: {},
     gate: { eligible: true, reasons: ["3 of 3 cases paired", "net wins 3"], proposer_feedback: [] },
     ...over,

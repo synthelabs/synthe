@@ -201,3 +201,15 @@ test("bounds are enforced with too_large", () => {
   const many = JSON.stringify({ ...makePack(), cases: Array.from({ length: PACK_LIMITS.cases + 1 }, (_, i) => simpleCase(`C-${i}`, "discovery", [{ id: "looks_up_order", role: "primary" }])) });
   assert.throws(() => parsePack(many), (e: any) => e instanceof PilotError && e.code === "too_large");
 });
+
+test("names that reach an object's prototype are refused wherever they sit in the pack", () => {
+  const text = JSON.stringify(makePack());
+  for (const hostile of [
+    text.replace('"observed":{', '"observed":{"__proto__":true,'),
+    text.replace('"check_catalog":{', '"check_catalog":{"constructor":"x",'),
+    text.replace('"input":{', '"input":{"prototype":{"a":1},'),
+  ]) {
+    assert.notEqual(hostile, text, "the fixture has the field this test changes");
+    assert.throws(() => parsePack(hostile), (e: unknown) => e instanceof PilotError && e.code === "invalid_pack" && /__proto__, constructor or prototype/.test(e.message));
+  }
+});

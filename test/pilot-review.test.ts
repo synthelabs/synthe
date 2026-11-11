@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PilotError } from "../src/pilot/errors.ts";
-import { promptId, reviewBranch, shortId } from "../src/pilot/ids.ts";
+import { contentId, promptId, reviewBranch, shortId } from "../src/pilot/ids.ts";
 import { buildReviewBundle, promptDiff, renderReview } from "../src/pilot/review.ts";
 import {
   BASELINE_PROMPT, CANARY_ORDER, CANARY_SENTENCE, CANARY_TOOL_ARG, CANDIDATE_PROMPT, PROMPT_PATH,
@@ -121,4 +121,15 @@ test("sections appear in the specified order", () => {
   assert.ok(at.every((i) => i >= 0));
   assert.deepEqual([...at].sort((a, b) => a - b), at);
   assert.ok(md.startsWith("# Synthe pilot fernhill-pilot: candidate "));
+});
+
+test("a long regression list is cut in the review, and the full list stays in the replay record it names", () => {
+  const f = fixture();
+  const many = Array.from({ length: 100 }, (_, i) => ({ case_id: `case-${String(i).padStart(3, "0")}`, split: "discovery" as const, turn: 1, check_id: Object.keys(f.pack.value.check_catalog)[0], role: "primary" as const, blocking: false }));
+  const bundle = { ...f.bundle.value, replay: { ...f.bundle.value.replay, regressions: many } };
+  const md = renderReview(bundle, contentId(bundle), f.pack.value);
+  assert.ok(md.includes("case-039") && !md.includes("case-040"), "the first 40 are listed");
+  assert.match(md, /and 60 more, listed in the replay record/);
+  assert.ok(md.includes(bundle.replay_id));
+  assert.ok(md.length < 60_000);
 });

@@ -19,6 +19,11 @@ export interface PublishInput {
   fault?: (point: string) => void;
 }
 
+// The fixed wording of the pull request title and commit message. Exported so the caller can tell the egress
+// check that this wording is the pilot's own, not content.
+export const publishTitle = (b: ReviewBundle): string => `Synthe pilot ${b.pilot_id}: candidate ${shortId(b.candidate_id)}`;
+export const publishMessage = (b: ReviewBundle): string => `${publishTitle(b)}\n\nProposes a system prompt change for human review. Merging is a human decision.\n`;
+
 export interface PublishResult { pr: number; branch: string; adopted: boolean }
 
 // Throws PilotError: unauthorized_publish, wrong_repo, wrong_revision, egress_blocked, replay_gate_failed.
@@ -57,9 +62,8 @@ export async function publishReview(repo: Repo, input: PublishInput): Promise<Pu
     throw new PilotError("conflict", "The review bundle names a different prompt file, pilot or branch than the pilot config. Nothing was sent. Rebuild the review.");
   }
 
-  const short = shortId(b.candidate_id);
-  const title = `Synthe pilot ${b.pilot_id}: candidate ${short}`;
-  const message = `${title}\n\nProposes a system prompt change for human review. Merging is a human decision.\n`;
+  const title = publishTitle(b);
+  const message = publishMessage(b);
   assertEgressSafe(title, input.sensitive, "pull request title");
   assertEgressSafe(input.body, input.sensitive, "pull request body");
   assertEgressSafe(message, input.sensitive, "commit message");

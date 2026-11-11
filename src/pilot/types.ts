@@ -92,6 +92,10 @@ export interface ReplayGateConfig {
   min_paired_coverage: number;
   // wins minus losses across paired cases must reach this.
   min_net_wins: number;
+  // Blocking guard checks that could be decided for the baseline but not for the candidate (its turn asked for a
+  // tool call outside the recording, or gave no usable reply). A guard that could not be checked is not a pass:
+  // above this many, the candidate stays out of review.
+  max_unchecked_blocking_guards: number;
 }
 
 export interface ReplayConfig {
@@ -293,8 +297,10 @@ export interface CheckResult {
 // unsupported: the model asked for a tool call the recording has no result for. No tool is run; tool checks are
 //   still decided from the request, text checks are null.
 // inconclusive: no usable reply (cut off, refused, too many steps, model error).
-// not_reached: an earlier turn left the recording (see CaseRun.stopped), so this turn was not replayed.
-export type TurnStatus = "scored" | "unsupported" | "inconclusive" | "not_reached";
+// after_stop: an earlier turn left the recording (see CaseRun.stopped). The turn is still replayed against the
+//   recorded history, so guard checks keep watching for harm, but it is not counted in the paired comparison:
+//   the recorded customer was answering the old agent. Its checks are decided as far as the turn got.
+export type TurnStatus = "scored" | "unsupported" | "inconclusive" | "after_stop";
 
 export interface TurnRun {
   turn: number;
@@ -310,7 +316,7 @@ export interface CaseRun {
   case_id: string;
   split: Split;
   turns: TurnRun[];
-  // Where and why replay of this case stopped before the last turn. Null when every turn was replayed.
+  // Where and why this case stopped counting in the paired comparison. Null when every turn counts.
   // diverged: the reply at that turn was scored, but it behaves differently from the recorded reply (different
   //   tool calls, or a different result on that turn's checks), so the recorded later turns no longer follow.
   // unsupported / inconclusive: as TurnStatus.
@@ -375,6 +381,8 @@ export interface ReplayReport {
   fixes: TurnRef[];
   // Blocking guard checks the candidate fails that the baseline does not fail. Any entry keeps it out of review.
   new_blocking_guard_failures: TurnRef[];
+  // Blocking guard checks decided for the baseline but not for the candidate.
+  unchecked_blocking_guards: TurnRef[];
   // Historical outcomes of the real conversations, counted per outcome name. Not used by the gate.
   observed_outcomes: Record<string, { cases: number; true_or_positive: number }>;
   gate: {
@@ -519,6 +527,12 @@ export interface TelemetryImport {
   assignment: TelemetryExport["assignment"];
   expected_rows: number | null;
   duplicates_dropped: number;
+  // Rows whose values were in the export although the conversation was younger than the outcome lag at export
+  // time. Such a value is provisional, so it is stored as null and a later export may supply the final one.
+  provisional_values_dropped: number;
+  // The hash of the customer's metric query, when the export carries one. Every export of a pilot must carry the
+  // same one: a changed query is a changed denominator.
+  query_hash: Sha256 | null;
   arms: ArmCounts[];
   rows: TelemetryRow[] | null;
   aggregates: TelemetryAggregate[] | null;
@@ -640,8 +654,8 @@ export interface ExperimentAnalysis {
   primary: MetricReadout;
   guards: MetricReadout[];
   // Named data problems: observational, attribution_ambiguous, cohort_imbalance, missing_events, inside_lag_window,
-  // sample_ratio_mismatch, insufficient_samples, runtime_changed, before_cutoff, window_not_covered,
-  // superseded_aggregate.
+  // missing_imbalance, sample_ratio_mismatch, insufficient_samples, runtime_changed, before_cutoff,
+  // window_not_covered, superseded_aggregate.
   flags: string[];
   recommendation: Recommendation;
   // revert only: "early_stop" or "final".
@@ -675,6 +689,7 @@ export interface ReviewBundle {
     regressions: TurnRef[];
     fixes: number;
     new_blocking_guard_failures: TurnRef[];
+    unchecked_blocking_guards: number;
     gate: { eligible: boolean; reasons: string[] };
   };
   experiment: Pick<ExperimentSpec, "arms" | "allocation" | "window" | "analysis_cutoff" | "required_per_arm" | "methods">;

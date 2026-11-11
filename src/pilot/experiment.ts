@@ -31,7 +31,7 @@ const EPS = 1e-12;
 
 // The flags that hold a final result. Order is the order reasons are given in.
 export const HOLD_FLAGS = [
-  "insufficient_samples", "sample_ratio_mismatch", "cohort_imbalance", "missing_events", "attribution_ambiguous",
+  "insufficient_samples", "sample_ratio_mismatch", "cohort_imbalance", "missing_events", "missing_imbalance", "attribution_ambiguous",
   "observational", "runtime_changed", "inside_lag_window", "window_not_covered",
 ] as const;
 
@@ -92,9 +92,9 @@ export function buildExperimentSpec(input: {
       rate: `Rate metrics: each arm's estimate is the share of mature, attributable conversations whose value is 1 (a null value is missing and left out); the difference is candidate minus baseline, with a Newcombe hybrid score interval (method 10) at ${pctLevel(level)}.`,
       mean: `Mean metrics: each arm's estimate is the mean over mature, attributable conversations with a value; the difference is candidate minus baseline, with a Welch interval (Welch-Satterthwaite degrees of freedom) at ${pctLevel(level)}.`,
       keep: `Keep only at the final analysis (an export made at or after ${cutoff}) with none of the data problems listed under hold, when the primary metric's benefit (the difference in its good direction) is at least ${c.primary.min_effect} and the lower bound of its ${pctLevel(level)} interval is above 0, and every guard passes: the upper bound of the ${pctLevel(level)} interval for its harm is at most its max_harm.`,
-      revert: `Revert at the final analysis when any guard breaches (its harm is above max_harm and the lower bound of the ${pctLevel(level)} interval for harm is above 0) or the primary metric is significantly worse (the upper bound of the ${pctLevel(level)} interval for its benefit is below 0). Before the final analysis only a critical guard's early stop can revert.`,
-      hold: `Hold in every other case: before the cutoff; when there are fewer than ${required} conversations with a primary value in either arm, a sample ratio mismatch, a cohort imbalance, missing events above ${pct(c.max_missing_rate)}, ambiguous attribution above ${pct(c.max_unattributed_rate)}, observational assignment, more than one runtime model, or outcomes still inside the ${c.outcome_lag_days}-day lag, or no single export covering the whole window; when the primary does not clear; or when a guard is inconclusive.`,
-      early_stop: `Early stop: before the cutoff, a critical guard with early_stop is checked at ${pctLevel(EARLY_STOP_LEVEL)} once both arms have at least its min_per_arm mature values; it reverts when its harm is above max_harm and the lower bound of the ${pctLevel(EARLY_STOP_LEVEL)} interval for harm is above 0. No other guard and no primary result is acted on before the cutoff.`,
+      revert: `Revert at the final analysis when any guard breaches (the lower bound of the ${pctLevel(level)} interval for its harm is above its max_harm) or the primary metric is significantly worse (the upper bound of the ${pctLevel(level)} interval for its benefit is below 0). Before the final analysis only a critical guard's early stop can revert.`,
+      hold: `Hold in every other case: before the cutoff; when there are fewer than ${required} conversations with a primary value in either arm, a sample ratio mismatch, a cohort imbalance, missing events above ${pct(c.max_missing_rate)} or far more common in one arm, ambiguous attribution above ${pct(c.max_unattributed_rate)}, observational assignment, more than one runtime model, or outcomes still inside the ${c.outcome_lag_days}-day lag, or no single export covering the whole window; when the primary does not clear; or when a guard is inconclusive.`,
+      early_stop: `Early stop: before the cutoff, a critical guard with early_stop is checked at ${pctLevel(EARLY_STOP_LEVEL)} once both arms have at least its min_per_arm mature values; it reverts when the lower bound of the ${pctLevel(EARLY_STOP_LEVEL)} interval for its harm is above its max_harm. No other guard and no primary result is acted on before the cutoff.`,
       integrity: `Integrity: rows per arm are tested against the intended allocation (chi-square goodness of fit), and arm against segment (chi-square test of independence, pooling segments with expected counts below ${MIN_EXPECTED}); a p-value below ${INTEGRITY_ALPHA} holds the result as a sample ratio mismatch or a cohort imbalance.`,
     },
     telemetry_fields: fields,
@@ -174,23 +174,26 @@ function guardReadout(g: GuardSpec, base: ArmMetric, cand: ArmMetric, level: num
   const { benefit, hCi } = benefitOf(g.direction, diff, ci);
   const harm = benefit === null ? null : -benefit;
   let status: MetricReadout["status"] = "inconclusive";
-  if (harm !== null && hCi !== null && harm > g.max_harm + EPS && hCi.lo > EPS) status = "breach";
+  // Three outcomes, each a statement the interval supports: the harm is shown to be beyond what the team
+  // tolerates (breach), shown to be within it (pass), or neither (inconclusive). Harm that is real but may still
+  // be inside the tolerated margin is not a breach: the contract says the team accepts that much.
+  if (hCi !== null && hCi.lo > g.max_harm + EPS) status = "breach";
   else if (hCi !== null && hCi.hi <= g.max_harm + EPS) status = "pass";
   let early: Interval | null = null;
   let earlyBreach = false;
   if (g.critical && g.early_stop && base.n >= g.early_stop.min_per_arm && cand.n >= g.early_stop.min_per_arm && diff !== null) {
     early = interval(g.kind, cand, base, earlyLevel);
     const e = benefitOf(g.direction, diff, early).hCi;
-    earlyBreach = harm !== null && e !== null && harm > g.max_harm + EPS && e.lo > EPS;
+    earlyBreach = e !== null && e.lo > g.max_harm + EPS;
   }
   const nums = `candidate ${fmt(cand.estimate)} (n ${cand.n}) vs baseline ${fmt(base.estimate)} (n ${base.n}), harm ${signed(harm)} (${pctLevel(level)} interval for harm ${ciStr(hCi)}), tolerated ${g.max_harm}`;
   const detail = diff === null
     ? `${g.name}: no estimate, because ${base.n === 0 ? "the baseline arm" : "the candidate arm"} has no usable values.`
     : status === "breach"
-      ? `${g.name}: ${nums}; harm is above the margin and the interval is above 0.`
+      ? `${g.name}: ${nums}; the whole interval is above the margin.`
       : status === "pass"
         ? `${g.name}: ${nums}; the whole interval is within the margin.`
-        : `${g.name}: ${nums}; ${hCi === null ? "the interval cannot be computed from these values" : "the interval reaches past the margin, so it is not shown to be safe"}.`;
+        : `${g.name}: ${nums}; ${hCi === null ? "the interval cannot be computed from these values" : hCi.lo > EPS ? "harm is above zero, but the interval does not show whether it is within or beyond the margin" : "the interval reaches past the margin, so it is not shown to be safe"}.`;
   return { readout: { ...readout, early_ci: early, status, detail }, earlyBreach, spec: g, harm };
 }
 
@@ -248,7 +251,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   let hasSegments = false;
   if (merged.form === "rows") {
     const rows = merged.rows as TelemetryRow[];
-    const classes = classifyRows(rows, spec.outcome_lag_days, asOf);
+    const classes = classifyRows(rows, spec.outcome_lag_days, asOf, merged.row_as_of ?? undefined);
     arms = { baseline: armCountsFromRows(rows, classes, baseTag), candidate: armCountsFromRows(rows, classes, candTag) };
     metricFor = (tag, name, kind) => armMetricFromRows(rows, classes, tag, name, kind);
     models = new Set(rows.filter((r) => r.model_id !== undefined).map((r) => r.model_id)).size;
@@ -282,13 +285,24 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   const srmP = srm === null ? null : srm.p;
   const cohortP = hasSegments ? cohortTest(arms.baseline.segments, arms.candidate.segments) : null;
 
+  // Missing outcomes that pile up in one arm can make that arm look better while each arm stays under the limit:
+  // drop the failures and the rate rises. So the arms' missing rates are also compared with each other.
+  let missingGap: { name: string; p: number } | null = null;
+  for (const [name, m] of [[spec.primary.name, pm] as const, ...spec.guards.map((g, i) => [g.name, guardMetrics[i]] as const)]) {
+    const r = chiSquareIndependence([[m.base.missing, m.base.n], [m.cand.missing, m.cand.n]]);
+    if (r !== null && r.p < spec.integrity_alpha && (missingGap === null || r.p < missingGap.p)) missingGap = { name, p: r.p };
+  }
+  // Segments reported for one arm only cannot be compared, which is not the same as balanced.
+  const oneSided = hasSegments && (Object.keys(arms.baseline.segments).length === 0) !== (Object.keys(arms.candidate.segments).length === 0);
+
   const flags: string[] = [];
   if (!final) flags.push("before_cutoff");
   if (immatureTotal > 0) flags.push("inside_lag_window");
   if (pm.base.n < spec.required_per_arm || pm.cand.n < spec.required_per_arm) flags.push("insufficient_samples");
   if (srmP !== null && srmP < spec.integrity_alpha) flags.push("sample_ratio_mismatch");
-  if (cohortP !== null && cohortP < spec.integrity_alpha) flags.push("cohort_imbalance");
+  if ((cohortP !== null && cohortP < spec.integrity_alpha) || oneSided) flags.push("cohort_imbalance");
   if (missingRates.some((r) => r.rate > spec.max_missing_rate + EPS)) flags.push("missing_events");
+  if (missingGap !== null) flags.push("missing_imbalance");
   if (unattributedRate > spec.max_unattributed_rate + EPS) flags.push("attribution_ambiguous");
   if (merged.observational) flags.push("observational");
   if (models > 1) flags.push("runtime_changed");
@@ -310,7 +324,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
     stoppedBy = "early_stop";
     for (const g of earlyStops) {
       const e = benefitOf(g.spec.direction, g.readout.difference, g.readout.early_ci ?? null).hCi as Oriented;
-      reasons.push(`Early stop: critical guard ${g.spec.name} has harm ${fmt(g.harm)}, above its tolerated ${g.spec.max_harm}, and the ${pctLevel(spec.early_stop_level)} interval for harm (${ciStr(e)}) is above 0, with ${g.readout.baseline.n} baseline and ${g.readout.candidate.n} candidate values (at least ${g.spec.early_stop?.min_per_arm} each).`);
+      reasons.push(`Early stop: critical guard ${g.spec.name} has harm ${fmt(g.harm)}, and the ${pctLevel(spec.early_stop_level)} interval for harm (${ciStr(e)}) is wholly above its tolerated ${g.spec.max_harm}, with ${g.readout.baseline.n} baseline and ${g.readout.candidate.n} candidate values (at least ${g.spec.early_stop?.min_per_arm} each).`);
     }
   } else if (final && (finalBreaches.length > 0 || primary.status === "breach")) {
     recommendation = "revert";
@@ -325,7 +339,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
 
   if (recommendation === "hold") {
     if (!final) reasons.push(`This is an interim look: the newest export was made at ${asOf}, before the analysis cutoff ${spec.analysis_cutoff}. A final result needs an export made at or after the cutoff; look again then.`);
-    for (const f of holdFlags) reasons.push(holdReason(f, { spec, pm, arms, srmP, cohortP, worstMissing, unattributedRate, immatureTotal, models, asOf }));
+    for (const f of holdFlags) reasons.push(holdReason(f, { spec, pm, arms, srmP, cohortP, worstMissing, unattributedRate, immatureTotal, models, asOf, missingGap }));
     if (primary.status !== "clears") reasons.push(`The primary metric does not clear: ${primary.detail}`);
     for (const g of guards) {
       if (g.readout.status === "inconclusive") reasons.push(`Guard ${g.spec.name} is inconclusive: ${g.readout.detail}`);
@@ -370,13 +384,16 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
 function holdReason(flag: string, x: {
   spec: ExperimentSpec; pm: { base: ArmMetric; cand: ArmMetric }; arms: { baseline: ArmCounts; candidate: ArmCounts };
   srmP: number | null; cohortP: number | null; worstMissing: { name: string; arm: string; rate: number }; unattributedRate: number;
-  immatureTotal: number; models: number; asOf: IsoTime;
+  immatureTotal: number; models: number; asOf: IsoTime; missingGap: { name: string; p: number } | null;
 }): string {
   const s = x.spec;
   switch (flag) {
     case "insufficient_samples": return `Not enough data: ${s.primary.name} has ${x.pm.base.n} baseline and ${x.pm.cand.n} candidate values; the experiment needs ${s.required_per_arm} in each arm. Keep the experiment running and export again later.`;
     case "sample_ratio_mismatch": return `Sample ratio mismatch: ${x.arms.candidate.rows} of ${x.arms.baseline.rows + x.arms.candidate.rows} rows are candidate, against an intended ${pct(s.allocation.candidate)} (p = ${x.srmP?.toExponential(2)}, below ${s.integrity_alpha}). The traffic split or the export is not working as planned; the customer should check both before any result is trusted.`;
-    case "cohort_imbalance": return `Cohort imbalance: the arms have a different mix of segments (p = ${x.cohortP?.toExponential(2)}, below ${s.integrity_alpha}), so assignment may not be random. The customer should check how traffic is split.`;
+    case "cohort_imbalance": return x.cohortP === null
+      ? "Cohort imbalance: only one arm reports segments, so the mix of the two arms cannot be compared. Export segments for both arms."
+      : `Cohort imbalance: the arms have a different mix of segments (p = ${x.cohortP.toExponential(2)}, below ${s.integrity_alpha}), so assignment may not be random. The customer should check how traffic is split.`;
+    case "missing_imbalance": return `Missing events differ between the arms: ${x.missingGap?.name} is missing far more often in one arm than the other (p = ${x.missingGap?.p.toExponential(2)}, below ${s.integrity_alpha}). An arm can look better only because its bad outcomes were not recorded; fix the logging and export again.`;
     case "missing_events": return `Missing events: ${pct(x.worstMissing.rate)} of mature ${x.worstMissing.arm} conversations have no ${x.worstMissing.name} value, above the ${pct(s.max_missing_rate)} limit. An arm can look better only because its bad outcomes were not recorded; fix the logging and export again.`;
     case "attribution_ambiguous": return `Ambiguous attribution: ${pct(x.unattributedRate)} of rows belong to units seen in both arms, above the ${pct(s.max_unattributed_rate)} limit. Their outcomes cannot be credited to one prompt; check that assignment is sticky.`;
     case "observational": return "The export says traffic was not randomised (observational), so a difference could come from who saw each prompt rather than the prompt. Run the experiment with a random split.";
@@ -430,6 +447,7 @@ const FLAG_TEXT: Record<string, string> = {
   sample_ratio_mismatch: "The split between arms is not what was planned (sample ratio mismatch).",
   cohort_imbalance: "The arms have a different mix of segments (cohort imbalance).",
   missing_events: "Too many conversations have no recorded value for some metric (missing events).",
+  missing_imbalance: "One arm is missing recorded values far more often than the other.",
   attribution_ambiguous: "Too many rows belong to units seen in both arms (ambiguous attribution).",
   observational: "Traffic was not randomised (observational).",
   runtime_changed: "More than one runtime model appears in the rows.",

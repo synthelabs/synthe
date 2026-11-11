@@ -7,6 +7,7 @@
 // counts, tags, fields and row positions, never a conversation id, unit id or value, because they are printed.
 import { PilotError } from "./errors.ts";
 import { DAY_MS, isSha256, ms, shortId } from "./ids.ts";
+import { unsafeKey } from "./io.ts";
 import { personalDataKinds } from "./pii.ts";
 import { canonicalJson } from "../core/evidence.ts";
 import {
@@ -61,11 +62,15 @@ function checkPersonalData(text: string, field: string, where: string): void {
   }
 }
 
+// A field or column name in a refusal. A name the export invented could be data (a CSV with no header line puts
+// its first row there), so only a plain lowercase name is repeated.
+const shown = (name: string): string => (/^[a-z][a-z0-9_]{0,63}$/.test(name) ? `"${name}"` : "with a name that is not a plain lowercase word");
+
 // One row, from inline JSON or a parsed CSV line. Returns the row with only the documented fields.
 function validateRow(raw: unknown, where: string, contract: MetricContract): TelemetryRow {
   if (!isObject(raw)) return bad(`${where} is not an object.`);
   const unknown = Object.keys(raw).filter((k) => !ROW_FIELDS.includes(k));
-  if (unknown.length > 0) bad(`${where} has an undocumented field "${unknown[0]}". ${MINIMISE}`);
+  if (unknown.length > 0) bad(`${where} has an undocumented field ${shown(unknown[0])}. ${MINIMISE}`);
   for (const field of ["conversation_id", "prompt_version", "started_at"]) {
     if (!isNonEmpty(raw[field])) bad(`${where}: ${field} must be a non-empty string.`);
   }
@@ -82,7 +87,7 @@ function validateRow(raw: unknown, where: string, contract: MetricContract): Tel
   if (!isObject(raw.values)) return bad(`${where}: values must be an object of metric name to number or null.`);
   const metrics = contractMetrics(contract);
   const extra = Object.keys(raw.values).filter((k) => !metrics.some((m) => m.name === k));
-  if (extra.length > 0) bad(`${where}: values has "${extra[0]}", which is not a metric in the contract. ${MINIMISE}`);
+  if (extra.length > 0) bad(`${where}: values has ${shown(extra[0])}, which is not a metric in the contract. ${MINIMISE}`);
   const values: Record<string, number | null> = {};
   for (const m of metrics) {
     if (!(m.name in raw.values)) bad(`${where}: values is missing ${m.name}. Every contract metric must be present, as a number or null when no outcome was recorded.`);
@@ -146,9 +151,9 @@ function rowsFromCsv(text: string, file: string, contract: MetricContract): unkn
   const metrics = contractMetrics(contract);
   const known = ["conversation_id", "prompt_version", "started_at", "segment", "unit_id", "model_id", ...metrics.map((m) => m.name)];
   const unknown = header.filter((h) => !known.includes(h));
-  if (unknown.length > 0) bad(`${file} has an undocumented column "${unknown[0]}". ${MINIMISE}`);
+  if (unknown.length > 0) bad(`${file} has an undocumented column ${shown(unknown[0])}. ${MINIMISE}`);
   const dup = header.find((h, i) => header.indexOf(h) !== i);
-  if (dup !== undefined) bad(`${file} has the column "${dup}" more than once.`);
+  if (dup !== undefined) bad(`${file} has the column ${shown(dup)} more than once.`);
   for (const required of ["conversation_id", "prompt_version", "started_at", ...metrics.map((m) => m.name)]) {
     if (!header.includes(required)) bad(`${file} has no "${required}" column. Required: conversation_id, prompt_version, started_at and one column per contract metric.`);
   }
@@ -176,7 +181,7 @@ function rowsFromCsv(text: string, file: string, contract: MetricContract): unkn
 function validateAggregate(raw: unknown, where: string, contract: MetricContract): TelemetryAggregate {
   if (!isObject(raw)) return bad(`${where} is not an object.`);
   const unknown = Object.keys(raw).filter((k) => !["prompt_version", "n", "immature", "unattributed", "metrics", "segments"].includes(k));
-  if (unknown.length > 0) bad(`${where} has an undocumented field "${unknown[0]}". ${MINIMISE}`);
+  if (unknown.length > 0) bad(`${where} has an undocumented field ${shown(unknown[0])}. ${MINIMISE}`);
   if (!isNonEmpty(raw.prompt_version)) bad(`${where}: prompt_version must be a non-empty string.`);
   if ((raw.prompt_version as string).length > MAX_ID) bad(`${where}: prompt_version is longer than ${MAX_ID} characters.`);
   checkPersonalData(raw.prompt_version as string, "prompt_version", where);
@@ -234,7 +239,9 @@ export function versionCheck(tags: string[], allowed: string[], noun: string): v
 // Classifies each row as unattributed (its unit appears under more than one tag), immature (outcome not final by
 // asOf) or mature. Shared by the import, the baseline report and the experiment analysis so all three agree.
 export type RowClass = "mature" | "immature" | "unattributed";
-export function classifyRows(rows: TelemetryRow[], lagDays: number, asOf: IsoTime): RowClass[] {
+// rowAsOf, when given, is the export time of the newest export that carried each row. A row's outcome is final
+// only if THAT export was made after the row matured: a later export of other rows says nothing about it.
+export function classifyRows(rows: TelemetryRow[], lagDays: number, asOf: IsoTime, rowAsOf?: number[]): RowClass[] {
   const tagsByUnit = new Map<string, Set<string>>();
   for (const r of rows) {
     if (r.unit_id === undefined) continue;
@@ -243,9 +250,9 @@ export function classifyRows(rows: TelemetryRow[], lagDays: number, asOf: IsoTim
     tagsByUnit.set(r.unit_id, set);
   }
   const asOfMs = ms(asOf);
-  return rows.map((r) => {
+  return rows.map((r, i) => {
     if (r.unit_id !== undefined && (tagsByUnit.get(r.unit_id) as Set<string>).size > 1) return "unattributed";
-    return ms(r.started_at) + lagDays * DAY_MS > asOfMs ? "immature" : "mature";
+    return ms(r.started_at) + lagDays * DAY_MS > (rowAsOf?.[i] ?? asOfMs) ? "immature" : "mature";
   });
 }
 
@@ -275,8 +282,9 @@ export function importTelemetry(input: ImportInput): TelemetryImport {
   try { parsed = JSON.parse(input.text); } catch { return bad("The export is not valid JSON. Export it again as one JSON file shaped as docs/PILOT.md describes."); }
   if (!isObject(parsed)) return bad("The export must be a JSON object.");
   const x = parsed;
+  if (unsafeKey(x) !== null) bad("The export has a field named __proto__, constructor or prototype, which no export needs.");
   const unknownTop = Object.keys(x).filter((k) => !TOP_KEYS.includes(k));
-  if (unknownTop.length > 0) bad(`The export has an undocumented top-level field "${unknownTop[0]}". ${MINIMISE}`);
+  if (unknownTop.length > 0) bad(`The export has an undocumented top-level field ${shown(unknownTop[0])}. ${MINIMISE}`);
   if (x.format !== TELEMETRY_FORMAT) bad(`The export's format must be "${TELEMETRY_FORMAT}".`);
   if (!isNonEmpty(x.export_id)) bad("The export needs a non-empty export_id (the customer's own id for this export).");
   if (!isNonEmpty(x.source)) bad("The export needs a non-empty source naming the system it came from.");
@@ -316,6 +324,7 @@ export function importTelemetry(input: ImportInput): TelemetryImport {
   const base = {
     version: 1 as const, purpose: input.purpose, scope_id: input.scope_id, export_id: x.export_id as string, source: x.source as string,
     exported_at: exportedAt, window, assignment: x.assignment as TelemetryImport["assignment"],
+    provisional_values_dropped: 0, query_hash: (x.query_hash as Sha256 | undefined) ?? null,
   };
 
   if (x.aggregates !== undefined) {
@@ -376,10 +385,19 @@ export function importTelemetry(input: ImportInput): TelemetryImport {
   }
 
   const classes = classifyRows(rows, contract.outcome_lag_days, exportedAt);
-  const tags = [...new Set(rows.map((r) => r.prompt_version))].sort(byString);
+  // A value on a conversation that is still inside the outcome lag is provisional: the outcome can still change.
+  // It is stored as "not known yet", so it is never counted, and the export made after the lag supplies the
+  // final value without contradicting this one.
+  let provisional = 0;
+  const kept = rows.map((r, i) => {
+    if (classes[i] !== "immature" || Object.values(r.values).every((v) => v === null)) return r;
+    provisional++;
+    return { ...r, values: Object.fromEntries(Object.keys(r.values).map((k) => [k, null])) };
+  });
+  const tags = [...new Set(kept.map((r) => r.prompt_version))].sort(byString);
   return {
-    ...base, form: "rows", expected_rows: x.expected_rows as number, duplicates_dropped: duplicates,
-    arms: tags.map((t) => armCountsFromRows(rows, classes, t)), rows, aggregates: null,
+    ...base, form: "rows", expected_rows: x.expected_rows as number, duplicates_dropped: duplicates, provisional_values_dropped: provisional,
+    arms: tags.map((t) => armCountsFromRows(kept, classes, t)), rows: kept, aggregates: null,
   };
 }
 
@@ -394,6 +412,8 @@ export interface MergedTelemetry {
   // aggregates form: older cumulative exports the newest one replaces.
   superseded: Stored<TelemetryImport>[];
   rows: TelemetryRow[] | null;
+  // rows form: for each row, the export time (ms) of the newest export that carried it.
+  row_as_of: number[] | null;
   aggregates: TelemetryAggregate[] | null;
   duplicates_dropped: number;
   as_of: IsoTime;
@@ -402,6 +422,26 @@ export interface MergedTelemetry {
 }
 
 const sameExceptValues = (a: TelemetryRow, b: TelemetryRow) => canonicalJson({ ...a, values: null }) === canonicalJson({ ...b, values: null });
+
+// Why `newer` cannot be a cumulative update of `older`, or null when it can.
+function notCumulative(older: TelemetryImport, newer: TelemetryImport): string | null {
+  if (ms(newer.window.end) < ms(older.window.end)) return "its window ends earlier";
+  for (const o of older.aggregates ?? []) {
+    const n = (newer.aggregates ?? []).find((a) => a.prompt_version === o.prompt_version);
+    if (!n) return `it has no summary for ${o.prompt_version}`;
+    if (n.n < o.n) return `${o.prompt_version} has fewer mature conversations (${n.n}, was ${o.n})`;
+    if (n.n + n.immature + n.unattributed < o.n + o.immature + o.unattributed) return `${o.prompt_version} has fewer conversations in total`;
+    for (const [name, was] of Object.entries(o.metrics)) {
+      const now = n.metrics[name];
+      if (!now || now.kind !== was.kind) return `${o.prompt_version} has no ${name} of the same kind`;
+      if (was.kind === "rate" && now.kind === "rate") {
+        if (now.successes < was.successes) return `${o.prompt_version} has fewer ${name} = 1 conversations (${now.successes}, was ${was.successes})`;
+        if (n.n - now.missing - now.successes < o.n - was.missing - was.successes) return `${o.prompt_version} has fewer ${name} = 0 conversations than before`;
+      }
+    }
+  }
+  return null;
+}
 
 // Imports with the same id count once. Rows: union by conversation_id; a later export may fill in an outcome that
 // was null (it matured), anything else that differs is a conflict. Aggregates: each export is cumulative, so only
@@ -413,17 +453,42 @@ export function mergeImports(imports: Stored<TelemetryImport>[]): MergedTelemetr
   const all = [...unique.values()].sort((a, b) => ms(a.value.exported_at) - ms(b.value.exported_at) || byString(a.id, b.id));
   const forms = new Set(all.map((i) => i.value.form));
   if (forms.size > 1) fail("telemetry_conflict", "Some imports are rows and some are aggregates. Counts from the two forms cannot be combined without double counting; import one form for the whole experiment.");
+  // The metric query defines the denominator. Exports made with different queries do not count the same thing.
+  if (new Set(all.map((i) => i.value.query_hash ?? "none")).size > 1) {
+    fail("telemetry_denominator_mismatch", "The exports do not all carry the same query_hash (or some carry none), so they were not made with the same metric query. Export every period with one query.");
+  }
   const asOf = all[all.length - 1].value.exported_at;
 
   if (all[0].value.form === "aggregates") {
     const newest = all[all.length - 1];
     const tied = all.filter((i) => i.value.exported_at === newest.value.exported_at);
     if (tied.length > 1) fail("telemetry_conflict", `${tied.length} aggregate imports share the newest exported_at, so it is not clear which one is current. Re-export with distinct times.`);
+    // Each aggregate export is cumulative, so nothing in it may be smaller than in an older one. A newer export
+    // with fewer conversations, successes or failures is a different (or filtered) population, not an update.
+    for (const older of all.slice(0, -1)) {
+      const shrunk = notCumulative(older.value, newest.value);
+      if (shrunk) fail("telemetry_conflict", `The newest aggregate export is not cumulative over an older one: ${shrunk}. Each aggregate export must count everything since the start, including what earlier exports counted.`);
+    }
     return {
-      form: "aggregates", used: [newest], superseded: all.slice(0, -1), rows: null, aggregates: newest.value.aggregates ?? [],
+      form: "aggregates", used: [newest], superseded: all.slice(0, -1), rows: null, row_as_of: null, aggregates: newest.value.aggregates ?? [],
       duplicates_dropped: newest.value.duplicates_dropped, as_of: asOf, window: newest.value.window,
       observational: newest.value.assignment === "observational",
     };
+  }
+
+  // A later export must hold every conversation an earlier export had for the time both cover. Otherwise the
+  // same conversations under new ids would be counted twice, and conversations dropped from a later export
+  // would go unnoticed.
+  for (let later = 1; later < all.length; later++) {
+    const ids = new Set((all[later].value.rows ?? []).map((r) => r.conversation_id));
+    const from = ms(all[later].value.window.start);
+    const to = ms(all[later].value.window.end);
+    for (let earlier = 0; earlier < later; earlier++) {
+      const gone = (all[earlier].value.rows ?? []).filter((r) => ms(r.started_at) >= from && ms(r.started_at) < to && !ids.has(r.conversation_id)).length;
+      if (gone > 0) {
+        fail("telemetry_conflict", `${gone} conversation${gone === 1 ? "" : "s"} from an earlier export (telemetry:${shortId(all[earlier].id)}) started inside the window of a later export but are not in it. A later export must contain every conversation of earlier exports for the time it covers; it may add new ones and fill in outcomes.`);
+      }
+    }
   }
 
   const merged = new Map<string, { row: TelemetryRow; at: number }>();
@@ -452,9 +517,10 @@ export function mergeImports(imports: Stored<TelemetryImport>[]): MergedTelemetr
   if (conflicts > 0) {
     fail("telemetry_conflict", `${conflicts} conversation${conflicts === 1 ? "" : "s"} appear in more than one import with different content. A later export may only fill in an outcome that was missing; it may not change a recorded value, tag, time, segment or unit. Find which export is wrong before importing again.`);
   }
-  const rows = [...merged.values()].map((v) => v.row).sort((a, b) => byString(a.conversation_id, b.conversation_id));
+  const ordered = [...merged.values()].sort((a, b) => byString(a.row.conversation_id, b.row.conversation_id));
+  const rows = ordered.map((v) => v.row);
   return {
-    form: "rows", used: all, superseded: [], rows, aggregates: null, duplicates_dropped: duplicates, as_of: asOf,
+    form: "rows", used: all, superseded: [], rows, row_as_of: ordered.map((v) => v.at), aggregates: null, duplicates_dropped: duplicates, as_of: asOf,
     window: {
       start: all.map((i) => i.value.window.start).sort((a, b) => ms(a) - ms(b))[0],
       end: all.map((i) => i.value.window.end).sort((a, b) => ms(b) - ms(a))[0],
@@ -521,7 +587,7 @@ export function baselineReport(input: { config_id: Sha256; contract: MetricContr
   let armMetric: (name: string, kind: MetricKind) => ArmMetric;
   if (merged.form === "rows") {
     const rows = merged.rows as TelemetryRow[];
-    const classes = classifyRows(rows, contract.outcome_lag_days, merged.as_of);
+    const classes = classifyRows(rows, contract.outcome_lag_days, merged.as_of, merged.row_as_of ?? undefined);
     counts = armCountsFromRows(rows, classes, tag);
     armMetric = (name, kind) => armMetricFromRows(rows, classes, tag, name, kind);
   } else {

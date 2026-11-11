@@ -10,16 +10,16 @@ import { assertEgressSafe, sensitiveIndex } from "./egress.ts";
 import { PilotError } from "./errors.ts";
 import { analyzeExperiment, buildExperimentSpec, renderDecision, renderExperimentSpec } from "./experiment.ts";
 import { candidateTag, contentId, isSha256, ms, shortId } from "./ids.ts";
-import { inside, readBounded, writeOnce } from "./io.ts";
+import { inside, readBounded, unsafeKey, writeOnce } from "./io.ts";
 import { liveModel, type LiveOptIn } from "./live.ts";
 import { modelProposer, parseModelScript, parseProposerScript, scriptedModel, scriptedProposer } from "./model.ts";
 import { packSummary, parsePack } from "./pack.ts";
 import { eligibleFailures, promote, renderPromotion } from "./promote.ts";
-import { publishReview } from "./publish.ts";
+import { publishMessage, publishReview } from "./publish.ts";
 import { pairArms, renderReplay, replayArm } from "./replay.ts";
 import { renderPilotReport } from "./report.ts";
-import { buildReviewBundle, renderReview } from "./review.ts";
-import { PilotStore } from "./store.ts";
+import { buildReviewBundle, MAX_REVIEW_CHARS, renderReview } from "./review.ts";
+import { OBJECT_KINDS, PilotStore } from "./store.ts";
 import { baselineReport, importTelemetry, renderBaseline } from "./telemetry.ts";
 import type {
   Approval, ArmRun, BaselineReport, Candidate, ChatModel, ExperimentAnalysis, ExperimentSpec, FailureFinding, IsoTime, Pack, PilotConfig,
@@ -58,14 +58,23 @@ const opt = (flags: Flags, name: string): string | undefined => (typeof flags[na
 const iso = (d: Date): IsoTime => d.toISOString().replace(/\.\d{3}Z$/, "Z");
 
 function defaultGit(args: string[], cwd: string): string {
-  // SYNTHE_* settings stay out of child processes, as in src/cli/main.ts.
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_")));
+  // SYNTHE_* settings stay out of child processes, as in src/cli/main.ts. GIT_* is dropped too: an inherited
+  // GIT_DIR (set inside a git hook, for one) would make git read a different repository than --repo-dir names.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_")));
   return execFileSync("git", args, { cwd, encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
 }
 
 // ---------------------------------------------------------------------------------------------------------------
 // What the journal says about the pilot so far.
 // ---------------------------------------------------------------------------------------------------------------
+
+// The host and owner/name of a git remote URL, in its https, ssh or scp-like form.
+function originOf(url: string): { host: string; slug: string } | null {
+  const m = /^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^@/\s]+@)?([^:/\s]+)[:/](?:\d+\/)?(.+?)(?:\.git)?\/?$/i.exec(url);
+  if (!m) return null;
+  const parts = m[2].split("/");
+  return parts.length >= 2 ? { host: m[1], slug: parts.slice(-2).join("/") } : null;
+}
 
 export interface Frozen { config_id: Sha256; config: PilotConfig; baseline_prompt_id: Sha256; commit: string }
 
@@ -97,14 +106,35 @@ const replaysFor = (store: PilotStore, candidateId: Sha256, packId: Sha256): Sto
 const importsFor = (store: PilotStore, scope: Sha256): Stored<TelemetryImport>[] =>
   store.find("telemetry.imported").filter((e) => e.refs.scope === scope).map((e) => store.stored<TelemetryImport>("telemetry", e.refs.telemetry));
 
-const approvals = (store: PilotStore): Stored<Approval>[] => store.find("approval.recorded").map((e) => store.stored<Approval>("approval", e.refs.approval));
+// An approval counts only if it answers a review bundle this pilot wrote for the same candidate and experiment, and
+// names who approved. A record that merely sits in the store with the right ids is not one.
+function approvals(store: PilotStore): Stored<Approval>[] {
+  const reviews = store.find("review.bundled");
+  return store.find("approval.recorded").map((e) => store.stored<Approval>("approval", e.refs.approval)).filter((a) =>
+    typeof a.value.approver === "string" && a.value.approver.trim() !== ""
+    && reviews.some((r) => r.key === a.value.review_id && r.refs.candidate === a.value.candidate_id && r.refs.experiment === a.value.experiment_id));
+}
 
-// A case that was ever held out stays held out: no pack may show it to a proposer.
+// A case that was ever held out stays held out: no pack may show it to a proposer, under its own id or as a copy
+// of its conversation under another id.
 function assertNoHoldoutLeak(store: PilotStore, pack: Pack): void {
-  const held = new Set(allPacks(store).flatMap((p) => p.value.cases.filter((c) => c.split === "heldout").map((c) => c.id)));
-  const leaked = pack.cases.filter((c) => c.split === "discovery" && held.has(c.id)).map((c) => c.id);
+  const heldIds = new Set<string>();
+  const heldConversations = new Set<string>();
+  for (const p of [...allPacks(store).map((x) => x.value), pack]) {
+    for (const c of p.cases) if (c.split === "heldout") { heldIds.add(c.id); heldConversations.add(contentId(c.messages)); }
+  }
+  const leaked = pack.cases.filter((c) => c.split === "discovery" && (heldIds.has(c.id) || heldConversations.has(contentId(c.messages)))).map((c) => c.id);
   if (leaked.length) {
-    throw new PilotError("holdout_leak", `${leaked.length} case(s) in this pack are marked discovery but were held out in an earlier pack (${leaked.slice(0, 5).join(", ")}). A held-out case must stay held out, or the proposer would see it.`);
+    throw new PilotError("holdout_leak", `${leaked.length} discovery case(s) in this pack are held-out cases, or copies of a held-out conversation (${leaked.slice(0, 5).join(", ")}). A held-out conversation must stay held out, or the proposer would see it.`);
+  }
+}
+
+// An export cannot have been made after it is imported. Its own date decides what counts as final, so a date in
+// the future would let an unfinished experiment read as finished.
+const CLOCK_SKEW_MS = 5 * 60_000;
+function assertNotFromTheFuture(imported: TelemetryImport, now: Date): void {
+  if (ms(imported.exported_at) > now.getTime() + CLOCK_SKEW_MS) {
+    throw new PilotError("invalid_telemetry", `The export says it was made at ${imported.exported_at}, which is later than now (${iso(now)}). Check the export's clock and time zone (times must be UTC), then export again.`);
   }
 }
 
@@ -174,8 +204,16 @@ export async function init(store: PilotStore, flags: Flags, deps: PilotDeps): Pr
   }
   let origin = "";
   try { origin = git(["remote", "get-url", "origin"], repoDir).trim(); } catch { /* a checkout with no remote: nothing to compare */ }
-  if (origin && !new RegExp(`[:/]${config.repo.slug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(\\.git)?/?$`).test(origin)) {
-    throw new PilotError("wrong_repo", `${repoDir} is a checkout of a different repo than repo.slug (${config.repo.slug}). Point --repo-dir at the right checkout, or fix repo.slug.`);
+  if (origin) {
+    const remote = originOf(origin);
+    const api = config.repo.api ?? GITHUB_API;
+    // The checkout must be the repo the review will go to: same owner and name, on github.com unless the config
+    // points the API at a loopback stand-in.
+    if (!remote || remote.slug.toLowerCase() !== config.repo.slug.toLowerCase() || (api === GITHUB_API && remote.host.toLowerCase() !== "github.com")) {
+      throw new PilotError("wrong_repo", `${repoDir} is a checkout of a different repo than repo.slug (${config.repo.slug}). Point --repo-dir at the right checkout, or fix repo.slug.`);
+    }
+  } else {
+    deps.say(`Note: ${repoDir} has no origin remote, so it could not be checked against repo.slug (${config.repo.slug}).`);
   }
   if (!prompt.trim()) throw new PilotError("wrong_revision", `${config.agent.prompt_path} is empty at commit ${commit.slice(0, 12)}.`);
 
@@ -207,12 +245,20 @@ export async function baseline(store: PilotStore, flags: Flags, deps: PilotDeps)
     text: readBounded(file), readSibling: (name) => readBounded(inside(dirname(file), name)),
     purpose: "baseline", scope_id: f.config_id, contract: f.config.metric, tags: [f.config.agent.baseline_tag],
   });
+  assertNotFromTheFuture(imported, deps.now());
   const at = iso(deps.now());
-  const id = store.put("telemetry", imported);
-  const before = store.find("telemetry.imported", id).length;
-  store.record("telemetry.imported", id, { telemetry: id, purpose: "baseline", scope: f.config_id }, at);
-  if (before) deps.say(`This export was already imported (${shortId(id)}); nothing is counted twice.`);
-  const report = baselineReport({ config_id: f.config_id, contract: f.config.metric, tag: f.config.agent.baseline_tag, imports: importsFor(store, f.config_id) });
+  const id = contentId(imported);
+  const existing = importsFor(store, f.config_id);
+  const known = existing.some((i) => i.id === id);
+  // The report is worked out before anything is recorded: an export that contradicts an earlier one is refused
+  // here and leaves no trace, so the next correct export still imports.
+  const report = baselineReport({ config_id: f.config_id, contract: f.config.metric, tag: f.config.agent.baseline_tag, imports: known ? existing : [...existing, { id, value: imported }] });
+  if (known) deps.say(`This export was already imported (${shortId(id)}); nothing is counted twice.`);
+  else {
+    store.put("telemetry", imported);
+    store.record("telemetry.imported", id, { telemetry: id, purpose: "baseline", scope: f.config_id }, at);
+    if (imported.provisional_values_dropped) deps.say(`${imported.provisional_values_dropped} conversations were younger than the outcome lag when exported; their values are treated as not known yet.`);
+  }
   const reportId = store.put("baseline", report);
   store.record("baseline.reported", reportId, { baseline: reportId }, at);
   const path = store.report("baseline.md", renderBaseline(report, f.config.metric, reportId));
@@ -231,10 +277,9 @@ export async function pack(store: PilotStore, flags: Flags, deps: PilotDeps): Pr
   const id = contentId(parsed);
   const current = store.journal().filter((e) => e.step === "pack.frozen" || e.step === "pack.promoted").at(-1);
   if (current && current.refs.pack !== id) {
-    const active = store.get<Pack>("pack", current.refs.pack);
-    if (parsed.parent_pack_id !== current.refs.pack || parsed.pack_version !== active.pack_version + 1) {
-      throw new PilotError("conflict", `Pack ${shortId(current.refs.pack)} (version ${active.pack_version}) is already frozen. A newer pack must name it as parent_pack_id and be version ${active.pack_version + 1}; the frozen pack itself is never replaced.`);
-    }
+    // Only `promote` makes a new version: it keeps every earlier case as it was, records who approved each
+    // change, and cannot move a conversation out of the held-out split. A hand-made successor could do all three.
+    throw new PilotError("conflict", `Pack ${shortId(current.refs.pack)} is already frozen and is never replaced. To add approved failures, use \`promote --request <file>\`; for a different pack, start a new pilot directory.`);
   } else if (!current && (parsed.pack_version !== 1 || parsed.parent_pack_id !== null)) {
     throw new PilotError("conflict", "The first pack of a pilot must be version 1 with no parent.");
   }
@@ -410,8 +455,13 @@ export async function review(store: PilotStore, flags: Flags, deps: PilotDeps): 
   });
   const id = contentId(bundle);
   const body = renderReview(bundle, id, active.value, replayed.value.target_check_id);
-  // Checked even for the local bundle: a review file is written to be shared.
-  const sensitive = sensitiveIndex(allPacks(store).map((p) => p.value), [baselinePrompt]);
+  if (body.length > MAX_REVIEW_CHARS) throw new PilotError("too_large", `The review bundle is ${body.length} characters; the limit is ${MAX_REVIEW_CHARS}, so it fits in a pull request. Shorten the rationale or make a smaller change.`);
+  // Checked even for the local bundle: a review file is written to be shared. What may appear in it is the
+  // baseline prompt (already in the customer's repo) and the review's own generated wording, which is the same
+  // review rendered with its two free-text parts, the rationale and the prompt change, left out. Anything those
+  // two parts add is checked against the conversations.
+  const frame = renderReview({ ...bundle, rationale: "", diff: "" }, id, active.value, replayed.value.target_check_id);
+  const sensitive = sensitiveIndex(allPacks(store).map((p) => p.value), [baselinePrompt, frame, publishMessage(bundle)]);
   assertEgressSafe(body, sensitive, "review bundle");
   store.put("review", bundle);
   store.record("review.bundled", id, { review: id, candidate: candidate.id, experiment: bundle.experiment_id }, iso(deps.now()));
@@ -475,19 +525,43 @@ export async function analyze(store: PilotStore, flags: Flags, deps: PilotDeps):
   const approval = requireApproval(approvals(store), spec.arms.candidate.prompt_id, experimentId);
   const at = iso(deps.now());
   const file = opt(flags, "telemetry");
+  const existing = importsFor(store, experimentId);
+  let imports = existing;
+  let fresh: Stored<TelemetryImport> | null = null;
   if (file) {
     const imported = importTelemetry({
       text: readBounded(file), readSibling: (name) => readBounded(inside(dirname(file), name)),
       purpose: "experiment", scope_id: experimentId, contract: f.config.metric, tags: [spec.arms.baseline.tag, spec.arms.candidate.tag], window: spec.window,
     });
-    const id = store.put("telemetry", imported);
-    const before = store.find("telemetry.imported", id).length;
-    store.record("telemetry.imported", id, { telemetry: id, purpose: "experiment", scope: experimentId }, at);
-    deps.say(before ? `This export was already imported (${shortId(id)}); nothing is counted twice.` : `Imported export ${imported.export_id} as ${id}.`);
+    assertNotFromTheFuture(imported, deps.now());
+    const id = contentId(imported);
+    if (existing.some((i) => i.id === id)) deps.say(`This export was already imported (${shortId(id)}); nothing is counted twice.`);
+    else {
+      // A keep or a revert ends the experiment. After a revert the traffic went back to the baseline, so later
+      // numbers are not a continuation of it, and a stopped experiment must not come back as a keep.
+      const decided = store.find("analysis.decided").filter((e) => e.refs.experiment === experimentId && (e.refs.recommendation === "keep" || e.refs.recommendation === "revert")).at(-1);
+      if (decided) {
+        throw new PilotError("conflict", `Experiment ${shortId(experimentId)} already ended with ${decided.refs.recommendation} (analysis ${shortId(decided.key)}). A decided experiment takes no more exports. Run \`analyze --experiment ${shortId(experimentId)}\` without --telemetry to see that decision again, or start a new experiment.`);
+      }
+      // The baseline and the experiment must be counted by the same query, or the two numbers are not comparable.
+      const baselineHash = importsFor(store, f.config_id)[0]?.value.query_hash ?? null;
+      if (importsFor(store, f.config_id).length && baselineHash !== (imported.query_hash ?? null)) {
+        throw new PilotError("telemetry_denominator_mismatch", "This export's query_hash is not the one the baseline export carried, so the metric was not computed by the same query as the baseline. Export with the baseline's query.");
+      }
+      fresh = { id, value: imported };
+      imports = [...existing, fresh];
+    }
   }
-  const imports = importsFor(store, experimentId);
   if (!imports.length) throw new PilotError("telemetry_incomplete", `Experiment ${shortId(experimentId)} has no outcome export yet. Give one with --telemetry <export.json>.`);
+  // Analysed before anything is recorded: an export that contradicts an earlier one is refused here and leaves
+  // no trace, so the experiment can still be analysed with a correct export.
   const analysis = analyzeExperiment({ spec, experiment_id: experimentId, imports, approval_id: approval.id });
+  if (fresh) {
+    store.put("telemetry", fresh.value);
+    store.record("telemetry.imported", fresh.id, { telemetry: fresh.id, purpose: "experiment", scope: experimentId }, at);
+    deps.say(`Imported export ${fresh.value.export_id} as ${fresh.id}.`);
+    if (fresh.value.provisional_values_dropped) deps.say(`${fresh.value.provisional_values_dropped} conversations were younger than the outcome lag when exported; their values are treated as not known yet.`);
+  }
   const id = store.put("analysis", analysis);
   store.record("analysis.decided", id, { analysis: id, experiment: experimentId, recommendation: analysis.recommendation, final: String(analysis.final) }, at);
   const text = renderDecision(analysis, spec, id);
@@ -507,6 +581,7 @@ export async function analyze(store: PilotStore, flags: Flags, deps: PilotDeps):
 function parsePromotionRequest(source: string): PromotionRequest {
   let v: unknown;
   try { v = JSON.parse(source); } catch { throw new PilotError("invalid_promotion", "The promotion request is not valid JSON."); }
+  if (unsafeKey(v) !== null) throw new PilotError("invalid_promotion", "The promotion request has a field named __proto__, constructor or prototype, which is not allowed.");
   const r = v as Partial<PromotionRequest> | null;
   if (r === null || typeof r !== "object" || r.version !== 1 || typeof r.base_pack_id !== "string" || typeof r.approver !== "string" || typeof r.at !== "string" || !Array.isArray(r.existing) || !Array.isArray(r.added)) {
     throw new PilotError("invalid_promotion", "The promotion request needs version 1, base_pack_id, approver, at, and the lists `existing` and `added`.");
@@ -525,11 +600,13 @@ export async function promotePack(store: PilotStore, flags: Flags, deps: PilotDe
     return 0;
   }
   const request = parsePromotionRequest(readBounded(need(flags, "request", "the reviewer's promotion request (JSON)"), 8 * 1024 * 1024));
-  const requestId = store.put("promotion-request", request);
+  const requestId = contentId(request);
   const next = promote({ pack: active, request: { id: requestId, value: request }, replays, experiment_ids: store.find("experiment.specified").map((e) => e.key) });
   // The new version goes through the same validation as an imported pack, including redaction of added cases.
   const validated = parsePack(JSON.stringify(next));
   assertNoHoldoutLeak(store, validated);
+  // Stored only now: a refused request may hold exactly the content it was refused for.
+  store.put("promotion-request", request);
   const newId = store.put("pack", validated);
   const added = new Set(request.added.map((a) => a.case.id));
   const promotedIds = new Set([...request.existing.map((x) => x.case_id), ...added]);
@@ -572,9 +649,20 @@ export async function verify(store: PilotStore, _flags: Flags, deps: PilotDeps):
   if (!problems.length) {
     const f = frozen(store);
     const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
+    // What a step was computed from: every import for its scope that the journal recorded before it. (The ids a
+    // report lists are only the imports it used; an older aggregate export it set aside was still an input.)
+    const journal = store.journal();
+    const importsBefore = (scope: Sha256, seq: number) =>
+      journal.filter((x) => x.step === "telemetry.imported" && x.refs.scope === scope && x.seq < seq).map((x) => store.stored<TelemetryImport>("telemetry", x.refs.telemetry));
+    const armRecorded = (arm: ArmRun) => journal.some((x) => x.step === "arm.replayed" && x.refs.arm === contentId(arm) && x.refs.prompt === arm.prompt_id && x.refs.pack === arm.pack_id);
+    const validApprovals = new Set(approvals(store).map((a) => a.id));
     for (const e of store.find("replay.paired")) {
       attempt(`replay ${shortId(e.key)}`, () => {
         const stored = store.get<ReplayReport>("replay", e.key);
+        // The arm runs inside a replay report must be the ones this pilot recorded for those prompts on that
+        // pack, and the journal must describe the report it names.
+        if (!armRecorded(stored.baseline) || !armRecorded(stored.candidate)) throw new Error("its arm runs are not the ones recorded for these prompts on this pack");
+        if (e.refs.candidate !== stored.candidate_id || e.refs.pack !== stored.pack_id || e.refs.eligible !== String(stored.gate.eligible)) throw new Error("the journal describes a different candidate, pack or gate verdict than the stored report");
         const again = pairArms({ pack: store.get<Pack>("pack", stored.pack_id), baseline: stored.baseline, candidate: stored.candidate, target_check_id: stored.target_check_id, gate: f.config.replay.gate });
         if (!same(stored, again)) throw new Error("the stored replay report does not follow from its own arm runs");
         recomputed++;
@@ -583,7 +671,7 @@ export async function verify(store: PilotStore, _flags: Flags, deps: PilotDeps):
     for (const e of store.find("baseline.reported")) {
       attempt(`baseline ${shortId(e.key)}`, () => {
         const stored = store.get<BaselineReport>("baseline", e.key);
-        const again = baselineReport({ config_id: f.config_id, contract: f.config.metric, tag: f.config.agent.baseline_tag, imports: stored.telemetry_ids.map((id) => store.stored<TelemetryImport>("telemetry", id)) });
+        const again = baselineReport({ config_id: f.config_id, contract: f.config.metric, tag: f.config.agent.baseline_tag, imports: importsBefore(f.config_id, e.seq) });
         if (!same(stored, again)) throw new Error("the stored baseline report does not follow from its telemetry imports");
         recomputed++;
       });
@@ -593,8 +681,10 @@ export async function verify(store: PilotStore, _flags: Flags, deps: PilotDeps):
         const stored = store.get<ExperimentAnalysis>("analysis", e.key);
         const spec = store.get<ExperimentSpec>("experiment", stored.experiment_id);
         const approval = store.get<Approval>("approval", stored.approval_id);
-        if (approval.decision !== "approved" || approval.experiment_id !== stored.experiment_id || approval.candidate_id !== spec.arms.candidate.prompt_id) throw new Error("the approval it cites is not an approval of this candidate and experiment");
-        const again = analyzeExperiment({ spec, experiment_id: stored.experiment_id, imports: stored.telemetry_ids.map((id) => store.stored<TelemetryImport>("telemetry", id)), approval_id: stored.approval_id });
+        if (approval.decision !== "approved" || approval.experiment_id !== stored.experiment_id || approval.candidate_id !== spec.arms.candidate.prompt_id || !validApprovals.has(stored.approval_id)) throw new Error("the approval it cites is not a recorded approval of this candidate and experiment, answering one of this pilot's review bundles");
+        const before = new Set(importsBefore(stored.experiment_id, e.seq).map((i) => i.id));
+        if (stored.telemetry_ids.some((id) => !before.has(id))) throw new Error("it cites telemetry that was not imported for this experiment before the decision");
+        const again = analyzeExperiment({ spec, experiment_id: stored.experiment_id, imports: importsBefore(stored.experiment_id, e.seq), approval_id: stored.approval_id });
         if (!same(stored, again)) throw new Error(`the stored recommendation (${stored.recommendation}) does not follow from its telemetry imports (recomputed: ${again.recommendation})`);
         if (e.refs.recommendation !== stored.recommendation) throw new Error("the journal names a different recommendation than the stored analysis");
         recomputed++;
@@ -607,6 +697,16 @@ export async function verify(store: PilotStore, _flags: Flags, deps: PilotDeps):
     return 1;
   }
   deps.say(`Verified: ${entries} journal entries in order, ${records} records match their ids, ${recomputed} reports and decisions recomputed from their evidence with the same result.`);
+  // Records no journal entry names: left by an interrupted or refused step. They are not evidence of anything.
+  const journal = store.journal();
+  const named = new Set(journal.flatMap((e) => [e.key, ...Object.values(e.refs)]));
+  const orphans = OBJECT_KINDS.flatMap((kind) => store.list(kind)).filter((id) => !named.has(id)).length;
+  if (orphans) deps.say(`Note: ${orphans} stored record(s) are not named by any journal entry (left by an interrupted or refused step). They are not part of the evidence.`);
+  const head = journal.at(-1);
+  if (head) {
+    deps.say(`Journal head: entry ${head.seq}, ${head.hash}`);
+    deps.say("This check shows the records agree with each other and were not changed by accident. It cannot show that an export is truthful, or detect someone rewriting the whole directory consistently: to guard against that, keep the journal head somewhere outside this directory, for example in the pull request.");
+  }
   return 0;
 }
 

@@ -77,7 +77,7 @@ export function demoConfig(): Record<string, unknown> {
     },
     replay: {
       model: DEMO.model, max_tokens: 800, temperature: null, max_steps_per_turn: 4,
-      gate: { min_paired_cases: 10, min_paired_coverage: 0.7, min_net_wins: 3 },
+      gate: { min_paired_cases: 10, min_paired_coverage: 0.7, min_net_wins: 3, max_unchecked_blocking_guards: 0 },
       min_recurring_cases: 3, max_changed_lines: 6,
     },
     provider: null,
@@ -404,11 +404,22 @@ export const baselineExport = () => telemetryExport({
   assignment: "none", lag_days: 2, csv_name: "baseline.csv", arms: [{ tag: DEMO.baseline_tag, per_day: 640, ...BASE_ARM }],
 });
 
+const B_ARMS = (candidateTag: string): ArmPlan[] => [
+  { tag: DEMO.baseline_tag, per_day: 320, ...BASE_ARM },
+  { tag: candidateTag, per_day: 320, resolved: 0.63, escalated: 0.24, refunded: 0.15, refund_usd: 28 },
+];
+
 // First experiment, five days in: the candidate hands far more conversations to people.
 export const experimentBInterim = (candidateTag: string) => telemetryExport({
   export_id: "fernhill-exp1-day5", start: DEMO.experiment_b_start, days: 5, exported_at: addDays(DEMO.experiment_b_start, 5),
   assignment: "randomized", lag_days: 2, csv_name: "experiment-1-day5.csv",
-  arms: [{ tag: DEMO.baseline_tag, per_day: 320, ...BASE_ARM }, { tag: candidateTag, per_day: 320, resolved: 0.63, escalated: 0.2, refunded: 0.15, refund_usd: 28 }],
+  arms: B_ARMS(candidateTag),
+});
+
+// The same experiment, exported after its cutoff. By then it had already been stopped.
+export const experimentBAfterStop = (candidateTag: string) => telemetryExport({
+  export_id: "fernhill-exp1-after-stop", start: DEMO.experiment_b_start, days: 14, exported_at: addDays(DEMO.experiment_b_start, 16),
+  assignment: "randomized", lag_days: 2, csv_name: "experiment-1-after-stop.csv", arms: B_ARMS(candidateTag),
 });
 
 // The same export with the candidate arm under a tag the experiment does not know.

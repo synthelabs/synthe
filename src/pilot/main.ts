@@ -85,8 +85,11 @@ export async function main(argv: string[], deps: PilotDeps): Promise<number> {
       deps.say(`Refused (${e.code}): ${e.message}`);
       return 1;
     }
-    // An unexpected failure: the message only, never a dump of the data being handled.
-    deps.say(`The pilot command hit an error: ${(e as Error).message}`);
+    // An unexpected failure. Its message is not printed by default: an error from a parser, a provider or git
+    // can quote the data it choked on.
+    const kind = e instanceof Error ? e.name : "error";
+    if (deps.env.SYNTHE_PILOT_DEBUG === "1") deps.say(`The pilot command hit an unexpected ${kind}: ${(e as Error).message}`);
+    else deps.say(`The pilot command hit an unexpected ${kind} and stopped. Nothing after that point was recorded, so it is safe to run the command again. To see the error text (it may quote your data), run it again with SYNTHE_PILOT_DEBUG=1.`);
     return 1;
   }
 }

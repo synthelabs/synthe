@@ -18,7 +18,7 @@ export const TOOLS = [
 ];
 
 export const SETTINGS: ReplaySettings = { model: "scripted-model", max_tokens: 512, temperature: 0, max_steps_per_turn: 4 };
-export const GATE = { min_paired_cases: 2, min_paired_coverage: 0.5, min_net_wins: 1 };
+export const GATE = { min_paired_cases: 2, min_paired_coverage: 0.5, min_net_wins: 1, max_unchecked_blocking_guards: 0 };
 export const PACK_ID = "1".repeat(64);
 export const BASE_ID = "a".repeat(64);
 export const CAND_ID = "b".repeat(64);

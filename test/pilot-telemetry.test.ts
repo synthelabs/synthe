@@ -307,3 +307,34 @@ test("a mean primary metric is sized from the baseline sd", () => {
   // 2 * (1.959964 + 0.841621)^2 * (20/9) / 0.25 = 139.5 -> 140.
   assert.equal(r.required_per_arm.value, 140);
 });
+
+test("a value exported while the conversation is still inside the outcome lag is stored as not known yet", () => {
+  // exported_at Sep 11 00:00 with a 2-day lag: the rows of Sep 9 and Sep 10 carry values, but those can still change.
+  const r = run(exp({ exported_at: "2026-09-11T00:00:00Z" }));
+  assert.equal(r.provisional_values_dropped, 2);
+  const late = r.rows!.filter((x) => x.started_at >= "2026-09-09T00:00:00Z");
+  assert.equal(late.length, 2);
+  assert.ok(late.every((x) => Object.values(x.values).every((v) => v === null)));
+  assert.ok(r.rows!.filter((x) => x.started_at < "2026-09-09T00:00:00Z").every((x) => x.values.resolved !== null));
+  // An export made after the lag keeps every value.
+  assert.equal(run(exp()).provisional_values_dropped, 0);
+  // The query hash an export carries is kept, so exports made with different queries can be told apart later.
+  assert.equal(run(exp({ query_hash: "a".repeat(64) })).query_hash, "a".repeat(64));
+  assert.equal(run(exp()).query_hash, null);
+});
+
+test("a refusal never repeats a name the export made up, because it can be data", () => {
+  const e = exp({ rows: undefined, rows_csv: "rows.csv", expected_rows: 1 });
+  // A CSV with no header line: its first data row is read as the column names.
+  const noHeader = `c-juniper-000001,${BASE_TAG},2026-09-01T00:30:00Z,1,0,3\n`;
+  assert.throws(() => run(e, { readSibling: () => noHeader }), (err: unknown) => {
+    assert.ok(err instanceof PilotError && err.code === "invalid_telemetry", String(err));
+    assert.ok(!err.message.includes("c-juniper-000001") && !err.message.includes(BASE_TAG), err.message);
+    assert.match(err.message, /undocumented column with a name that is not a plain lowercase word/);
+    return true;
+  });
+  const withField = exp();
+  (withField.rows![0] as unknown as Record<string, unknown>)["Jane Doe <jane>"] = 1;
+  assert.throws(() => run(withField), (err: unknown) => err instanceof PilotError && !err.message.includes("Jane") && /undocumented field with a name/.test(err.message));
+  refused(JSON.parse(JSON.stringify(exp()).replace('"format"', '"__proto__": {"x": 1}, "format"')), "invalid_telemetry", /__proto__, constructor or prototype/);
+});

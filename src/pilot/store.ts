@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, unlinkSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalJson } from "../core/evidence.ts";
 import { sha256 } from "../core/safety.ts";
@@ -38,6 +38,7 @@ export interface JournalEntry {
 
 const entryHash = (e: Omit<JournalEntry, "hash">): Sha256 => sha256(canonicalJson(e));
 const MAX_OBJECT_BYTES = 256 * 1024 * 1024;
+const LOCK_STALE_MS = 60_000;
 
 export class PilotStore {
   dir: string;
@@ -53,8 +54,19 @@ export class PilotStore {
     const id = contentId(value);
     // Written with keys in canonical order, so the same record always produces the same file whatever order its
     // fields were built in; otherwise a retry could look like an attempt to replace the record.
-    writeOnce(this.objectPath(kind, id), `${JSON.stringify(JSON.parse(canonicalJson(value)), null, 2)}\n`);
+    this.place(this.objectPath(kind, id), `${JSON.stringify(JSON.parse(canonicalJson(value)), null, 2)}\n`);
     return id;
+  }
+
+  // A record's name is the hash of its content, so only one content is right for a name. A file there with any
+  // other content is damaged (a crash, a stray edit) and is put right; a good record is never touched.
+  private place(path: string, content: string): void {
+    try {
+      writeOnce(path, content);
+    } catch (e) {
+      if (!(e instanceof PilotError) || e.code !== "conflict") throw e;
+      writeAtomic(path, content);
+    }
   }
 
   // Reads a record and checks it still hashes to its name: an edited record is refused, not used.
@@ -98,7 +110,7 @@ export class PilotStore {
 
   putPrompt(text: string): Sha256 {
     const id = promptId(text);
-    writeOnce(this.objectPath("prompt", id), text);
+    this.place(this.objectPath("prompt", id), text);
     return id;
   }
 
@@ -111,6 +123,18 @@ export class PilotStore {
   }
 
   private journalPath(): string { return join(this.dir, "journal.jsonl"); }
+  // The sequence number and hash of the newest entry, kept beside the journal. The chain alone cannot show that
+  // entries were cut off the end; a journal shorter than its recorded head can.
+  private headPath(): string { return join(this.dir, "journal.head"); }
+
+  head(): { seq: number; hash: Sha256 } | null {
+    if (!existsSync(this.headPath())) return null;
+    try {
+      const h = JSON.parse(readFileSync(this.headPath(), "utf8")) as { seq: number; hash: Sha256 };
+      if (Number.isInteger(h.seq) && h.seq >= 1 && isSha256(h.hash)) return { seq: h.seq, hash: h.hash };
+    } catch { /* falls through */ }
+    throw new PilotError("tampered", "journal.head is not readable, so the journal cannot be checked against it.");
+  }
 
   // Every entry, after checking the chain: each line must hash to its own `hash` and name the line before it.
   journal(): JournalEntry[] {
@@ -129,6 +153,13 @@ export class PilotStore {
       entries.push(e);
       prev = hash;
     }
+    const head = this.head();
+    // A crash between the append and the head update leaves the head one behind, which is fine. The journal being
+    // behind its head, or the head missing from a journal with history, means entries were removed.
+    if (head && (entries.length < head.seq || entries[head.seq - 1].hash !== head.hash)) {
+      throw new PilotError("tampered", `journal.jsonl has ${entries.length} entries but its recorded head is entry ${head.seq}, so entries were removed or changed.`);
+    }
+    if (!head && entries.length > 1) throw new PilotError("tampered", "journal.head is missing, so the journal cannot be checked for removed entries.");
     return entries;
   }
 
@@ -154,6 +185,7 @@ export class PilotStore {
       const entry: JournalEntry = { ...rest, hash: entryHash(rest) };
       mkdirSync(this.dir, { recursive: true });
       appendFileSync(this.journalPath(), `${JSON.stringify(entry)}\n`, { mode: 0o600 });
+      writeAtomic(this.headPath(), `${JSON.stringify({ seq: entry.seq, hash: entry.hash })}\n`);
       return entry;
     });
   }
@@ -172,6 +204,9 @@ export class PilotStore {
         const owner = Number(readFileSync(lock, "utf8").trim());
         let alive = Number.isInteger(owner) && owner > 0 && owner !== process.pid;
         if (alive) { try { process.kill(owner, 0); } catch { alive = false; } }
+        // A journal write takes milliseconds. A lock this old was left behind, even if its process id is in use
+        // again by something else.
+        try { if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) alive = false; } catch { alive = false; }
         if (alive || attempt >= 2) throw new PilotError("conflict", `Another pilot command (process ${owner}) is writing to ${this.dir}. Wait for it to finish and run this again.`);
         try { unlinkSync(lock); } catch { /* another process removed it first */ }
       }

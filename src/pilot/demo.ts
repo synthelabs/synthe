@@ -5,7 +5,7 @@ import { githubRepo } from "../github/repo.ts";
 import { main } from "./main.ts";
 import { activePack, GITHUB_TOKEN_ENV, type Flags, type PilotDeps } from "./commands.ts";
 import {
-  agentScript, BASELINE_PROMPT, baselineExport, CANARIES, DEMO, demoConfig, demoPack, experimentBInterim, experimentBMistagged, experimentCFinal,
+  agentScript, BASELINE_PROMPT, baselineExport, CANARIES, DEMO, demoConfig, demoPack, experimentBAfterStop, experimentBInterim, experimentBMistagged, experimentCFinal,
   experimentCInterim, experimentFailureCases, HUMAN_CANDIDATE_PROMPT, proposerScript,
 } from "./demo-data.ts";
 import { proposerContext } from "./discover.ts";
@@ -72,6 +72,8 @@ export async function demo(flags: Flags, deps: PilotDeps): Promise<number> {
     fault: (point) => { if (point === crashAt) { crashAt = null; throw new Error(`injected crash at ${point}`); } },
   };
   const store = new PilotStore(dir);
+  // The demo's calendar. Each export is imported on or after the day it says it was made, as a real one would be.
+  const on = (day: string) => { clock = Date.parse(`${day}T09:00:00Z`); };
   let step = 0;
   const run = async (title: string, argv: string[]): Promise<number> => {
     say("");
@@ -141,6 +143,8 @@ export async function demo(flags: Flags, deps: PilotDeps): Promise<number> {
     const exportB = writeExport("experiment-1-day5.json", experimentBInterim(tagB));
     expect("analysis without a recorded approval is refused", await run("Try to analyse before anyone approved the experiment", ["analyze", "--experiment", expB, "--telemetry", exportB]) === 1 && store.find("analysis.decided").length === 0);
     expect("approval recorded against the exact candidate and experiment", await run("Record the approval", ["approve", "--candidate", candB, "--experiment", expB, "--approver", DEMO.metric_owner]) === 0);
+    expect("an export dated in the future is refused, and nothing is imported", await run("Try to analyse an export dated after today", ["analyze", "--experiment", expB, "--telemetry", exportB]) === 1 && store.find("telemetry.imported").filter((e) => e.refs.purpose === "experiment").length === 0);
+    on("2026-10-24");
     expect("an export with an unknown version tag is refused", await run("Try an export whose candidate arm carries the wrong tag", ["analyze", "--experiment", expB, "--telemetry", writeExport("experiment-1-mistagged.json", experimentBMistagged(tagB))]) === 1 && store.find("analysis.decided").length === 0);
     await run("Analyse the day-5 export of experiment 1", ["analyze", "--experiment", expB, "--telemetry", exportB]);
     const decisionB = store.get<ExperimentAnalysis>("analysis", lastOf("analysis.decided").key);
@@ -153,6 +157,7 @@ export async function demo(flags: Flags, deps: PilotDeps): Promise<number> {
     outcomes.push(`Candidate ${shortId(candB)} (proposer, attempt 2): passed replay, pull request #${github.pulls[0]?.number}, experiment ${shortId(expB)}: REVERT (early stop: ${decisionB.guards.find((g) => g.status === "breach" || g.early_ci)?.name ?? "guard"} breached). Rollback target ${decisionB.rollback.tag}.`);
 
     // ---- 5. Close the loop ----
+    on("2026-10-25");
     const request: PromotionRequest = {
       version: 1, base_pack_id: packV1.id, approver: DEMO.quality_lead, at: "2026-10-25T10:00:00Z",
       existing: [{ case_id: "ret-h01", reason: "The current prompt never states the return-by date here; keep it as a permanent check.", evidence: { replay_id: replayB.key, turn: 1, check_id: "states-return-deadline" } }],
@@ -182,13 +187,17 @@ export async function demo(flags: Flags, deps: PilotDeps): Promise<number> {
     expect("second pull request opened for the new candidate", await run("Publish the review", ["review", "--candidate", candC, "--publish", "--repo", DEMO.slug, "--base", DEMO.base, "--confirm", candC]) === 0 && github.pulls.length === 2);
     await run("Record the approval", ["approve", "--candidate", candC, "--experiment", expC, "--approver", DEMO.metric_owner]);
     const tagC = candidateTag(candC);
+    on("2026-11-02");
     await run("Analyse the day-6 export of experiment 2", ["analyze", "--experiment", expC, "--telemetry", writeExport("experiment-2-day6.json", experimentCInterim(tagC))]);
     const holdC = store.get<ExperimentAnalysis>("analysis", lastOf("analysis.decided").key);
     expect("experiment 2 at day 6: HOLD (too few mature conversations, window still open)", holdC.recommendation === "hold" && holdC.final === false);
+    on("2026-11-12");
     await run("Analyse the final export of experiment 2", ["analyze", "--experiment", expC, "--telemetry", writeExport("experiment-2-final.json", experimentCFinal(tagC))]);
     const keepC = store.get<ExperimentAnalysis>("analysis", lastOf("analysis.decided").key);
     expect("experiment 2 at the cutoff: KEEP (primary clears the minimum effect, guards pass)", keepC.recommendation === "keep" && keepC.final === true);
     expect("the final export overlaps the day-6 export and no conversation is counted twice", keepC.coverage.rows === 14 * 640 && keepC.coverage.duplicates_dropped >= holdC.coverage.rows);
+    const decisionsB = store.find("analysis.decided").filter((e) => e.refs.experiment === expB).length;
+    expect("a reverted experiment takes no later export: it cannot come back as a keep", await run("Try to reopen the reverted experiment with a later export", ["analyze", "--experiment", expB, "--telemetry", writeExport("experiment-1-after-stop.json", experimentBAfterStop(tagB))]) === 1 && store.find("analysis.decided").filter((e) => e.refs.experiment === expB).length === decisionsB);
     outcomes.push(`Experiment ${shortId(expC)} at day 6: HOLD (${holdC.flags.join(", ")}).`);
     outcomes.push(`Candidate ${shortId(candC)} (written by a person): passed replay on pack v2, pull request #${github.pulls[1]?.number}, experiment ${shortId(expC)} at the cutoff: KEEP (${keepC.primary.name} ${keepC.primary.baseline.estimate?.toFixed(4)} to ${keepC.primary.candidate.estimate?.toFixed(4)}).`);
     outcomes.push(`Pack ${shortId(packV1.id)} (v1) promoted to ${shortId(packV2.id)} (v2): 3 approved regression cases; v1 unchanged; held-out cases still held out.`);

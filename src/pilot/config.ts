@@ -1,6 +1,7 @@
 import { promptPathProblem } from "../core/safety.ts";
 import { PilotError } from "./errors.ts";
 import { ms } from "./ids.ts";
+import { unsafeKey } from "./io.ts";
 import { parseMetricContract } from "./metric.ts";
 import type { PilotConfig, ProviderApproval, ReplayConfig } from "./types.ts";
 
@@ -34,7 +35,7 @@ function parseReplay(v: unknown): ReplayConfig {
   onlyKeys(v, ["model", "max_tokens", "temperature", "max_steps_per_turn", "gate", "min_recurring_cases", "max_changed_lines"], "replay");
   const gate = v.gate;
   if (!isObject(gate)) return bad("replay.gate is required");
-  onlyKeys(gate, ["min_paired_cases", "min_paired_coverage", "min_net_wins"], "replay.gate");
+  onlyKeys(gate, ["min_paired_cases", "min_paired_coverage", "min_net_wins", "max_unchecked_blocking_guards"], "replay.gate");
   const temperature = v.temperature === null ? null : fraction(v.temperature, "replay.temperature");
   return {
     model: text(v.model, "replay.model"),
@@ -45,6 +46,7 @@ function parseReplay(v: unknown): ReplayConfig {
       min_paired_cases: int(gate.min_paired_cases, "replay.gate.min_paired_cases", 1, 100000),
       min_paired_coverage: fraction(gate.min_paired_coverage, "replay.gate.min_paired_coverage"),
       min_net_wins: int(gate.min_net_wins, "replay.gate.min_net_wins", 1, 100000),
+      max_unchecked_blocking_guards: int(gate.max_unchecked_blocking_guards, "replay.gate.max_unchecked_blocking_guards", 0, 100000),
     },
     min_recurring_cases: int(v.min_recurring_cases, "replay.min_recurring_cases", 2, 100000),
     max_changed_lines: int(v.max_changed_lines, "replay.max_changed_lines", 1, 200),
@@ -76,8 +78,10 @@ function parseProvider(v: unknown): ProviderApproval | null {
 // Parses pilot.json. Throws PilotError invalid_config (or invalid_metric, from the metric contract).
 export function parsePilotConfig(source: string): PilotConfig {
   let v: unknown;
-  try { v = JSON.parse(source); } catch (e) { return bad(`not valid JSON (${(e as Error).message})`); }
+  try { v = JSON.parse(source); } catch { return bad("not valid JSON"); }
   if (!isObject(v)) return bad("must be a JSON object");
+  const unsafe = unsafeKey(v);
+  if (unsafe) bad(`has a field named "${unsafe}", which is not allowed`);
   onlyKeys(v, ["version", "pilot_id", "agent", "repo", "metric", "replay", "provider"], "the file");
   if (v.version !== 1) bad("version must be 1");
   const pilotId = text(v.pilot_id, "pilot_id");

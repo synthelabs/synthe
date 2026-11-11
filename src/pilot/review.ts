@@ -115,6 +115,7 @@ export function buildReviewBundle(input: {
       regressions: copy(r.regressions),
       fixes: r.fixes.length,
       new_blocking_guard_failures: copy(r.new_blocking_guard_failures),
+      unchecked_blocking_guards: r.unchecked_blocking_guards.length,
       gate: { eligible: r.gate.eligible, reasons: [...r.gate.reasons] },
     },
     experiment: copy({ arms: e.arms, allocation: e.allocation, window: e.window, analysis_cutoff: e.analysis_cutoff, required_per_arm: e.required_per_arm, methods: e.methods }),
@@ -130,6 +131,11 @@ const refLine = (pack: Pack, t: TurnRef) => `- case ${t.case_id}, turn ${t.turn}
 // the prompt diff, and no conversation text: the pack is read only for its catalog.
 // `targetCheckId` is the check the candidate was written to fix (ReplayReport.target_check_id); the bundle does not
 // carry it, so the caller passes it when it has one.
+// The review is also a pull request body, which GitHub caps at 65,536 characters: a long list is cut, and the
+// full list stays in the replay record the review names.
+const LISTED = 40;
+export const MAX_REVIEW_CHARS = 60_000;
+
 export function renderReview(bundle: ReviewBundle, reviewId: Sha256, pack: Pack, targetCheckId: string | null = null): string {
   const m = bundle.metric;
   const rp = bundle.replay;
@@ -177,9 +183,11 @@ export function renderReview(bundle: ReviewBundle, reviewId: Sha256, pack: Pack,
     `- Sign test p (one-sided, wins against losses, ties left out): ${rp.sign_p < 0.0001 ? "below 0.0001" : rp.sign_p.toFixed(4)}.`,
     `- Checks the candidate fixes: ${rp.fixes}.`,
     `- Regressions (a check the baseline passed and the candidate fails):${rp.regressions.length === 0 ? " none." : ""}`,
-    ...rp.regressions.map((t) => refLine(pack, t).replace(/^- /, "  - ")),
+    ...rp.regressions.slice(0, LISTED).map((t) => refLine(pack, t).replace(/^- /, "  - ")),
+    ...(rp.regressions.length > LISTED ? [`  - ... and ${rp.regressions.length - LISTED} more, listed in the replay record ${bundle.replay_id}.`] : []),
     `- New blocking guard failures:${rp.new_blocking_guard_failures.length === 0 ? " none." : ""}`,
     ...rp.new_blocking_guard_failures.map((t) => refLine(pack, t).replace(/^- /, "  - ")),
+    `- Blocking guard checks that could not be checked for the candidate: ${rp.unchecked_blocking_guards}.`,
     `- Gate verdict: ${rp.gate.eligible ? "eligible for review" : "not eligible"}.${rp.gate.reasons.length > 0 ? ` ${rp.gate.reasons.join(" ")}` : ""}`,
     "",
     "Replay shows checks on recorded conversations. It is not an estimate of business impact.",

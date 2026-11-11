@@ -22,7 +22,10 @@ const SCRIPT: ModelScript = {
 
 test("the scripted agent answers from its rules, and a prompt phrase changes what it does", async () => {
   const model = scriptedModel(parseModelScript(JSON.stringify(SCRIPT)));
-  assert.equal(model.destination, "scripted:sim");
+  assert.match(model.destination, /^scripted:sim@[0-9a-f]{12}$/);
+  // A different script under the same name is a different model, so its replays are never mixed with this one's.
+  assert.notEqual(scriptedModel({ ...SCRIPT, fallback: "Something else." }).destination, model.destination);
+  assert.equal(scriptedModel(structuredClone(SCRIPT)).destination, model.destination);
   const first = await model.chat(request("Be brief.", [{ role: "user", text: "I want to return order ORD-7Q4Z" }]));
   assert.equal(first.stop, "tool_use");
   assert.deepEqual(first.tool_calls.map((c) => [c.name, c.input]), [["lookup_order", { order_id: "ORD-7Q4Z" }]]);
@@ -81,6 +84,14 @@ test("a model-backed proposer sends only what the context holds, and an off-form
   const sent = JSON.stringify(seen[0]);
   assert.ok(sent.includes("DISCOVERY-TEXT") && sent.includes("Tells the customer the return-by date.") && sent.includes("newly fails on case ret-d01"));
   assert.equal(await codeOf(() => modelProposer(reply("Sure! Here is a prompt."), "m", 500).propose(context(0))), "invalid_candidate");
+});
+
+test("tool definitions count toward the character limit", async () => {
+  const inner: ChatModel = { destination: "fake:model", async chat() { return { text: "ok", tool_calls: [], stop: "end" }; } };
+  const limited = bounded(inner, { max_calls: 10, max_input_chars: 300 });
+  const tools = [{ name: "lookup_order", description: "x".repeat(400), input_schema: { type: "object" } }];
+  assert.equal(await codeOf(() => limited.chat({ ...request("s", [{ role: "user", text: "hi" }]), tools })), "budget_exceeded");
+  assert.equal(limited.calls(), 0);
 });
 
 test("the call and character limits stop the request that would pass them, before it is sent", async () => {

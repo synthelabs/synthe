@@ -84,7 +84,7 @@ Every command can be run again. A repeated step finds its earlier record and add
   },
   "replay": {
     "model": "juniper-sim", "max_tokens": 800, "temperature": null, "max_steps_per_turn": 4,
-    "gate": { "min_paired_cases": 10, "min_paired_coverage": 0.7, "min_net_wins": 3 },
+    "gate": { "min_paired_cases": 10, "min_paired_coverage": 0.7, "min_net_wins": 3, "max_unchecked_blocking_guards": 0 },
     "min_recurring_cases": 3, "max_changed_lines": 6
   },
   "provider": null
@@ -143,7 +143,16 @@ Aggregates form, when rows cannot leave the warehouse: replace `rows_csv` with
 
 `n` counts mature, attributable conversations. Each aggregate export must be cumulative from the experiment start; only the newest is used. With aggregates Synthe cannot check duplicates, unit overlap or a runtime change, so it takes the customer's counts as given.
 
-Imports are safe to repeat. The same export twice counts once. A later export may fill in an outcome that was empty; a changed value, tag or time for a conversation already imported is refused.
+Rules that keep the counts honest:
+
+- The same export twice counts once.
+- A value on a conversation that was still inside the outcome lag when exported is provisional. It is stored as not known yet, and counts only once an export made after the lag carries it.
+- A later export must contain every conversation an earlier export had for the time both cover. It may add conversations and fill in outcomes. The same conversations under new ids, or conversations that vanish, are refused.
+- A changed value, tag or time for a conversation already imported is refused. So is a newer aggregate export that counts less than an older one.
+- Every export of a pilot must carry the same `query_hash` (or none), the baseline's included.
+- An export dated later than the moment it is imported is refused.
+- A refused export leaves no record, so the next correct export still imports.
+- A keep or a revert ends the experiment. It takes no more exports after that: a stopped experiment cannot come back as a keep.
 
 ## Conversation pack
 
@@ -180,9 +189,11 @@ Import refuses a pack that is not approved for replay, has unknown fields, excee
 - Each assistant turn is replayed against the **recorded** history up to that turn, with the same settings for both prompts.
 - A tool call gets the recorded result for the same tool and arguments. No tool is ever run. A call the recording has no result for makes the turn `unsupported`: nothing is invented, and the case stops there.
 - A cut-off, refused or failed reply makes the turn `inconclusive`.
-- When a reply behaves differently from the recorded one (other tool calls, or a different result on that turn's checks), later turns are `not_reached`: the recorded customer was answering the old agent. A change that fixes a failure diverges by design, so expect it.
+- When a reply behaves differently from the recorded one (other tool calls, or a different result on that turn's checks), the case stops counting in the comparison from the next turn: the recorded customer was answering the old agent. A change that fixes a failure diverges by design, so expect it.
+- Those later turns are still replayed against the recorded history (`after_stop`), for their guard checks only. Harm seen there blocks the candidate like any other. A blocking guard that could not be decided for the candidate (its turn did not finish) counts against it: a guard nobody checked is not a pass.
 - A case is **paired** when at least one turn was scored for both prompts. The report gives wins, losses and ties, coverage (paired cases, turns scored on both), excluded cases with the reason and turn, each regression with its case, turn and check, and new blocking guard failures.
-- The gate passes only when: no new blocking guard failure; enough paired cases and coverage; wins minus losses reaches the minimum; held-out cases do not lose; and the targeted check is fixed somewhere.
+- The gate passes only when: no new blocking guard failure; no more unchecked blocking guards than the config allows; enough paired cases and coverage; wins minus losses reaches the minimum; at least one held-out case was compared and held-out cases do not lose; and the targeted check is fixed somewhere.
+- What replay does not see: a reply that passes the same checks with the same tool calls but says something different does not count as a divergence, and later turns never contain the candidate's own earlier replies.
 - The proposer gets discovery cases only. Its feedback after a rejection names discovery cases only; a problem on held-out cases is reported to it as one fixed sentence.
 
 Replay shows checks on recorded conversations. It is not an estimate of business impact. That is what the experiment is for.
@@ -194,8 +205,10 @@ Replay shows checks on recorded conversations. It is not an estimate of business
 The analysis is fixed in the specification before any outcome is seen:
 
 - **Keep**: only at the final analysis (an export made at or after the cutoff), with clean data, when the primary metric's gain is at least `min_effect` and its interval is above zero, and every guard's interval for harm is inside its `max_harm`.
-- **Revert**: at the final analysis when a guard breaches (harm above `max_harm` and its interval above zero) or the primary is significantly worse. Before the cutoff, only a critical guard's early stop reverts: the same test at 99.9%, once both arms have the guard's `min_per_arm`.
-- **Hold**: everything else. Before the cutoff; too few mature conversations; outcomes still inside the lag; a sample ratio mismatch; a cohort imbalance; missing events or ambiguous attribution above the limits; observational data; more than one runtime model; no single export that covers the whole window; a primary that does not clear; a guard that is not shown to be safe.
+- **Revert**: at the final analysis when a guard breaches (the whole interval for its harm is above `max_harm`) or the primary is significantly worse. Before the cutoff, only a critical guard's early stop reverts: the same test at 99.9%, once both arms have the guard's `min_per_arm`.
+- **Hold**: everything else. Before the cutoff; too few mature conversations; outcomes still inside the lag; a sample ratio mismatch; a cohort imbalance, or segments reported for one arm only; missing events above the limit, or far more common in one arm than the other; ambiguous attribution above the limit; observational data; more than one runtime model; no single export that covers the whole window; a primary that does not clear; a guard that is not shown to be safe.
+
+A guard has three outcomes. Pass: the whole interval for harm is inside `max_harm`. Breach: the whole interval is beyond it. Otherwise it is inconclusive, which holds. Harm that is real but may still be inside the margin is not a breach, because the contract says the team tolerates that much; it is not a pass either.
 
 Methods: a rate uses the Newcombe hybrid score interval for the difference of two proportions; a mean uses the Welch interval. Sample ratio and cohort balance use chi-square tests at 0.001. The required sample size is the standard two-sample formula at the contract's alpha and power.
 
@@ -205,7 +218,9 @@ Known limits of the method. Read these before you rely on a decision:
 - The experiment is sized to detect `min_effect`. A change whose true effect is exactly `min_effect` is kept only about half the time, because keep also needs the measured gain to reach `min_effect`.
 - Each guard is tested on its own. With several guards, a false revert is more likely than alpha suggests.
 - The early stop is a fixed 99.9% check at every look, not a formal sequential boundary. Many looks raise the chance of a false stop.
-- `final` depends on the export's own `exported_at`. The export is the customer's statement; Synthe cannot audit how the split was run.
+- `final` depends on the export's own `exported_at`. The export is the customer's statement; Synthe cannot audit how the split was run. An export dated in the future is refused, but an honest-looking date cannot be checked.
+- Rows left out of one arm are caught only when the split moves far from the plan (p below 0.001) or the later export no longer contains conversations an earlier one had. A few percent of one arm's failures dropped from the very first export can pass unnoticed.
+- A guard that is harmful but not yet shown to be beyond its margin holds; it does not revert. With little data that can take the whole window.
 - A mean metric with heavy tails (refunds, revenue) needs more data than the formula says.
 
 Each decision file leads with the recommendation and the team's own number, lists every number with its source record and method, and gives the exact rollback target (the baseline tag and prompt id).
@@ -218,7 +233,11 @@ The default is a local bundle. A pull request is opened only when all of these h
 - A GitHub token in `SYNTHE_PILOT_GITHUB_TOKEN`. `GITHUB_TOKEN` and `GH_TOKEN` are not read.
 - The candidate passed the replay gate.
 - The prompt on the base branch is still the baseline prompt the candidate was built from.
-- The title, body, commit message and candidate prompt pass the egress check: no personal data shapes, no run of six words from pack conversations, no identifier token from them. Wording already in the baseline prompt is allowed. A refusal names the kind of match and never repeats it.
+- The title, body, commit message and candidate prompt pass the egress check (below).
+
+The egress check looks for content that belongs to particular conversations: any run of three words, and any single word of five letters or more or word with a digit (a name, an order token), that appears in only a few cases of the pack (two, or 2% of the cases if that is more). Wording that many conversations share is the agent's and the tools' own boilerplate and is not flagged. Matching ignores case, spacing, punctuation, accents, dash variants and hidden characters. Personal data shapes (an email address, a card number) are refused whatever the pack holds. Allowed: the baseline prompt, the review's own generated wording, and what reports print by design (case ids, check ids, catalog sentences, tool names). So the free text that is really checked is the rationale and the changed prompt lines. A refusal names the kind of match and never repeats it; reword the candidate or the rationale and run `review` again.
+
+Limits of the check: it cannot see a paraphrase, look-alike letters from another alphabet, or content that many conversations share. Case ids and catalog sentences are printed in reports and pull requests, so the customer must write them without customer details.
 
 A retry, or a second run, finds the existing pull request for the candidate's branch and opens nothing. Merging is a person's decision. The pull request body is the review bundle: the diff, the contract, replay evidence, the experiment plan, the rollback target, every id, and the approve command.
 
@@ -239,7 +258,8 @@ node src/pilot/cli.ts replay --candidate <id> --live --confirm-endpoint https://
 ```
 
 - The key is read from the one variable `key_env` names. There is no fallback to `ANTHROPIC_API_KEY`, `SYNTHE_ANTHROPIC_KEY` or an event code, and Synthe's event proxy is never used.
-- The destination, model, data class and limits are printed before the first request. The call that would pass a limit is refused before it is sent.
+- The destination, model, data class and limits are printed before the first request. The call that would pass a limit is refused before it is sent. One counted call is one request: the SDK's own retries are off.
+- Settings in the shell cannot change the request: the base URL, a second credential, extra headers, request logging and tracing are all fixed or off.
 - `replay.model` must equal the approved model. Both prompts must run on the same model.
 - Model output is data. A tool call is only used to look up a recorded result.
 
@@ -249,17 +269,20 @@ A live run sends pack conversations to the provider. That needs the customer's w
 
 - Records are write-once and named by the hash of their content. A record that no longer matches its name is refused.
 - The journal is append-only and chained. An edited or shortened journal is refused.
-- `verify` rechecks every record and the journal, then recomputes every replay report, baseline report and decision from its stored evidence and compares.
+- `verify` rechecks every record and the journal, then recomputes every replay report, baseline report and decision from its stored evidence and compares. It also checks that each decision cites only exports imported for its experiment, an approval that answers one of this pilot's review bundles, and that each replay report was built from the recorded runs.
+- The newest journal entry's number and hash are kept in `journal.head`, so entries cut off the end are noticed. `verify` prints that head.
 - Reports under `reports/` are renderings. They can be deleted and rebuilt with `report` and by re-running the step.
 - Nothing is sent to Synthe: no events, run records or shared results.
 
-`verify` proves the records are consistent with each other. It cannot prove an export is truthful.
+`verify` shows the records agree with each other and were not changed by accident. It cannot show that an export is truthful, and it cannot detect someone with write access rewriting the whole directory consistently. To guard against that, keep the journal head outside the directory, for example in the pull request.
+
+An unexpected error prints only its kind, because an error message can quote the data it choked on. Run the command again with `SYNTHE_PILOT_DEBUG=1` to see the text.
 
 ## Promotion
 
 `promote --list` prints the failures a reviewer may approve: every check that failed in a stored replay on the active pack. The request names the approver, existing cases with the replay evidence, and any new redacted cases (for example from the experiment) with the experiment id.
 
-The result is a new pack version that names the old one as its parent. The old pack is not changed. A held-out case stays held out, and a later pack that moves a held-out case to discovery is refused.
+The result is a new pack version that names the old one as its parent. The old pack is not changed. A held-out case stays held out. `promote` is the only way to make a new version: the `pack` command refuses any pack once one is frozen, and a promotion that would put a held-out conversation in the discovery split, under its own id or as a copy, is refused.
 
 ## Checks
 

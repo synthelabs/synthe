@@ -294,8 +294,23 @@ test("hold on missing events: a guard that looks good only because the candidate
   assert.equal(a.guards[0].candidate.missing, 100);
   assert.equal(a.guards[0].candidate.n, 900);
   assert.ok(Math.abs(a.coverage.missing_rate - 0.1) < 1e-12);
-  assert.deepEqual(a.flags, ["missing_events"]);
+  assert.deepEqual(a.flags, ["missing_events", "missing_imbalance"]);
   assert.equal(a.recommendation, "hold");
+});
+
+test("hold when missing outcomes pile up in one arm, even under the per-arm limit", () => {
+  // 4% of the candidate's resolved outcomes are missing (the contract allows 5%), none of the baseline's. Dropping
+  // 40 failures lifts the candidate from 42.0% to 43.8%, which would otherwise read as a clean win.
+  const honest = run(GOOD_BASE, { ...GOOD_CAND, resolved: 420 }).a;
+  assert.equal(honest.recommendation, "hold");
+  const { a } = run(GOOD_BASE, { ...GOOD_CAND, resolved: 420, missing: { resolved: 40 } });
+  assert.ok(a.coverage.missing_rate < 0.05);
+  assert.deepEqual(a.flags, ["missing_imbalance"]);
+  assert.equal(a.recommendation, "hold");
+  assert.ok(a.reasons.some((r) => r.includes("far more often in one arm")));
+  // The same small share missing in both arms is not an imbalance.
+  const even = run({ ...GOOD_BASE, missing: { resolved: 40 } }, { ...GOOD_CAND, missing: { resolved: 40 } }).a;
+  assert.deepEqual(even.flags, []);
 });
 
 test("hold on ambiguous attribution", () => {
@@ -341,8 +356,9 @@ test("hold when the export was made after the cutoff but covers only part of the
 });
 
 test("revert on a final guard breach", () => {
-  const { a } = run(GOOD_BASE, { ...GOOD_CAND, escalated: 160 });
+  const { a } = run(GOOD_BASE, { ...GOOD_CAND, escalated: 180 });
   assert.equal(a.guards[0].status, "breach");
+  assert.ok(a.guards[0].ci!.lo > 0.03, "the whole interval for harm is beyond the tolerated 0.03");
   assert.equal(a.primary.status, "clears");
   assert.equal(a.recommendation, "revert");
   assert.equal(a.stopped_by, "final");
@@ -387,12 +403,12 @@ test("no revert before the cutoff from a nominal-level breach that is not an ear
   assert.equal(noEarly.guards[0].status, "breach");
   assert.equal(noEarly.recommendation, "hold");
   // A critical guard with early_stop that breaches at 95% but not at 99.9%: hold.
-  const mild = run(GOOD_BASE, { ...GOOD_CAND, escalated: 145 }, { at: INTERIM_AT, days: 6 }).a;
+  const mild = run(GOOD_BASE, { ...GOOD_CAND, escalated: 175 }, { at: INTERIM_AT, days: 6 }).a;
   assert.equal(mild.guards[0].status, "breach");
-  assert.ok(mild.guards[0].early_ci && mild.guards[0].early_ci.lo <= 0);
+  assert.ok(mild.guards[0].early_ci && mild.guards[0].early_ci.lo <= 0.03, "at 99.9% the harm is not shown to be beyond the 0.03 margin");
   assert.equal(mild.recommendation, "hold");
   // The same data at the final analysis reverts.
-  assert.equal(run(GOOD_BASE, { ...GOOD_CAND, escalated: 145 }).a.recommendation, "revert");
+  assert.equal(run(GOOD_BASE, { ...GOOD_CAND, escalated: 175 }).a.recommendation, "revert");
 });
 
 test("revert when the primary is significantly worse at the final analysis", () => {
@@ -428,6 +444,73 @@ test("a later export that overlaps an earlier one, with some outcomes matured fr
   assert.deepEqual(both.telemetry_ids, [earlyImport.id, finalImport.id]);
   // Order of the imports given does not matter.
   assert.deepEqual(analyze(s, [finalImport, earlyImport]), both);
+});
+
+test("an outcome exported while the conversation was inside the lag is not final, whatever a later export says", () => {
+  const s = spec();
+  const full = makeRows(GOOD_BASE, GOOD_CAND);
+  // Exported one hour before the window ends, with a value on every row: the last two days are still inside the lag.
+  const early = full.filter((r) => r.started_at < "2026-10-14T23:00:00Z");
+  const atEnd = imp(exportOf(early, "2026-10-14T23:00:00Z", { window: { start: START, end: "2026-10-14T23:00:00Z" } }));
+  assert.ok(atEnd.value.provisional_values_dropped > 100, "values on immature rows are recorded as not known yet");
+  assert.ok(atEnd.value.rows!.filter((r) => r.started_at >= "2026-10-13T00:00:00Z").every((r) => Object.values(r.values).every((v) => v === null)));
+  const alone = analyze(s, [atEnd]);
+  assert.equal(alone.recommendation, "hold");
+  // A second export made after the cutoff that holds only the last hour's conversations. It makes the analysis
+  // "final" by date, but says nothing about the conversations of the first export.
+  const lastHour = imp(exportOf(full.filter((r) => r.started_at >= "2026-10-14T23:00:00Z"), FINAL_AT, { export_id: "last-hour", window: { start: "2026-10-14T23:00:00Z", end: "2026-10-15T00:00:00Z" } }));
+  const both = analyze(s, [atEnd, lastHour]);
+  assert.equal(both.final, true);
+  assert.ok(both.coverage.immature > 100, `${both.coverage.immature} rows still wait for a final outcome`);
+  assert.ok(both.flags.includes("inside_lag_window") && both.flags.includes("window_not_covered"));
+  assert.equal(both.recommendation, "hold");
+  // The whole window, exported after the cutoff, is what makes it final.
+  const whole = analyze(s, [atEnd, imp(exportOf(full, FINAL_AT, { export_id: "whole" }))]);
+  assert.equal(whole.coverage.immature, 0);
+  assert.equal(whole.recommendation, "keep");
+});
+
+test("the same conversations under new ids, or dropped from a later export, are refused", () => {
+  const s = spec();
+  const small: [ArmPlan, ArmPlan] = [{ n: 400, resolved: 160, escalated: 40 }, { n: 400, resolved: 200, escalated: 36 }];
+  const first = imp(exportOf(makeRows(...small), FINAL_AT));
+  assert.equal(analyze(s, [first]).recommendation, "hold");
+  // The same rows again with fresh ids would double the sample and turn hold into keep.
+  const rekeyed = imp(exportOf(makeRows(...small, { firstId: 500001 }), "2026-10-19T00:00:00Z", { export_id: "again" }));
+  refusal(() => analyze(s, [first, rekeyed]), "telemetry_conflict", /must contain every conversation of earlier exports/);
+  // A later export of the same period that leaves conversations out is refused for the same reason.
+  const thinner = imp(exportOf(makeRows(...small).filter((_, k) => k % 10 !== 0), "2026-10-19T00:00:00Z", { export_id: "thinner" }));
+  refusal(() => analyze(s, [first, thinner]), "telemetry_conflict", /80 conversations/);
+});
+
+test("a newer aggregate export that counts less than an older one is refused", () => {
+  const c = contract();
+  const { s, rows } = run({ n: 2000, resolved: 800, escalated: 200 }, { n: 2000, resolved: 1000, escalated: 600 });
+  const big = imp(baseExport({ export_id: "agg-big", exported_at: "2026-10-17T12:00:00Z", window: s.window, assignment: "randomized", aggregates: aggregatesOf(rows, c, s, "2026-10-17T12:00:00Z") }));
+  assert.equal(analyze(s, [big]).recommendation, "revert");
+  const fewer = run({ n: 700, resolved: 280, escalated: 70 }, { n: 700, resolved: 350, escalated: 63 }).rows;
+  const small = imp(baseExport({ export_id: "agg-small", exported_at: FINAL_AT, window: s.window, assignment: "randomized", aggregates: aggregatesOf(fewer, c, s, FINAL_AT) }));
+  assert.equal(analyze(s, [small]).recommendation, "keep", "on its own the smaller export reads as a clean win");
+  refusal(() => analyze(s, [big, small]), "telemetry_conflict", /not cumulative/);
+  refusal(() => analyze(s, [small, big]), "telemetry_conflict", /not cumulative/);
+});
+
+test("exports made with different metric queries are refused, and one-sided segments hold", () => {
+  const { s, rows } = run(GOOD_BASE, GOOD_CAND);
+  const withHash = (hash: string | undefined, id: string, at: string) => imp(exportOf(rows, at, { export_id: id, ...(hash ? { query_hash: hash } : {}) }));
+  const a1 = withHash("a".repeat(64), "q1", FINAL_AT);
+  assert.equal(a1.value.query_hash, "a".repeat(64));
+  refusal(() => analyze(s, [a1, withHash("b".repeat(64), "q2", "2026-10-19T00:00:00Z")]), "telemetry_denominator_mismatch", /same metric query/);
+  refusal(() => analyze(s, [a1, withHash(undefined, "q3", "2026-10-19T00:00:00Z")]), "telemetry_denominator_mismatch");
+  assert.equal(analyze(s, [a1, withHash("a".repeat(64), "q4", "2026-10-19T00:00:00Z")]).recommendation, "keep");
+
+  const c = contract();
+  const aggs = aggregatesOf(run({ ...GOOD_BASE, segments: [["returns", 500], ["orders", 500]] }, { ...GOOD_CAND, segments: [["returns", 500], ["orders", 500]] }).rows, c, s, FINAL_AT);
+  const oneSided = aggs.map((a) => (a.prompt_version === CAND_TAG ? { ...a, segments: {} } : a));
+  const held = analyze(s, [imp(baseExport({ export_id: "agg-one-sided", exported_at: FINAL_AT, window: s.window, assignment: "randomized", aggregates: oneSided }))]);
+  assert.deepEqual(held.flags, ["cohort_imbalance"]);
+  assert.equal(held.recommendation, "hold");
+  assert.ok(held.reasons.some((r) => r.includes("only one arm reports segments")));
 });
 
 test("the same import twice does not double any count, and the analysis is deterministic", () => {
