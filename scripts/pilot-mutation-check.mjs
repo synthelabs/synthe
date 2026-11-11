@@ -212,6 +212,7 @@ const allMutations = [
   ["report: a conversation that was inside the lag counts as late", EXPERIMENT, "return missed !== null && ms(r.started_at) + lag <= missed;", "return missed !== null;"],
   ["hold: late conversations hold an honest result for good", EXPERIMENT, '  "observational", "runtime_changed", "inside_lag_window", "window_not_covered",', '  "late_rows", "observational", "runtime_changed", "inside_lag_window", "window_not_covered",'],
   ["telemetry: an export with every conversation in it twice is read", TELEMETRY, "  if (copies !== null) {\n", "  if (false) {\n"],
+  ["telemetry: values that follow the clock refuse an honest export", TELEMETRY, "const share = Math.max((common.get(attributes[i]) ?? 0) / sorted.length, neighbours > 0 ? (around.get(attributes[i]) ?? 0) / neighbours : 0);", "const share = (common.get(attributes[i]) ?? 0) / sorted.length;"],
   ["telemetry: twins that chance explains refuse an honest export", TELEMETRY, "if (excess <= Math.max(5, 0.05 * rows.length) || excess <= 7 * Math.sqrt(variance)) return null;", "if (twins === 0) return null;"],
   ["review: the rationale is rendered as markdown", REVIEW, '...(bundle.rationale.trim() === "" ? ["No rationale was recorded."] : literal(bundle.rationale.trim(), "text")),', "bundle.rationale.trim(),"],
   ["review: free text can close its own fence", REVIEW, 'const fence = "`".repeat(Math.max(3, ...(text.match(/`+/g) ?? []).map((run) => run.length + 1)));', 'const fence = "```";'],

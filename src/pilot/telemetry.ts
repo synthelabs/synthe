@@ -70,27 +70,41 @@ const shown = (name: string): string => (/^[a-z][a-z0-9_]{0,63}$/.test(name) ? `
 // nothing. A duplicated export does not look like chance, though: every copied row has an exact twin, far more
 // rows than the mix of versions and values would pair up among rows that share a start time.
 // For each row, the chance that some other row with its start time has its values is worked out from the size of
-// that group and how common the row's values are in the whole export. The export is refused when the rows that
-// do have a twin exceed the expected number by more than 5% of all rows (and at least five) and by more than
-// seven standard deviations. With one timestamp per day nearly every row has a twin by chance, so nothing can be
-// said and nothing is refused.
+// that group and how common the row's values are. "How common" is taken from the whole export or from the rows
+// nearest in time, whichever is higher: values often follow the clock (chat by day, email by night; a model
+// switch), and then rows that share a start time are alike far more often than the whole export suggests.
+// The export is refused when the rows that do have a twin exceed the expected number by more than 5% of all rows
+// (and at least five) and by more than seven standard deviations. With one timestamp per day nearly every row
+// has a twin by chance, so nothing can be said and nothing is refused.
+const NEIGHBOURS = 50; // rows before and after, by start time, that show what is common around then
 export function likelyCopies(rows: TelemetryRow[]): { twins: number; expected: number } | null {
   if (rows.length < 2) return null;
-  const tally = (keys: string[]) => { const m = new Map<string, number>(); for (const k of keys) m.set(k, (m.get(k) ?? 0) + 1); return m; };
-  const attributes = rows.map((r) => canonicalJson({ ...r, conversation_id: null, started_at: null }));
-  const exactKeys = rows.map((r, i) => `${r.started_at}|${attributes[i]}`);
+  const tally = <K>(keys: K[]) => { const m = new Map<K, number>(); for (const k of keys) m.set(k, (m.get(k) ?? 0) + 1); return m; };
+  const order = rows.map((_, i) => i).sort((x, y) => ms(rows[x].started_at) - ms(rows[y].started_at) || byString(rows[x].started_at, rows[y].started_at));
+  const sorted = order.map((i) => rows[i]);
+  const attributes = sorted.map((r) => canonicalJson({ ...r, conversation_id: null, started_at: null }));
   const common = tally(attributes);
-  const sameTime = tally(rows.map((r) => r.started_at));
-  const exact = tally(exactKeys);
+  const exact = tally(sorted.map((r, i) => `${r.started_at}|${attributes[i]}`));
   let twins = 0;
   let expected = 0;
   let variance = 0;
-  rows.forEach((r, i) => {
-    if ((exact.get(exactKeys[i]) ?? 0) > 1) twins++;
-    const p = 1 - (1 - (common.get(attributes[i]) ?? 0) / rows.length) ** ((sameTime.get(r.started_at) ?? 1) - 1);
-    expected += p;
-    variance += p * (1 - p);
-  });
+  for (let from = 0; from < sorted.length;) {
+    let to = from + 1;
+    while (to < sorted.length && sorted[to].started_at === sorted[from].started_at) to++;
+    // A row alone at its start time cannot have a twin.
+    if (to - from > 1) {
+      const around = tally([...attributes.slice(Math.max(0, from - NEIGHBOURS), from), ...attributes.slice(to, to + NEIGHBOURS)]);
+      const neighbours = Math.min(from, NEIGHBOURS) + Math.min(sorted.length - to, NEIGHBOURS);
+      for (let i = from; i < to; i++) {
+        if ((exact.get(`${sorted[i].started_at}|${attributes[i]}`) ?? 0) > 1) twins++;
+        const share = Math.max((common.get(attributes[i]) ?? 0) / sorted.length, neighbours > 0 ? (around.get(attributes[i]) ?? 0) / neighbours : 0);
+        const p = 1 - (1 - share) ** (to - from - 1);
+        expected += p;
+        variance += p * (1 - p);
+      }
+    }
+    from = to;
+  }
   const excess = twins - expected;
   if (excess <= Math.max(5, 0.05 * rows.length) || excess <= 7 * Math.sqrt(variance)) return null;
   return { twins, expected };

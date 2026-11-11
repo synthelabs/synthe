@@ -113,6 +113,15 @@ test("without unit ids, exact copies are refused only when there are far more th
   const doubled = likelyCopies([...busy, ...again(busy, 1)]);
   assert.ok(doubled !== null && doubled.twins === 4000 && doubled.expected < 3000, JSON.stringify(doubled));
 
+  // Values that follow the clock: each six-hour shift has its own channel. Conversations that share a minute are
+  // then alike four times as often as the whole export suggests, and that is still chance, not copies.
+  const shifts = busy.map((r) => ({ ...r, segment: `shift-${Math.floor(new Date(r.started_at).getUTCHours() / 6)}` }));
+  const bySegment = shifts.length - new Set(shifts.map((r) => `${r.started_at}|${r.segment}|${JSON.stringify(r.values)}`)).size;
+  assert.ok(bySegment > 0.05 * shifts.length, `many twins by chance (${bySegment})`);
+  assert.equal(likelyCopies(shifts), null);
+  assert.equal(run(exported(shifts)).rows!.length, 2000);
+  assert.ok(likelyCopies([...shifts, ...again(shifts, 1)]) !== null, "and every conversation twice is still seen");
+
   // One timestamp per day: nearly every conversation has a twin by chance, so nothing can be said either way.
   const coarse = at(1400, 0).map((r, i) => ({ ...r, started_at: isoAt(START, (i % 14) * 24 * 60) }));
   assert.equal(likelyCopies(coarse), null);
