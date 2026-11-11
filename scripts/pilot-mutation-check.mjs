@@ -28,6 +28,26 @@ const CONFIG = "src/pilot/config.ts";
 
 const TESTS = readdirSync("test").filter((f) => /^pilot-.*\.test\.ts$/.test(f)).map((f) => `test/${f}`);
 
+// The test files closest to each source file. A mutation is tried against these first, because they are quick and
+// usually enough; only a mutation they do not catch is run against every pilot test. So a mutation counts as
+// killed if any pilot test fails, exactly as before, but most are settled in a second or two.
+const NEAR = {
+  [EXPERIMENT]: ["test/pilot-experiment.test.ts"],
+  [TELEMETRY]: ["test/pilot-telemetry.test.ts", "test/pilot-experiment.test.ts"],
+  [REPLAY]: ["test/pilot-replay.test.ts"],
+  [DISCOVER]: ["test/pilot-discover.test.ts"],
+  [PACK]: ["test/pilot-pack.test.ts"],
+  [EGRESS]: ["test/pilot-egress.test.ts", "test/pilot-publish.test.ts"],
+  [PUBLISH]: ["test/pilot-publish.test.ts"],
+  [APPROVAL]: ["test/pilot-approval.test.ts"],
+  [PROMOTE]: ["test/pilot-promote.test.ts"],
+  [STORE]: ["test/pilot-store.test.ts"],
+  [IO]: ["test/pilot-store.test.ts"],
+  [LIVE]: ["test/pilot-live.test.ts"],
+  [MODEL]: ["test/pilot-model.test.ts"],
+  [CONFIG]: ["test/pilot-config.test.ts"],
+};
+
 const allMutations = [
   // Decision boundaries: keep, hold, revert.
   ["keep: an effect below the minimum is kept", EXPERIMENT, "benefit >= p.min_effect - EPS && bCi.lo > EPS", "bCi.lo > EPS"],
@@ -164,8 +184,8 @@ const nameFilter = process.env.MUTATION_MATCH ? new RegExp(process.env.MUTATION_
 const mutations = allMutations.filter(([name, file]) => (selectedFiles.length === 0 || selectedFiles.includes(file)) && (!nameFilter || nameFilter.test(name)));
 if (!mutations.length) throw new Error("No mutations match the requested files");
 console.log(`Checking ${mutations.length} pilot mutations${selectedFiles.length ? ` in ${selectedFiles.join(", ")}` : ""}`);
-const run = (stdio) => spawnSync(process.execPath, [...process.execArgv, "--test", ...TESTS], { stdio, timeout: 180000 });
-if (run("ignore").status !== 0) throw new Error("The unmutated pilot tests must pass before checking mutations");
+const run = (files) => spawnSync(process.execPath, [...process.execArgv, "--test", ...files], { stdio: "ignore", timeout: 300000 }).status;
+if (run(TESTS) !== 0) throw new Error("The unmutated pilot tests must pass before checking mutations");
 
 // Every mutated file as it was before the run, restored at the end whatever happened in between.
 const before = new Map([...new Set(mutations.map(([, file]) => file))].map((f) => [f, readFileSync(f, "utf8")]));
@@ -178,7 +198,9 @@ for (const [name, file, from, to] of mutations) {
   process.once("SIGINT", restore);
   try {
     writeFileSync(file, original.replace(from, to));
-    const { status } = run("ignore");
+    const near = NEAR[file];
+    let status = near ? run(near) : 0;
+    if (status === 0) status = run(TESTS);
     if (status === 0 || status === null) survived++;
     console.log(`${status === null ? "TIMED OUT" : status === 0 ? "SURVIVED " : "killed   "} ${name}`);
   } finally {
