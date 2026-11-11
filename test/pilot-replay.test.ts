@@ -441,6 +441,8 @@ test("pairing refuses arms that cannot be compared", () => {
   const conflict = (b: ArmRun, c: ArmRun) => assert.throws(() => pairArms({ pack, baseline: b, candidate: c, target_check_id: null, gate: GATE }), (e: unknown) => e instanceof PilotError && e.code === "conflict");
   conflict(baseline, { ...candidate, pack_id: "2".repeat(64) });
   conflict(baseline, { ...candidate, settings: { ...SETTINGS, max_tokens: 1 } });
+  // One prompt on a scripted rehearsal and the other on a provider would compare the models, not the prompts.
+  conflict(baseline, { ...candidate, model_destination: "anthropic:https://api.anthropic.com:some-model" });
   conflict(baseline, { ...candidate, prompt_id: BASE_ID });
   conflict(baseline, { ...candidate, cases: candidate.cases.slice(1) });
   conflict({ ...baseline, cases: baseline.cases.slice(1) }, candidate);

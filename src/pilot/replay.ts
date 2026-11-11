@@ -182,6 +182,9 @@ export function pairArms(input: PairInput): ReplayReport {
   const conflict = (message: string): never => { throw new PilotError("conflict", message); };
   if (baseline.pack_id !== candidate.pack_id) conflict("The two replays were run on different packs, so they cannot be compared. Run both on the same pack.");
   if (canonicalJson(baseline.settings) !== canonicalJson(candidate.settings)) conflict("The two replays used different settings, so they cannot be compared. Run both with the same model, token limit, temperature and step limit.");
+  // A scripted rehearsal and a provider run are different agents: comparing one prompt on each would measure the
+  // model, not the prompt change.
+  if (baseline.model_destination !== candidate.model_destination) conflict(`The two replays ran on different models (${baseline.model_destination} and ${candidate.model_destination}), so they cannot be compared. Run both prompts on the same model.`);
   if (baseline.prompt_id === candidate.prompt_id) conflict("The candidate prompt is the same as the baseline prompt, so there is nothing to compare.");
   const packIds = pack.cases.map((c) => c.id).sort();
   for (const [label, arm] of [["baseline", baseline], ["candidate", candidate]] as const) {
@@ -284,7 +287,7 @@ export function pairArms(input: PairInput): ReplayReport {
   return {
     version: 1, pack_id: baseline.pack_id, baseline_prompt_id: baseline.prompt_id, candidate_id: candidate.prompt_id,
     target_check_id: input.target_check_id, settings: baseline.settings,
-    model_destination: baseline.model_destination === candidate.model_destination ? baseline.model_destination : `${baseline.model_destination} (baseline); ${candidate.model_destination} (candidate)`,
+    model_destination: baseline.model_destination,
     baseline, candidate, paired, tally, coverage,
     sign_p: signP(tally.all.wins, tally.all.losses), regressions, fixes, new_blocking_guard_failures: newBlocking,
     observed_outcomes: sortedObserved, gate: verdict,
