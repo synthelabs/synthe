@@ -130,15 +130,40 @@ function conversationKeys(c: PackCase): string[] {
   return said.length >= COPY_MIN_WORDS ? [`said:${said.join(" ")}`, all] : [all];
 }
 
-function assertNoHoldoutLeak(store: PilotStore, pack: Pack): void {
+// A case that a promotion adds is new to the pilot, so it is held to a stricter rule: its customer text must not
+// be mostly a held-out conversation's. Compared by runs of three words; "mostly" is four in five of the runs of
+// the shorter text, and a text of fewer than six runs is too short to judge this way.
+const NEAR_COPY = 0.8;
+const NEAR_COPY_MIN_RUNS = 6;
+function customerRuns(c: PackCase): Set<string> {
+  const w = words(c.messages.flatMap((m) => (m.role === "user" ? [m.text] : [])).join(" "));
+  const runs = new Set<string>();
+  for (let i = 0; i + 3 <= w.length; i++) runs.add(w.slice(i, i + 3).join(" "));
+  return runs;
+}
+function nearCopy(a: Set<string>, b: Set<string>): boolean {
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  if (small.size < NEAR_COPY_MIN_RUNS) return false;
+  let shared = 0;
+  for (const run of small) if (large.has(run)) shared++;
+  return shared >= NEAR_COPY * small.size;
+}
+
+// `added`: the ids of cases this pack adds to the pilot (a promotion); empty for the first pack.
+function assertNoHoldoutLeak(store: PilotStore, pack: Pack, added: Set<string> = new Set()): void {
   const heldIds = new Set<string>();
   const heldConversations = new Set<string>();
+  const held: PackCase[] = [];
   for (const p of [...allPacks(store).map((x) => x.value), pack]) {
-    for (const c of p.cases) if (c.split === "heldout") { heldIds.add(c.id); for (const k of conversationKeys(c)) heldConversations.add(k); }
+    for (const c of p.cases) if (c.split === "heldout") { heldIds.add(c.id); held.push(c); for (const k of conversationKeys(c)) heldConversations.add(k); }
   }
-  const leaked = pack.cases.filter((c) => c.split === "discovery" && (heldIds.has(c.id) || conversationKeys(c).some((k) => heldConversations.has(k)))).map((c) => c.id);
+  const heldRuns = added.size ? held.map(customerRuns) : [];
+  const leaked = pack.cases.filter((c) => c.split === "discovery" && (
+    heldIds.has(c.id) || conversationKeys(c).some((k) => heldConversations.has(k))
+    || (added.has(c.id) && heldRuns.some((runs) => nearCopy(customerRuns(c), runs)))
+  )).map((c) => c.id);
   if (leaked.length) {
-    throw new PilotError("holdout_leak", `${leaked.length} discovery case(s) in this pack are held-out cases, or copies of a held-out conversation (${leaked.slice(0, 5).join(", ")}). A held-out conversation must stay held out, or the proposer would see it.`);
+    throw new PilotError("holdout_leak", `${leaked.length} discovery case(s) in this pack are held-out cases, or copies or near copies of a held-out conversation (${leaked.slice(0, 5).join(", ")}). A held-out conversation must stay held out, or the proposer would see it. If the case is a different conversation that reads much like a held-out one, add it as a held-out case.`);
   }
 }
 
@@ -651,7 +676,7 @@ export async function promotePack(store: PilotStore, flags: Flags, deps: PilotDe
   const next = promote({ pack: active, request: { id: requestId, value: request }, replays, experiment_ids: store.find("experiment.specified").map((e) => e.key) });
   // The new version goes through the same validation as an imported pack, including redaction of added cases.
   const validated = parsePack(JSON.stringify(next));
-  assertNoHoldoutLeak(store, validated);
+  assertNoHoldoutLeak(store, validated, new Set(request.added.map((a) => a.case.id)));
   // Stored only now: a refused request may hold exactly the content it was refused for.
   store.put("promotion-request", request);
   const newId = store.put("pack", validated);

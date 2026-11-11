@@ -133,3 +133,20 @@ test("a long regression list is cut in the review, and the full list stays in th
   assert.ok(md.includes(bundle.replay_id));
   assert.ok(md.length < 60_000);
 });
+
+test("the rationale and the diff are shown as literal text, so markup in them is not rendered", () => {
+  const f = fixture();
+  const tricky = "Greet Th&#97;ddeus <b>warmly</b>.\n```\n## Not a heading\n````\nstill the rationale";
+  const body = renderReview({ ...f.bundle.value, rationale: tricky, diff: "--- a/p\n+++ b/p\n@@ -1 +1,2 @@\n ```\n+new line\n" }, f.bundle.id, f.pack.value, "looks_up_order");
+  const lines = body.split("\n");
+  // Each free-text part sits inside one fence that is longer than any run of backticks in it.
+  const why = lines.indexOf("## Why");
+  assert.equal(lines[why + 2], "`````text");
+  const close = lines.indexOf("`````", why);
+  assert.deepEqual(lines.slice(why + 3, close), tricky.split("\n"));
+  assert.equal(lines[lines.indexOf("## What changes") + 4], "````diff");
+  // Nothing of the rationale is outside its fence, and the sections after it are still sections.
+  assert.equal(lines.filter((l) => l === "## Not a heading").length, 1);
+  assert.ok(lines.indexOf("## Metric contract") > close);
+  assert.equal(body.split("Th&#97;ddeus").length, 2);
+});

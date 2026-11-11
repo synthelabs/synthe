@@ -6,6 +6,9 @@ import type { Pack } from "./types.ts";
 // Opaque index of the case-specific content of one or more packs, for finding it in outgoing text.
 export interface SensitiveIndex {
   readonly phrases: ReadonlySet<string>;
+  // The names among the phrases (single words written with a capital). A name can be cut into parts with spaces,
+  // hyphens or markup, so these are also looked for across adjacent words.
+  readonly names: ReadonlySet<string>;
   // Matches the identifiers the reports print by design, as whole identifiers; null when the packs have none.
   readonly identifiers: RegExp | null;
 }
@@ -14,12 +17,16 @@ const RUN = 3; // words in a run copied from a conversation
 const WORD_MIN = 5; // letters in a lowercase word worth indexing on its own when it is rare
 const TOKEN_MIN = 3; // characters in an identifier-like word (one that has a digit)
 const NAME_MIN = 2; // letters in a word the conversations only ever show with a capital
+const JOIN_MIN = 4; // letters in a name worth looking for across adjacent words
+const JOIN_WORDS = 16; // adjacent words joined at most ("T h a d d e u s" is eight)
+const JOIN_CHARS = 40;
 
-// Cyrillic and Greek letters that look like Latin ones. Folded on both sides, so a name cannot pass by swapping
-// a letter for its look-alike.
+// Cyrillic and Greek letters that look like Latin ones, and Latin small capitals. Folded on both sides, so a name
+// cannot pass by swapping a letter for its look-alike.
 const LOOKALIKES = new Map<string, string>(
   ("АA ВB ЕE КK МM НH ОO РP СC ТT УY ХX ЅS ІI ЈJ аa еe оo рp сc уy хx ѕs іi јj ԁd ԛq ԝw һh "
-    + "ΑA ΒB ΕE ΖZ ΗH ΙI ΚK ΜM ΝN ΟO ΡP ΤT ΥY ΧX οo νv ιi κk ρp").split(" ").map((p) => [p[0], p[1]] as [string, string]),
+    + "ΑA ΒB ΕE ΖZ ΗH ΙI ΚK ΜM ΝN ΟO ΡP ΤT ΥY ΧX οo νv ιi κk ρp "
+    + "ᴀA ʙB ᴄC ᴅD ᴇE ꜰF ɢG ʜH ɪI ᴊJ ᴋK ʟL ᴍM ɴN ᴏO ᴘP ʀR ꜱS ᴛT ᴜU ᴠV ᴡW ʏY ᴢZ").split(" ").map((p) => [p[0], p[1]] as [string, string]),
 );
 
 // The same normal form on both sides, so a quote cannot slip through by changing case, spacing, line breaks,
@@ -27,7 +34,7 @@ const LOOKALIKES = new Map<string, string>(
 // Compatibility forms are folded (NFKD), marks and format characters are removed, and everything that is not a
 // letter or digit splits words.
 const normal = (text: string): string =>
-  text.normalize("NFKD").replace(/[\p{M}\p{Cf}]/gu, "").replace(/[\u0370-\u03ff\u0400-\u052f]/g, (ch) => LOOKALIKES.get(ch) ?? ch);
+  text.normalize("NFKD").replace(/[\p{M}\p{Cf}]/gu, "").replace(/[^\x00-\x7f]/g, (ch) => LOOKALIKES.get(ch) ?? ch);
 
 // A word with its case kept, and whether it starts a sentence: a capital there says nothing, anywhere else it marks
 // a name. A full stop after a short capitalised word is an abbreviation ("Mr. Okonkwo"), not a sentence end.
@@ -66,6 +73,23 @@ function stringsIn(value: unknown, out: string[]): void {
   if (typeof value === "string") out.push(value);
   else if (Array.isArray(value)) for (const v of value) stringsIn(v, out);
   else if (value !== null && typeof value === "object") for (const [k, v] of Object.entries(value)) { out.push(k); stringsIn(v, out); }
+}
+
+// The text as a page would show it: character references decoded, tags and link targets taken out, percent
+// escapes read. Markup can cut a name into pieces that only come together when the text is rendered
+// ("Th&#97;ddeus", "Thad<b></b>deus"), so outgoing text is checked in this form as well as the form it has.
+const codePoint = (n: number): string => (Number.isInteger(n) && n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : " ");
+export function rendered(text: string): string {
+  return text
+    .replace(/&#(\d{1,7});/g, (_, d: string) => codePoint(Number(d)))
+    .replace(/&#[xX]([0-9a-fA-F]{1,6});/g, (_, h: string) => codePoint(parseInt(h, 16)))
+    .replace(/&([A-Za-z])(?:acute|grave|circ|uml|tilde|ring|cedil|caron|slash|macr|breve|ogon|dot|strok);/g, "$1")
+    .replace(/&(?:amp|lt|gt|quot|apos|nbsp|ensp|emsp|thinsp);/g, " ")
+    // Any other named reference. Many are invisible (a soft hyphen, a zero-width joiner), so the parts close up.
+    .replace(/&[A-Za-z][A-Za-z0-9]{1,31};/g, "")
+    .replace(/<[^<>\n]{0,300}>/g, "")
+    .replace(/\]\([^)\n]{0,2000}\)/g, "")
+    .replace(/%([2-7][0-9a-fA-F])/g, (_, h: string) => String.fromCharCode(parseInt(h, 16)));
 }
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -150,8 +174,9 @@ export function sensitiveIndex(packs: Pack[], allow: string[] = []): SensitiveIn
   for (const [item, count] of cases) if (count <= few && !allowed.has(item)) phrases.add(item);
   for (const word of always) if (!allowed.has(word)) phrases.add(word);
   // A word that some conversation also writes in lowercase is an ordinary word, not a name.
-  for (const word of capital) if (!lower.has(word) && !allowed.has(word)) phrases.add(word);
-  return { phrases, identifiers };
+  const names = new Set<string>();
+  for (const word of capital) if (!lower.has(word) && !allowed.has(word)) { phrases.add(word); names.add(word); }
+  return { phrases, names, identifiers };
 }
 
 const listed = (lines: number[]): string => (lines.length === 0 ? "" : `; line${lines.length === 1 ? "" : "s"} ${lines.slice(0, 8).join(", ")}${lines.length > 8 ? " and more" : ""}`);
@@ -161,12 +186,28 @@ const listed = (lines: number[]): string => (lines.length === 0 ? "" : `; line${
 // text.
 export function egressProblems(text: string, index: SensitiveIndex | null): string[] {
   const problems = personalDataKinds(text).map((kind) => `contains what looks like ${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}`);
-  if (MIXED.test(text.normalize("NFKD").replace(/\p{Cf}/gu, ""))) problems.push("contains a word that mixes alphabets, which is how a look-alike letter hides a name");
+  if (MIXED.test(rendered(text).normalize("NFKD").replace(/\p{Cf}/gu, ""))) problems.push("contains a word that mixes alphabets, which is how a look-alike letter hides a name");
   if (index !== null) {
     const rest = withoutIdentifiers(text, index.identifiers);
     const hits = (part: string): { copied: Set<string>; single: Set<string> } => {
-      const w = words(part);
-      return { copied: new Set(runsOf(w).filter((r) => index.phrases.has(r))), single: new Set(w.filter((x) => index.phrases.has(x))) };
+      const single = new Set<string>();
+      const copied = new Set<string>();
+      for (const form of new Set([part, rendered(part)])) {
+        const w = words(form);
+        for (const run of runsOf(w)) if (index.phrases.has(run)) copied.add(run);
+        for (const word of w) if (index.phrases.has(word)) single.add(word);
+        // A name cut into adjacent pieces: "Thad-deus", "T h a d d e u s", "Thad**deus**".
+        for (let i = 0; i < w.length; i++) {
+          if (/\p{N}/u.test(w[i])) continue;
+          let joined = w[i];
+          for (let j = i + 1; j < w.length && j < i + JOIN_WORDS && !/\p{N}/u.test(w[j]); j++) {
+            joined += w[j];
+            if (joined.length > JOIN_CHARS) break;
+            if (joined.length >= JOIN_MIN && index.names.has(joined)) single.add(joined);
+          }
+        }
+      }
+      return { copied, single };
     };
     const all = hits(rest);
     if (all.copied.size > 0 || all.single.size > 0) {

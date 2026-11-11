@@ -136,6 +136,8 @@ test("a frozen pack is never replaced: new versions come only from promote, whic
       ["reformatted.json", request([{ case: reformatted, reason: "reformatted", evidence: { experiment_id: experiment } }])],
       ["trailing-space.json", request([{ case: { ...copy, id: "spaced-h02", messages: copy.messages.map((m, i) => (i === 0 && m.role === "user" ? { ...m, text: `${m.text} ` } : m)) }, reason: "one space added", evidence: { experiment_id: experiment } }])],
       ["same-id.json", request([{ case: { ...copy, id: "ret-h02" }, reason: "same id", evidence: { experiment_id: experiment } }])],
+      // A word added, or the first sentence dropped: still mostly the held-out customer's words.
+      ["word-added.json", request([{ case: { ...copy, id: "padded-h02", messages: copy.messages.map((m, i) => (i === 0 && m.role === "user" ? { ...m, text: `${m.text} Thanks.` } : m)) }, reason: "one word added", evidence: { experiment_id: experiment } }])],
     ];
     for (const [name, value] of attempts) {
       assert.equal(await ctx.run(["promote", "--request", ctx.put(name, json(value))]), 1, name);
@@ -440,9 +442,14 @@ test("a second publication of the same candidate waits for the first", async () 
     assert.ok(refused(ctx.lines.slice(-1), "conflict") && /Another pilot command/.test(ctx.lines.at(-1) ?? ""), ctx.lines.at(-1) ?? "");
     assert.equal(ctx.github.requests.length, before, "nothing was sent while another run was publishing");
     rmSync(lock);
-    assert.equal(await ctx.run(publish), 0, ctx.lines.slice(-2).join(" | "));
+    // Two publications started together in one process: one waits out, one publishes, one pull request.
+    const both = await Promise.all([ctx.run(publish), ctx.run(publish)]);
+    assert.deepEqual([...both].sort(), [0, 1], ctx.lines.slice(-4).join(" | "));
     assert.equal(ctx.github.pulls.length, 1);
+    assert.equal(ctx.store.find("review.published").length, 1);
     assert.ok(!existsSync(lock), "the lock is released");
+    assert.equal(await ctx.run(publish), 0, "and a later run finds the pull request");
+    assert.equal(ctx.github.pulls.length, 1);
   } finally { await ctx.stop(); }
 });
 

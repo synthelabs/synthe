@@ -150,8 +150,9 @@ Rules that keep the counts honest:
 - The same export twice counts once.
 - A value on a conversation that was still inside the outcome lag when exported is provisional. It is stored as not known yet, and counts only once an export made after the lag carries it.
 - A later export must contain every conversation an earlier export had for the time both cover. It may add conversations and fill in outcomes. Conversations that vanish are refused.
-- One conversation under two ids is refused when the rows carry `unit_id`: the same unit, start time, version and values twice. Without `unit_id` this cannot be seen inside one export.
-- Conversations that are only in a later export, although their outcome was already final when an earlier export of the same period was made, are counted. More than 5 of them, and more than 2% of the other rows, hold the result (`late_rows`): either the source delivers rows late, or conversations were exported again under new ids.
+- One conversation under two ids is refused when the rows carry `unit_id`: the same unit, start time, version and values twice.
+- Without `unit_id`, two conversations can share a start time and every value by chance, so one twin proves nothing. The export is refused when far more rows have an exact twin than chance explains for rows that share a start time (more than 5% of the rows above the expected number, and more than seven standard deviations). That is what an export with conversations in it twice looks like. If they are separate conversations, add `unit_id`.
+- Conversations that are only in a later export, although they were older than the outcome lag when an earlier export of the same period was made, are counted (`late rows` in the decision). They finished later than the outcome lag, or reached the source late. The final export holds them, so they do not hold the result. More than 5 of them, and more than 2% of the other rows, add the note `late_rows`: the earlier exports were incomplete, and the contract's outcome lag may be too short.
 - A changed value, tag or time for a conversation already imported is refused. So is a newer aggregate export that counts less than an older one; a count may fall only by as much as that arm's `unattributed` count rose.
 - Every export of a pilot must carry the same `query_hash` (or none), the baseline's included.
 - An export dated later than the moment it is imported is refused.
@@ -210,7 +211,7 @@ The analysis is fixed in the specification before any outcome is seen:
 
 - **Keep**: only at the final analysis (an export made at or after the cutoff), with clean data, when the primary metric's gain is at least `min_effect` and its interval is above zero, and every guard's interval for harm is inside its `max_harm`.
 - **Revert**: at the final analysis when a guard breaches (the whole interval for its harm is above `max_harm`) or the primary is significantly worse. Before the cutoff, only a critical guard's early stop reverts: the same test at 99.9%, once both arms have the guard's `min_per_arm`.
-- **Hold**: everything else. Before the cutoff; too few mature conversations; outcomes still inside the lag; a sample ratio mismatch; a cohort imbalance, or segments reported for one arm only; missing events above the limit, or far more common in one arm than the other; ambiguous attribution above the limit; conversations that turn up late for a period an earlier export called complete; observational data; more than one runtime model; no single export that covers the whole window; a primary that does not clear; a guard that is not shown to be safe.
+- **Hold**: everything else. Before the cutoff; too few mature conversations; outcomes still inside the lag; a sample ratio mismatch; a cohort imbalance, or segments reported for one arm only; missing events above the limit, or far more common in one arm than the other; ambiguous attribution above the limit; observational data; more than one runtime model; no single export that covers the whole window; a primary that does not clear; a guard that is not shown to be safe.
 
 A guard has three outcomes. Pass: the whole interval for harm is inside `max_harm`. Breach: the whole interval is beyond it. Otherwise it is inconclusive, which holds. Harm that is real but may still be inside the margin is not a breach, because the contract says the team tolerates that much; it is not a pass either.
 
@@ -225,7 +226,8 @@ Known limits of the method. Read these before you rely on a decision:
 - `final` depends on the export's own `exported_at`. The export is the customer's statement; Synthe cannot audit how the split was run. An export dated in the future is refused, but an honest-looking date cannot be checked.
 - Rows left out of one arm are caught only when the split moves far from the plan (p below 0.001) or the later export no longer contains conversations an earlier one had. A few percent of one arm's failures dropped from the very first export can pass unnoticed.
 - Missing outcomes are checked two ways: the share in each arm against the limit, and one arm against the other. Outcomes that are missing equally often in both arms, but for the baseline's successes and the candidate's failures, pass both checks and make the candidate look better. Keep `max_missing_rate` low, and ask the customer why outcomes are missing.
-- Without `unit_id`, one export that holds every conversation twice under different ids cannot be told from a larger experiment.
+- A second copy of a conversation is recognised only when it is exact (same start time, version, segment and values). A copy with a changed start time or value, or copies in an export with one timestamp per day, cannot be told from more conversations. Send `unit_id`.
+- The outcome lag is the customer's statement of when an outcome is final. If many conversations finish later than it, the last days of the window are missing their slow conversations at the cutoff. The `late rows` count shows this only when there was an earlier export to compare with.
 - A guard that is harmful but not yet shown to be beyond its margin holds; it does not revert. With little data that can take the whole window.
 - A mean metric with heavy tails (refunds, revenue) needs more data than the formula says.
 
@@ -251,20 +253,24 @@ Matching ignores case, spacing, punctuation, accents, dash variants and hidden c
 
 Allowed: the baseline prompt and the review's own generated wording. Case ids, check ids, catalog sentences and tool names pass as whole identifiers only, because the reports print them by design; a word inside a case id is not allowed anywhere else. So the free text that is really checked is the rationale and the changed prompt lines. A refusal names the part, the kind of match and the line, and never repeats the match; reword the candidate or the rationale and run `review` again. The local bundle is checked the same way.
 
-The check is strict on purpose, so it also stops some harmless text: a status the tools always write with a capital (`Delivered`), a weekday, a product name. Put such a word in the baseline prompt first, or word the change without it. Bracketed all-capital tokens such as `[EMAIL_1]` are read as redaction placeholders, not names.
+Markup cannot hide a name. The rationale and the diff are printed in the review as literal text (a code block), so a character reference or a tag in them is shown as typed, not rendered. The check also reads the text the way a page would show it (character references decoded, tags and link targets removed, percent escapes read), and looks for a name across adjacent words, so `Th&#97;ddeus`, `Thad<b></b>deus`, `Thad-deus` and `T h a d d e u s` are found.
+
+The check is strict on purpose, so it also stops some harmless text: a status the tools always write with a capital (`Delivered`), a weekday, a product name. Word the change without such a word. (A word that is in the baseline prompt is allowed, but the baseline prompt is frozen for the pilot.) Bracketed all-capital tokens such as `[EMAIL_1]` are read as redaction placeholders, not names.
 
 Limits of the check. It is a net under the reviewer, not a proof:
 
-- It cannot see a paraphrase.
+- It cannot see a paraphrase, or text in a code (base64, a cipher).
 - A name the conversations also write in lowercase, or a name that is an ordinary word in the baseline prompt (Will, Rose), is not flagged on its own. A short lowercase name is caught only inside a three-word run.
 - A name that only ever starts a sentence in the conversations is treated as an ordinary word unless it is rare.
+- Only names are looked for across adjacent words. An order token whose digits are split with spaces or hyphens, or a rare lowercase word that is split, is not found.
 - Wording that three or more conversations share is treated as boilerplate, in a small pack too.
-- Look-alike letters outside Cyrillic and Greek are not folded.
+- Look-alike letters are folded for Cyrillic, Greek and Latin small capitals only.
+- The committed prompt file is checked the same way, but how a viewer renders that file is outside the check.
 - Case ids, check ids, catalog sentences and tool names are printed in reports and pull requests as they are. The customer must write them without customer details.
 
 Read `REVIEW.md` before you publish it.
 
-Only one publication of a candidate runs at a time. A retry, or a second run, finds the existing pull request for the candidate's branch and opens nothing. Merging is a person's decision. The pull request body is the review bundle: the diff, the contract, replay evidence, the experiment plan, the rollback target, every id, and the approve command.
+Only one publication of a candidate runs at a time, in one process or several. A retry, or a second run, finds the existing pull request for the candidate's branch and opens nothing. Merging is a person's decision. The pull request body is the review bundle: the diff, the contract, replay evidence, the experiment plan, the rollback target, every id, and the approve command.
 
 ## Live model provider
 
@@ -317,7 +323,7 @@ An unexpected error prints only its kind, because an error message can quote the
 
 `promote --list` prints the failures a reviewer may approve: every check that failed in a stored replay on the active pack. The request names the approver, existing cases with the replay evidence, and any new redacted cases (for example from the experiment) with the experiment id.
 
-The result is a new pack version that names the old one as its parent. The old pack is not changed. A held-out case stays held out. `promote` is the only way to make a new version: the `pack` command refuses any pack once one is frozen, and a promotion that would put a held-out conversation in the discovery split, under its own id or as a copy, is refused. A copy is recognised by what the customer said, whatever its case, spacing or punctuation and whatever the agent's side says, when the customer said eight words or more. A shorter conversation is a copy only when every message is the same, because many customers write the same few words. The same rule applies when the first pack is frozen. A reworded copy cannot be recognised, and a held-out case is only known inside its own pilot directory: the approver must not add one from elsewhere.
+The result is a new pack version that names the old one as its parent. The old pack is not changed. A held-out case stays held out. `promote` is the only way to make a new version: the `pack` command refuses any pack once one is frozen, and a promotion that would put a held-out conversation in the discovery split, under its own id or as a copy, is refused. A copy is recognised by what the customer said, whatever its case, spacing or punctuation and whatever the agent's side says, when the customer said eight words or more. A shorter conversation is a copy only when every message is the same, because many customers write the same few words. The same rule applies when the first pack is frozen. A case that a promotion adds is held to a stricter rule: it is refused as a discovery case when four in five of the three-word runs of the customer's text (of the shorter of the two texts, and at least six runs) are a held-out conversation's. So a copy with a word added, or a sentence dropped, is refused; a different conversation that reads much like a held-out one must be added as held out. A copy rewritten beyond that cannot be recognised, and a held-out case is only known inside its own pilot directory: the approver must not add one from elsewhere.
 
 ## Checks
 

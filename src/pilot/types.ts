@@ -650,6 +650,9 @@ export interface ExperimentAnalysis {
   coverage: {
     rows: number; mature: number; immature: number; unattributed: number; missing_rate: number; unattributed_rate: number;
     duplicates_dropped: number; required_per_arm: number;
+    // Conversations only a later export has, although their outcome was already final when an earlier export of
+    // the same period was made.
+    late_rows: number;
   };
   primary: MetricReadout;
   guards: MetricReadout[];

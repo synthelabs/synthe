@@ -32,11 +32,11 @@ const EPS = 1e-12;
 // The flags that hold a final result. Order is the order reasons are given in.
 export const HOLD_FLAGS = [
   "insufficient_samples", "sample_ratio_mismatch", "cohort_imbalance", "missing_events", "missing_imbalance", "attribution_ambiguous",
-  "late_rows", "observational", "runtime_changed", "inside_lag_window", "window_not_covered",
+  "observational", "runtime_changed", "inside_lag_window", "window_not_covered",
 ] as const;
 
 // A few rows can reach the source late. More than this many, and more than this share of the rows that were on
-// time, is not lateness any more.
+// time, is worth telling the reader.
 const LATE_ROWS_MIN = 5;
 const LATE_ROWS_SHARE = 0.02;
 
@@ -257,9 +257,11 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   let lateRows = 0;
   if (merged.form === "rows") {
     const rows = merged.rows as TelemetryRow[];
-    // Conversations whose outcome was already final when an earlier export was made, inside that export's window,
-    // yet only a later export has them. Either the source delivers rows late, or conversations were exported again
-    // under new ids; both make the counts untrustworthy.
+    // Conversations only a later export has, although they were old enough for their outcome to be final when an
+    // earlier export of the same period was made. They finished later than the outcome lag, or reached the source
+    // late. The final export holds them, so the result stands; the count is reported, because it means earlier
+    // exports were incomplete and the contract's outcome lag may be too short. (A second copy of a conversation
+    // is a different problem, and is refused when the export is read.)
     const lag = spec.outcome_lag_days * DAY_MS;
     lateRows = rows.filter((r, i) => { const missed = merged.row_missed_at?.[i] ?? null; return missed !== null && ms(r.started_at) + lag <= missed; }).length;
     const classes = classifyRows(rows, spec.outcome_lag_days, asOf, merged.row_as_of ?? undefined);
@@ -316,6 +318,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   if (missingGap !== null) flags.push("missing_imbalance");
   if (unattributedRate > spec.max_unattributed_rate + EPS) flags.push("attribution_ambiguous");
   const onTime = (merged.rows?.length ?? 0) - lateRows;
+  // Informational, like superseded_aggregate: it does not hold the result.
   if (lateRows > Math.max(LATE_ROWS_MIN, LATE_ROWS_SHARE * onTime)) flags.push("late_rows");
   if (merged.observational) flags.push("observational");
   if (models > 1) flags.push("runtime_changed");
@@ -352,7 +355,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
 
   if (recommendation === "hold") {
     if (!final) reasons.push(`This is an interim look: the newest export was made at ${asOf}, before the analysis cutoff ${spec.analysis_cutoff}. A final result needs an export made at or after the cutoff; look again then.`);
-    for (const f of holdFlags) reasons.push(holdReason(f, { spec, pm, arms, srmP, cohortP, worstMissing, unattributedRate, immatureTotal, models, asOf, missingGap, lateRows }));
+    for (const f of holdFlags) reasons.push(holdReason(f, { spec, pm, arms, srmP, cohortP, worstMissing, unattributedRate, immatureTotal, models, asOf, missingGap }));
     if (primary.status !== "clears") reasons.push(`The primary metric does not clear: ${primary.detail}`);
     for (const g of guards) {
       if (g.readout.status === "inconclusive") reasons.push(`Guard ${g.spec.name} is inconclusive: ${g.readout.detail}`);
@@ -381,7 +384,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
     allocation: { intended: spec.allocation.candidate, observed: rowsTotal > 0 ? arms.candidate.rows / rowsTotal : null, srm_p: srmP, flagged: flags.includes("sample_ratio_mismatch") },
     coverage: {
       rows: rowsTotal, mature: matureTotal, immature: immatureTotal, unattributed: unattributedTotal, missing_rate: worstMissing.rate,
-      unattributed_rate: unattributedRate, duplicates_dropped: merged.duplicates_dropped, required_per_arm: spec.required_per_arm,
+      unattributed_rate: unattributedRate, duplicates_dropped: merged.duplicates_dropped, required_per_arm: spec.required_per_arm, late_rows: lateRows,
     },
     primary,
     guards: guards.map((g) => g.readout),
@@ -397,7 +400,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
 function holdReason(flag: string, x: {
   spec: ExperimentSpec; pm: { base: ArmMetric; cand: ArmMetric }; arms: { baseline: ArmCounts; candidate: ArmCounts };
   srmP: number | null; cohortP: number | null; worstMissing: { name: string; arm: string; rate: number }; unattributedRate: number;
-  immatureTotal: number; models: number; asOf: IsoTime; missingGap: { name: string; p: number } | null; lateRows: number;
+  immatureTotal: number; models: number; asOf: IsoTime; missingGap: { name: string; p: number } | null;
 }): string {
   const s = x.spec;
   switch (flag) {
@@ -409,7 +412,6 @@ function holdReason(flag: string, x: {
     case "missing_imbalance": return `Missing events differ between the arms: ${x.missingGap?.name} is missing far more often in one arm than the other (p = ${x.missingGap?.p.toExponential(2)}, below ${s.integrity_alpha}). An arm can look better only because its bad outcomes were not recorded; fix the logging and export again.`;
     case "missing_events": return `Missing events: ${pct(x.worstMissing.rate)} of mature ${x.worstMissing.arm} conversations have no ${x.worstMissing.name} value, above the ${pct(s.max_missing_rate)} limit. An arm can look better only because its bad outcomes were not recorded; fix the logging and export again.`;
     case "attribution_ambiguous": return `Ambiguous attribution: ${pct(x.unattributedRate)} of rows belong to units seen in both arms, above the ${pct(s.max_unattributed_rate)} limit. Their outcomes cannot be credited to one prompt; check that assignment is sticky.`;
-    case "late_rows": return `${x.lateRows} conversations are in a later export only, although their outcomes were already final when an earlier export of the same period was made and that export said it was complete. Either the source delivers conversations late, or conversations were exported a second time under new ids; the counts cannot be trusted until the customer finds which.`;
     case "observational": return "The export says traffic was not randomised (observational), so a difference could come from who saw each prompt rather than the prompt. Run the experiment with a random split.";
     case "runtime_changed": return `The rows carry ${x.models} different runtime models, so a difference could come from the model change rather than the prompt. Rerun with one model, or export only the period with one model.`;
     case "window_not_covered": return `No export covers the whole experiment window ${s.window.start} to ${s.window.end}, so days of the planned window are missing. Export every conversation that started in the window, in one export, and analyse again.`;
@@ -463,7 +465,7 @@ const FLAG_TEXT: Record<string, string> = {
   missing_events: "Too many conversations have no recorded value for some metric (missing events).",
   missing_imbalance: "One arm is missing recorded values far more often than the other.",
   attribution_ambiguous: "Too many rows belong to units seen in both arms (ambiguous attribution).",
-  late_rows: "Conversations appear in a later export for a period an earlier export had reported as complete.",
+  late_rows: "Some conversations are only in a later export although they were older than the outcome lag when an earlier export of the same period was made. Earlier exports were incomplete: conversations finish later than the outcome lag, or the source delivers them late. This does not hold the result; check the outcome lag with the customer.",
   observational: "Traffic was not randomised (observational).",
   runtime_changed: "More than one runtime model appears in the rows.",
   superseded_aggregate: "Older cumulative aggregate exports were replaced by a newer one and not used.",
@@ -492,7 +494,7 @@ export function renderDecision(analysis: ExperimentAnalysis, spec: ExperimentSpe
   for (const [label, arm] of [["Baseline", a.arms.baseline], ["Candidate", a.arms.candidate]] as const) {
     L.push(`- ${label} (${arm.tag}): ${arm.rows} rows, ${arm.mature} mature, ${arm.immature} immature (excluded), ${arm.unattributed} unattributed (excluded). Source ${source}.`);
   }
-  L.push(`- Largest missing rate ${pct(a.coverage.missing_rate)} (limit ${pct(spec.max_missing_rate)}); unattributed ${pct(a.coverage.unattributed_rate)} (limit ${pct(spec.max_unattributed_rate)}); duplicates dropped ${a.coverage.duplicates_dropped}; required per arm ${a.coverage.required_per_arm}.`, "");
+  L.push(`- Largest missing rate ${pct(a.coverage.missing_rate)} (limit ${pct(spec.max_missing_rate)}); unattributed ${pct(a.coverage.unattributed_rate)} (limit ${pct(spec.max_unattributed_rate)}); duplicates dropped ${a.coverage.duplicates_dropped}; late rows ${a.coverage.late_rows}; required per arm ${a.coverage.required_per_arm}.`, "");
   L.push("## Metrics", "", "| Metric | Role | Baseline | Candidate | Difference | Interval | Status | Source | Method |", "|---|---|---|---|---|---|---|---|---|");
   for (const r of [p, ...a.guards]) {
     const arm = (x: MetricReadout["baseline"]) => `${fmt(x.estimate)} (n ${x.n}, missing ${x.missing})`;

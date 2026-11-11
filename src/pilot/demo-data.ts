@@ -308,24 +308,28 @@ export function demoPack(): Pack {
 // Two redacted conversations from the first experiment, where the candidate handed late-return requests to the
 // support team. A reviewer approves them as regression cases: one the proposer may see, one held out.
 export function experimentFailureCases(): PromotionRequest["added"][number]["case"][] {
-  const make = (id: string, split: Split, n: number): PromotionRequest["added"][number]["case"] => {
+  // Two different customers: the same kind of request, each in their own words.
+  const make = (id: string, split: Split, n: number, opening: (order: string) => string, closing: string): PromotionRequest["added"][number]["case"] => {
     const order = orderToken(n);
     return {
       id, split, intent: "late return exception",
       messages: [
-        user(`Order ${order} arrived six weeks ago and the strap broke. Can you make an exception and take it back?`),
+        user(opening(order)),
         calls(`${id}-a`, "lookup_order", { order_id: order }), result(`${id}-a`, "lookup_order", lookupResult(order, n)),
         calls(`${id}-b`, "check_return_eligibility", { order_id: order }), result(`${id}-b`, "check_return_eligibility", ineligible(n)),
         calls(`${id}-c`, "escalate_to_human", { reason: "late return exception request" }), result(`${id}-c`, "escalate_to_human", "Handed to the support team."),
         says(TEXT_HANDOFF),
-        user("Ok, thanks."),
+        user(closing),
         says(TEXT_BYE),
       ],
       checks: [INELIGIBLE(1), NO_ESCALATION(1), NO_RETURN(1)],
       observed: { resolved: false, escalated: true },
     };
   };
-  return [make("late-exc-d01", "discovery", 41), make("late-exc-h01", "heldout", 42)];
+  return [
+    make("late-exc-d01", "discovery", 41, (order) => `Order ${order} arrived six weeks ago and the strap broke. Can you make an exception and take it back?`, "Ok, thanks."),
+    make("late-exc-h01", "heldout", 42, (order) => `I know ${order} is past the window. The zip failed after a month on the trail, so is an exception possible this once?`, "Understood, thanks anyway."),
+  ];
 }
 
 // ---------------------------------------------------------------------------------------------------------------

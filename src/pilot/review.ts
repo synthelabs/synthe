@@ -141,7 +141,14 @@ export function renderReview(bundle: ReviewBundle, reviewId: Sha256, pack: Pack,
   const rp = bundle.replay;
   const ex = bundle.experiment;
   const tallyRow = (name: string, t: ReviewBundle["replay"]["tally"]["all"]) => `| ${name} | ${t.cases} | ${t.paired} | ${t.wins} | ${t.losses} | ${t.ties} | ${t.excluded} |`;
-  const why: string[] = [bundle.rationale.trim() === "" ? "No rationale was recorded." : bundle.rationale.trim()];
+  // The rationale and the diff are free text, from a person or a model. Both are shown as literal text, never
+  // as markdown: markup in them is displayed as typed, so it cannot render into something the egress check did
+  // not see. The fence is longer than any run of backticks inside, so the text cannot close it.
+  const literal = (text: string, kind: string): string[] => {
+    const fence = "`".repeat(Math.max(3, ...(text.match(/`+/g) ?? []).map((run) => run.length + 1)));
+    return [`${fence}${kind}`, ...text.replace(/\n$/, "").split("\n"), fence];
+  };
+  const why: string[] = [];
   if (targetCheckId !== null && pack.check_catalog[targetCheckId] !== undefined) {
     why.push(`Target behaviour (check ${targetCheckId}): ${pack.check_catalog[targetCheckId]}`);
   } else {
@@ -155,11 +162,11 @@ export function renderReview(bundle: ReviewBundle, reviewId: Sha256, pack: Pack,
     "",
     `The system prompt file \`${bundle.repo.prompt_path}\` on \`${bundle.repo.base}\` changes as follows.`,
     "",
-    "```diff",
-    bundle.diff.replace(/\n$/, ""),
-    "```",
+    ...literal(bundle.diff, "diff"),
     "",
     "## Why",
+    "",
+    ...(bundle.rationale.trim() === "" ? ["No rationale was recorded."] : literal(bundle.rationale.trim(), "text")),
     "",
     ...why.flatMap((p) => [p, ""]),
     "## Metric contract",

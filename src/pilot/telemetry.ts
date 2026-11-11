@@ -66,6 +66,36 @@ function checkPersonalData(text: string, field: string, where: string): void {
 // its first row there), so only a plain lowercase name is repeated.
 const shown = (name: string): string => (/^[a-z][a-z0-9_]{0,63}$/.test(name) ? `"${name}"` : "with a name that is not a plain lowercase word");
 
+// Without a unit id, two conversations can honestly share a start time and every value, so one twin proves
+// nothing. A duplicated export does not look like chance, though: every copied row has an exact twin, far more
+// rows than the mix of versions and values would pair up among rows that share a start time.
+// For each row, the chance that some other row with its start time has its values is worked out from the size of
+// that group and how common the row's values are in the whole export. The export is refused when the rows that
+// do have a twin exceed the expected number by more than 5% of all rows (and at least five) and by more than
+// seven standard deviations. With one timestamp per day nearly every row has a twin by chance, so nothing can be
+// said and nothing is refused.
+export function likelyCopies(rows: TelemetryRow[]): { twins: number; expected: number } | null {
+  if (rows.length < 2) return null;
+  const tally = (keys: string[]) => { const m = new Map<string, number>(); for (const k of keys) m.set(k, (m.get(k) ?? 0) + 1); return m; };
+  const attributes = rows.map((r) => canonicalJson({ ...r, conversation_id: null, started_at: null }));
+  const exactKeys = rows.map((r, i) => `${r.started_at}|${attributes[i]}`);
+  const common = tally(attributes);
+  const sameTime = tally(rows.map((r) => r.started_at));
+  const exact = tally(exactKeys);
+  let twins = 0;
+  let expected = 0;
+  let variance = 0;
+  rows.forEach((r, i) => {
+    if ((exact.get(exactKeys[i]) ?? 0) > 1) twins++;
+    const p = 1 - (1 - (common.get(attributes[i]) ?? 0) / rows.length) ** ((sameTime.get(r.started_at) ?? 1) - 1);
+    expected += p;
+    variance += p * (1 - p);
+  });
+  const excess = twins - expected;
+  if (excess <= Math.max(5, 0.05 * rows.length) || excess <= 7 * Math.sqrt(variance)) return null;
+  return { twins, expected };
+}
+
 // One row, from inline JSON or a parsed CSV line. Returns the row with only the documented fields.
 function validateRow(raw: unknown, where: string, contract: MetricContract): TelemetryRow {
   if (!isObject(raw)) return bad(`${where} is not an object.`);
@@ -378,6 +408,10 @@ export function importTelemetry(input: ImportInput): TelemetryImport {
     if (twinKeys.has(key)) twins++; else twinKeys.add(key);
   }
   if (twins > 0) fail("telemetry_duplicate", `${twins} row${twins === 1 ? " is" : "s are"} the same conversation under a different conversation_id (same unit, start time, version and values). Each conversation must appear once; fix the export query and export again.`);
+  const copies = likelyCopies(rows.filter((r) => r.unit_id === undefined));
+  if (copies !== null) {
+    fail("telemetry_duplicate", `${copies.twins} rows have an exact twin under another conversation_id (same start time, version, segment and values), where chance explains about ${Math.round(copies.expected)}. That is what an export looks like when conversations are in it twice. If these are separate conversations, add unit_id to every row so they can be told apart.`);
+  }
 
   versionCheck(rows.map((r) => r.prompt_version), input.tags, "row");
   const outside = rows.filter((r) => ms(r.started_at) < ms(window.start) || ms(r.started_at) >= ms(window.end)).length;
@@ -556,8 +590,8 @@ export function mergeImports(imports: Stored<TelemetryImport>[]): MergedTelemetr
   const ordered = [...merged.values()].sort((a, b) => byString(a.row.conversation_id, b.row.conversation_id));
   const rows = ordered.map((v) => v.row);
   // An export says it holds every conversation of its window (expected_rows). A conversation that started before
-  // an export was made, inside that export's window, and is only in a later export, was missed by the first or
-  // is a second copy under a new id. The analysis counts these and decides what that means.
+  // an export was made, inside that export's window, and is only in a later export, was not finished then or
+  // reached the source late. The analysis counts the ones that were old enough to be final.
   const spans = all.map((i) => ({ from: ms(i.value.window.start), to: ms(i.value.window.end), at: ms(i.value.exported_at), ids: new Set((i.value.rows ?? []).map((r) => r.conversation_id)) }));
   const missedAt = rows.map((r) => {
     const started = ms(r.started_at);

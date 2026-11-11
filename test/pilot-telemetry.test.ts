@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PilotError } from "../src/pilot/errors.ts";
 import { contentId } from "../src/pilot/ids.ts";
-import { baselineReport, importProblem, importTelemetry, parseCsv, renderBaseline, type ImportInput } from "../src/pilot/telemetry.ts";
+import { baselineReport, importProblem, importTelemetry, likelyCopies, parseCsv, renderBaseline, type ImportInput } from "../src/pilot/telemetry.ts";
 import { sampleSizeProportions, wilsonInterval } from "../src/pilot/stats.ts";
 import type { PilotErrorCode, Stored, TelemetryExport, TelemetryImport, TelemetryRow } from "../src/pilot/types.ts";
-import { BASE_TAG, CAND_TAG, CONFIG_ID, EXPERIMENT_ID, UNITS, baseExport, contract, isoAt, row } from "./pilot-metric-helpers.ts";
+import { BASE_TAG, CAND_TAG, CONFIG_ID, EXPERIMENT_ID, UNITS, baseExport, contract, isoAt, rng, row } from "./pilot-metric-helpers.ts";
 
 const C = contract();
 const START = "2026-09-01T00:00:00Z";
@@ -85,6 +85,38 @@ test("the same conversation under a second id is telemetry_duplicate when the ro
   // Without a unit id two conversations can start in the same second with the same outcome, so nothing is refused.
   const anonymous = tenRows();
   assert.equal(run(exp({ rows: [...anonymous, { ...anonymous[2], conversation_id: "c-rekeyed" }], expected_rows: 11 })).rows!.length, 11);
+});
+
+test("without unit ids, exact copies are refused only when there are far more than chance explains", () => {
+  const rand = rng(11);
+  const pick = () => ({ resolved: rand() < 0.6 ? 1 : 0, escalated: rand() < 0.1 ? 1 : 0, csat: 1 + Math.floor(rand() * 5) });
+  const at = (n: number, minutesApart: number) => Array.from({ length: n }, (_, i) => row(i + 1, BASE_TAG, isoAt(START, Math.floor(i * minutesApart)), pick()));
+  const again = (rows: TelemetryRow[], every: number) => rows.filter((_, i) => i % every === 0).map((r) => ({ ...r, conversation_id: `${r.conversation_id}-again` }));
+  const window = { start: START, end: "2026-09-15T00:00:00Z" };
+  const exported = (rows: TelemetryRow[]) => exp({ rows, expected_rows: rows.length, window, exported_at: "2026-09-20T00:00:00Z" });
+
+  // One conversation every half hour: no two share a start time.
+  const fine = at(600, 30);
+  assert.equal(likelyCopies(fine), null);
+  refused(exported([...fine, ...again(fine, 1)]), "telemetry_duplicate", /1200 rows have an exact twin under another conversation_id .* where chance explains about 1\d\d\./);
+  refused(exported([...fine, ...again(fine, 5)]), "telemetry_duplicate", /240 rows have an exact twin/);
+  // A handful of exact twins is what two customers writing in the same minute looks like.
+  assert.equal(run(exported([...fine, ...again(fine, 1).slice(0, 5)])).rows!.length, 605);
+
+  // Busier: three or four conversations share each start time, so some are identical by chance. That is not
+  // refused; the same export with every conversation in it twice is.
+  const busy = at(2000, 0.3).map((r) => ({ ...r, started_at: isoAt(START, Math.floor(Date.parse(r.started_at) / 60_000) - Math.floor(Date.parse(START) / 60_000)) }));
+  const byChance = busy.length - new Set(busy.map((r) => `${r.started_at}|${JSON.stringify(r.values)}`)).size;
+  assert.ok(byChance > 20, `the fixture has twins by chance (${byChance})`);
+  assert.equal(likelyCopies(busy), null);
+  assert.equal(run(exported(busy)).rows!.length, 2000);
+  const doubled = likelyCopies([...busy, ...again(busy, 1)]);
+  assert.ok(doubled !== null && doubled.twins === 4000 && doubled.expected < 3000, JSON.stringify(doubled));
+
+  // One timestamp per day: nearly every conversation has a twin by chance, so nothing can be said either way.
+  const coarse = at(1400, 0).map((r, i) => ({ ...r, started_at: isoAt(START, (i % 14) * 24 * 60) }));
+  assert.equal(likelyCopies(coarse), null);
+  assert.equal(likelyCopies([...coarse, ...again(coarse, 1)]), null);
 });
 
 test("a stored import must agree with itself", () => {

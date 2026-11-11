@@ -39,6 +39,8 @@ export interface JournalEntry {
 const entryHash = (e: Omit<JournalEntry, "hash">): Sha256 => sha256(canonicalJson(e));
 const MAX_OBJECT_BYTES = 256 * 1024 * 1024;
 const LOCK_STALE_MS = 60_000;
+// Lock files this process holds right now.
+const HELD = new Set<string>();
 
 export class PilotStore {
   dir: string;
@@ -212,18 +214,21 @@ export class PilotStore {
       try {
         const fd = openSync(lock, "wx", 0o600);
         try { writeSync(fd, String(process.pid)); } finally { closeSync(fd); }
+        HELD.add(lock);
         break;
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
         const owner = Number(readFileSync(lock, "utf8").trim());
-        let alive = Number.isInteger(owner) && owner > 0 && owner !== process.pid;
-        if (alive) { try { process.kill(owner, 0); } catch { alive = false; } }
+        // A lock with this process's id is live only while this process still holds it (two commands running in
+        // one process); otherwise it was left by an earlier process that had the same id.
+        let alive = Number.isInteger(owner) && owner > 0 && (owner === process.pid ? HELD.has(lock) : true);
+        if (alive && owner !== process.pid) { try { process.kill(owner, 0); } catch { alive = false; } }
         try { if (Date.now() - statSync(lock).mtimeMs > staleMs) alive = false; } catch { alive = false; }
         if (alive || attempt >= 2) throw new PilotError("conflict", `Another pilot command (process ${owner}) is working in ${this.dir} (${file}). Wait for it to finish and run this again.`);
         try { unlinkSync(lock); } catch { /* another process removed it first */ }
       }
     }
-    return () => { try { unlinkSync(lock); } catch { /* already gone */ } };
+    return () => { HELD.delete(lock); try { unlinkSync(lock); } catch { /* already gone */ } };
   }
 
   // A rendering of stored records. Safe to overwrite: the records, not the report, are the evidence.

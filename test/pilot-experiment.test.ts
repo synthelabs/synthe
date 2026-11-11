@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { PilotError } from "../src/pilot/errors.ts";
-import { analyzeExperiment, buildExperimentSpec, renderDecision, renderExperimentSpec } from "../src/pilot/experiment.ts";
+import { analyzeExperiment, buildExperimentSpec, HOLD_FLAGS, renderDecision, renderExperimentSpec } from "../src/pilot/experiment.ts";
 import { contentId } from "../src/pilot/ids.ts";
 import { meanSummary, newcombeInterval, welchInterval } from "../src/pilot/stats.ts";
 import { importTelemetry } from "../src/pilot/telemetry.ts";
@@ -189,7 +189,7 @@ test("keep: final, enough samples, primary clears and every guard passes", () =>
   assert.equal(a.experiment_id, EXPERIMENT_ID);
   assert.deepEqual(a.rollback, s.rollback);
   assert.deepEqual(a.allocation, { intended: 0.5, observed: 0.5, srm_p: 1, flagged: false });
-  assert.deepEqual(a.coverage, { rows: 2000, mature: 2000, immature: 0, unattributed: 0, missing_rate: 0, unattributed_rate: 0, duplicates_dropped: 0, required_per_arm: 600 });
+  assert.deepEqual(a.coverage, { rows: 2000, mature: 2000, immature: 0, unattributed: 0, missing_rate: 0, unattributed_rate: 0, duplicates_dropped: 0, required_per_arm: 600, late_rows: 0 });
   assert.deepEqual(a.arms.baseline, { tag: BASE_TAG, rows: 1000, mature: 1000, immature: 0, unattributed: 0, segments: { "(none)": 1000 } });
   assert.ok(a.reasons.length >= 1);
 });
@@ -524,7 +524,7 @@ test("an aggregate update may move a unit's conversations to unattributed, and n
   refusal(() => analyze(s, [first, worse]), "telemetry_conflict", /fewer resolved = 1 conversations/);
 });
 
-test("conversations that turn up in a later export for a period an earlier export called complete hold the result", () => {
+test("exact copies under new ids are refused when the export is read; conversations that only turn up late are counted, not held", () => {
   const s = spec();
   const small = makeRows({ n: 400, resolved: 160, escalated: 40 }, { n: 400, resolved: 200, escalated: 36 });
   const early = small.filter((r) => r.started_at < "2026-10-12T00:00:00Z");
@@ -532,21 +532,42 @@ test("conversations that turn up in a later export for a period an earlier expor
   // Honest: the final export holds the first export's conversations and the ones that started after it.
   const honest = analyze(s, [first, imp(exportOf(small, FINAL_AT))]);
   assert.deepEqual(honest.flags, ["insufficient_samples"]);
-  // The final export also holds every conversation a second time under a new id: 800 each arm reads as enough.
+  assert.equal(honest.coverage.late_rows, 0);
+  // The final export also holds every conversation a second time under a new id, which would read as 800 in each
+  // arm and enough. It is refused: nearly every pair of rows that shares a start time is identical, which chance
+  // does not do.
   const copies = small.map((r, k) => ({ ...r, conversation_id: `rekeyed-${k}` }));
-  const doubled = analyze(s, [first, imp(exportOf([...small, ...copies], FINAL_AT))]);
-  assert.equal(doubled.arms.baseline.mature, 800);
-  assert.equal(doubled.recommendation, "hold");
-  assert.ok(doubled.flags.includes("late_rows") && !doubled.flags.includes("insufficient_samples"));
-  assert.match(doubled.reasons.join(" "), /conversations are in a later export only/);
+  refusal(() => imp(exportOf([...small, ...copies], FINAL_AT)), "telemetry_duplicate", /1600 rows have an exact twin under another conversation_id/);
   // A conversation that was inside the outcome lag at the first export may have been unfinished then: not late.
-  const young = small.slice(0, 30).map((r, k) => ({ ...r, conversation_id: `young-${k}`, started_at: isoAt("2026-10-10T12:00:00Z", k * 60) }));
-  assert.deepEqual(analyze(s, [first, imp(exportOf([...small, ...young], FINAL_AT))]).flags, ["insufficient_samples"]);
-  // A handful of conversations that reach the source late are not a reason to hold.
-  const few = small.slice(0, 5).map((r, k) => ({ ...r, conversation_id: `late-${k}` }));
-  assert.deepEqual(analyze(s, [first, imp(exportOf([...small, ...few], FINAL_AT))]).flags, ["insufficient_samples"]);
-  const six = small.slice(0, 20).map((r, k) => ({ ...r, conversation_id: `late-${k}` }));
-  assert.ok(analyze(s, [first, imp(exportOf([...small, ...six], FINAL_AT))]).flags.includes("late_rows"));
+  const young = small.slice(0, 30).map((r, k) => ({ ...r, conversation_id: `young-${k}`, started_at: isoAt("2026-10-10T12:00:00Z", k * 60 + 7) }));
+  const withYoung = analyze(s, [first, imp(exportOf([...small, ...young], FINAL_AT))]);
+  assert.deepEqual(withYoung.flags, ["insufficient_samples"]);
+  assert.equal(withYoung.coverage.late_rows, 0);
+  // Conversations older than the outcome lag at the first export, yet only in the final one: they finished late
+  // or were delivered late. They are counted and reported. The final export holds them, so they do not hold the
+  // result: an honest pilot with slow conversations must not be stuck for good.
+  const lateOnes = (n: number) => small.slice(0, n).map((r, k) => ({ ...r, conversation_id: `late-${k}`, started_at: isoAt(r.started_at, 3) }));
+  const few = analyze(s, [first, imp(exportOf([...small, ...lateOnes(5)], FINAL_AT))]);
+  assert.equal(few.coverage.late_rows, 5);
+  assert.deepEqual(few.flags, ["insufficient_samples"]);
+  const many = analyze(s, [first, imp(exportOf([...small, ...lateOnes(40)], FINAL_AT))]);
+  assert.equal(many.coverage.late_rows, 40);
+  assert.deepEqual(many.flags, ["insufficient_samples", "late_rows"]);
+  assert.ok(!(HOLD_FLAGS as readonly string[]).includes("late_rows"));
+  // With enough conversations the same lateness leaves the decision as it would be without the first export.
+  const big = makeRows(GOOD_BASE, GOOD_CAND);
+  const bigFirst = imp(exportOf(big.filter((r) => r.started_at < "2026-10-12T00:00:00Z"), "2026-10-12T00:00:00Z"));
+  const slow = big.slice(0, 200).map((r, k) => ({ ...r, conversation_id: `slow-${k}`, started_at: isoAt(r.started_at, 3) }));
+  const decided = analyze(s, [bigFirst, imp(exportOf([...big, ...slow], FINAL_AT))]);
+  assert.equal(decided.recommendation, "keep");
+  assert.deepEqual(decided.flags, ["late_rows"]);
+  assert.equal(decided.coverage.late_rows, 200);
+  assert.match(renderDecision(decided, s, "d".repeat(64)), /late rows 200/);
+});
+
+test("with a unit id on every row, one conversation under two ids is refused whatever the timestamps of the others", () => {
+  const small = makeRows({ n: 400, resolved: 160, escalated: 40 }, { n: 400, resolved: 200, escalated: 36 }).map((r, k) => ({ ...r, unit_id: `u-${k}` }));
+  refusal(() => imp(exportOf([...small, { ...small[0], conversation_id: "again" }], FINAL_AT)), "telemetry_duplicate", /same conversation under a different conversation_id/);
 });
 
 test("exports made with different metric queries are refused, and one-sided segments hold", () => {

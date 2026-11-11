@@ -18,6 +18,7 @@ const DISCOVER = "src/pilot/discover.ts";
 const PACK = "src/pilot/pack.ts";
 const EGRESS = "src/pilot/egress.ts";
 const PUBLISH = "src/pilot/publish.ts";
+const REVIEW = "src/pilot/review.ts";
 const APPROVAL = "src/pilot/approval.ts";
 const PROMOTE = "src/pilot/promote.ts";
 const STORE = "src/pilot/store.ts";
@@ -40,6 +41,7 @@ const NEAR = {
   [PACK]: ["test/pilot-pack.test.ts"],
   [EGRESS]: ["test/pilot-egress.test.ts", "test/pilot-publish.test.ts"],
   [PUBLISH]: ["test/pilot-publish.test.ts"],
+  [REVIEW]: ["test/pilot-review.test.ts"],
   [APPROVAL]: ["test/pilot-approval.test.ts"],
   [PROMOTE]: ["test/pilot-promote.test.ts"],
   [STORE]: ["test/pilot-store.test.ts"],
@@ -110,12 +112,14 @@ const allMutations = [
   ["pack: a field named __proto__ is accepted", PACK, "if (unsafeKey(raw) !== null) bad(", "if (false) bad("],
 
   // Egress, review authority and approvals.
-  ["egress: copied conversation wording passes", EGRESS, "copied: new Set(runsOf(w).filter((r) => index.phrases.has(r)))", "copied: new Set()"],
-  ["egress: a single word or identifier from a conversation passes", EGRESS, "single: new Set(w.filter((x) => index.phrases.has(x)))", "single: new Set()"],
-  ["egress: a name that is in many conversations passes", EGRESS, "for (const word of capital) if (!lower.has(word) && !allowed.has(word)) phrases.add(word);", ""],
+  ["egress: copied conversation wording passes", EGRESS, "for (const run of runsOf(w)) if (index.phrases.has(run)) copied.add(run);", ""],
+  ["egress: a single word or identifier from a conversation passes", EGRESS, "for (const word of w) if (index.phrases.has(word)) single.add(word);", ""],
+  ["egress: a name that is in many conversations passes", EGRESS, "for (const word of capital) if (!lower.has(word) && !allowed.has(word)) { phrases.add(word); names.add(word); }", ""],
+  ["egress: markup that renders into a name passes", EGRESS, "for (const form of new Set([part, rendered(part)])) {", "for (const form of [part]) {"],
+  ["egress: a name cut into pieces passes", EGRESS, "if (joined.length >= JOIN_MIN && index.names.has(joined)) single.add(joined);", ""],
   ["egress: an order token that is in many conversations passes", EGRESS, "for (const word of always) if (!allowed.has(word)) phrases.add(word);", ""],
-  ["egress: look-alike letters are not read as Latin ones", EGRESS, ".replace(/[\\u0370-\\u03ff\\u0400-\\u052f]/g, (ch) => LOOKALIKES.get(ch) ?? ch)", ""],
-  ["egress: a word that mixes alphabets passes", EGRESS, 'if (MIXED.test(text.normalize("NFKD").replace(/\\p{Cf}/gu, ""))) problems.push', "if (false) problems.push"],
+  ["egress: look-alike letters are not read as Latin ones", EGRESS, ".replace(/[^\\x00-\\x7f]/g, (ch) => LOOKALIKES.get(ch) ?? ch)", ""],
+  ["egress: a word that mixes alphabets passes", EGRESS, 'if (MIXED.test(rendered(text).normalize("NFKD").replace(/\\p{Cf}/gu, ""))) problems.push', "if (false) problems.push"],
   ["egress: a word inside a case id or catalog sentence is allowed everywhere", EGRESS, "const w = words(withoutIdentifiers(t, identifiers));", "const w = words(t);"],
   ["egress: an identifier the reports print is refused in free text", EGRESS, "const rest = withoutIdentifiers(text, index.identifiers);", "const rest = text;"],
   ["egress: the first word of a sentence is read as a name", EGRESS, "else if ((!isProse || !tok.starts) && tok.lower.length >= NAME_MIN) capital.add(tok.lower);", "else if (tok.lower.length >= NAME_MIN) capital.add(tok.lower);"],
@@ -142,7 +146,8 @@ const allMutations = [
   ["analysis: an export dated in the future is accepted", COMMANDS, "if (ms(imported.exported_at) > now.getTime() + CLOCK_SKEW_MS) {", "if (false) {"],
   ["analysis: the experiment may use another query than the baseline", COMMANDS, "if (importsFor(store, f.config_id).length && baselineHash !== (imported.query_hash ?? null)) {", "if (false) {"],
   ["pack: a hand-made successor replaces the frozen pack", COMMANDS, "  if (current && current.refs.pack !== id) {", "  if (false) {"],
-  ["pack: a held-out conversation copied under a new id becomes discovery", COMMANDS, "(heldIds.has(c.id) || conversationKeys(c).some((k) => heldConversations.has(k)))", "(heldIds.has(c.id))"],
+  ["pack: a held-out conversation copied under a new id becomes discovery", COMMANDS, "heldIds.has(c.id) || conversationKeys(c).some((k) => heldConversations.has(k))\n", "heldIds.has(c.id)\n"],
+  ["pack: a held-out conversation with a word added becomes discovery", COMMANDS, "    || (added.has(c.id) && heldRuns.some((runs) => nearCopy(customerRuns(c), runs)))\n", ""],
   ["init: git follows the shell's GIT_DIR", COMMANDS, ' && !k.startsWith("GIT_")', ""],
   ["init: a repo on another host passes the origin check", COMMANDS, " || (api === GITHUB_API && !GITHUB_HOSTS.has(remote.host.toLowerCase()))", ""],
   ["verify: a replay built from unrecorded arm runs passes", COMMANDS, "if (!armRecorded(stored.baseline) || !armRecorded(stored.candidate)) throw", "if (false) throw"],
@@ -203,8 +208,14 @@ const allMutations = [
   ["telemetry: an aggregate count may fall by any amount", TELEMETRY, "const moved = Math.max(0, n.unattributed - o.unattributed);", "const moved = Infinity;"],
   ["telemetry: conversations moved to unattributed refuse an honest update", TELEMETRY, "const moved = Math.max(0, n.unattributed - o.unattributed);", "const moved = 0;"],
   ["telemetry: a conversation an earlier export missed is not noticed", TELEMETRY, "if (started >= span.from && started < span.to && started <= span.at) missed = span.at;", ""],
-  ["hold: conversations that turn up late do not hold the result", EXPERIMENT, 'if (lateRows > Math.max(LATE_ROWS_MIN, LATE_ROWS_SHARE * onTime)) flags.push("late_rows");', ""],
-  ["hold: a conversation that was inside the lag counts as late", EXPERIMENT, "return missed !== null && ms(r.started_at) + lag <= missed;", "return missed !== null;"],
+  ["report: conversations that turn up late are not reported", EXPERIMENT, 'if (lateRows > Math.max(LATE_ROWS_MIN, LATE_ROWS_SHARE * onTime)) flags.push("late_rows");', ""],
+  ["report: a conversation that was inside the lag counts as late", EXPERIMENT, "return missed !== null && ms(r.started_at) + lag <= missed;", "return missed !== null;"],
+  ["hold: late conversations hold an honest result for good", EXPERIMENT, '  "observational", "runtime_changed", "inside_lag_window", "window_not_covered",', '  "late_rows", "observational", "runtime_changed", "inside_lag_window", "window_not_covered",'],
+  ["telemetry: an export with every conversation in it twice is read", TELEMETRY, "  if (copies !== null) {\n", "  if (false) {\n"],
+  ["telemetry: twins that chance explains refuse an honest export", TELEMETRY, "if (excess <= Math.max(5, 0.05 * rows.length) || excess <= 7 * Math.sqrt(variance)) return null;", "if (twins === 0) return null;"],
+  ["review: the rationale is rendered as markdown", REVIEW, '...(bundle.rationale.trim() === "" ? ["No rationale was recorded."] : literal(bundle.rationale.trim(), "text")),', "bundle.rationale.trim(),"],
+  ["review: free text can close its own fence", REVIEW, 'const fence = "`".repeat(Math.max(3, ...(text.match(/`+/g) ?? []).map((run) => run.length + 1)));', 'const fence = "```";'],
+  ["publish: two publications in one process both run", STORE, "(owner === process.pid ? HELD.has(lock) : true)", "owner !== process.pid"],
   ["live: a call may wait for the SDK's ten minutes", LIVE, "maxRetries: 0, timeout: timeoutMs, logLevel", "maxRetries: 0, logLevel"],
 ];
 

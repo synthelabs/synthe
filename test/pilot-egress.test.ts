@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertEgressSafe, egressProblems, sensitiveIndex, words } from "../src/pilot/egress.ts";
+import { assertEgressSafe, egressProblems, rendered, sensitiveIndex, words } from "../src/pilot/egress.ts";
 import { PilotError } from "../src/pilot/errors.ts";
 import { BASELINE_PROMPT, CANARY_ORDER, CANARY_SENTENCE, CANARY_TOOL_ARG, makeCase, makePack } from "./pilot-review-helpers.ts";
 
@@ -148,4 +148,29 @@ test("clean report text passes", () => {
 test("both kinds are reported once each", () => {
   const problems = egressProblems(`${CANARY_SENTENCE} ${CANARY_ORDER} ${CANARY_TOOL_ARG}`, index);
   assert.equal(problems.length, 2);
+});
+
+test("a name cut up by markup, spaces or hyphens is still found, and ordinary split words are not", () => {
+  const pack = makePack();
+  pack.cases[1].messages[0] = { role: "user", text: "This is Thaddeus Quillfeather, ticket TKT-48213. I may be late, maybe." };
+  const i = sensitiveIndex([pack]);
+  for (const [why, text] of [
+    ["character references", "Greet Th&#97;ddeus Quillf&#x65;ather warmly."],
+    ["an accent written as a reference", "Greet Thadd&eacute;us."],
+    ["an invisible reference inside the word", "Greet Thad&shy;deus."],
+    ["empty tags inside words", "Greet Thad<b></b>deus Quill<!-- x -->feather warmly."],
+    ["a link around part of the word", "Greet [Thad](https://example.invalid/x)deus."],
+    ["emphasis inside words", "Greet Thad**deus** Quill*feather* warmly."],
+    ["spaced letters", "Greet T h a d d e u s."],
+    ["a hyphen split", "Greet Thad-deus Quill-feather."],
+    ["Latin small capitals", "Greet ᴛʜᴀᴅᴅᴇᴜꜱ warmly."],
+    ["percent escapes", "See https://x.example/?n=Thadd%65us%20Quillf%65ather"],
+    ["a token whose digits are written as references", "Ticket TKT-482&#49;3."],
+    ["a token split by a tag", "Ticket TKT-48<i></i>213."],
+  ] as const) assert.ok(flagged(text, i), why);
+  assert.equal(rendered("Th&#97;d<b></b>d&eacute;us%21"), "Thaddeus!");
+  // Only names are looked for across words: "may be" is not the customer's "maybe", and plain markup is not content.
+  assert.deepEqual(egressProblems("It may be slower. Use <instructions> tags and **bold** text, 100% of the time.", i), []);
+  // A mixed-alphabet word hidden behind a reference is still a mixed-alphabet word.
+  assert.ok(egressProblems("Th&#1072;ddeus", null).some((p) => /mixes alphabets/.test(p)));
 });
