@@ -5,7 +5,7 @@ import { createServer, type Server } from "node:http";
 // without touching GitHub. It keeps every request it receives, which is how the privacy checks read what was sent.
 
 export interface SeenRequest { method: string; path: string; body: string; authorization: string | undefined }
-export interface FakePull { number: number; head: string; base: string; title: string; body: string }
+export interface FakePull { number: number; head: string; base: string; title: string; body: string; state: "open" | "closed" }
 
 export class FakeGitHub {
   slug: string;
@@ -15,12 +15,15 @@ export class FakeGitHub {
   // branch -> path -> content
   branches = new Map<string, Map<string, string>>();
   heads = new Map<string, string>();
+  private revisions = new Map<string, Map<string, string>>();
+  private commits = new Map<string, { sha: string; parents: { sha: string }[]; files: { filename: string; status: string }[] }>();
   private server: Server;
 
   constructor(slug: string, base: string, files: Record<string, string>, headSha: string) {
     this.slug = slug;
     this.branches.set(base, new Map(Object.entries(files)));
     this.heads.set(base, headSha);
+    this.revisions.set(headSha, this.branches.get(base)!);
     this.server = createServer((req, res) => {
       let raw = "";
       req.on("data", (chunk) => { raw += chunk; });
@@ -52,29 +55,36 @@ export class FakeGitHub {
       if (this.branches.has(branch)) return send(422, { message: "Reference already exists" });
       return this.point(branch, body.sha, send, 201);
     }
-    if (path.startsWith("/git/refs/heads/") && method === "PATCH") {
-      return this.point(decodeURIComponent(path.slice("/git/refs/heads/".length)), body.sha, send, 200);
+    if (path.startsWith("/commits/") && method === "GET") {
+      const commit = this.commits.get(decodeURIComponent(path.slice("/commits/".length)));
+      return commit ? send(200, commit) : send(404, { message: "Commit not found" });
     }
     if (path.startsWith("/contents/")) {
       const file = decodeURIComponent(path.slice("/contents/".length));
       if (method === "PUT") {
         const files = this.branches.get(body.branch);
         if (!files) return send(404, { message: "Branch not found" });
-        files.set(file, Buffer.from(body.content, "base64").toString("utf8"));
+        const next = new Map(files);
+        next.set(file, Buffer.from(body.content, "base64").toString("utf8"));
+        const parent = this.heads.get(body.branch)!;
         const sha = `commit-${this.requests.length}`;
         this.heads.set(body.branch, sha);
+        this.branches.set(body.branch, next);
+        this.revisions.set(sha, next);
+        this.commits.set(sha, { sha, parents: [{ sha: parent }], files: [{ filename: file, status: files.has(file) ? "modified" : "added" }] });
         return send(200, { commit: { sha } });
       }
-      const text = this.branches.get(url.searchParams.get("ref") ?? "")?.get(file);
+      const ref = url.searchParams.get("ref") ?? "";
+      const text = (this.revisions.get(ref) ?? this.branches.get(ref))?.get(file);
       if (text === undefined) return send(404, { message: "Not Found" });
       return accept.includes("raw") ? send(200, text) : send(200, { sha: `blob-${file}`, content: Buffer.from(text, "utf8").toString("base64") });
     }
     if (path === "/pulls" && method === "GET") {
       const head = url.searchParams.get("head");
-      return send(200, this.pulls.filter((p) => `${owner}:${p.head}` === head).map((p) => ({ number: p.number, state: "open", merged_at: null })));
+      return send(200, this.pulls.filter((p) => `${owner}:${p.head}` === head).map((p) => ({ number: p.number, state: p.state, base: { ref: p.base, repo: { full_name: this.slug } }, head: { ref: p.head, sha: this.heads.get(p.head), repo: { full_name: this.slug } }, body: p.body })));
     }
     if (path === "/pulls" && method === "POST") {
-      const pull: FakePull = { number: this.pulls.length + 1, head: body.head, base: body.base, title: body.title, body: body.body };
+      const pull: FakePull = { number: this.pulls.length + 1, head: body.head, base: body.base, title: body.title, body: body.body, state: "open" };
       this.pulls.push(pull);
       return send(201, { number: pull.number });
     }
@@ -83,9 +93,9 @@ export class FakeGitHub {
 
   // A branch created or moved to a commit starts from the files of the branch that commit is the head of.
   private point(branch: string, sha: string, send: (code: number, value?: unknown) => void, code: number): void {
-    const from = [...this.heads].find(([, head]) => head === sha)?.[0];
+    const from = this.revisions.get(sha);
     if (!from) return send(422, { message: "Object does not exist" });
-    this.branches.set(branch, new Map(this.branches.get(from)));
+    this.branches.set(branch, new Map(from));
     this.heads.set(branch, sha);
     return send(code, {});
   }

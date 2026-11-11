@@ -1,6 +1,6 @@
 // Opening the review pull request. Off unless the operator asks, names the destination and confirms the candidate.
 // Lane: evidence and review workflow.
-import type { Repo } from "../github/repo.ts";
+import type { PilotRepo } from "./github.ts";
 import { assertEgressSafe, type SensitiveIndex } from "./egress.ts";
 import { PilotError } from "./errors.ts";
 import { contentId, promptId, reviewBranch, shortId } from "./ids.ts";
@@ -15,6 +15,7 @@ export interface PublishInput {
   // What the operator typed for this one publication.
   operator: { publish: boolean; repo: string; base: string; confirm: string };
   sensitive: SensitiveIndex;
+  expectedPr?: number;
   // Test hook: called at named points ("after-commit", "after-open-pr") so a crash can be injected there.
   fault?: (point: string) => void;
 }
@@ -28,7 +29,7 @@ export interface PublishResult { pr: number; branch: string; adopted: boolean }
 
 // Throws PilotError: unauthorized_publish, wrong_repo, wrong_revision, egress_blocked, replay_gate_failed.
 // Every check before step "Then, through the Repo" runs with no network call, so a refusal sends nothing.
-export async function publishReview(repo: Repo, input: PublishInput): Promise<PublishResult> {
+export async function publishReview(repo: PilotRepo, input: PublishInput): Promise<PublishResult> {
   const { config, bundle, operator } = input;
   const b = bundle.value;
 
@@ -73,7 +74,8 @@ export async function publishReview(repo: Repo, input: PublishInput): Promise<Pu
   const base = config.repo.base;
   const branch = b.repo.branch;
 
-  const current = await repo.readFile(path, base);
+  const baseSha = await repo.headSha(base);
+  const current = await repo.readFile(path, baseSha);
   if (current === null) {
     throw new PilotError("wrong_revision", `The prompt file ${path} was not found on the ${base} branch. Nothing was written. Check the prompt path and base branch in the pilot config.`);
   }
@@ -81,14 +83,26 @@ export async function publishReview(repo: Repo, input: PublishInput): Promise<Pu
     throw new PilotError("wrong_revision", `The ${base} branch no longer holds the baseline prompt this candidate was built from. Nothing was written. Re-run the pilot from the current prompt.`);
   }
 
-  // A pull request for this branch in any state means this candidate was already published: a retry or a second
-  // operator must never open another.
-  const existing = await repo.findPr(branch);
-  if (existing !== null) return { pr: existing.number, branch, adopted: true };
+  const file = { branch, baseSha, path, content: input.candidate_prompt, message };
+  const existing = await repo.findReviewPr(branch);
+  if (existing !== null) {
+    if (existing.state !== "open" || existing.base !== base || existing.head !== branch || existing.body !== input.body
+      || (input.expectedPr !== undefined && existing.number !== input.expectedPr)
+      || !existing.headSha || !await repo.matchesReview(existing.headSha, file)) {
+      throw new PilotError("conflict", "An existing pull request does not match this open review. Check its status, revisions and review body before retrying.");
+    }
+    return { pr: existing.number, branch, adopted: true };
+  }
+  if (input.expectedPr !== undefined) {
+    throw new PilotError("conflict", "The previously published review pull request could not be verified. No replacement was opened.");
+  }
 
-  const baseSha = await repo.headSha(base);
-  await repo.commitFile({ branch, baseSha, path, content: input.candidate_prompt, message });
+  if (await repo.headSha(base) !== baseSha) throw new PilotError("wrong_revision", "The base branch moved during validation. Retry against its current revision.");
+  const head = await repo.commitReview(file);
   input.fault?.("after-commit");
+  if (!await repo.matchesReview(head, file) || await repo.headSha(branch) !== head || await repo.headSha(base) !== baseSha) {
+    throw new PilotError("wrong_revision", "The base or review revision changed during publication. No pull request was opened.");
+  }
   const pr = await repo.openPr({ branch, base, title, body: input.body });
   input.fault?.("after-open-pr");
   return { pr, branch, adopted: false };

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { canonicalJson } from "../core/evidence.ts";
-import { githubRepo, type Repo } from "../github/repo.ts";
+import { pilotGithubRepo, type PilotRepo } from "./github.ts";
 import { makeApproval, requireApproval } from "./approval.ts";
 import { CONFIG_FILE, GITHUB_API, parsePilotConfig } from "./config.ts";
 import { discoverFailures, makeCandidate, proposerContext, renderFindings } from "./discover.ts";
@@ -32,7 +32,7 @@ export interface PilotDeps {
   env: Record<string, string | undefined>;
   now(): Date;
   // GitHub access for a publication. Default: the real API through src/github/repo.ts.
-  github?(slug: string, token: string, api: string): Repo;
+  github?(slug: string, token: string, api: string): PilotRepo;
   // Runs git in a checkout and returns stdout. Default: the git on PATH.
   git?(args: string[], cwd: string): string;
   // Transport for a live model provider (tests point it at a loopback server).
@@ -535,17 +535,13 @@ export async function review(store: PilotStore, flags: Flags, deps: PilotDeps): 
     return 0;
   }
   const published = store.find("review.published", id)[0];
-  if (published) {
-    deps.say(`Already published as pull request #${published.refs.pr} on ${published.refs.branch}. No second pull request was opened.`);
-    return 0;
-  }
   const token = deps.env[GITHUB_TOKEN_ENV]?.trim();
   if (!token) throw new PilotError("unauthorized_publish", `Nothing was published. Put a GitHub token for ${f.config.repo.slug} in ${GITHUB_TOKEN_ENV}; no other variable is read.`);
-  const repo = (deps.github ?? githubRepo)(f.config.repo.slug, token, f.config.repo.api ?? GITHUB_API);
+  const repo = (deps.github ?? pilotGithubRepo)(f.config.repo.slug, token, f.config.repo.api ?? GITHUB_API);
   const operator = { publish: true, repo: need(flags, "repo", "repeat the destination repo, owner/name"), base: need(flags, "base", "repeat the base branch"), confirm: need(flags, "confirm", "repeat the full candidate id") };
   // One publication of a candidate at a time: two runs at once could both find no pull request and both commit.
   const result = await store.exclusive(`publish-${shortId(candidate.id)}`, PUBLISH_LOCK_STALE_MS, async () => {
-    const r = await publishReview(repo, { config: f.config, bundle: { id, value: bundle }, body, candidate_prompt: candidatePrompt, sensitive, fault: deps.fault, operator });
+    const r = await publishReview(repo, { config: f.config, bundle: { id, value: bundle }, body, candidate_prompt: candidatePrompt, sensitive, fault: deps.fault, operator, expectedPr: published ? Number(published.refs.pr) : undefined });
     store.record("review.published", id, { review: id, pr: String(r.pr), branch: r.branch }, iso(deps.now()));
     return r;
   });

@@ -212,7 +212,11 @@ test("a rejected candidate cannot reach review, and publishing needs every part 
     assert.equal(await ctx.run(publish), 0);
     const requestsAfterPublish = ctx.github.requests.length;
     assert.equal(await ctx.run(publish), 0);
-    assert.equal(ctx.github.requests.length, requestsAfterPublish, "a review already published is not sent again, not even to look");
+    assert.ok(ctx.github.requests.length > requestsAfterPublish, "a retry re-verifies the PR");
+    assert.ok(ctx.github.requests.slice(requestsAfterPublish).every((request) => request.method === "GET"), "verification never writes");
+    ctx.github.pulls[0].state = "closed";
+    assert.equal(await ctx.run(publish), 1, "a recorded PR that was closed cannot be adopted");
+    assert.ok(refused(ctx.lines, "conflict"));
     assert.equal(ctx.github.pulls.length, 1);
     assert.equal(ctx.store.find("review.published").length, 1);
     const pull = ctx.github.pulls[0];
@@ -222,6 +226,11 @@ test("a rejected candidate cannot reach review, and publishing needs every part 
     assert.ok(pull.body.includes(eligible) && pull.body.includes("It is not an estimate of business impact."));
     assert.ok(ctx.github.requests.every((r) => r.authorization === "Bearer test-token"));
     assert.ok(!ctx.lines.join("\n").includes("test-token") && !ctx.lines.join("\n").includes("ambient-token"), "no token is ever printed");
+    ctx.github.pulls.pop();
+    const writesAfterPublish = ctx.github.writes().length;
+    assert.equal(await ctx.run(publish), 1, "a missing recorded PR cannot be recreated");
+    assert.equal(ctx.github.writes().length, writesAfterPublish);
+    assert.equal(ctx.github.pulls.length, 0);
   } finally { await ctx.stop(); }
 });
 

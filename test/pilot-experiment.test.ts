@@ -365,6 +365,22 @@ test("revert on a final guard breach", () => {
   assert.ok(a.reasons[0].includes("escalated"));
 });
 
+test("unreliable telemetry cannot turn a guard breach into a terminal revert", () => {
+  const interim = run({ n: 400, resolved: 160, escalated: 40 }, { n: 400, resolved: 200, escalated: 120 }, {
+    at: INTERIM_AT, days: 6, over: { assignment: "observational" },
+  }).a;
+  const final = run(GOOD_BASE, { ...GOOD_CAND, escalated: 180 }, { over: { assignment: "observational" } }).a;
+  const incomplete = run(GOOD_BASE, { ...GOOD_CAND, escalated: 180 }, {
+    days: 7, over: { window: { start: START, end: "2026-10-08T00:00:00Z" } },
+  }).a;
+  for (const [result, flag] of [[interim, "observational"], [final, "observational"], [incomplete, "window_not_covered"]] as const) {
+    assert.equal(result.guards[0].status, "breach");
+    assert.ok(result.flags.includes(flag));
+    assert.equal(result.recommendation, "hold");
+    assert.equal(result.stopped_by, undefined);
+  }
+});
+
 test("no revert when harm is real but inside the tolerated margin: the result is hold, not a breach", () => {
   // Escalation rises from 10% to 12.5% over 4000 per arm: clearly above zero, but below the 3-point margin.
   const { a } = run({ n: 4000, resolved: 1600, escalated: 400 }, { n: 4000, resolved: 2000, escalated: 500 }, { required: 600 });

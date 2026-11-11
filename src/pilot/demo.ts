@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { githubRepo } from "../github/repo.ts";
+import { pilotGithubRepo } from "./github.ts";
 import { main } from "./main.ts";
 import { activePack, GITHUB_TOKEN_ENV, type Flags, type PilotDeps } from "./commands.ts";
 import {
@@ -68,7 +68,7 @@ export async function demo(flags: Flags, deps: PilotDeps): Promise<number> {
     say: (line) => say(`    ${line}`),
     env: { [GITHUB_TOKEN_ENV]: "demo-token-for-the-loopback-server" },
     now: () => new Date((clock += 60_000)),
-    github: (slug, token) => githubRepo(slug, token, githubUrl),
+    github: (slug, token) => pilotGithubRepo(slug, token, githubUrl),
     fault: (point) => { if (point === crashAt) { crashAt = null; throw new Error(`injected crash at ${point}`); } },
   };
   const store = new PilotStore(dir);

@@ -222,7 +222,7 @@ export class PilotStore {
         // A lock with this process's id is live only while this process still holds it (two commands running in
         // one process); otherwise it was left by an earlier process that had the same id.
         let alive = Number.isInteger(owner) && owner > 0 && (owner === process.pid ? HELD.has(lock) : true);
-        if (alive && owner !== process.pid) { try { process.kill(owner, 0); } catch { alive = false; } }
+        if (alive && owner !== process.pid) { try { process.kill(owner, 0); } catch (e) { alive = (e as NodeJS.ErrnoException).code !== "ESRCH"; } }
         try { if (Date.now() - statSync(lock).mtimeMs > staleMs) alive = false; } catch { alive = false; }
         if (alive || attempt >= 2) throw new PilotError("conflict", `Another pilot command (process ${owner}) is working in ${this.dir} (${file}). Wait for it to finish and run this again.`);
         try { unlinkSync(lock); } catch { /* another process removed it first */ }

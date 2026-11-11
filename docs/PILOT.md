@@ -210,7 +210,7 @@ Replay shows checks on recorded conversations. It is not an estimate of business
 The analysis is fixed in the specification before any outcome is seen:
 
 - **Keep**: only at the final analysis (an export made at or after the cutoff), with clean data, when the primary metric's gain is at least `min_effect` and its interval is above zero, and every guard's interval for harm is inside its `max_harm`.
-- **Revert**: at the final analysis when a guard breaches (the whole interval for its harm is above `max_harm`) or the primary is significantly worse. Before the cutoff, only a critical guard's early stop reverts: the same test at 99.9%, once both arms have the guard's `min_per_arm`.
+- **Revert**: at the final analysis with clean data and enough samples, when a guard breaches (the whole interval for its harm is above `max_harm`) or the primary is significantly worse. Before the cutoff, a critical guard can revert at the 99.9% early stop once both arms have the guard's `min_per_arm` and telemetry integrity checks pass. Its minimum is separate from the final sample target, and the interim decision uses mature outcomes.
 - **Hold**: everything else. Before the cutoff; too few mature conversations; outcomes still inside the lag; a sample ratio mismatch; a cohort imbalance, or segments reported for one arm only; missing events above the limit, or far more common in one arm than the other; ambiguous attribution above the limit; observational data; more than one runtime model; no single export that covers the whole window; a primary that does not clear; a guard that is not shown to be safe.
 
 A guard has three outcomes. Pass: the whole interval for harm is inside `max_harm`. Breach: the whole interval is beyond it. Otherwise it is inconclusive, which holds. Harm that is real but may still be inside the margin is not a breach, because the contract says the team tolerates that much; it is not a pass either.
@@ -270,7 +270,7 @@ Limits of the check. It is a net under the reviewer, not a proof:
 
 Read `REVIEW.md` before you publish it.
 
-Only one publication of a candidate runs at a time, in one process or several. A retry, or a second run, finds the existing pull request for the candidate's branch and opens nothing. Merging is a person's decision. The pull request body is the review bundle: the diff, the contract, replay evidence, the experiment plan, the rollback target, every id, and the approve command.
+Only one publication of a candidate runs at a time, in one process or several. A retry verifies that an existing PR is open in the expected repository, targets the expected base, and carries the exact review body and single-file candidate commit. A mismatch or closed PR stops the retry. The publisher checks the baseline prompt at an immutable base SHA and leaves unexpected review branches in place. Merging is a person's decision. The pull request body is the review bundle: the diff, the contract, replay evidence, the experiment plan, the rollback target, every id, and the approve command.
 
 ## Live model provider
 

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { githubRepo } from "../src/github/repo.ts";
+import { pilotGithubRepo } from "../src/pilot/github.ts";
 import { main } from "../src/pilot/main.ts";
 import { GITHUB_TOKEN_ENV, type PilotDeps } from "../src/pilot/commands.ts";
 import { agentScript, BASELINE_PROMPT, baselineExport, DEMO, demoConfig, demoPack, proposerScript } from "../src/pilot/demo-data.ts";
@@ -63,7 +63,7 @@ export async function workspace(): Promise<Ctx> {
     proposer: `scripted:${put("proposer.script.json", json(proposerScript()))}`,
     run: (argv, over = {}) => main([...argv, "--dir", dir], {
       say: (line) => { lines.push(line); }, env, now: () => new Date((clock += 60_000)),
-      github: (slug, token) => githubRepo(slug, token, url), ...over,
+      github: (slug, token) => pilotGithubRepo(slug, token, url), ...over,
     }),
     on: (day) => { clock = Date.parse(`${day}T09:00:00Z`); },
     last: (step) => {

@@ -91,6 +91,17 @@ test("a lock left by a process that died does not block the retry", () => {
   assert.ok(!existsSync(lock));
 });
 
+test("a permission-denied process probe leaves a fresh lock in place", (t) => {
+  const store = fresh();
+  const lock = join(store.dir, "journal.lock");
+  writeFileSync(lock, "1");
+  t.mock.method(process, "kill", () => {
+    throw Object.assign(new Error("permission denied"), { code: "EPERM" });
+  });
+  assert.equal(code(() => store.record("pack.frozen", "pack", {}, "2026-10-01T00:01:00Z")), "conflict");
+  assert.equal(readFileSync(lock, "utf8"), "1");
+});
+
 test("entries cut off the end of the journal are noticed through its recorded head", () => {
   const store = fresh();
   for (let i = 1; i <= 4; i++) store.record("step", `k${i}`, { n: String(i) }, "2026-10-01T00:00:00Z");
