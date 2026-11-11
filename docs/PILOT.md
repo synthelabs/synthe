@@ -195,7 +195,7 @@ The analysis is fixed in the specification before any outcome is seen:
 
 - **Keep**: only at the final analysis (an export made at or after the cutoff), with clean data, when the primary metric's gain is at least `min_effect` and its interval is above zero, and every guard's interval for harm is inside its `max_harm`.
 - **Revert**: at the final analysis when a guard breaches (harm above `max_harm` and its interval above zero) or the primary is significantly worse. Before the cutoff, only a critical guard's early stop reverts: the same test at 99.9%, once both arms have the guard's `min_per_arm`.
-- **Hold**: everything else. Before the cutoff; too few mature conversations; outcomes still inside the lag; a sample ratio mismatch; a cohort imbalance; missing events or ambiguous attribution above the limits; observational data; more than one runtime model; a primary that does not clear; a guard that is not shown to be safe.
+- **Hold**: everything else. Before the cutoff; too few mature conversations; outcomes still inside the lag; a sample ratio mismatch; a cohort imbalance; missing events or ambiguous attribution above the limits; observational data; more than one runtime model; no single export that covers the whole window; a primary that does not clear; a guard that is not shown to be safe.
 
 Methods: a rate uses the Newcombe hybrid score interval for the difference of two proportions; a mean uses the Welch interval. Sample ratio and cohort balance use chi-square tests at 0.001. The required sample size is the standard two-sample formula at the contract's alpha and power.
 

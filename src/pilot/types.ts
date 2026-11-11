@@ -640,7 +640,8 @@ export interface ExperimentAnalysis {
   primary: MetricReadout;
   guards: MetricReadout[];
   // Named data problems: observational, attribution_ambiguous, cohort_imbalance, missing_events, inside_lag_window,
-  // sample_ratio_mismatch, insufficient_samples, runtime_changed, before_cutoff.
+  // sample_ratio_mismatch, insufficient_samples, runtime_changed, before_cutoff, window_not_covered,
+  // superseded_aggregate.
   flags: string[];
   recommendation: Recommendation;
   // revert only: "early_stop" or "final".

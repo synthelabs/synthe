@@ -324,6 +324,22 @@ test("hold when the runtime model changed during the experiment", () => {
   assert.equal(a.recommendation, "hold");
 });
 
+test("hold when the export was made after the cutoff but covers only part of the window", () => {
+  // The first seven days only, exported after the cutoff, with more than enough conversations and a clear win.
+  const partial = { window: { start: START, end: "2026-10-08T00:00:00Z" } };
+  const { a } = run(GOOD_BASE, GOOD_CAND, { days: 7, over: partial });
+  assert.equal(a.final, true);
+  assert.equal(a.primary.status, "clears");
+  assert.deepEqual(a.flags, ["window_not_covered"]);
+  assert.equal(a.recommendation, "hold");
+  assert.ok(a.reasons.some((r) => r.includes("whole experiment window")));
+  // Two partial exports that together span the window still leave no export that vouches for all of it.
+  const { s, i } = run(GOOD_BASE, GOOD_CAND, { days: 7, over: partial });
+  const tail = makeRows({ n: 5, resolved: 5, escalated: 0 }, { n: 5, resolved: 5, escalated: 0 }, { days: 3, start: "2026-10-10T00:00:00Z", firstId: 900001 });
+  const later = imp(exportOf(tail, FINAL_AT, { export_id: "tail", window: { start: "2026-10-08T00:00:00Z", end: "2026-10-15T00:00:00Z" } }));
+  assert.equal(analyze(s, [i, later]).recommendation, "hold");
+});
+
 test("revert on a final guard breach", () => {
   const { a } = run(GOOD_BASE, { ...GOOD_CAND, escalated: 160 });
   assert.equal(a.guards[0].status, "breach");
@@ -331,6 +347,16 @@ test("revert on a final guard breach", () => {
   assert.equal(a.recommendation, "revert");
   assert.equal(a.stopped_by, "final");
   assert.ok(a.reasons[0].includes("escalated"));
+});
+
+test("no revert when harm is real but inside the tolerated margin: the result is hold, not a breach", () => {
+  // Escalation rises from 10% to 12.5% over 4000 per arm: clearly above zero, but below the 3-point margin.
+  const { a } = run({ n: 4000, resolved: 1600, escalated: 400 }, { n: 4000, resolved: 2000, escalated: 500 }, { required: 600 });
+  const g = a.guards[0];
+  assert.ok(g.difference! > 0 && g.difference! < 0.03 && g.ci!.lo > 0 && g.ci!.hi > 0.03, `${g.difference} ${g.ci?.lo} ${g.ci?.hi}`);
+  assert.equal(g.status, "inconclusive");
+  assert.equal(a.recommendation, "hold");
+  assert.equal(a.stopped_by, undefined);
 });
 
 test("revert on an early stop of a critical guard before the cutoff", () => {
@@ -478,8 +504,10 @@ test("aggregates: only the newest cumulative export is used, and it must start a
   assert.ok(a.reasons.some((r) => r.includes(older.id.slice(0, 12))));
   const late = imp(baseExport({ export_id: "agg-3", exported_at: FINAL_AT, window: { start: "2026-10-02T00:00:00Z", end: s.window.end }, assignment: "randomized", aggregates: aggregatesOf(rows, c, s, FINAL_AT) }));
   refusal(() => analyze(s, [late]), "telemetry_window_mismatch");
-  // Rows and aggregates cannot be mixed.
-  refusal(() => analyze(s, [newer, run(GOOD_BASE, GOOD_CAND).i]), "telemetry_conflict");
+  // Rows and aggregates cannot be mixed, whichever was exported first: the counts would overlap.
+  refusal(() => analyze(s, [newer, run(GOOD_BASE, GOOD_CAND).i]), "telemetry_conflict", /some are aggregates/);
+  refusal(() => analyze(s, [run(GOOD_BASE, GOOD_CAND, { at: "2026-10-16T12:00:00Z" }).i, newer]), "telemetry_conflict", /some are aggregates/);
+  refusal(() => analyze(s, [older, run(GOOD_BASE, GOOD_CAND).i]), "telemetry_conflict", /some are aggregates/);
 });
 
 test("analysis refusals", () => {

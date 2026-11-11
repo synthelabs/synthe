@@ -32,7 +32,7 @@ const EPS = 1e-12;
 // The flags that hold a final result. Order is the order reasons are given in.
 export const HOLD_FLAGS = [
   "insufficient_samples", "sample_ratio_mismatch", "cohort_imbalance", "missing_events", "attribution_ambiguous",
-  "observational", "runtime_changed", "inside_lag_window",
+  "observational", "runtime_changed", "inside_lag_window", "window_not_covered",
 ] as const;
 
 const pctLevel = (level: number) => `${Number((level * 100).toFixed(2))}%`;
@@ -93,7 +93,7 @@ export function buildExperimentSpec(input: {
       mean: `Mean metrics: each arm's estimate is the mean over mature, attributable conversations with a value; the difference is candidate minus baseline, with a Welch interval (Welch-Satterthwaite degrees of freedom) at ${pctLevel(level)}.`,
       keep: `Keep only at the final analysis (an export made at or after ${cutoff}) with none of the data problems listed under hold, when the primary metric's benefit (the difference in its good direction) is at least ${c.primary.min_effect} and the lower bound of its ${pctLevel(level)} interval is above 0, and every guard passes: the upper bound of the ${pctLevel(level)} interval for its harm is at most its max_harm.`,
       revert: `Revert at the final analysis when any guard breaches (its harm is above max_harm and the lower bound of the ${pctLevel(level)} interval for harm is above 0) or the primary metric is significantly worse (the upper bound of the ${pctLevel(level)} interval for its benefit is below 0). Before the final analysis only a critical guard's early stop can revert.`,
-      hold: `Hold in every other case: before the cutoff; when there are fewer than ${required} conversations with a primary value in either arm, a sample ratio mismatch, a cohort imbalance, missing events above ${pct(c.max_missing_rate)}, ambiguous attribution above ${pct(c.max_unattributed_rate)}, observational assignment, more than one runtime model, or outcomes still inside the ${c.outcome_lag_days}-day lag; when the primary does not clear; or when a guard is inconclusive.`,
+      hold: `Hold in every other case: before the cutoff; when there are fewer than ${required} conversations with a primary value in either arm, a sample ratio mismatch, a cohort imbalance, missing events above ${pct(c.max_missing_rate)}, ambiguous attribution above ${pct(c.max_unattributed_rate)}, observational assignment, more than one runtime model, or outcomes still inside the ${c.outcome_lag_days}-day lag, or no single export covering the whole window; when the primary does not clear; or when a guard is inconclusive.`,
       early_stop: `Early stop: before the cutoff, a critical guard with early_stop is checked at ${pctLevel(EARLY_STOP_LEVEL)} once both arms have at least its min_per_arm mature values; it reverts when its harm is above max_harm and the lower bound of the ${pctLevel(EARLY_STOP_LEVEL)} interval for harm is above 0. No other guard and no primary result is acted on before the cutoff.`,
       integrity: `Integrity: rows per arm are tested against the intended allocation (chi-square goodness of fit), and arm against segment (chi-square test of independence, pooling segments with expected counts below ${MIN_EXPECTED}); a p-value below ${INTEGRITY_ALPHA} holds the result as a sample ratio mismatch or a cohort imbalance.`,
     },
@@ -292,6 +292,10 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   if (unattributedRate > spec.max_unattributed_rate + EPS) flags.push("attribution_ambiguous");
   if (merged.observational) flags.push("observational");
   if (models > 1) flags.push("runtime_changed");
+  // A final result needs one export that spans the whole predeclared window. Otherwise an export of the first few
+  // days, made after the cutoff, would count as final and skip the days the window was set to cover.
+  const covered = merged.used.some((i) => ms(i.value.window.start) <= ms(spec.window.start) && ms(i.value.window.end) >= ms(spec.window.end));
+  if (final && !covered) flags.push("window_not_covered");
   if (merged.superseded.length > 0) flags.push("superseded_aggregate");
 
   // Recommendation, in the predeclared order.
@@ -377,6 +381,7 @@ function holdReason(flag: string, x: {
     case "attribution_ambiguous": return `Ambiguous attribution: ${pct(x.unattributedRate)} of rows belong to units seen in both arms, above the ${pct(s.max_unattributed_rate)} limit. Their outcomes cannot be credited to one prompt; check that assignment is sticky.`;
     case "observational": return "The export says traffic was not randomised (observational), so a difference could come from who saw each prompt rather than the prompt. Run the experiment with a random split.";
     case "runtime_changed": return `The rows carry ${x.models} different runtime models, so a difference could come from the model change rather than the prompt. Rerun with one model, or export only the period with one model.`;
+    case "window_not_covered": return `No export covers the whole experiment window ${s.window.start} to ${s.window.end}, so days of the planned window are missing. Export every conversation that started in the window, in one export, and analyse again.`;
     case "inside_lag_window": return `${x.immatureTotal} conversations are younger than the ${s.outcome_lag_days}-day outcome lag at ${x.asOf}, so their outcomes are not final and they are left out. Export again after the cutoff ${s.analysis_cutoff}.`;
     default: return flag;
   }
@@ -429,6 +434,7 @@ const FLAG_TEXT: Record<string, string> = {
   observational: "Traffic was not randomised (observational).",
   runtime_changed: "More than one runtime model appears in the rows.",
   superseded_aggregate: "Older cumulative aggregate exports were replaced by a newer one and not used.",
+  window_not_covered: "No single export covers the whole experiment window.",
 };
 
 const shown = (r: MetricReadout, x: number | null) => (r.kind === "rate" ? pct(x) : `${fmt(x)} ${r.unit}`);
