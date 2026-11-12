@@ -216,6 +216,12 @@ const allMutations = [
   ["improve: product code the app imports counts as a metric helper", "src/improve/protect.ts", '    if (t !== null) for (const i of importsOf(f, t, known)) used.delete(i);\n', ''],
   ["improve: setup never records metric-only helpers", "src/cli/improve.ts", 'return helpers.length ? { ...draft, metricOnly: helpers } : draft;', 'return draft;'],
   ["improve: Python relative imports resolve from the repo root", "src/improve/protect.ts", 'for (const root of from ? [from] : roots)', 'for (const root of roots)'],
+  ["improve: a win is kept without measuring again", "src/improve/loop.ts", 'const confirmed = again.measurement && notKeptWhy(config, best, again.measurement, again.guardPassed);', 'const confirmed = null;'],
+  ["improve: the lucky first runs become the best", "src/improve/loop.ts", 'best = again.measurement;', 'best = m.measurement;'],
+  ["improve: an unmeasurable confirmation still keeps", "src/improve/loop.ts", 'if (!again.measurement) record.why', 'if (false) record.why'],
+  ["init: too few test cases accepted", "src/cli/init.ts", "const ENOUGH = 64;", "const ENOUGH = 32;"],
+  ["init: back to 20 hidden cases", "src/cli/init.ts", "const HOLDOUT = 40;", "const HOLDOUT = 20;"],
+  ["init: asks for no spare cases", "src/cli/init.ts", "const ASK_FOR = TRAIN + HOLDOUT + 8;", "const ASK_FOR = TRAIN + HOLDOUT;"],
 ];
 
 const selectedFiles = process.argv.slice(2);

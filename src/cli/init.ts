@@ -17,6 +17,10 @@ export const SCENARIOS_FILE = ".synthe/scenarios.jsonl";
 export const WORKFLOW_FILE = ".github/workflows/synthe.yml";
 export const DRAFT_FILE = ".synthe/setup-draft.json";
 export const EVENT_BUDGET_USD = 4;
+// On event credit every setup model call goes through the organizers' proxy, which keeps the request and the reply.
+// Those requests hold the prompt, the code file it lives in and part of the README, so the notice says so, as
+// `improve` does (RECORD_NOTICE). It applies whatever the sharing setting is.
+export const SETUP_RECORD_NOTICE = "Event credit: the organizers keep and read a copy of everything setup sends to Claude and every reply — your prompt, the code file that holds it, part of your README, and the test cases and checks Claude writes. This applies whatever your sharing setting is. Keys and other secrets in your files are removed first.";
 export const AGENT_NEXT = "NEXT: Synthe is NOT installed yet. This step wrote only a local draft: no workflow, no secrets, no commit. Finish confirm before any other work in this repo, and do not edit the prompt file until then. Tell the person which credential and budget will be used. Show all of this to the person, including the notices, proposed checks and calibration examples. The notices need no answer. Ask which checks to keep or reword and whether the marks look right. Then run `npx synthe init --agent --confirm --check \"final sentence\"`, repeating `--check` for each final check, or use `--keep-checks` if they keep the proposed checks.";
 const SETUP_BRANCH = "synthe/setup";
 const SETUP_PR_BODY = "Adds Synthe, which improves this repo's AI agent prompt. Merging this starts the first round; completed rounds then start back to back, up to 12 rounds with a local run budget of $3. Available provider or event credit can stop it sooner; this budget is not a credit allowance. It stops by itself.\n\nIt adds `synthe.json` (the goal and your rules), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Stop it any time with `npx synthe stop`.";
@@ -51,14 +55,16 @@ const SCENARIO_SCHEMA = {
   required: ["guardrails", "policy", "brief", "checks", "scenarios"], additionalProperties: false,
 };
 
-const TRAIN = 20;
-// 20 hidden cases, so a real gain can pass the hidden-case sign test at the default limit (holdout_max_p 0.1): with
-// 10, a real 10-point gain merged 64% of the time in simulation, with 20 it merges 83% (test/core.test.ts).
-const HOLDOUT = 20;
-// The model often writes a case or two fewer than asked (29 instead of 30 in 4 of 6 live tries), so it is asked for a
-// few extra, and a slightly short list is still used. Below ENOUGH the merge rule loses too much power, so it asks again.
-const ASK_FOR = TRAIN + HOLDOUT + 4;
-const ENOUGH = 32;
+// 40 to learn from and 40 hidden. Ties carry no evidence, so the gate's power comes from cases where one reply is
+// clearly better: a change that wins 2 of every 3 decisive duels merges about 1 time in 9 with 20/20 cases and about 1 in
+// 3 with 40/40, while false merges stay under 1% (notes research/reports/2026-11-10-gate-power-study.md; decided by Rohan
+// 2026-11-10). Each round duels about twice as many cases as at 20/20, so it costs about twice as much.
+const TRAIN = 40;
+const HOLDOUT = 40;
+// The model often writes a few cases fewer than asked (29 instead of 30 in 4 of 6 live tries), so it is asked for about
+// 10% extra, and a short list is still used. Below ENOUGH the merge rule loses too much power, so it asks again.
+const ASK_FOR = TRAIN + HOLDOUT + 8;
+const ENOUGH = 64;
 
 const CHECKS_WANTED = 3;
 
@@ -488,6 +494,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   const credentialName = event ? "Crimson Hacks event code" : key === env.SYNTHE_ANTHROPIC_KEY?.trim() ? "your own key from SYNTHE_ANTHROPIC_KEY" : key === envKey?.trim() ? "your own key from ANTHROPIC_API_KEY" : "your own Anthropic key";
   io.say(`Credential: ${credentialName}, $${event ? EVENT_BUDGET_USD : 3} ${event ? "local run budget (not a credit allowance). Event credit is limited by organizer-configured caps and shared availability; it can stop sooner." : "budget on your Anthropic account."}`);
   if (enrollment) io.say(CRIMSON_NOTICE);
+  if (event) io.say(SETUP_RECORD_NOTICE);
 
   const tracked = repoTextFiles(await io.run("git", ["ls-files"]), root);
   const prompts = findPrompts(tracked);
@@ -549,10 +556,12 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
       : share === "numbers" ? 'By using Synthe, you share numbers only with the Synthe team so we can improve it: rounds, checks and spend.'
       : 'By using Synthe, you share how this run goes with the Synthe team so we can improve it: rounds, checks and spend, plus your goal, your checks, Synthe\'s prompt edits and one example message with its replies. Never your whole prompt, your test-case file or your code, and keys, emails and phone numbers are removed first.');
   // The notice above is the versioned text (SHARE_NOTICE_VERSION). The opt-outs still work but setup does not advertise them.
+  // It is about the workflow rounds. On event credit the setup calls are kept anyway, code included, so say which is which.
+  if (event) io.say("The sharing line above is about the workflow rounds. Setup on event credit is recorded as the event-credit line said, including your code.");
 
   io.say(`\nDrafting now: Synthe is reading your current prompt and your goal, "${objective}".`);
   const context = repoContext(tracked, location);
-  io.say(`\nReading your prompt${context.names.length ? ` and ${context.names.join(" and ")}` : ""}, and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes about a minute...`);
+  io.say(`\nReading your prompt${context.names.length ? ` and ${context.names.join(" and ")}` : ""}, and writing ${TRAIN + HOLDOUT} test cases: ${TRAIN} Synthe learns from and ${HOLDOUT} it keeps hidden to check its changes. This takes a minute or two...`);
   const generated = await generateScenarios(model, objective, promptText, context.text, seeds);
   const { guardrails, policy, brief, rows } = generated;
   const learnFrom = rows.filter((r) => r.split === "train").length;
