@@ -290,3 +290,14 @@ test("prompt mode's files are saved as promptFiles, not as --protect entries, an
   assert.deepEqual(configAt(dir).promptFiles, ["prompts/agent.md"]);
   assert.ok(said.join("\n").includes(".synthe/, and: data/seed.json, prompts/agent.md."));
 });
+
+test("a helper only the metric script imports is saved as metricOnly and shows on the task card", async () => {
+  const dir = repo();
+  writeFileSync(join(dir, "eval.js"), "const score = require('./scoring');\nconsole.log(score(7));\n");
+  writeFileSync(join(dir, "scoring.js"), "module.exports = (n) => n;\n");
+  git(dir, "add", "."); git(dir, "commit", "-qm", "metric");
+  const { io, said } = fakeIo(dir);
+  assert.equal(await improve(io, dir, improveOptions(["--handoff", "--agent", "--goal", "g", "--metric", "custom", "--command", "node eval.js", "--label", "score", "--unit", "points", "--direction", "higher", "--guard", "none", "--mode", "review"])), true);
+  assert.deepEqual(configAt(dir).metricOnly, ["scoring.js"]);
+  assert.ok(said.join("\n").includes(".synthe/, and: scoring.js."), said.join("\n"));
+});

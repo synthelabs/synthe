@@ -16,6 +16,8 @@ export interface ImproveConfig {
   protect: string[];
   // Files prompt mode tunes (named in synthe.json); kept apart from `protect` so a refusal names the real reason.
   promptFiles?: string[];
+  // Files only the metric or the regression check imports (see metricOnlyFiles in protect.ts); protected like the script.
+  metricOnly?: string[];
   mode: "auto" | "review";
   baseline: Measurement;
 }
@@ -47,6 +49,10 @@ export function parseImproveConfig(raw: string): ImproveConfig {
   if (c.promptFiles !== undefined) {
     if (!Array.isArray(c.promptFiles) || c.promptFiles.some((p: unknown) => !text(p))) bad("promptFiles must be a list of paths");
     if (c.promptFiles.some((p: string) => p.startsWith("/") || p.split("/").includes(".."))) bad("promptFiles paths must stay inside the repo");
+  }
+  if (c.metricOnly !== undefined) {
+    if (!Array.isArray(c.metricOnly) || c.metricOnly.some((p: unknown) => !text(p))) bad("metricOnly must be a list of paths");
+    if (c.metricOnly.some((p: string) => p.startsWith("/") || p.split("/").includes(".."))) bad("metricOnly paths must stay inside the repo");
   }
   if (c.mode !== "auto" && c.mode !== "review") bad("mode must be auto or review");
   const b = c.baseline;

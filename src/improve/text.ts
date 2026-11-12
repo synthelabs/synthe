@@ -20,7 +20,7 @@ export const modeText = (mode: ImproveConfig["mode"]) =>
 // What the coding agent works from: the number to beat, which way is better, and what it may not touch.
 export function taskCard(config: ImproveConfig, branch: string): string {
   const { metric, baseline } = config;
-  const listed = [...config.protect, ...(config.promptFiles ?? [])];
+  const listed = [...config.protect, ...(config.promptFiles ?? []), ...(config.metricOnly ?? [])];
   const extra = listed.length ? `, and: ${listed.join(", ")}` : "";
   return [
     `Goal: ${config.goal}`,
