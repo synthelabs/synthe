@@ -37,6 +37,36 @@ export function scopeProblem(changed, allowed) {
   return outside.length ? `Changed outside this task: ${outside.join(", ")}` : null;
 }
 
+// A test file that registers no test, or fails to load, prints one file-level ok/not ok line with its path
+// (Node 22), and `# tests` still counts it. So a run passes only when every task test file has its own tests.
+export function testRunProblem(output, testFiles) {
+  const summary = /^# tests (\d+)$/m.exec(output);
+  if (!summary || Number(summary[1]) === 0) return "No task test ran: the '# tests' summary is missing or zero.";
+  for (const line of output.split("\n")) {
+    const m = /^\s*(?:not )?ok \d+ - (.+)$/.exec(line);
+    if (m && testFiles.includes(m[1].trim())) return `${m[1].trim()} ran no test of its own, or failed to load. Add its tests.`;
+  }
+  const skipped = /^# skipped (\d+)$/m.exec(output);
+  if (skipped && Number(skipped[1]) > 0) return "A task test is skipped. Remove the skip so it runs.";
+  const todo = /^# todo (\d+)$/m.exec(output);
+  if (todo && Number(todo[1]) > 0) return "A task test is marked todo. Make it run and pass.";
+  return null;
+}
+
+// Porcelain lines from git status run with --no-renames: a rename shows as a delete and an add.
+export function statusPaths(lines) {
+  return lines.map((line) => line.slice(3));
+}
+
+// dist/ must match what the build makes from src/. npm test rebuilds it, so a change during the run is stale.
+export function staleDistProblem(before, after) {
+  const changed = Object.keys(before).filter((file) => before[file] !== after[file]);
+  return changed.length ? "dist/ is not a fresh build of src/: run npm run build and include dist/ in the commit." : null;
+}
+
+const DIST_FILES = ["dist/cli.js", "dist/action.mjs"];
+const distSnapshot = () => Object.fromEntries(DIST_FILES.map((file) => [file, readFileSync(join(ROOT, file), "utf8")]));
+
 const ok = () => ({ ok: true });
 const fail = (problem, tail = "") => ({ ok: false, problem, tail });
 const skip = (why) => ({ skipped: true, why });
@@ -60,10 +90,10 @@ function git(args) {
 function g1(allowed) {
   // Uncommitted work is checked against this task's own list. Committed work is checked against the union,
   // because earlier tasks are already committed on the branch.
-  const uncommitted = [...git(["diff", "--name-only", "HEAD"]), ...git(["ls-files", "--others", "--exclude-standard"])];
+  const uncommitted = [...git(["diff", "--no-renames", "--name-only", "HEAD"]), ...git(["ls-files", "--others", "--exclude-standard"])];
   const own = scopeProblem(uncommitted, allowed);
   if (own) return fail(own);
-  const committed = scopeProblem(git(["diff", "--name-only", "origin/main...HEAD"]), ALL_FILES);
+  const committed = scopeProblem(git(["diff", "--no-renames", "--name-only", "origin/main...HEAD"]), ALL_FILES);
   return committed ? fail(committed) : ok();
 }
 
@@ -76,15 +106,20 @@ function g3(testFiles) {
   if (!testFiles.length) return fail("This task lists no test file in test/.");
   const r = run("node", ["--test", ...testFiles]);
   if (r.status !== 0) return fail(`Task tests failed: node --test ${testFiles.join(" ")} exited ${r.status}. See the failing assertion in the tail.`, r.tail);
-  const summary = /^# tests (\d+)$/m.exec(r.output);
-  if (!summary || Number(summary[1]) === 0) return fail("No task test ran: the '# tests' summary is missing or zero.", r.tail);
-  return ok();
+  const problem = testRunProblem(r.output, testFiles);
+  return problem ? fail(problem, r.tail) : ok();
 }
 
 function g4(id) {
+  const ownsDist = id === "7" || id === "all";
+  const before = ownsDist ? distSnapshot() : null;
   const r = run("npm", ["test"]);
-  // npm test rebuilds dist/ (test/e2e.test.ts), so restore it unless this task owns it.
-  if (id !== "7" && id !== "all") run("git", ["checkout", "--", "dist"]);
+  // npm test rebuilds dist/ (test/e2e.test.ts). A task that owns dist/ must have committed a build that
+  // npm test reproduces; any other task gets its dist/ restored.
+  if (ownsDist) {
+    const stale = staleDistProblem(before, distSnapshot());
+    if (stale) return fail(stale);
+  } else run("git", ["checkout", "--", "dist"]);
   if (r.status === 0) return ok();
   const failCount = /^# fail (\d+)$/m.exec(r.output);
   const notOk = [...r.output.matchAll(/^\s*not ok \d+ - (.*)$/gm)].map((m) => m[1]);
@@ -167,7 +202,7 @@ function g6(allowed, testFiles, state) {
 }
 
 function g7(allowed, state) {
-  const paths = git(["status", "--porcelain", "--untracked-files=all"]).map((line) => line.slice(3).split(" -> ").pop());
+  const paths = statusPaths(git(["status", "--porcelain", "--untracked-files=all", "--no-renames"]));
   const outside = paths.filter((file) => !allowed.includes(file));
   if (outside.length) return fail(`Leftover change outside this task: ${outside.join(", ")}. Revert it or commit it under its own task.`);
   if (state.snapshot) {
