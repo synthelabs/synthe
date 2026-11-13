@@ -105,4 +105,16 @@ export function conformance(name: string, make: (reply: unknown) => MetricSource
     assert.deepEqual(await ask(withBase({ units: 10, sum: 20, sum_sq: -1 })), { problem: badArm("sum_sq") });
     assert.deepEqual(await ask(withBase({ units: 10, sum: 20 })), { problem: badArm("sum_sq") });
   });
+
+  test(`${name}: a mean whose sum_sq is too small for its sum (negative variance) names sum_sq`, async () => {
+    const base = { units: 1000, sum: 12000, sum_sq: 0 };
+    const testArm = { units: 1000, sum: 11200, sum_sq: 225340 };
+    assert.deepEqual(await ask({ arms: { base, test: testArm } }), { problem: badArm("sum_sq") });
+  });
+
+  test(`${name}: a constant mean (sum_sq exactly sum squared over units) is accepted`, async () => {
+    const base = { units: 1000, sum: 700, sum_sq: 490 };
+    const testArm = { units: 1000, sum: 710, sum_sq: 505 };
+    assert.deepEqual(await ask({ arms: { base, test: testArm } }), { arms: { base, test: testArm } });
+  });
 }

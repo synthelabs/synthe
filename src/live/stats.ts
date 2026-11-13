@@ -83,16 +83,20 @@ export function meanTest(
   test: { units: number; sum: number; sum_sq: number },
 ): Test | null {
   if (base.units < 2 || test.units < 2) return null;
+  // Returns null when the sums are impossible for real data: a sum of squares below sum^2 / n means a
+  // negative variance, so the test must not promote on it.
   const arm = (a: { units: number; sum: number; sum_sq: number }) => {
     const m = a.sum / a.units;
-    // The subtraction cancels to rounding noise when every value in the arm is the same. Treat a
-    // numerator that small relative to sum_sq as zero, so a constant arm gives se 0 and a null test.
     const num = a.sum_sq - a.units * m * m;
+    if (num < -1e-12 * a.sum_sq) return null;
+    // Below the threshold the subtraction is rounding noise, as when every value in the arm is the
+    // same: treat it as zero, so a constant arm gives se 0 and a null test.
     const v = num <= 1e-12 * a.sum_sq ? 0 : num / (a.units - 1);
     return { m, v: v / a.units };
   };
   const b = arm(base);
   const t = arm(test);
+  if (b === null || t === null) return null;
   const se = Math.sqrt(b.v + t.v);
   if (se === 0) return null;
   const diff = t.m - b.m;

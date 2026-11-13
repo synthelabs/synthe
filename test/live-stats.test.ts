@@ -33,3 +33,6 @@ test("interval", () => {
 test("mean: constant arms give null, not a rounding-noise se", () => {
   assert.equal(meanTest({ units: 1000, sum: 700, sum_sq: 490 }, { units: 1000, sum: 100, sum_sq: 10 }), null);
 });
+test("mean: impossible sums (sum_sq below sum^2/n) give null", () => {
+  assert.equal(meanTest({ units: 1000, sum: 12000, sum_sq: 0 }, { units: 1000, sum: 11200, sum_sq: 225340 }), null);
+});

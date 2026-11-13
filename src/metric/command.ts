@@ -81,6 +81,9 @@ function armProblem(arm: unknown): string | null {
   }
   if (!nonNeg(arm.sum)) return "sum";
   if (!nonNeg(arm.sum_sq)) return "sum_sq";
+  // The variance is sum_sq / units - (sum / units)^2, which cannot be below 0. A smaller sum_sq is a broken
+  // count, and the gate would read it as a real spread. The tolerance only allows float rounding.
+  if (arm.sum * arm.sum > arm.sum_sq * arm.units * (1 + 1e-12)) return "sum_sq";
   return null;
 }
 

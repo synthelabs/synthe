@@ -31325,6 +31325,7 @@ function armProblem(arm) {
   }
   if (!nonNeg(arm.sum)) return "sum";
   if (!nonNeg(arm.sum_sq)) return "sum_sq";
+  if (arm.sum * arm.sum > arm.sum_sq * arm.units * (1 + 1e-12)) return "sum_sq";
   return null;
 }
 function copyArm(arm) {
