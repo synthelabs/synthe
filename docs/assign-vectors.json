@@ -1,0 +1,7 @@
+{ "rule": "sha256-v1", "vectors": [
+  { "unit": "conv-1", "salt": "e1", "bucket": 9303 },
+  { "unit": "conv-2", "salt": "e1", "bucket": 8210 },
+  { "unit": "conv-1", "salt": "e2", "bucket": 417 },
+  { "unit": "", "salt": "e1", "bucket": 7704 },
+  { "unit": "客户-7", "salt": "e1", "bucket": 667 }
+] }
