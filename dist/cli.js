@@ -31263,10 +31263,16 @@ import { join as join10 } from "node:path";
 var win = process.platform === "win32";
 var quote = (s) => win ? `"${s}"` : `'${s.replace(/'/g, "'\\''")}'`;
 var DEFAULT_TIMEOUT_MS = 12e4;
+var liveDirs = /* @__PURE__ */ new Set();
+function removeQueryFiles() {
+  for (const dir of liveDirs) rmSync2(dir, { recursive: true, force: true });
+  liveDirs.clear();
+}
 function commandSource(exec, cwd, run2, timeoutMs = DEFAULT_TIMEOUT_MS) {
   return {
     async read(q) {
       const dir = mkdtempSync(join10(tmpdir(), "synthe-metric-"));
+      liveDirs.add(dir);
       try {
         const path4 = join10(dir, "query.json");
         writeFileSync6(path4, JSON.stringify({ agent: q.agent, from: q.from, to: q.to, arms: q.arms }));
@@ -31280,6 +31286,7 @@ function commandSource(exec, cwd, run2, timeoutMs = DEFAULT_TIMEOUT_MS) {
         return checkArms(answer, q.arms);
       } finally {
         rmSync2(dir, { recursive: true, force: true });
+        liveDirs.delete(dir);
       }
     }
   };
@@ -31365,6 +31372,14 @@ async function metricCheck(io2, cwd, args, now = /* @__PURE__ */ new Date()) {
     io2.say(parsed.error);
     return false;
   }
+  const stop2 = io2.onInterrupt?.(removeQueryFiles);
+  try {
+    return await checkDays(io2, cwd, parsed, now);
+  } finally {
+    stop2?.();
+  }
+}
+async function checkDays(io2, cwd, parsed, now) {
   const source = commandSource(io2.exec, cwd, parsed.run);
   const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const days = [];
@@ -33911,7 +33926,7 @@ async function main() {
   else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
   else if (command === "verify") process.exitCode = verify(process.argv[3], process.cwd());
-  else if (command === "metric") process.exitCode = await metricCheck({ say: console.log, exec: shellExec }, process.cwd(), process.argv.slice(3)) ? 0 : 1;
+  else if (command === "metric") process.exitCode = await metricCheck({ say: console.log, exec: shellExec, onInterrupt }, process.cwd(), process.argv.slice(3)) ? 0 : 1;
   else if (command === "undo") await undoRound();
   else if (command === "calibrate") await calibrateChecks();
   else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.ANTHROPIC_API_KEY });

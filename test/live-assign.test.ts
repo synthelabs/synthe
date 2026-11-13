@@ -65,3 +65,10 @@ test("assign: a bucket on a range edge goes to the next arm", () => {
   assert.equal(bucket("u5025", "e1"), 6000);
   assert.equal(pickArm([{ id: "base", weight: 6 }, { id: "test", weight: 3 }, { id: "hold", weight: 1 }], "u5025", "e1"), "test");
 });
+
+// Plain-JS callers can pass other types; each port would stringify them differently (null, 100.0, objects).
+test("assign: bucket rejects ids and salts that are not text", () => {
+  assert.throws(() => bucket(null as never, "e1"), /must be text/);
+  assert.throws(() => bucket(100 as never, "e1"), /must be text/);
+  assert.throws(() => bucket("u", {} as never), /must be text/);
+});

@@ -14,6 +14,10 @@ export interface Arm {
 // so the same unit gets a fresh draw in each one.
 // A lone surrogate is rejected: Node would hash it as U+FFFD, but Python raises, so the ports would disagree.
 export function bucket(unitId: string, salt: string): number {
+  // Other types would stringify differently in each port (null, 100.0, objects), so they are refused here.
+  if (typeof unitId !== "string" || typeof salt !== "string") {
+    throw new TypeError("bucket: the unit id and the salt must be text.");
+  }
   if (/\p{Cs}/u.test(unitId) || /\p{Cs}/u.test(salt)) {
     throw new Error("bucket: the unit id and the salt must be valid Unicode text.");
   }

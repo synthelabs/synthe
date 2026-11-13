@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { metricCheck } from "../src/cli/metric-check.ts";
 import type { Exec } from "../src/improve/exec.ts";
+import { removeQueryFiles } from "../src/metric/command.ts";
 
 // Answers each day's query file with the same base arm: 300 events in 10,000 units.
 function fakeExec(answer: string | null = JSON.stringify({ arms: { base: { units: 10000, events: 300 } } })) {
@@ -49,4 +50,30 @@ test("metric check: zero units on every day says there is no data", async () => 
   const ok = await metricCheck({ say: (t) => said.push(t), exec }, "/tmp", ARGS, NOW);
   assert.equal(ok, false);
   assert.ok(said.includes("No data for this agent in the last 14 days. Check the command and the agent name."));
+});
+
+// Records what the interrupt hook was given, and counts how often the function it returns is called.
+function interruptSpy() {
+  const seen: { cleanup?: () => void; stops: number } = { stops: 0 };
+  const onInterrupt = (cleanup: () => void) => {
+    seen.cleanup = cleanup;
+    return () => { seen.stops++; };
+  };
+  return { seen, onInterrupt };
+}
+
+test("metric check: the interrupt cleanup is removeQueryFiles, and the stop function runs once on a good run", async () => {
+  const spy = interruptSpy();
+  const ok = await metricCheck({ say: () => {}, exec: fakeExec().exec, onInterrupt: spy.onInterrupt }, "/tmp", ARGS, NOW);
+  assert.equal(ok, true);
+  assert.equal(spy.seen.cleanup, removeQueryFiles);
+  assert.equal(spy.seen.stops, 1);
+});
+
+test("metric check: the stop function runs once on a failing run too", async () => {
+  const spy = interruptSpy();
+  const ok = await metricCheck({ say: () => {}, exec: fakeExec(null).exec, onInterrupt: spy.onInterrupt }, "/tmp", ARGS, NOW);
+  assert.equal(ok, false);
+  assert.equal(spy.seen.cleanup, removeQueryFiles);
+  assert.equal(spy.seen.stops, 1);
 });

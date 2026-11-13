@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { test } from "node:test";
 import type { Exec, ExecResult } from "../src/improve/exec.ts";
-import { commandSource } from "../src/metric/command.ts";
+import { commandSource, removeQueryFiles } from "../src/metric/command.ts";
 import { conformance, FAILED, TIMED_OUT } from "./metric-conformance.ts";
 
 const CWD = "/work/team";
@@ -94,3 +94,22 @@ for (const [label, reply] of cases) {
     assert.equal(existsSync(seen.dir), false);
   });
 }
+
+test("command: removeQueryFiles removes the query folder during a run, and read still returns", async () => {
+  let dir = "";
+  let existedBefore = false;
+  let goneAfterCall = false;
+  const exec: Exec = async (_cwd, command) => {
+    const path = /'([^']*)'$/.exec(command)![1];
+    dir = dirname(path);
+    existedBefore = existsSync(path);
+    removeQueryFiles();
+    goneAfterCall = !existsSync(dir);
+    return answer(GOOD);
+  };
+  const got = await commandSource(exec, CWD, RUN).read(QUERY);
+  assert.equal(existedBefore, true);
+  assert.equal(goneAfterCall, true);
+  assert.deepEqual(got, GOOD);
+  assert.equal(existsSync(dir), false);
+});

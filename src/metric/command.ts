@@ -11,11 +11,20 @@ const quote = (s: string) => (win ? `"${s}"` : `'${s.replace(/'/g, "'\\''")}'`);
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
+// Query folders still in use. A signal skips the finally in read, so removeQueryFiles clears them on interrupt.
+const liveDirs = new Set<string>();
+
+export function removeQueryFiles(): void {
+  for (const dir of liveDirs) rmSync(dir, { recursive: true, force: true });
+  liveDirs.clear();
+}
+
 // The team's own command. It gets the query as a JSON file, because shellExec strips SYNTHE_* variables.
 export function commandSource(exec: Exec, cwd: string, run: string, timeoutMs = DEFAULT_TIMEOUT_MS): MetricSource {
   return {
     async read(q: MetricQuery): Promise<MetricResult> {
       const dir = mkdtempSync(join(tmpdir(), "synthe-metric-"));
+      liveDirs.add(dir);
       try {
         const path = join(dir, "query.json");
         writeFileSync(path, JSON.stringify({ agent: q.agent, from: q.from, to: q.to, arms: q.arms }));
@@ -29,6 +38,7 @@ export function commandSource(exec: Exec, cwd: string, run: string, timeoutMs = 
         return checkArms(answer, q.arms);
       } finally {
         rmSync(dir, { recursive: true, force: true });
+        liveDirs.delete(dir);
       }
     },
   };

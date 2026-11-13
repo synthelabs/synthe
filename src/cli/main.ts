@@ -308,7 +308,7 @@ async function main() {
   else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
   else if (command === "verify") process.exitCode = verify(process.argv[3], process.cwd());
-  else if (command === "metric") process.exitCode = (await metricCheck({ say: console.log, exec: shellExec }, process.cwd(), process.argv.slice(3))) ? 0 : 1;
+  else if (command === "metric") process.exitCode = (await metricCheck({ say: console.log, exec: shellExec, onInterrupt }, process.cwd(), process.argv.slice(3))) ? 0 : 1;
   else if (command === "undo") await undoRound();
   else if (command === "calibrate") await calibrateChecks();
   else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.ANTHROPIC_API_KEY });
