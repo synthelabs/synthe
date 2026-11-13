@@ -1,7 +1,7 @@
 import type { Exec } from "../improve/exec.ts";
 import { daysNeeded, unitsPerArm } from "../live/plan.ts";
 import { DEFAULT_RULE } from "../live/rule.ts";
-import { commandSource } from "../metric/command.ts";
+import { commandSource, removeQueryFiles } from "../metric/command.ts";
 
 // Reads the team's metric for each of the last N whole UTC days and says how long an experiment would take.
 // It only reads: nothing is written and no model is called.
@@ -35,18 +35,24 @@ function parse(args: string[]): Parsed {
 const pct = (rate: number) => `${(rate * 100).toFixed(1)}%`;
 const count = (n: number) => Math.round(n).toLocaleString("en-US");
 
-export async function metricCheck(
-  io: { say(t: string): void; exec: Exec },
-  cwd: string,
-  args: string[],
-  now = new Date(),
-): Promise<boolean> {
+type Io = { say(t: string): void; exec: Exec; onInterrupt?: (cleanup: () => void) => () => void };
+
+export async function metricCheck(io: Io, cwd: string, args: string[], now = new Date()): Promise<boolean> {
   const parsed = parse(args);
   if ("error" in parsed) {
     io.say(parsed.error);
     return false;
   }
+  // Ctrl-C clears the query folders; the stop function runs on every path out of the check.
+  const stop = io.onInterrupt?.(removeQueryFiles);
+  try {
+    return await checkDays(io, cwd, parsed, now);
+  } finally {
+    stop?.();
+  }
+}
 
+async function checkDays(io: Io, cwd: string, parsed: { run: string; days: number; agent: string }, now: Date): Promise<boolean> {
   const source = commandSource(io.exec, cwd, parsed.run);
   const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const days: { date: string; units: number; events: number }[] = [];
