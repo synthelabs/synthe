@@ -50,6 +50,13 @@ function isRate(arm: ArmData): arm is { units: number; events: number } {
   return "events" in arm;
 }
 
+// Every number in an arm must be a real count in its range, so a bad value never reaches a test.
+function armUsable(arm: ArmData): boolean {
+  if (!Number.isFinite(arm.units) || arm.units <= 0) return false;
+  if (isRate(arm)) return Number.isFinite(arm.events) && arm.events >= 0 && arm.events <= arm.units;
+  return Number.isFinite(arm.sum) && Number.isFinite(arm.sum_sq) && arm.sum_sq >= 0;
+}
+
 // The point estimate of an arm: a rate is events per unit, a mean is the sum per unit.
 function pointOf(arm: ArmData): number {
   return isRate(arm) ? arm.events / arm.units : arm.sum / arm.units;
@@ -58,6 +65,19 @@ function pointOf(arm: ArmData): number {
 // Whole days from the first reading's start to this reading's end.
 function daysAt(readings: Reading[], index: number): number {
   return Math.floor((Date.parse(readings[index].to) - Date.parse(readings[0].from)) / DAY_MS);
+}
+
+// Every reading must have readable dates, and the window end must never move back. A copy error like that
+// would make the look count wrong, so the whole ledger fails closed.
+function ledgerIsSound(readings: Reading[]): boolean {
+  let previousEnd = -Infinity;
+  for (const r of readings) {
+    const start = Date.parse(r.from);
+    const end = Date.parse(r.to);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < previousEnd) return false;
+    previousEnd = end;
+  }
+  return true;
 }
 
 // How many looks are due at this many days. Integer comparison, so no float rounding moves a look.
@@ -73,10 +93,34 @@ function testOf(base: ArmData, test: ArmData): Test | null {
   return null;
 }
 
+// Step 1 for one pair of arms: an empty, bad or mixed pair is no data. Fail closed.
+function noData(base: ArmData, test: ArmData): boolean {
+  return !armUsable(base) || !armUsable(test) || isRate(base) !== isRate(test);
+}
+
+// Step 3: the arms must have the share they were set to. A null result means bad weights, so it fails closed.
+// A NaN p fails too, which is why this is written as "not at least srm_p".
+function splitBroken(base: ArmData, test: ArmData, input: GateInput): boolean {
+  const rule = input.rule;
+  if (rule.srm_p > 0) {
+    const p = srmP([base.units, test.units], [input.weights.base, input.weights.test]);
+    return p === null || !(p >= rule.srm_p);
+  }
+  return false;
+}
+
+// Step 4: not enough days, units or (for rates) events in an arm.
+function tooEarly(base: ArmData, test: ArmData, days: number, rule: LiveRule): boolean {
+  const enoughEvents = (arm: ArmData) => !isRate(arm) || arm.events >= rule.min_events_per_arm;
+  if (days < rule.min_days || base.units < rule.min_units_per_arm || test.units < rule.min_units_per_arm) return true;
+  return !enoughEvents(base) || !enoughEvents(test);
+}
+
 export function decide(input: GateInput): Verdict {
   const { rule, changed, readings } = input;
   const last = readings[readings.length - 1];
-  const days = last ? daysAt(readings, readings.length - 1) : 0;
+  const ledgerOk = ledgerIsSound(readings);
+  const days = last && ledgerOk ? daysAt(readings, readings.length - 1) : 0;
   const out = (action: Verdict["action"], reason: Reason, extra: Partial<Verdict> = {}): Verdict => ({
     action,
     reason,
@@ -85,11 +129,10 @@ export function decide(input: GateInput): Verdict {
     ...extra,
   });
 
-  // 1. No data: no reading, an empty arm, or arms of different kinds. Fail closed.
-  if (!last) return out("continue", "no_data");
+  // 1. No data: no reading, a broken ledger, or a bad or empty arm.
+  if (!last || !ledgerOk) return out("continue", "no_data");
   const { base, test } = last.arms;
-  if (base.units <= 0 || test.units <= 0) return out("continue", "no_data");
-  if (isRate(base) !== isRate(test)) return out("continue", "no_data");
+  if (noData(base, test)) return out("continue", "no_data");
 
   // 2. Guards: a breach of a guard drops at once. Points are compared in the guard metric's own units.
   for (const guard of input.guards ?? []) {
@@ -102,27 +145,29 @@ export function decide(input: GateInput): Verdict {
     if (worse > guard.max_worse) return out("drop", "guard", { guard: guard.name });
   }
 
-  // 3. Split: the arms must have the share they were set to. A null result means bad weights, so it fails closed.
-  if (rule.srm_p > 0) {
-    const p = srmP([base.units, test.units], [input.weights.base, input.weights.test]);
-    // Written as "not at least srm_p" so a NaN (from a NaN weight) fails closed too.
-    if (p === null || !(p >= rule.srm_p)) return out("invalid", "split");
-  }
+  // 3. Split.
+  if (splitBroken(base, test, input)) return out("invalid", "split");
 
-  // 4. Too early: not enough days, units or (for rates) events in an arm.
-  const enoughEvents = (arm: ArmData) => !isRate(arm) || arm.events >= rule.min_events_per_arm;
-  if (days < rule.min_days || base.units < rule.min_units_per_arm || test.units < rule.min_units_per_arm) {
-    return out("continue", "too_early");
-  }
-  if (!enoughEvents(base) || !enoughEvents(test)) return out("continue", "too_early");
+  // 4. Too early.
+  if (tooEarly(base, test, days, rule)) return out("continue", "too_early");
 
-  // 5-6. Looks. A look is taken once, at the first reading where it is due.
+  // 5-6. Looks. A look is taken once, at the first reading where it is due and where the numbers were usable.
   const final = rule.method === "looks" ? rule.looks : 1;
   const dueAt = (d: number) => (rule.method === "looks" ? looksDue(d, rule) : d >= rule.max_days ? 1 : 0);
   const now = dueAt(days);
-  const before = readings.length > 1 ? dueAt(daysAt(readings, readings.length - 2)) : 0;
+  // The look ledger: the largest look due at an earlier reading that passes steps 1, 3 and 4 on its own
+  // numbers. Guards are not replayed for earlier readings; they are a check on the latest numbers only.
+  let taken = 0;
+  for (let j = 0; j < readings.length - 1; j++) {
+    const earlier = readings[j].arms;
+    const d = daysAt(readings, j);
+    if (noData(earlier.base, earlier.test)) continue;
+    if (splitBroken(earlier.base, earlier.test, input)) continue;
+    if (tooEarly(earlier.base, earlier.test, d, rule)) continue;
+    taken = Math.max(taken, dueAt(d));
+  }
   const lookLimit = rule.method === "looks" ? rule.alpha / rule.looks : rule.alpha;
-  const takesLook = now > before;
+  const takesLook = now > taken;
   const limit = takesLook ? lookLimit : rule.alpha;
   const t = testOf(base, test);
   const extra: Partial<Verdict> = {

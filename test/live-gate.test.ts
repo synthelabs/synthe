@@ -128,3 +128,37 @@ test("gate: a bad sign on the test reads as worse, not as a win, for lower", () 
   const v = decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 360 }), direction: "lower" });
   assert.deepEqual([v.action, v.reason], ["drop", "worse"]);
 });
+
+// Final-review items: bad arm values, the look ledger, and one-arm sparse data.
+test("gate: a bad arm value fails closed as no data", () => {
+  // events above units is not a rate; it must never reach a test.
+  assert.deepEqual(pick(decide(at(28, { units: 10000, events: 300 }, { units: 10000, events: 12000 }))), ["continue", "no_data"]);
+  assert.deepEqual(pick(decide(at(28, { units: 10000, events: -5 }, { units: 10000, events: 360 }))), ["continue", "no_data"]);
+  assert.deepEqual(pick(decide(at(28, { units: Number.NaN, events: 300 }, { units: 10000, events: 360 }))), ["continue", "no_data"]);
+  assert.deepEqual(pick(decide(at(28, { units: 1000, sum: Number.NaN, sum_sq: 5 }, { units: 1000, sum: 11000, sum_sq: 221000 }))), ["continue", "no_data"]);
+  assert.deepEqual(pick(decide(at(28, { units: 1000, sum: 12000, sum_sq: -1 }, { units: 1000, sum: 11000, sum_sq: 221000 }))), ["continue", "no_data"]);
+});
+test("gate: a look is not lost when its first reading was too early", () => {
+  const v = decide(input([
+    reading(28, { units: 2800, events: 22 }, { units: 2800, events: 60 }), // too early: base has under 25 events
+    reading(29, { units: 2900, events: 25 }, { units: 2900, events: 63 }),
+  ]));
+  assert.deepEqual(pick(v), ["promote", "win"]);
+});
+test("gate: a ledger whose window end goes back is no data", () => {
+  const arms = [{ units: 10000, events: 300 }, { units: 10000, events: 360 }] as const;
+  assert.deepEqual(pick(decide(input([reading(14, arms[0], arms[1]), reading(13, arms[0], arms[1]), reading(15, arms[0], arms[1])]))), ["continue", "no_data"]);
+});
+test("gate: a reading whose end is not a date is no data", () => {
+  const bad = { ...reading(28, { units: 10000, events: 300 }, { units: 10000, events: 360 }), to: "?" };
+  assert.deepEqual(pick(decide(input([bad]))), ["continue", "no_data"]);
+});
+test("gate: one sparse arm is too early on its own (test arm units)", () => {
+  assert.deepEqual(pick(decide({ ...at(28, { units: 10000, events: 300 }, { units: 90, events: 30 }), weights: { base: 10000, test: 90 } })), ["continue", "too_early"]);
+});
+test("gate: one sparse arm is too early on its own (base arm units)", () => {
+  assert.deepEqual(pick(decide({ ...at(28, { units: 90, events: 30 }, { units: 10000, events: 300 }), weights: { base: 90, test: 10000 }, direction: "lower" })), ["continue", "too_early"]);
+});
+test("gate: one sparse arm is too early on its own (test arm events)", () => {
+  assert.deepEqual(pick(decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 20 }), direction: "lower" })), ["continue", "too_early"]);
+});
