@@ -17,7 +17,7 @@ export const TASK_FILES = {
   "4": ["scripts/simulate-live-gate.ts", "package.json", "test/live-simulate.test.ts"],
   "5": ["src/metric/types.ts", "src/metric/command.ts", "test/metric-conformance.ts", "test/metric-source.test.ts"],
   "6": ["src/live/assign.ts", "docs/assign-vectors.json", "test/live-assign.test.ts"],
-  "7": ["src/cli/metric-check.ts", "src/live/plan.ts", "src/cli/main.ts", "dist/cli.js", "test/live-plan.test.ts", "test/metric-check.test.ts"],
+  "7": ["src/cli/metric-check.ts", "src/live/plan.ts", "src/cli/main.ts", "dist/cli.js", "dist/action.mjs", "test/live-plan.test.ts", "test/metric-check.test.ts"],
 };
 const ALL_FILES = [...new Set(Object.values(TASK_FILES).flat())];
 
