@@ -218,6 +218,12 @@ const allMutations = [
   ["init: too few test cases accepted", "src/cli/init.ts", "const ENOUGH = 64;", "const ENOUGH = 32;"],
   ["init: back to 20 hidden cases", "src/cli/init.ts", "const HOLDOUT = 40;", "const HOLDOUT = 20;"],
   ["init: asks for no spare cases", "src/cli/init.ts", "const ASK_FOR = TRAIN + HOLDOUT + 8;", "const ASK_FOR = TRAIN + HOLDOUT;"],
+  ["live gate: the win direction is flipped", "src/live/gate.ts", "? diff > 0 : diff < 0;", "? diff < 0 : diff > 0;"],
+  ["live gate: looks never divide alpha", "src/live/gate.ts", "rule.alpha / rule.looks", "rule.alpha"],
+  ["live gate: the split check is off", "src/live/gate.ts", "if (rule.srm_p > 0) {", "if (false) {"],
+  ["live gate: days before min_days are not too early", "src/live/gate.ts", "days < rule.min_days ||", "false ||"],
+  ["live gate: a guard breach never drops", "src/live/gate.ts", "if (worse > guard.max_worse) return", "if (false) return"],
+  ["live gate: a tie promotes", "src/live/gate.ts", "return out(\"drop\", \"no_difference\", extra);", "return out(\"promote\", \"win\", extra);"],
 ];
 
 const selectedFiles = process.argv.slice(2);
