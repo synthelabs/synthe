@@ -23,6 +23,7 @@ import { AgentSetupError, agentOptions } from "./agent.ts";
 import { setKey } from "./key.ts";
 import { guide } from "./guide.ts";
 import { verify } from "./verify.ts";
+import { metricCheck } from "./metric-check.ts";
 import { undo } from "./undo.ts";
 import { githubRepo } from "../github/repo.ts";
 import { improve, improveOptions } from "./improve.ts";
@@ -278,6 +279,7 @@ Then:
   npx synthe upgrade  update only the installed workflow for chained rounds
   npx synthe upgrade --event  install Crimson tracking in an existing event repo
   npx synthe verify FILE   check a round's evidence record (.synthe/evidence/round-N.json)
+  npx synthe metric check --run "<command>" [--days 14]   read the metric for each of the last days; how long a test would take (changes nothing)
   npx synthe undo N   open a pull request that puts back the prompt from before round N
   npx synthe stop     stop it; nothing more runs or changes
   npx synthe restart  start it again, after stop or once you've fixed what stopped it
@@ -306,6 +308,7 @@ async function main() {
   else if (command === "restart") await restart();
   else if (command === "try") await tryRound();
   else if (command === "verify") process.exitCode = verify(process.argv[3], process.cwd());
+  else if (command === "metric") process.exitCode = (await metricCheck({ say: console.log, exec: shellExec }, process.cwd(), process.argv.slice(3))) ? 0 : 1;
   else if (command === "undo") await undoRound();
   else if (command === "calibrate") await calibrateChecks();
   else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.ANTHROPIC_API_KEY });
