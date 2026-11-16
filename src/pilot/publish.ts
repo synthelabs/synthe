@@ -87,9 +87,11 @@ export async function publishReview(repo: PilotRepo, input: PublishInput): Promi
   const existing = await repo.findReviewPr(branch);
   if (existing !== null) {
     if (existing.state !== "open" || existing.base !== base || existing.head !== branch || existing.body !== input.body
-      || (input.expectedPr !== undefined && existing.number !== input.expectedPr)
-      || !existing.headSha || !await repo.matchesReview(existing.headSha, file)) {
-      throw new PilotError("conflict", "An existing pull request does not match this open review. Check its status, revisions and review body before retrying.");
+      || (input.expectedPr !== undefined && existing.number !== input.expectedPr)) {
+      throw new PilotError("conflict", `An existing pull request (#${existing.number}) does not match this open review. Check its status, base branch and review body before retrying.`);
+    }
+    if (!existing.headSha || !await repo.matchesReview(existing.headSha, file)) {
+      throw new PilotError("conflict", `The pull request #${existing.number} is not this review's change on ${base}'s history: the commit on ${branch} was changed, or ${base} moved to history that does not contain the commit it was made on (a rewritten branch). Nothing was written. To start over, close the pull request, delete the branch ${branch}, and run \`review --publish\` again; or open the pull request by hand from the bundle.`);
     }
     return { pr: existing.number, branch, adopted: true };
   }

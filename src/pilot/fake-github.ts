@@ -59,6 +59,14 @@ export class FakeGitHub {
       const commit = this.commits.get(decodeURIComponent(path.slice("/commits/".length)));
       return commit ? send(200, commit) : send(404, { message: "Commit not found" });
     }
+    if (path.startsWith("/compare/") && method === "GET") {
+      const [from, to] = decodeURIComponent(path.slice("/compare/".length)).split("...");
+      // Walks `to` back through the commits this server made; the first commit has no record and ends the walk.
+      for (let at: string | undefined = to; at !== undefined; at = this.commits.get(at)?.parents[0]?.sha) {
+        if (at === from) return send(200, { status: from === to ? "identical" : "ahead" });
+      }
+      return send(200, { status: "diverged" });
+    }
     if (path.startsWith("/contents/")) {
       const file = decodeURIComponent(path.slice("/contents/".length));
       if (method === "PUT") {

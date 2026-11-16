@@ -35,9 +35,18 @@ export function pilotGithubRepo(slug: string, token: string, api: string): Pilot
     if (!res.ok) throw new PilotError("conflict", `GitHub could not verify or publish the review (HTTP ${res.status}). Check the review branch before retrying.`);
     return res.json();
   };
+  // True when `ancestor` is `descendant` or lies in its history.
+  const isAncestor = async (ancestor: string, descendant: string) => {
+    if (ancestor === descendant) return true;
+    const compare = await json(await request("GET", `/compare/${encodeURIComponent(ancestor)}...${encodeURIComponent(descendant)}`));
+    return compare.status === "ahead" || compare.status === "identical";
+  };
+  // The commit must be exactly this review's one-file change. It sits on the base commit the review was made from
+  // or on an earlier one in that base's history: the base branch may have moved on since, and the review is still
+  // the same change.
   const matchesReview = async (sha: string, file: ReviewFile) => {
     const commit = await json(await request("GET", `/commits/${encodeURIComponent(sha)}`));
-    return commit.sha === sha && commit.parents?.length === 1 && commit.parents[0].sha === file.baseSha
+    return commit.sha === sha && commit.parents?.length === 1 && await isAncestor(commit.parents[0].sha, file.baseSha)
       && commit.files?.length === 1 && commit.files[0].filename === file.path && commit.files[0].status === "modified"
       && await repo.readFile(file.path, sha) === file.content;
   };

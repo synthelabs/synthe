@@ -346,3 +346,62 @@ test("an approval recorded after the traffic started holds the result, whatever 
     assert.equal((await run(ctx.dir, ["verify"])).code, 0, "and the decision still verifies");
   } finally { await ctx.stop(); }
 });
+
+// Publishing the review of the eligible candidate, as the documented command line has it.
+const publishArgs = (candidate: string) => ["review", "--candidate", candidate, "--publish", "--repo", DEMO.slug, "--base", DEMO.base, "--confirm", candidate];
+// Someone else's commit lands on the base branch.
+async function moveBase(ctx: Ctx): Promise<void> {
+  const res = await fetch(`${ctx.github.url}/repos/${DEMO.slug}/contents/README.md`, { method: "PUT", body: JSON.stringify({ branch: DEMO.base, content: Buffer.from("hello").toString("base64"), message: "docs", sha: "x" }) });
+  assert.equal(res.status, 200);
+}
+async function experimentReady(): Promise<Ctx & { candidate: string }> {
+  const ctx = await replayedPilot();
+  for (const argv of [["experiment", "--candidate", ctx.eligible, "--start", DEMO.experiment_c_start], ["review", "--candidate", ctx.eligible]]) {
+    if (await ctx.run(argv) !== 0) throw new Error(`setup failed at ${argv[0]}: ${ctx.lines.slice(-3).join(" | ")}`);
+  }
+  return Object.assign(ctx, { candidate: ctx.eligible });
+}
+
+test("publishing again after the base branch moved finds the pull request that is already open", async () => {
+  const ctx = await experimentReady();
+  try {
+    assert.equal(await ctx.run(publishArgs(ctx.candidate)), 0, ctx.lines.slice(-2).join(" | "));
+    assert.equal(ctx.github.pulls.length, 1);
+    await moveBase(ctx);
+    const writes = ctx.github.writes().length;
+    assert.equal(await ctx.run(publishArgs(ctx.candidate)), 0, ctx.lines.slice(-2).join(" | "));
+    assert.ok(ctx.lines.some((l) => l.startsWith("Found the existing pull request #1")), ctx.lines.slice(-2).join(" | "));
+    assert.equal(ctx.github.pulls.length, 1);
+    assert.equal(ctx.github.writes().length, writes, "the retry wrote nothing");
+  } finally { await ctx.stop(); }
+});
+
+test("a publication that stopped after the commit finishes when retried, although the base moved in between", async () => {
+  const ctx = await experimentReady();
+  try {
+    assert.equal(await ctx.run(publishArgs(ctx.candidate), { fault: (point) => { if (point === "after-commit") throw new Error("crash"); } }), 1);
+    assert.equal(ctx.github.pulls.length, 0);
+    await moveBase(ctx);
+    assert.equal(await ctx.run(publishArgs(ctx.candidate)), 0, ctx.lines.slice(-2).join(" | "));
+    assert.equal(ctx.github.pulls.length, 1, "one pull request, not two");
+  } finally { await ctx.stop(); }
+});
+
+test("when the open pull request is not built on the base branch's history, the refusal says the base moved and how to recover", async () => {
+  const ctx = await experimentReady();
+  try {
+    assert.equal(await ctx.run(publishArgs(ctx.candidate)), 0);
+    // The base branch is rewritten: its head is a commit with no history in common with the review's.
+    const fake = ctx.github as unknown as { heads: Map<string, string>; revisions: Map<string, Map<string, string>>; commits: Map<string, unknown> };
+    fake.revisions.set("rewritten", new Map(ctx.github.branches.get(DEMO.base)!));
+    fake.commits.set("rewritten", { sha: "rewritten", parents: [], files: [] });
+    fake.heads.set(DEMO.base, "rewritten");
+    const writes = ctx.github.writes().length;
+    assert.equal(await ctx.run(publishArgs(ctx.candidate)), 1);
+    const refusal = ctx.lines.find((l) => l.startsWith("Refused")) ?? "";
+    assert.match(refusal, /moved/);
+    assert.match(refusal, /close the pull request/i);
+    assert.equal(ctx.github.writes().length, writes);
+    assert.equal(ctx.github.pulls.length, 1);
+  } finally { await ctx.stop(); }
+});
