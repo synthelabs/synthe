@@ -312,7 +312,12 @@ A live run sends pack conversations to the provider. That needs the customer's w
   - each import's summary follows from its own rows;
   - each decision cites only exports imported for its experiment before the decision, and an approval that answers one of this pilot's review bundles;
   - each replay report was built from the recorded runs;
-  - nothing was imported or decided for an experiment after its keep or revert, and no second experiment was written for a decided candidate.
+  - nothing was imported or decided for an experiment after its keep or revert, and no second experiment was written for a decided candidate;
+  - every record a journal entry names still exists (a deleted record is reported, not skipped);
+  - a decision's approval was not followed by a rejection before the decision (the last decision in journal order counts, whatever the times say);
+  - an approval was recorded only while the candidate passed replay on the pack that was active then. `approve` refuses the same way.
+- One lock file serialises writers. `baseline` and `analyze` hold it for their whole run, so a second one at the same time is told to wait and run again. A lock is taken over only when its owner is gone or it is older than a minute (ten for `baseline`, `analyze` and publishing).
+- A journal line cut off by a crash is ignored, `verify` notes it, and the next recorded step removes it. A `journal.head` more than one entry behind the journal is refused.
 - Records that no journal entry names are listed by kind. An interrupted step leaves such records; so does a journal that was cut back.
 - Reports under `reports/` are renderings. They can be deleted and rebuilt with `report` and by re-running the step.
 - Nothing is sent to Synthe: no events, run records or shared results.
