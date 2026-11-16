@@ -215,17 +215,21 @@ export function oneSampleT(s: MeanStats, level: number): Ci | null {
 }
 
 // Welch interval for mean1 - mean2, with Welch-Satterthwaite degrees of freedom. Does not assume equal variances.
+// Zero variation in both arms gives a zero-width interval at the difference (the degrees of freedom are then n1 + n2 - 2).
 export function welchInterval(a: MeanStats, b: MeanStats, level: number): (Ci & { df: number }) | null {
   if (!finite(level) || level <= 0 || level >= 1) return null;
   if (a.n < 2 || b.n < 2 || !finite(a.mean) || !finite(b.mean) || !finite(a.sd) || !finite(b.sd)) return null;
   const va = (a.sd * a.sd) / a.n;
   const vb = (b.sd * b.sd) / b.n;
   const se2 = va + vb;
-  if (!(se2 > 0)) return null;
+  if (!(se2 >= 0)) return null;
+  const d = a.mean - b.mean;
+  // No variation in either arm: the difference is known exactly, so the interval has zero width. Nothing is
+  // estimated from a spread that is not there, and a guard on a constant value can still be decided.
+  if (se2 === 0) return { lo: d, hi: d, level, df: a.n + b.n - 2 };
   const df = (se2 * se2) / ((va * va) / (a.n - 1) + (vb * vb) / (b.n - 1));
   const t = studentTQuantile(1 - (1 - level) / 2, df);
   if (t === null) return null;
-  const d = a.mean - b.mean;
   const half = t * Math.sqrt(se2);
   return { lo: d - half, hi: d + half, level, df };
 }

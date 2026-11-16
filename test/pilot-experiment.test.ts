@@ -194,6 +194,19 @@ test("keep: final, enough samples, primary clears and every guard passes", () =>
   assert.ok(a.reasons.length >= 1);
 });
 
+test("a guard with no variation in either arm is decided on its point estimate (M-01)", () => {
+  const constant = (base: number, cand: number) => (rows: TelemetryRow[]) =>
+    rows.map((r) => ({ ...r, values: { ...r.values, csat: r.prompt_version === CAND_TAG ? cand : base } }));
+  // csat is a mean guard that tolerates a fall of 0.2. A constant 4 -> 4.1 is within it; 4 -> 3.5 is beyond it.
+  const fine = run(GOOD_BASE, GOOD_CAND, { rows: constant(4, 4.1) }).a;
+  assert.equal(fine.guards[1].status, "pass");
+  assert.deepEqual([fine.guards[1].ci!.lo, fine.guards[1].ci!.hi].map((x) => Number(x.toFixed(9))), [0.1, 0.1]);
+  assert.equal(fine.recommendation, "keep");
+  const worse = run(GOOD_BASE, GOOD_CAND, { rows: constant(4, 3.5) }).a;
+  assert.equal(worse.guards[1].status, "breach");
+  assert.equal(worse.recommendation, "revert");
+});
+
 test("hold: primary point estimate just below min_effect, although the interval is above zero", () => {
   const { a } = run(GOOD_BASE, { ...GOOD_CAND, resolved: 449 });
   assert.ok(a.primary.difference! < 0.05 && a.primary.ci!.lo > 0, `${a.primary.difference} ${a.primary.ci?.lo}`);
