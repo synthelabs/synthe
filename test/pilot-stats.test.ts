@@ -94,7 +94,13 @@ test("Welch interval for a difference of means", () => {
   near(w.hi, 3 + half, 1e-9, "hi");
   near(w.hi - 3, 3.2426, 2e-3, "half width");
   assert.equal(welchInterval({ n: 1, mean: 1, sd: null }, { n: 12, mean: 17, sd: 3 }, 0.95), null);
-  assert.equal(welchInterval({ n: 5, mean: 1, sd: 0 }, { n: 5, mean: 2, sd: 0 }, 0.95), null, "zero variance in both arms");
+  // M-01: with no variation in either arm the interval has zero width at the point estimate (it was null, which left
+  // a guard with a constant value inconclusive for ever).
+  const flat = welchInterval({ n: 5, mean: 1, sd: 0 }, { n: 5, mean: 2, sd: 0 }, 0.95)!;
+  assert.deepEqual([flat.lo, flat.hi, flat.level, flat.df], [-1, -1, 0.95, 8]);
+  assert.equal(welchInterval({ n: 5, mean: 2, sd: 0 }, { n: 5, mean: 2, sd: 0 }, 0.95)!.lo, 0);
+  // One arm with spread is a normal Welch interval.
+  assert.ok(welchInterval({ n: 5, mean: 1, sd: 0 }, { n: 5, mean: 2, sd: 1 }, 0.95)!.hi > -1);
 });
 
 test("one-sample t interval and mean summary", () => {
@@ -139,9 +145,14 @@ test("sample size per arm", () => {
   assert.equal(sampleSizeProportions(0.5, 0.1, "lower_is_better", 0.05, 0.8), 388);
   // 0.2 -> 0.25: (1.959964*sqrt(2*.225*.775) + 0.841621*sqrt(.16+.1875))^2 / .0025 = 1093.7 -> 1094.
   assert.equal(sampleSizeProportions(0.2, 0.05, "higher_is_better", 0.05, 0.8), 1094);
-  // A target past 1 is clamped inside (0, 1), so the size is finite.
-  const clamped = sampleSizeProportions(0.95, 0.1, "higher_is_better", 0.05, 0.8);
+  // A target that lands exactly on 1 is clamped just inside (0, 1), so the size is finite.
+  const clamped = sampleSizeProportions(0.95, 0.05, "higher_is_better", 0.05, 0.8);
   assert.ok(clamped !== null && clamped > 0 && Number.isFinite(clamped));
+  // M-03: a gain that would take the rate past 0 or 1 is impossible. It used to be sized for the gain that was left
+  // (0.99 + 0.03 clamped to 0.99, a 0.01 change, 781 per arm), which promised a power the experiment cannot have.
+  assert.equal(sampleSizeProportions(0.99, 0.03, "higher_is_better", 0.05, 0.8), null);
+  assert.equal(sampleSizeProportions(0.95, 0.1, "higher_is_better", 0.05, 0.8), null);
+  assert.equal(sampleSizeProportions(0.01, 0.03, "lower_is_better", 0.05, 0.8), null);
   // Nothing to improve: a zero rate cannot go lower.
   assert.equal(sampleSizeProportions(0, 0.05, "lower_is_better", 0.05, 0.8), null);
   assert.equal(sampleSizeProportions(Number.NaN, 0.05, "higher_is_better", 0.05, 0.8), null);

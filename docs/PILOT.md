@@ -82,7 +82,7 @@ Most commands can be run again, and a repeated step finds its earlier record and
     "primary": { "name": "resolved", "kind": "rate", "unit": "share of completed conversations resolved without a person", "direction": "higher_is_better", "min_effect": 0.03 },
     "guards": [
       { "name": "escalated", "kind": "rate", "unit": "share of completed conversations handed to a person", "direction": "lower_is_better", "max_harm": 0.02, "critical": true, "early_stop": { "min_per_arm": 400 } },
-      { "name": "refund_usd", "kind": "mean", "unit": "USD refunded per completed conversation", "direction": "lower_is_better", "max_harm": 0.75, "critical": false }
+      { "name": "refund_usd", "kind": "mean", "unit": "USD refunded per completed conversation", "direction": "lower_is_better", "max_harm": 0.75, "critical": false, "range": { "min": 0, "max": 100 } }
     ],
     "denominator": "completed_conversations",
     "randomization_unit": "conversation",
@@ -101,7 +101,9 @@ Most commands can be run again, and a repeated step finds its earlier record and
 ```
 
 - `kind` is `rate` (each conversation is 0 or 1) or `mean` (a number per conversation).
+- A mean guard declares `range` (the smallest and largest value one conversation can have). Without it, the guard can never pass, so the pilot can never keep. Choose rate guards or bounded mean guards. See [the experiment and the decision](#the-experiment-and-the-decision).
 - `min_effect` and `max_harm` are absolute, in the metric's own units. For a rate, 0.03 is three percentage points.
+- `analysis_window_days` is at least 7: a shorter window cannot see each weekday once, and the contract is refused.
 - `outcome_lag_days` is how long an outcome takes to become final. Younger conversations are left out until they mature. A lag longer than the window is refused: that outcome cannot be attributed in the pilot.
 - `baseline_tag` is the tag the customer's telemetry already carries for the current prompt.
 - `provider: null` means only scripted models run.
@@ -146,11 +148,11 @@ Aggregates form, when rows cannot leave the warehouse: replace `rows_csv` with
 ```json
 "aggregates": [
   { "prompt_version": "juniper-v14", "n": 4480, "immature": 0, "unattributed": 0,
-    "metrics": { "resolved": { "kind": "rate", "successes": 2772, "missing": 0 }, "refund_usd": { "kind": "mean", "mean": 4.2, "sd": 10.0, "missing": 0 } } }
+    "metrics": { "resolved": { "kind": "rate", "successes": 2772, "missing": 0 }, "refund_usd": { "kind": "mean", "mean": 4.2, "sd": 10.0, "missing": 0, "nonzero": 672 } } }
 ]
 ```
 
-`n` counts mature, attributable conversations. Each aggregate export must be cumulative from the experiment start; only the newest is used. With aggregates Synthe cannot check duplicates, unit overlap or a runtime change, so it takes the customer's counts as given.
+`n` counts mature, attributable conversations. Each aggregate export must be cumulative from the experiment start; only the newest is used. For a mean metric, `nonzero` is the number of conversations with a value other than 0; without it a mean guard cannot pass. With aggregates Synthe cannot check duplicates, unit overlap or a runtime change, so it takes the customer's counts as given.
 
 Rules that keep the counts honest:
 
@@ -164,6 +166,7 @@ Rules that keep the counts honest:
 - Every export of a pilot must carry the same `query_hash` (or none), the baseline's included.
 - An export dated later than the moment it is imported is refused.
 - A refused export leaves no record, so the next correct export still imports.
+- The first export made at or after the cutoff gives the final result. A second one is refused unless the caller reopens the experiment on purpose (`reopen`; the CLI flag is `--reopen`), because a final result that can be redone with new numbers until it reads keep is not predeclared. A reopened decision says so, and every repeat of it needs the same flag (a larger aggregate after the cutoff otherwise turns a hold into a keep).
 - A keep or a revert ends the experiment. It takes no more exports after that, and its candidate gets no second experiment: a stopped change cannot come back as a keep.
 
 ## Conversation pack
@@ -204,7 +207,7 @@ Import refuses a pack that is not approved for replay, has unknown fields, excee
 - When a reply behaves differently from the recorded one (other tool calls, or a different result on that turn's checks), the case stops counting in the comparison from the next turn: the recorded customer was answering the old agent. A change that fixes a failure diverges by design, so expect it.
 - Those later turns are still replayed against the recorded history (`after_stop`), for their guard checks only. Harm seen there blocks the candidate like any other. A blocking guard that could not be decided for the candidate (its turn did not finish) counts against it: a guard nobody checked is not a pass.
 - A case is **paired** when at least one turn was scored for both prompts. The report gives wins, losses and ties, coverage (paired cases, turns scored on both), excluded cases with the reason and turn, each regression with its case, turn and check, and new blocking guard failures.
-- The gate passes only when: no new blocking guard failure; no more unchecked blocking guards than the config allows; enough paired cases and coverage; wins minus losses reaches the minimum; at least one held-out case was compared and held-out cases do not lose; and the targeted check is fixed somewhere.
+- The gate passes only when: no new blocking guard failure; no more unchecked blocking guards than the config allows; enough paired cases and coverage; wins minus losses reaches the minimum; the one-sided sign test on wins against losses (ties left out) gives p of 0.1 or less, so a few lucky flips on a large pack do not pass (3 wins and no loss is p = 0.125, which fails, whatever the minimum); at least one held-out case was compared and held-out cases do not lose; and the targeted check is fixed somewhere.
 - What replay does not see: a reply that passes the same checks with the same tool calls but says something different does not count as a divergence, and later turns never contain the candidate's own earlier replies.
 - The proposer gets discovery cases only. Its feedback after a rejection names discovery cases only; a problem on held-out cases is reported to it as one fixed sentence.
 
@@ -217,16 +220,24 @@ Replay shows checks on recorded conversations. It is not an estimate of business
 The analysis is fixed in the specification before any outcome is seen:
 
 - **Keep**: only at the final analysis (an export made at or after the cutoff), with clean data, when the primary metric's gain is at least `min_effect` and its interval is above zero, and every guard's interval for harm is inside its `max_harm`.
-- **Revert**: at the final analysis with clean data and enough samples, when a guard breaches (the whole interval for its harm is above `max_harm`) or the primary is significantly worse. Before the cutoff, a critical guard can revert at the 99.9% early stop once both arms have the guard's `min_per_arm` and telemetry integrity checks pass. Its minimum is separate from the final sample target, and the interim decision uses mature outcomes.
-- **Hold**: everything else. Before the cutoff; too few mature conversations; outcomes still inside the lag; a sample ratio mismatch; a cohort imbalance, or segments reported for one arm only; missing events above the limit, or far more common in one arm than the other; ambiguous attribution above the limit; observational data; more than one runtime model; no single export that covers the whole window; a primary that does not clear; a guard that is not shown to be safe.
+- **Revert**: at the final analysis with clean data and enough samples, when a guard breaches (the whole interval for its harm is above `max_harm`) or the primary is significantly worse. A critical guard can also revert at the 99.9% early stop, in every analysis including the final one, once both arms have the guard's `min_per_arm` and telemetry integrity checks pass. Its minimum is separate from the final sample target, so too few samples overall do not hide a clear breach, and the decision uses mature outcomes. Every breached guard is named in the reasons, also when a data problem holds the result.
+- **Hold**: everything else. Before the cutoff; too few mature conversations; outcomes still inside the lag; a sample ratio mismatch; a cohort imbalance, or segments reported for one arm only; missing events above the limit, or far more common in one arm than the other; ambiguous attribution above the limit; units (`unit_id`) with more than 1.2 conversations each on average (`clustered_units`: conversations of one unit are not independent, so the intervals would be too narrow); observational data; more than one runtime model; no single export that covers the whole window; at the final analysis, rows on fewer than 80% of the window's calendar days (UTC) (`window_not_populated`: the window was not actually run, or the export leaves days out); a primary that does not clear; a guard that is not shown to be safe.
+
+If the baseline report raised `short_window`, `window_too_short_for_required_samples` or `missing_events`, `experiment` is refused until the person names each one (`--accept-flag <name>`, once per flag). The accepted flags are written into the specification and shown in its plan, so the review and the decision carry them.
+
+The baseline report checks each guard's margin against the planned size: with no change at all, the 95% interval for a difference between the arms at the required conversations per arm has a half-width of z x sqrt(2 x variance / n), the variance taken from the baseline. When that is not below `max_harm` for some guard, the report flags `guard_margin_infeasible`, the specification carries the flag, and the analysis cannot give keep (it still reverts on a clear breach). The required size is sized on the primary metric and is not changed by this flag. Widen `max_harm`, choose a less noisy guard, or accept a longer experiment.
 
 A guard has three outcomes. Pass: the whole interval for harm is inside `max_harm`. Breach: the whole interval is beyond it. Otherwise it is inconclusive, which holds. Harm that is real but may still be inside the margin is not a breach, because the contract says the team tolerates that much; it is not a pass either.
 
+A mean guard has a stricter rule, because a mean can be carried by a few rare, large values (a refund, a credit) and an interval cannot show they are absent. It reports `pass` only when its metric declares a finite `range` in the contract and each arm has at least 30 non-zero values. Otherwise it is inconclusive, which holds, so keep is impossible. A value outside the declared range refuses the export. A breach is not restricted. Teams should choose a rate (binary) guard, such as "any refund over 50 dollars", or a bounded mean guard. A money-mean guard cannot certify a keep at pilot volumes: with a few events per arm no result can show that a large harm is missing.
+
 Methods: a rate uses the Newcombe hybrid score interval for the difference of two proportions; a mean uses the Welch interval. Sample ratio and cohort balance use chi-square tests at 0.001. The required sample size is the standard two-sample formula at the contract's alpha and power.
 
-Known limits of the method. Read these before you rely on a decision:
+### Known limits
 
-- Conversations are treated as independent. If one customer has many conversations, intervals are too narrow.
+Read these before you rely on a decision:
+
+- Conversations are treated as independent. With `unit_id` in the rows, a pilot whose units average more than 1.2 conversations holds (`clustered_units`). Without `unit_id`, or in the aggregates form, this cannot be checked: if one customer has many conversations, the intervals are too narrow.
 - The experiment is sized to detect `min_effect`. A change whose true effect is exactly `min_effect` is kept only about half the time, because keep also needs the measured gain to reach `min_effect`.
 - Each guard is tested on its own. With several guards, a false revert is more likely than alpha suggests.
 - The early stop is a fixed 99.9% check at every look, not a formal sequential boundary. Many looks raise the chance of a false stop.
@@ -236,7 +247,9 @@ Known limits of the method. Read these before you rely on a decision:
 - A second copy of a conversation is recognised only when it is exact (same start time, version, segment and values). A copy with a changed start time or value, or copies in an export with one timestamp per day, cannot be told from more conversations. Send `unit_id`.
 - The outcome lag is the customer's statement of when an outcome is final. If many conversations finish later than it, the last days of the window are missing their slow conversations at the cutoff. The `late rows` count shows this only when there was an earlier export to compare with.
 - A guard that is harmful but not yet shown to be beyond its margin holds; it does not revert. With little data that can take the whole window.
-- A mean metric with heavy tails (refunds, revenue) needs more data than the formula says.
+- A mean metric with heavy tails (refunds, revenue) needs more data than the formula says. That is why a mean guard cannot pass without a declared range and 30 non-zero values per arm (see above). A mean primary metric has no such rule: choose a rate, or size it with care.
+- Corrected outcomes after the lag are refused. Once an outcome is final (older than the outcome lag when exported), a later export that carries a different value for the same conversation is a `telemetry_conflict`, and so is any other change to a recorded value, tag or time. That protects the record from quiet rewriting, but it also means a customer who finds a wrong value after the lag cannot fix it in the same experiment: the export that is wrong stays, and the experiment has to be run again. A journalled, explicit way to supersede the older value would be safer for honest corrections, and it is not built.
+- The standard deviation of a mean metric in the aggregates form is trusted as supplied. Synthe cannot tell whether it was computed per conversation, per day or over a different population, and its meaning is not checked beyond being a finite number of 0 or more (and, for a guard with a range, no larger than the range allows). Two exports with the same sums and different `sd` give different intervals, so a customer who sends a too small `sd` gets a narrow interval and an easier keep. Bucket-level data (the sum and count per hour or day, with the variance taken between buckets) or the sum of squares would fix this, and would narrow the interval for honest data too. It is not built, so prefer rows, and treat an aggregate keep on a mean metric with more caution than a keep on rates.
 
 Each decision file leads with the recommendation and the team's own number, lists every number with its source record and method, and gives the exact rollback target (the baseline tag and prompt id).
 

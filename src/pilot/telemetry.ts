@@ -11,7 +11,7 @@ import { unsafeKey } from "./io.ts";
 import { personalDataKinds } from "./pii.ts";
 import { canonicalJson } from "../core/evidence.ts";
 import {
-  meanSummary, oneSampleT, sampleSizeMeans, sampleSizeProportions, wilsonInterval, type MeanStats,
+  meanSummary, normalQuantile, oneSampleT, sampleSizeMeans, sampleSizeProportions, wilsonInterval, type MeanStats,
 } from "./stats.ts";
 import {
   TELEMETRY_FORMAT,
@@ -52,8 +52,8 @@ const MAX_ID = 200;
 export const NO_SEGMENT = "(none)";
 const MINIMISE = "Export only the documented fields (see docs/PILOT.md): an extra field could carry personal data.";
 
-export const contractMetrics = (contract: MetricContract): { name: string; kind: MetricKind; unit: string }[] =>
-  [contract.primary, ...contract.guards].map((m) => ({ name: m.name, kind: m.kind, unit: m.unit }));
+export const contractMetrics = (contract: MetricContract): { name: string; kind: MetricKind; unit: string; range?: { min: number; max: number } }[] =>
+  [contract.primary, ...contract.guards].map((m) => ({ name: m.name, kind: m.kind, unit: m.unit, ...("range" in m && m.range ? { range: m.range } : {}) }));
 
 function checkPersonalData(text: string, field: string, where: string): void {
   const kinds = personalDataKinds(text);
@@ -139,6 +139,7 @@ function validateRow(raw: unknown, where: string, contract: MetricContract): Tel
     if (v === null) { values[m.name] = null; continue; }
     if (m.kind === "rate" && v !== 0 && v !== 1) bad(`${where}: ${m.name} is a rate, so each value must be 0, 1 or null.`);
     if (m.kind === "mean" && (typeof v !== "number" || !Number.isFinite(v))) bad(`${where}: ${m.name} must be a finite number or null.`);
+    if (m.range && ((v as number) < m.range.min || (v as number) > m.range.max)) bad(`${where}: ${m.name} is outside the range ${m.range.min} to ${m.range.max} that the contract declares for it. Fix the export, or the range in the contract before the pilot starts.`);
     values[m.name] = v as number;
   }
   const out: TelemetryRow = { conversation_id: raw.conversation_id as string, prompt_version: raw.prompt_version as string, started_at: raw.started_at as string, values };
@@ -250,12 +251,21 @@ function validateAggregate(raw: unknown, where: string, contract: MetricContract
       if ((s.successes as number) + (s.missing as number) > n) bad(`${where}: metrics.${m.name}.successes plus missing is more than n.`);
       out[m.name] = { kind: "rate", successes: s.successes as number, missing: s.missing as number };
     } else {
-      const unk = Object.keys(s).filter((k) => !["kind", "mean", "sd", "missing"].includes(k));
+      const unk = Object.keys(s).filter((k) => !["kind", "mean", "sd", "missing", "nonzero"].includes(k));
       if (unk.length > 0) bad(`${where}: metrics.${m.name} has an undocumented field "${unk[0]}".`);
       if (typeof s.mean !== "number" || !Number.isFinite(s.mean)) bad(`${where}: metrics.${m.name}.mean must be a finite number.`);
       if (typeof s.sd !== "number" || !Number.isFinite(s.sd) || s.sd < 0) bad(`${where}: metrics.${m.name}.sd must be a finite number of 0 or more.`);
       if (!isCount(s.missing) || s.missing > n) bad(`${where}: metrics.${m.name}.missing must be a whole number from 0 to n.`);
-      out[m.name] = { kind: "mean", mean: s.mean as number, sd: s.sd as number, missing: s.missing as number };
+      if (s.nonzero !== undefined && (!isCount(s.nonzero) || s.nonzero > n - (s.missing as number))) bad(`${where}: metrics.${m.name}.nonzero must be a whole number from 0 to the conversations that have a value.`);
+      if (m.range) {
+        const have = n - (s.missing as number);
+        const half = (m.range.max - m.range.min) / 2;
+        // A sample sd cannot exceed half the range times sqrt(n / (n - 1)).
+        const maxSd = have >= 2 ? half * Math.sqrt(have / (have - 1)) * (1 + 1e-9) : 0;
+        if (have > 0 && ((s.mean as number) < m.range.min || (s.mean as number) > m.range.max)) bad(`${where}: metrics.${m.name}.mean is outside the range ${m.range.min} to ${m.range.max} that the contract declares for it.`);
+        if (have >= 2 && (s.sd as number) > maxSd) bad(`${where}: metrics.${m.name}.sd is larger than any values inside the range ${m.range.min} to ${m.range.max} can have.`);
+      }
+      out[m.name] = { kind: "mean", mean: s.mean as number, sd: s.sd as number, missing: s.missing as number, ...(s.nonzero !== undefined ? { nonzero: s.nonzero as number } : {}) };
     }
   }
   const agg: TelemetryAggregate = { prompt_version: raw.prompt_version as string, n, immature: raw.immature as number, unattributed: raw.unattributed as number, metrics: out };
@@ -627,7 +637,8 @@ export function mergeImports(imports: Stored<TelemetryImport>[]): MergedTelemetr
 }
 
 // One arm's numbers for one metric. rate: successes out of n. mean: mean and sample sd over n values.
-export interface ArmMetric { kind: MetricKind; n: number; missing: number; successes: number; stats: MeanStats; estimate: number | null }
+// nonzero: values other than 0 (null when an aggregate does not say).
+export interface ArmMetric { kind: MetricKind; n: number; missing: number; successes: number; stats: MeanStats; estimate: number | null; nonzero: number | null }
 
 export function armMetricFromRows(rows: TelemetryRow[], classes: RowClass[], tag: string, name: string, kind: MetricKind): ArmMetric {
   const values: number[] = [];
@@ -639,20 +650,20 @@ export function armMetricFromRows(rows: TelemetryRow[], classes: RowClass[], tag
   });
   const stats = meanSummary(values);
   const successes = kind === "rate" ? values.reduce((s, v) => s + v, 0) : 0;
-  return { kind, n: values.length, missing, successes, stats, estimate: stats.mean };
+  return { kind, n: values.length, missing, successes, stats, estimate: stats.mean, nonzero: values.filter((v) => v !== 0).length };
 }
 
 export function armMetricFromAggregate(agg: TelemetryAggregate | undefined, name: string, kind: MetricKind): ArmMetric {
-  const empty: ArmMetric = { kind, n: 0, missing: 0, successes: 0, stats: { n: 0, mean: null, sd: null }, estimate: null };
+  const empty: ArmMetric = { kind, n: 0, missing: 0, successes: 0, stats: { n: 0, mean: null, sd: null }, estimate: null, nonzero: 0 };
   if (!agg) return empty;
   const m = agg.metrics[name];
   const n = agg.n - m.missing;
   if (m.kind === "rate") {
     const mean = n > 0 ? m.successes / n : null;
-    return { kind, n, missing: m.missing, successes: m.successes, stats: { n, mean, sd: null }, estimate: mean };
+    return { kind, n, missing: m.missing, successes: m.successes, stats: { n, mean, sd: null }, estimate: mean, nonzero: m.successes };
   }
   const mean = n > 0 ? m.mean : null;
-  return { kind, n, missing: m.missing, successes: 0, stats: { n, mean, sd: n >= 2 ? m.sd : null }, estimate: mean };
+  return { kind, n, missing: m.missing, successes: 0, stats: { n, mean, sd: n >= 2 ? m.sd : null }, estimate: mean, nonzero: m.nonzero ?? null };
 }
 
 export const telemetrySource = (imports: Stored<TelemetryImport>[]) => `telemetry:${imports.map((i) => shortId(i.id)).join(",")}`;
@@ -726,7 +737,7 @@ export function baselineReport(input: { config_id: Sha256; contract: MetricContr
   const requiredPerArm: Sourced = {
     value: required, source,
     method: power === null
-      ? `cannot be computed: ${powerMethod}. The baseline has no usable ${p.name} values to size from.`
+      ? `cannot be computed: ${powerMethod}. ${primary.estimate === null || (p.kind === "mean" && primary.stats.sd === null) ? `The baseline has no usable ${p.name} values to size from.` : p.kind === "rate" ? `The baseline ${p.name} is ${fmt(primary.estimate)}, so a change of ${fmt(p.min_effect)} ${p.direction === "higher_is_better" ? "up" : "down"} would pass ${p.direction === "higher_is_better" ? "1" : "0"}: that gain is impossible. Lower min_effect or choose another primary metric.` : `The baseline spread (sd) is not positive, so there is nothing to size from.`}`
       : `max(min_samples_per_arm ${contract.min_samples_per_arm}, ${power} from ${powerMethod})`,
   };
   const daysTo = required !== null && dailyVolume.value !== null && dailyVolume.value > 0 ? Math.ceil((2 * required) / dailyVolume.value) : null;
@@ -735,16 +746,28 @@ export function baselineReport(input: { config_id: Sha256; contract: MetricContr
     method: `ceil(2 x required per arm ${required ?? "n/a"} / daily volume ${fmt(dailyVolume.value, 2)}), at an even split`,
   };
 
+  // S-05: the planned size is chosen for the primary metric. A guard can only be shown safe when its interval is
+  // narrower than max_harm, and at the planned size the interval for no difference at all has this half-width:
+  // z * sqrt(2 * variance / n), the variance from the baseline (p (1 - p) for a rate, sd squared for a mean).
+  const z = normalQuantile(1 - contract.alpha / 2);
+  const guardMargins = contract.guards.map((g) => {
+    const m = summaries.get(g.name) as ArmMetric;
+    const variance = g.kind === "rate" ? (m.estimate === null ? null : m.estimate * (1 - m.estimate)) : m.stats.sd === null ? null : m.stats.sd ** 2;
+    const half = required === null || z === null || variance === null ? null : z * Math.sqrt((2 * variance) / required);
+    return { name: g.name, max_harm: g.max_harm, half_width: half };
+  });
+
   const flags: string[] = [];
   if (days < 7) flags.push("short_window");
   if (counts.mature > 0 && metrics.some((m) => m.missing / counts.mature > contract.max_missing_rate)) flags.push("missing_events");
   if (daysTo !== null && daysTo > contract.analysis_window_days) flags.push("window_too_short_for_required_samples");
   if (counts.mature === 0) flags.push("no_mature_rows");
+  if (guardMargins.some((g) => g.half_width !== null && g.half_width >= g.max_harm)) flags.push("guard_margin_infeasible");
 
   return {
     version: 1, config_id: input.config_id, telemetry_ids: merged.used.map((i) => i.id), tag, window: merged.window,
     rows: counts.rows, mature: counts.mature, immature: counts.immature, daily_volume: dailyVolume, metrics,
-    required_per_arm: requiredPerArm, days_to_required: daysToRequired, flags,
+    required_per_arm: requiredPerArm, days_to_required: daysToRequired, guard_margins: guardMargins, flags,
   };
 }
 
@@ -753,6 +776,7 @@ const BASELINE_FLAG_TEXT: Record<string, string> = {
   missing_events: "Some metric is missing for more conversations than the contract allows (max_missing_rate). Fix the outcome logging before the experiment starts.",
   window_too_short_for_required_samples: "At the measured volume the experiment cannot reach the required conversations per arm inside analysis_window_days. Lengthen the window, raise min_effect, or accept that the result will be hold.",
   no_mature_rows: "No conversation is old enough for its outcome to be final. Export again after the outcome lag has passed.",
+  guard_margin_infeasible: "At the planned size, the interval for a guard cannot be narrower than its max_harm even when nothing changes, so that guard cannot be shown safe and keep is not possible. Widen max_harm, choose a less noisy guard, or accept a longer experiment.",
 };
 
 const ciText = (ci: { lo: number; hi: number } | null) => (ci === null ? "n/a" : `${fmt(ci.lo)} to ${fmt(ci.hi)}`);
@@ -777,7 +801,10 @@ export function renderBaseline(report: BaselineReport, contract: MetricContract,
   if (report.flags.length === 0) lines.push("No data problems found.");
   else {
     lines.push("## Problems", "");
-    for (const f of report.flags) lines.push(`- ${f}: ${BASELINE_FLAG_TEXT[f] ?? f}`);
+    for (const f of report.flags) {
+    const which = f === "guard_margin_infeasible" ? ` Guards: ${(report.guard_margins ?? []).filter((g) => g.half_width !== null && g.half_width >= g.max_harm).map((g) => `${g.name} (interval about +/-${fmt(g.half_width)} against max_harm ${g.max_harm})`).join(", ")}.` : "";
+    lines.push(`- ${f}: ${BASELINE_FLAG_TEXT[f] ?? f}${which}`);
+  }
   }
   lines.push("", "## Ids", "", `- Baseline report: ${baselineId}`, `- Configuration: ${report.config_id}`, ...report.telemetry_ids.map((id) => `- Telemetry import: ${id}`));
   if (report.required_per_arm.value === null) lines.push("", "Next: export a baseline with mature outcomes for the primary metric, so the experiment can be sized.");

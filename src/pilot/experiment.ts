@@ -22,6 +22,9 @@ import {
 const fail = (code: ConstructorParameters<typeof PilotError>[0], message: string): never => { throw new PilotError(code, message); };
 
 export const EARLY_STOP_LEVEL = 0.999;
+// S-01: a mean guard may pass only with this many non-zero values in each arm. Below it, one or two rare large
+// values decide the mean and the interval cannot show that they are absent.
+export const MIN_NONZERO_EVENTS = 30;
 export const INTEGRITY_ALPHA = 0.001;
 // Pearson's chi-square needs expected counts of about 5 or more per cell to be trusted.
 export const MIN_EXPECTED = 5;
@@ -32,19 +35,42 @@ const EPS = 1e-12;
 // The flags that hold a final result. Order is the order reasons are given in.
 export const HOLD_FLAGS = [
   "insufficient_samples", "sample_ratio_mismatch", "cohort_imbalance", "missing_events", "missing_imbalance", "attribution_ambiguous",
-  "observational", "runtime_changed", "inside_lag_window", "window_not_covered", "traffic_before_approval",
+  "observational", "runtime_changed", "inside_lag_window", "window_not_covered", "traffic_before_approval", "window_not_populated", "clustered_units",
 ] as const;
+
+// S-03: at the final analysis the rows must fall on at least this share of the window's calendar days (UTC).
+export const MIN_POPULATED_DAYS = 0.8;
+
+// S-02: the intervals count conversations as independent. When a unit has several conversations they are not, and
+// the intervals are too narrow. Above this many conversations per unit the result is held, not widened.
+export const MAX_CONVERSATIONS_PER_UNIT = 1.2;
+
+// Flags that only stop a keep. They say the result could not certify safety, not that the data are wrong, so a
+// guard that is clearly beyond its margin can still revert. Reasons come first, in this order.
+export const KEEP_BLOCKERS = ["guard_margin_infeasible"] as const;
 
 // A few rows can reach the source late. More than this many, and more than this share of the rows that were on
 // time, is worth telling the reader.
 const LATE_ROWS_MIN = 5;
 const LATE_ROWS_SHARE = 0.02;
 
+const BASELINE_FLAG_WARNING: Record<(typeof ACCEPTABLE_BASELINE_FLAGS)[number], string> = {
+  short_window: "the baseline covers less than 7 days, so weekly patterns are not in it.",
+  window_too_short_for_required_samples: "at the measured volume the experiment cannot reach the required conversations per arm inside the window, so it will most likely end in hold.",
+  missing_events: "some metric is missing for more conversations than the contract allows, so its outcome logging is unreliable.",
+};
+
 const pctLevel = (level: number) => `${Number((level * 100).toFixed(2))}%`;
+
+// Baseline problems that make an experiment likely to end in hold, or its keep less trustworthy. The specification is
+// written only when the person names each one that was raised (M-02).
+export const ACCEPTABLE_BASELINE_FLAGS = ["short_window", "window_too_short_for_required_samples", "missing_events"] as const;
 
 export function buildExperimentSpec(input: {
   pilot_id: string; config_id: Sha256; contract: MetricContract; baseline: ArmRef; candidate: ArmRef;
   baseline_report: BaselineReport; start: IsoTime;
+  // Baseline flags the person accepts by name (the CLI's repeatable --accept-flag).
+  accept_flags?: string[];
   // Intended share of traffic for the candidate. Absent: 0.5.
   candidate_share?: number;
 }): ExperimentSpec {
@@ -57,7 +83,15 @@ export function buildExperimentSpec(input: {
   if (input.baseline_report.config_id !== input.config_id) fail("conflict", "The baseline report was made for a different pilot configuration. Make a baseline report for the current configuration first.");
   const required = input.baseline_report.required_per_arm.value;
   if (required === null) {
-    fail("invalid_telemetry", "The baseline report could not compute the required conversations per arm (no usable baseline values for the primary metric). Import a baseline export with mature outcomes and make the report again.");
+    fail("invalid_telemetry", "The baseline report could not compute the required conversations per arm (the baseline has no usable values for the primary metric, or min_effect asks for a rate past 0 or 1: the Required per arm line of the baseline report says which). Fix that and make the report again.");
+  }
+  const raised = ACCEPTABLE_BASELINE_FLAGS.filter((f) => input.baseline_report.flags.includes(f));
+  const accepted = input.accept_flags ?? [];
+  const unknown = accepted.filter((f) => !raised.includes(f as (typeof ACCEPTABLE_BASELINE_FLAGS)[number]));
+  if (unknown.length > 0) fail("usage", `--accept-flag names ${unknown.join(", ")}, which the baseline report did not raise${raised.length > 0 ? ` (it raised: ${raised.join(", ")})` : " (it raised none of the flags that need acceptance)"}. Check the spelling.`);
+  const unaccepted = raised.filter((f) => !accepted.includes(f));
+  if (unaccepted.length > 0) {
+    fail("conflict", `The baseline report raised ${unaccepted.join(", ")}. ${unaccepted.map((f) => `${f}: ${BASELINE_FLAG_WARNING[f]}`).join(" ")} Fix the baseline, or accept each one by name: ${unaccepted.map((f) => `--accept-flag ${f}`).join(" ")}.`);
   }
   const start = input.start;
   const end = addDays(start, c.analysis_window_days);
@@ -86,7 +120,7 @@ export function buildExperimentSpec(input: {
     required_per_arm: required as number,
     denominator: c.denominator,
     primary: { ...c.primary },
-    guards: c.guards.map((g) => ({ ...g, ...(g.early_stop ? { early_stop: { ...g.early_stop } } : {}) })),
+    guards: c.guards.map((g) => ({ ...g, ...(g.early_stop ? { early_stop: { ...g.early_stop } } : {}), ...(g.range ? { range: { ...g.range } } : {}) })),
     alpha: c.alpha,
     early_stop_level: EARLY_STOP_LEVEL,
     integrity_alpha: INTEGRITY_ALPHA,
@@ -96,13 +130,15 @@ export function buildExperimentSpec(input: {
     methods: {
       rate: `Rate metrics: each arm's estimate is the share of mature, attributable conversations whose value is 1 (a null value is missing and left out); the difference is candidate minus baseline, with a Newcombe hybrid score interval (method 10) at ${pctLevel(level)}.`,
       mean: `Mean metrics: each arm's estimate is the mean over mature, attributable conversations with a value; the difference is candidate minus baseline, with a Welch interval (Welch-Satterthwaite degrees of freedom) at ${pctLevel(level)}.`,
-      keep: `Keep only at the final analysis (an export made at or after ${cutoff}) with none of the data problems listed under hold, when the primary metric's benefit (the difference in its good direction) is at least ${c.primary.min_effect} and the lower bound of its ${pctLevel(level)} interval is above 0, and every guard passes: the upper bound of the ${pctLevel(level)} interval for its harm is at most its max_harm.`,
-      revert: `Revert at the final analysis with no data or sample-size holds when any guard breaches (the lower bound of the ${pctLevel(level)} interval for its harm is above its max_harm) or the primary metric is significantly worse (the upper bound of the ${pctLevel(level)} interval for its benefit is below 0). Before the final analysis only a critical guard's early stop can revert, and only when telemetry integrity checks pass.`,
-      hold: `Hold in every other case: before the cutoff; when there are fewer than ${required} conversations with a primary value in either arm, a sample ratio mismatch, a cohort imbalance, missing events above ${pct(c.max_missing_rate)} or far more common in one arm, ambiguous attribution above ${pct(c.max_unattributed_rate)}, observational assignment, more than one runtime model, or outcomes still inside the ${c.outcome_lag_days}-day lag, or no single export covering the whole window; when the primary does not clear; or when a guard is inconclusive.`,
-      early_stop: `Early stop: before the cutoff, a critical guard with early_stop is checked at ${pctLevel(EARLY_STOP_LEVEL)} once both arms have at least its min_per_arm mature values; it reverts when the lower bound of the ${pctLevel(EARLY_STOP_LEVEL)} interval for its harm is above its max_harm. No other guard and no primary result is acted on before the cutoff.`,
+      keep: `Keep only at the final analysis (an export made at or after ${cutoff}) with none of the data problems listed under hold, when the primary metric's benefit (the difference in its good direction) is at least ${c.primary.min_effect} and the lower bound of its ${pctLevel(level)} interval is above 0, and every guard passes: the upper bound of the ${pctLevel(level)} interval for its harm is at most its max_harm. A mean guard passes only when its metric declares a finite range and each arm has at least ${MIN_NONZERO_EVENTS} non-zero values; otherwise it is inconclusive, so keep is not possible.`,
+      revert: `Revert at the final analysis with no data or sample-size holds when any guard breaches (the lower bound of the ${pctLevel(level)} interval for its harm is above its max_harm) or the primary metric is significantly worse (the upper bound of the ${pctLevel(level)} interval for its benefit is below 0). Before the final analysis only a critical guard's early stop can revert, and only when telemetry integrity checks pass; the early stop is also checked in the final analysis.`,
+      hold: `Hold in every other case: before the cutoff; when there are fewer than ${required} conversations with a primary value in either arm, a sample ratio mismatch, a cohort imbalance, missing events above ${pct(c.max_missing_rate)} or far more common in one arm, ambiguous attribution above ${pct(c.max_unattributed_rate)}, rows on fewer than ${pct(MIN_POPULATED_DAYS)} of the window's days, more than ${MAX_CONVERSATIONS_PER_UNIT} conversations per unit_id on average, observational assignment, more than one runtime model, or outcomes still inside the ${c.outcome_lag_days}-day lag, or no single export covering the whole window; when the primary does not clear; or when a guard is inconclusive.`,
+      early_stop: `Early stop: at every analysis, the final one included, a critical guard with early_stop is checked at ${pctLevel(EARLY_STOP_LEVEL)} once both arms have at least its min_per_arm mature values; it reverts when the lower bound of the ${pctLevel(EARLY_STOP_LEVEL)} interval for its harm is above its max_harm, even if the experiment has too few samples or outcomes still inside the lag. A data problem of any other kind blocks it. No other guard and no primary result is acted on before the cutoff.`,
       integrity: `Integrity: rows per arm are tested against the intended allocation (chi-square goodness of fit), and arm against segment (chi-square test of independence, pooling segments with expected counts below ${MIN_EXPECTED}); a p-value below ${INTEGRITY_ALPHA} holds the result as a sample ratio mismatch or a cohort imbalance.`,
     },
     telemetry_fields: fields,
+    baseline_flags: [...input.baseline_report.flags],
+    ...(raised.length > 0 ? { accepted_baseline_flags: [...raised] } : {}),
     rollback: {
       prompt_id: input.baseline.prompt_id,
       tag: input.baseline.tag,
@@ -184,6 +220,17 @@ function guardReadout(g: GuardSpec, base: ArmMetric, cand: ArmMetric, level: num
   // be inside the tolerated margin is not a breach: the contract says the team accepts that much.
   if (hCi !== null && hCi.lo > g.max_harm + EPS) status = "breach";
   else if (hCi !== null && hCi.hi <= g.max_harm + EPS) status = "pass";
+  // A mean can be moved by a few rare, large values, and an interval built from a small number of them does not show
+  // they are absent (S-01). A mean guard passes only when its metric declares a finite range and each arm has enough
+  // non-zero values; otherwise it is inconclusive, so keep is impossible. Breach is not restricted: a harm that large
+  // is not something a missing tail can hide.
+  let uncertified: string | null = null;
+  if (status === "pass" && g.kind === "mean") {
+    if (!g.range) uncertified = "this mean guard has no declared range (range min and max in the contract), so a rare large harm cannot be ruled out; choose a rate or a bounded guard";
+    else if (base.nonzero === null || cand.nonzero === null) uncertified = `the export does not say how many values are non-zero, and ${MIN_NONZERO_EVENTS} per arm are needed to certify a mean guard`;
+    else if (base.nonzero < MIN_NONZERO_EVENTS || cand.nonzero < MIN_NONZERO_EVENTS) uncertified = `only ${base.nonzero} baseline and ${cand.nonzero} candidate values are non-zero, and ${MIN_NONZERO_EVENTS} in each arm are needed to certify a mean guard`;
+    if (uncertified !== null) status = "inconclusive";
+  }
   let early: Interval | null = null;
   let earlyBreach = false;
   if (g.critical && g.early_stop && base.n >= g.early_stop.min_per_arm && cand.n >= g.early_stop.min_per_arm && diff !== null) {
@@ -198,7 +245,9 @@ function guardReadout(g: GuardSpec, base: ArmMetric, cand: ArmMetric, level: num
       ? `${g.name}: ${nums}; the whole interval is above the margin.`
       : status === "pass"
         ? `${g.name}: ${nums}; the whole interval is within the margin.`
-        : `${g.name}: ${nums}; ${hCi === null ? "the interval cannot be computed from these values" : hCi.lo > EPS ? "harm is above zero, but the interval does not show whether it is within or beyond the margin" : "the interval reaches past the margin, so it is not shown to be safe"}.`;
+        : uncertified !== null
+          ? `${g.name}: ${nums}; the interval is within the margin, but it is not certified: ${uncertified}.`
+          : `${g.name}: ${nums}; ${hCi === null ? "the interval cannot be computed from these values" : hCi.lo > EPS ? "harm is above zero, but the interval does not show whether it is within or beyond the margin" : "the interval reaches past the margin, so it is not shown to be safe"}.`;
   return { readout: { ...readout, early_ci: early, status, detail }, earlyBreach, spec: g, harm };
 }
 
@@ -230,13 +279,23 @@ export function cohortTest(base: Record<string, number>, cand: Record<string, nu
 // `approved_at`: the time of the approval being relied on. Conversations that started before it ran on a change nobody
 // had approved yet, so an approval that follows the traffic holds the result. Row exports only: an aggregate has no
 // start times to compare.
-export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: Sha256; imports: Stored<TelemetryImport>[]; approval_id: Sha256; approved_at?: IsoTime }): ExperimentAnalysis {
+// reopen (M-05): the first final export gives the experiment's final result. A later export that is also made at or
+// after the cutoff is refused unless the caller passes reopen: true, because a result that can be redone with new numbers
+// until it says keep is not a predeclared result. A reopened analysis says so (reopened: true), and every later call
+// with the same imports must pass reopen: true again (verify and a repeat of the analysis do).
+export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: Sha256; imports: Stored<TelemetryImport>[]; approval_id: Sha256; approved_at?: IsoTime; reopen?: boolean }): ExperimentAnalysis {
   const { spec } = input;
   const baseTag = spec.arms.baseline.tag;
   const candTag = spec.arms.candidate.tag;
   for (const imp of input.imports) {
     if (imp.value.purpose !== "experiment") fail("invalid_telemetry", `Import telemetry:${shortId(imp.id)} was made for the baseline, not this experiment. Import the experiment export with purpose experiment.`);
     if (imp.value.scope_id !== input.experiment_id) fail("invalid_telemetry", `Import telemetry:${shortId(imp.id)} belongs to a different experiment. Import the export again for this experiment.`);
+  }
+  // The same export listed twice is one export (it counts once everywhere else too).
+  const finalExports = input.imports.filter((i, k) => ms(i.value.exported_at) >= ms(spec.analysis_cutoff) && input.imports.findIndex((o) => o.id === i.id) === k);
+  const reopened = finalExports.length > 1;
+  if (reopened && input.reopen !== true) {
+    fail("conflict", `This experiment already has a final export (made at ${finalExports[0].value.exported_at}, at or after the cutoff ${spec.analysis_cutoff}), so its final result stands. A second final export (${finalExports[finalExports.length - 1].value.export_id}, made at ${finalExports[finalExports.length - 1].value.exported_at}) is refused: redoing a final result with new numbers until it reads keep is not a predeclared analysis. If the first export was wrong, reopen the experiment on purpose (--reopen); the decision then says it was reopened.`);
   }
   if (input.imports.length === 0) fail("telemetry_incomplete", "No experiment telemetry has been imported yet. Import the customer's export first.");
   const merged = mergeImports(input.imports);
@@ -256,6 +315,8 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   let arms: { baseline: ArmCounts; candidate: ArmCounts };
   let metricFor: (tag: string, name: string, kind: MetricKind) => ArmMetric;
   let models = 0;
+  let perUnit: number | null = null;
+  let populated: { days: number; of: number } | null = null;
   let hasSegments = false;
   let lateRows = 0;
   if (merged.form === "rows") {
@@ -271,6 +332,15 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
     arms = { baseline: armCountsFromRows(rows, classes, baseTag), candidate: armCountsFromRows(rows, classes, candTag) };
     metricFor = (tag, name, kind) => armMetricFromRows(rows, classes, tag, name, kind);
     models = new Set(rows.filter((r) => r.model_id !== undefined).map((r) => r.model_id)).size;
+    const dayOf = (t: number) => Math.floor(t / DAY_MS);
+    const firstDay = dayOf(ms(spec.window.start));
+    const lastDay = dayOf(ms(spec.window.end) - 1);
+    const rowDays = new Set(rows.map((r) => dayOf(ms(r.started_at))));
+    let hit = 0;
+    for (let d = firstDay; d <= lastDay; d++) if (rowDays.has(d)) hit++;
+    populated = { days: hit, of: lastDay - firstDay + 1 };
+    const withUnit = rows.filter((r, i) => r.unit_id !== undefined && classes[i] !== "unattributed");
+    if (withUnit.length > 0) perUnit = withUnit.length / new Set(withUnit.map((r) => r.unit_id)).size;
     hasSegments = rows.some((r) => r.segment !== undefined);
   } else {
     const aggs = merged.aggregates ?? [];
@@ -329,10 +399,18 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   // days, made after the cutoff, would count as final and skip the days the window was set to cover.
   const covered = merged.used.some((i) => ms(i.value.window.start) <= ms(spec.window.start) && ms(i.value.window.end) >= ms(spec.window.end));
   if (final && !covered) flags.push("window_not_covered");
+  // The window is a claim about when the conversations happened; the rows must support it. Only the final analysis
+  // is judged: an interim look is partial by design.
+  if (final && populated !== null && populated.days < MIN_POPULATED_DAYS * populated.of - EPS) flags.push("window_not_populated");
+  if (perUnit !== null && perUnit > MAX_CONVERSATIONS_PER_UNIT + EPS) flags.push("clustered_units");
   if (merged.superseded.length > 0) flags.push("superseded_aggregate");
   const approvedAt = input.approved_at;
   const beforeApproval = approvedAt !== undefined && merged.form === "rows" ? (merged.rows as TelemetryRow[]).filter((r) => ms(r.started_at) < ms(approvedAt)).length : 0;
   if (beforeApproval > 0) flags.push("traffic_before_approval");
+  // From the baseline, carried in the specification: the planned size cannot make some guard's interval narrower than
+  // its margin, so no result could show that guard safe.
+  for (const f of KEEP_BLOCKERS) if (spec.baseline_flags?.includes(f)) flags.push(f);
+  const keepBlockers = KEEP_BLOCKERS.filter((f) => flags.includes(f));
 
   // Recommendation, in the predeclared order.
   const reasons: string[] = [];
@@ -343,34 +421,41 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   const holdFlags = HOLD_FLAGS.filter((f) => flags.includes(f));
   // Interim guards have their own mature-sample minimum. Integrity failures still block every terminal decision.
   const canStopEarly = holdFlags.every((flag) => flag === "insufficient_samples" || flag === "inside_lag_window");
-  if (!final && canStopEarly && earlyStops.length > 0) {
+  const finalRevert = final && holdFlags.length === 0 && (finalBreaches.length > 0 || primary.status === "breach");
+  // A breached guard is always named, whatever the recommendation turns out to be.
+  const breachNote = (g: GuardEval) => `Guard ${g.spec.name} is beyond its tolerated ${g.spec.max_harm} at the ${pctLevel(level)} level: ${g.readout.detail}`;
+  if (finalRevert) {
+    recommendation = "revert";
+    stoppedBy = "final";
+    for (const g of finalBreaches) reasons.push(`Guard breach at the final analysis: ${g.readout.detail}`);
+    if (primary.status === "breach") reasons.push(`The primary metric is significantly worse at the final analysis: ${primary.detail}`);
+  } else if (canStopEarly && earlyStops.length > 0) {
+    // The early-stop rule is looked at in every analysis, the final one included: too few samples or outcomes still
+    // inside the lag do not make a guard that is clearly beyond its margin safe.
     recommendation = "revert";
     stoppedBy = "early_stop";
     for (const g of earlyStops) {
       const e = benefitOf(g.spec.direction, g.readout.difference, g.readout.early_ci ?? null).hCi as Oriented;
       reasons.push(`Early stop: critical guard ${g.spec.name} has harm ${fmt(g.harm)}, and the ${pctLevel(spec.early_stop_level)} interval for harm (${ciStr(e)}) is wholly above its tolerated ${g.spec.max_harm}, with ${g.readout.baseline.n} baseline and ${g.readout.candidate.n} candidate values (at least ${g.spec.early_stop?.min_per_arm} each).`);
     }
-  } else if (final && holdFlags.length === 0 && (finalBreaches.length > 0 || primary.status === "breach")) {
-    recommendation = "revert";
-    stoppedBy = "final";
-    for (const g of finalBreaches) reasons.push(`Guard breach at the final analysis: ${g.readout.detail}`);
-    if (primary.status === "breach") reasons.push(`The primary metric is significantly worse at the final analysis: ${primary.detail}`);
+    for (const g of guards) if (g.readout.status === "breach" && !g.earlyBreach) reasons.push(breachNote(g));
   } else if (!final || holdFlags.length > 0) {
     recommendation = "hold";
   } else {
-    recommendation = primary.status === "clears" && guards.every((g) => g.readout.status === "pass") ? "keep" : "hold";
+    recommendation = primary.status === "clears" && guards.every((g) => g.readout.status === "pass") && keepBlockers.length === 0 ? "keep" : "hold";
   }
 
   if (recommendation === "hold") {
     if (!final) reasons.push(`This is an interim look: the newest export was made at ${asOf}, before the analysis cutoff ${spec.analysis_cutoff}. A final result needs an export made at or after the cutoff; look again then.`);
-    for (const f of holdFlags) reasons.push(holdReason(f, { spec, pm, arms, srmP, cohortP, worstMissing, unattributedRate, immatureTotal, models, asOf, missingGap, beforeApproval, approvedAt }));
+    for (const f of holdFlags) reasons.push(holdReason(f, { spec, pm, arms, srmP, cohortP, worstMissing, unattributedRate, immatureTotal, models, asOf, missingGap, beforeApproval, approvedAt, perUnit, populated }));
     if (primary.status !== "clears") reasons.push(`The primary metric does not clear: ${primary.detail}`);
     for (const g of guards) {
       if (g.readout.status === "inconclusive") reasons.push(`Guard ${g.spec.name} is inconclusive: ${g.readout.detail}`);
-      if (g.readout.status === "breach" && !final) {
-        reasons.push(`Guard ${g.spec.name} looks harmful at the ${pctLevel(level)} level (${g.readout.detail}) but ${g.earlyBreach && !canStopEarly ? "telemetry integrity checks block its early stop" : g.spec.critical && g.spec.early_stop ? `has not met its ${pctLevel(spec.early_stop_level)} early-stop rule` : "has no predeclared early stop"}. A later decision needs valid evidence.`);
+      if (g.readout.status === "breach") {
+        reasons.push(`${breachNote(g)} It cannot revert here: ${g.earlyBreach && !canStopEarly ? "telemetry integrity checks block its early stop" : holdFlags.length > 0 ? "the data problems listed above block a revert" : g.spec.critical && g.spec.early_stop ? `it has not met its ${pctLevel(spec.early_stop_level)} early-stop rule` : "it has no predeclared early stop"}. A later decision needs valid evidence.`);
       }
     }
+    if (keepBlockers.includes("guard_margin_infeasible")) reasons.push(`Keep is not possible for this experiment: the baseline report said that at ${spec.required_per_arm} conversations per arm the interval for some guard cannot be narrower than its max_harm even if nothing changes (guard_margin_infeasible), so that guard cannot be shown safe. A harmful result can still revert.`);
     if (final && holdFlags.length === 0 && reasons.length === 0) reasons.push("The result does not meet the keep rule.");
   }
   if (recommendation === "keep") {
@@ -402,13 +487,17 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
     rollback: { ...spec.rollback },
   };
   if (stoppedBy) out.stopped_by = stoppedBy;
+  if (reopened) {
+    out.reopened = true;
+    out.reasons.push(`This experiment was reopened: ${finalExports.length} exports were made at or after the cutoff, and this result uses the newest. The earlier final result is in the record.`);
+  }
   return out;
 }
 
 function holdReason(flag: string, x: {
   spec: ExperimentSpec; pm: { base: ArmMetric; cand: ArmMetric }; arms: { baseline: ArmCounts; candidate: ArmCounts };
   srmP: number | null; cohortP: number | null; worstMissing: { name: string; arm: string; rate: number }; unattributedRate: number;
-  immatureTotal: number; models: number; asOf: IsoTime; missingGap: { name: string; p: number } | null; beforeApproval: number; approvedAt: IsoTime | undefined;
+  immatureTotal: number; models: number; asOf: IsoTime; missingGap: { name: string; p: number } | null; beforeApproval: number; approvedAt: IsoTime | undefined; perUnit: number | null; populated: { days: number; of: number } | null;
 }): string {
   const s = x.spec;
   switch (flag) {
@@ -422,6 +511,8 @@ function holdReason(flag: string, x: {
     case "attribution_ambiguous": return `Ambiguous attribution: ${pct(x.unattributedRate)} of rows belong to units seen in both arms, above the ${pct(s.max_unattributed_rate)} limit. Their outcomes cannot be credited to one prompt; check that assignment is sticky.`;
     case "observational": return "The export says traffic was not randomised (observational), so a difference could come from who saw each prompt rather than the prompt. Run the experiment with a random split.";
     case "runtime_changed": return `The rows carry ${x.models} different runtime models, so a difference could come from the model change rather than the prompt. Rerun with one model, or export only the period with one model.`;
+    case "clustered_units": return `Clustered units: the rows carry unit_id, with ${fmt(x.perUnit, 2)} conversations per unit on average, above the limit of ${MAX_CONVERSATIONS_PER_UNIT}. Conversations of one unit are not independent, so every interval here would be too narrow and the result cannot be trusted. Analyse one value per unit (assign and export per conversation, or one row per unit), or run the experiment with units that have about one conversation each.`;
+    case "window_not_populated": return `Window not populated: the rows start on ${x.populated?.days} of the ${x.populated?.of} days of the window ${s.window.start} to ${s.window.end}, and at least ${pct(MIN_POPULATED_DAYS)} of the days need rows. The experiment did not run for the whole window (or the export leaves days out), so weekday patterns are not covered. Export every conversation that started in the window, or run it for the planned window.`;
     case "window_not_covered": return `No export covers the whole experiment window ${s.window.start} to ${s.window.end}, so days of the planned window are missing. Export every conversation that started in the window, in one export, and analyse again.`;
     case "inside_lag_window": return `${x.immatureTotal} conversations are younger than the ${s.outcome_lag_days}-day outcome lag at ${x.asOf}, so their outcomes are not final and they are left out. Export again after the cutoff ${s.analysis_cutoff}.`;
     case "traffic_before_approval": return `${x.beforeApproval} conversations started before the approval was recorded (${x.approvedAt}), so they ran on a change nobody had approved yet. Approve before the split starts; to measure this change, write a new experiment that starts after the approval.`;
@@ -451,10 +542,17 @@ export function renderExperimentSpec(spec: ExperimentSpec, experimentId: Sha256)
   L.push("## Metrics", "", "| Metric | Role | Kind | Unit | Good direction | Threshold |", "|---|---|---|---|---|---|");
   L.push(`| ${p.name} | primary | ${p.kind} | ${p.unit} | ${p.direction.replace(/_/g, " ")} | benefit of at least ${p.min_effect} |`);
   for (const g of spec.guards) {
-    L.push(`| ${g.name} | guard${g.critical ? ", critical" : ""} | ${g.kind} | ${g.unit} | ${g.direction.replace(/_/g, " ")} | harm of at most ${g.max_harm}${g.early_stop ? `; early stop from ${g.early_stop.min_per_arm} per arm` : ""} |`);
+    L.push(`| ${g.name} | guard${g.critical ? ", critical" : ""} | ${g.kind} | ${g.unit} | ${g.direction.replace(/_/g, " ")} | harm of at most ${g.max_harm}${g.kind === "mean" ? (g.range ? `; values from ${g.range.min} to ${g.range.max}` : "; no declared range, so this guard cannot pass and keep is not possible") : ""}${g.early_stop ? `; early stop from ${g.early_stop.min_per_arm} per arm` : ""} |`);
   }
   L.push("", `Denominator: ${spec.denominator}.`, "");
   L.push("## Stop rules", "", `- ${spec.methods.early_stop}`, `- ${spec.methods.revert}`, `- ${spec.methods.keep}`, `- ${spec.methods.hold}`, "");
+  if ((spec.baseline_flags ?? []).length > 0) {
+    L.push("## Baseline flags", "", "The baseline report raised these flags when this plan was written. Read them before the experiment starts:", "");
+    for (const f of spec.baseline_flags as string[]) {
+      L.push(`- ${f}${f === "guard_margin_infeasible" ? ": at the planned size some guard cannot be shown safe, so keep is not possible; a harmful result can still revert" : ""}${(spec.accepted_baseline_flags ?? []).includes(f) ? " (accepted by name when this plan was written)" : ""}`);
+    }
+    L.push("");
+  }
   L.push("## What to export", "");
   L.push(`One JSON file with format "${TELEMETRY_FORMAT}", export_id, source, exported_at, window (start and end as above), assignment "randomized", denominator "${spec.denominator}", units (each metric name to its unit, word for word as below), expected_rows (how many conversations the source holds for the window), and exactly one of rows (inline), rows_csv (a CSV file next to it, with a header line) or aggregates (one summary per prompt version: n, immature, unattributed, metrics, optional segments). Each row has only these fields; anything else is refused:`, "");
   for (const f of spec.telemetry_fields) L.push(`- ${f}`);
@@ -480,6 +578,9 @@ const FLAG_TEXT: Record<string, string> = {
   superseded_aggregate: "Older cumulative aggregate exports were replaced by a newer one and not used.",
   window_not_covered: "No single export covers the whole experiment window.",
   traffic_before_approval: "Some conversations started before the approval was recorded.",
+  guard_margin_infeasible: "The baseline report said that at the planned size some guard's interval cannot be narrower than its max_harm, so that guard cannot be shown safe: keep is not possible.",
+  window_not_populated: "The rows do not fall on at least 80% of the window's days, so the window was not actually run or the export leaves days out.",
+  clustered_units: "Units (unit_id) have more than 1.2 conversations on average, so conversations are not independent and the intervals would be too narrow.",
 };
 
 const shown = (r: MetricReadout, x: number | null) => (r.kind === "rate" ? pct(x) : `${fmt(x)} ${r.unit}`);

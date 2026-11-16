@@ -55,6 +55,10 @@ export interface GuardSpec extends MetricSpec {
   // Predeclared early stop, for a critical guard only: looked at before the final analysis, at a stricter
   // confidence level, once each arm has at least min_per_arm mature conversations.
   early_stop?: { min_per_arm: number };
+  // Mean guards only: the smallest and largest value one conversation can have (a rating 1 to 5, a refund 0 to the
+  // largest order). A mean guard may only pass when it declares a finite range, because an interval on a mean with
+  // no bound on single values can hide a rare, large harm (S-01). Values outside the range are refused at import.
+  range?: { min: number; max: number };
 }
 
 export interface MetricContract {
@@ -464,7 +468,8 @@ export interface TelemetryRow {
 
 export type AggregateMetric =
   | { kind: "rate"; successes: number; missing: number }
-  | { kind: "mean"; mean: number; sd: number; missing: number };
+  // nonzero: conversations with a value other than 0 (optional). Without it a mean guard cannot be certified.
+  | { kind: "mean"; mean: number; sd: number; missing: number; nonzero?: number };
 
 export interface TelemetryAggregate {
   prompt_version: string;
@@ -574,6 +579,9 @@ export interface BaselineReport {
   required_per_arm: Sourced;
   // Days of traffic at the measured daily volume to fill both arms at an even split.
   days_to_required: Sourced;
+  // Per guard: the half-width of the interval for a difference between the arms at the planned size, if the arms
+  // do not differ, against max_harm (S-05). Absent in older records.
+  guard_margins?: { name: string; max_harm: number; half_width: number | null }[];
   flags: string[];
 }
 
@@ -612,6 +620,10 @@ export interface ExperimentSpec {
   // What the customer must export.
   telemetry_fields: string[];
   rollback: { prompt_id: Sha256; tag: string; instructions: string };
+  // The baseline report's flags when the specification was written. Absent in older records.
+  baseline_flags?: string[];
+  // Of those, the ones a person accepted by name (--accept-flag) to get the specification written.
+  accepted_baseline_flags?: string[];
 }
 
 export type Recommendation = "keep" | "hold" | "revert";
@@ -658,11 +670,13 @@ export interface ExperimentAnalysis {
   guards: MetricReadout[];
   // Named data problems: observational, attribution_ambiguous, cohort_imbalance, missing_events, inside_lag_window,
   // missing_imbalance, sample_ratio_mismatch, insufficient_samples, runtime_changed, before_cutoff,
-  // window_not_covered, superseded_aggregate.
+  // window_not_covered, window_not_populated, clustered_units, guard_margin_infeasible, superseded_aggregate.
   flags: string[];
   recommendation: Recommendation;
   // revert only: "early_stop" or "final".
   stopped_by?: "early_stop" | "final";
+  // Set when more than one export was made at or after the cutoff and the caller reopened the experiment on purpose.
+  reopened?: true;
   reasons: string[];
   rollback: ExperimentSpec["rollback"];
 }

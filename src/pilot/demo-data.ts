@@ -62,7 +62,7 @@ export function demoConfig(): Record<string, unknown> {
       primary: { name: "resolved", kind: "rate", unit: "share of completed conversations resolved without a person", direction: "higher_is_better", min_effect: 0.03 },
       guards: [
         { name: "escalated", kind: "rate", unit: "share of completed conversations handed to a person", direction: "lower_is_better", max_harm: 0.02, critical: true, early_stop: { min_per_arm: 400 } },
-        { name: "refund_usd", kind: "mean", unit: "USD refunded per completed conversation", direction: "lower_is_better", max_harm: 0.75, critical: false },
+        { name: "refund_usd", kind: "mean", unit: "USD refunded per completed conversation", direction: "lower_is_better", max_harm: 0.75, critical: false, range: { min: 0, max: 100 } },
       ],
       denominator: "completed_conversations",
       randomization_unit: "conversation",

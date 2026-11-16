@@ -94,7 +94,9 @@ function imp(e: TelemetryExport, c: MetricContract = contract()): Stored<Telemet
   return { id: contentId(value), value };
 }
 
-const analyze = (s: ExperimentSpec, imports: Stored<TelemetryImport>[]) => analyzeExperiment({ spec: s, experiment_id: EXPERIMENT_ID, imports, approval_id: APPROVAL_ID });
+// Most tests here are about how exports merge, and use several exports made after the cutoff. Since M-05 a second final
+// export needs reopen, so this helper reopens; the rule itself is tested with analyzeExperiment called directly.
+const analyze = (s: ExperimentSpec, imports: Stored<TelemetryImport>[]) => analyzeExperiment({ spec: s, experiment_id: EXPERIMENT_ID, imports, approval_id: APPROVAL_ID, reopen: true });
 
 function run(base: ArmPlan, cand: ArmPlan, opts: { at?: string; required?: number; c?: MetricContract; days?: number; over?: Partial<TelemetryExport>; share?: number; rows?: (r: TelemetryRow[]) => TelemetryRow[] } = {}) {
   const c = opts.c ?? contract();
@@ -153,6 +155,26 @@ test("the specification sets the window, cutoff, allocation and predeclared meth
   }
 });
 
+test("baseline flags about a short window, too little volume or missing events need an explicit acceptance (M-02)", () => {
+  const base = { pilot_id: "fernhill-support", config_id: CONFIG_ID, contract: contract(), baseline: { prompt_id: BASE_PROMPT, tag: BASE_TAG }, candidate: { prompt_id: CAND_PROMPT, tag: CAND_TAG }, start: START };
+  const flagged = { ...fakeReport(600), flags: ["short_window", "window_too_short_for_required_samples", "missing_events"] };
+  // Without acceptance the specification is not written, and the refusal names each flag and the way to accept it.
+  refusal(() => buildExperimentSpec({ ...base, baseline_report: flagged }), "conflict", /short_window.*window_too_short_for_required_samples.*missing_events.*--accept-flag/s);
+  // Naming only some is not enough.
+  refusal(() => buildExperimentSpec({ ...base, baseline_report: flagged, accept_flags: ["short_window", "missing_events"] }), "conflict", /window_too_short_for_required_samples/);
+  // Naming a flag the baseline did not raise is a typo, not an acceptance.
+  refusal(() => buildExperimentSpec({ ...base, baseline_report: flagged, accept_flags: ["short_window", "window_too_short_for_required_samples", "missing_events", "short_windows"] }), "usage", /short_windows/);
+  const s = buildExperimentSpec({ ...base, baseline_report: flagged, accept_flags: ["short_window", "window_too_short_for_required_samples", "missing_events"] });
+  assert.deepEqual(s.baseline_flags, ["short_window", "window_too_short_for_required_samples", "missing_events"]);
+  assert.deepEqual(s.accepted_baseline_flags, ["short_window", "window_too_short_for_required_samples", "missing_events"]);
+  const md = renderExperimentSpec(s, EXPERIMENT_ID);
+  assert.match(md, /## Baseline flags/);
+  assert.match(md, /short_window.*accepted/);
+  // A clean baseline needs nothing, and a flag that is not one of the three needs no acceptance (it has its own rule).
+  assert.equal(buildExperimentSpec({ ...base, baseline_report: fakeReport(600) }).accepted_baseline_flags, undefined);
+  assert.doesNotThrow(() => buildExperimentSpec({ ...base, baseline_report: { ...fakeReport(600), flags: ["guard_margin_infeasible"] } }));
+});
+
 test("the specification refuses bad inputs", () => {
   const base = { pilot_id: "fernhill-support", config_id: CONFIG_ID, contract: contract(), baseline: { prompt_id: BASE_PROMPT, tag: BASE_TAG }, candidate: { prompt_id: CAND_PROMPT, tag: CAND_TAG }, baseline_report: fakeReport(600), start: START };
   refusal(() => buildExperimentSpec({ ...base, start: "2026-10-01" }), "usage", /start/);
@@ -192,6 +214,88 @@ test("keep: final, enough samples, primary clears and every guard passes", () =>
   assert.deepEqual(a.coverage, { rows: 2000, mature: 2000, immature: 0, unattributed: 0, missing_rate: 0, unattributed_rate: 0, duplicates_dropped: 0, required_per_arm: 600, late_rows: 0 });
   assert.deepEqual(a.arms.baseline, { tag: BASE_TAG, rows: 1000, mature: 1000, immature: 0, unattributed: 0, segments: { "(none)": 1000 } });
   assert.ok(a.reasons.length >= 1);
+});
+
+test("a guard with no variation in either arm is decided on its point estimate (M-01)", () => {
+  const constant = (base: number, cand: number) => (rows: TelemetryRow[]) =>
+    rows.map((r) => ({ ...r, values: { ...r.values, csat: r.prompt_version === CAND_TAG ? cand : base } }));
+  // csat is a mean guard that tolerates a fall of 0.2. A constant 4 -> 4.1 is within it; 4 -> 3.5 is beyond it.
+  const fine = run(GOOD_BASE, GOOD_CAND, { rows: constant(4, 4.1) }).a;
+  assert.equal(fine.guards[1].status, "pass");
+  assert.deepEqual([fine.guards[1].ci!.lo, fine.guards[1].ci!.hi].map((x) => Number(x.toFixed(9))), [0.1, 0.1]);
+  assert.equal(fine.recommendation, "keep");
+  const worse = run(GOOD_BASE, GOOD_CAND, { rows: constant(4, 3.5) }).a;
+  assert.equal(worse.guards[1].status, "breach");
+  assert.equal(worse.recommendation, "revert");
+});
+
+// A bounded mean guard where most conversations are 0 and a few are 5: "k non-zero values in each arm".
+const sparse = (k: number) => (rows: TelemetryRow[]) => {
+  const seen = { [BASE_TAG]: 0, [CAND_TAG]: 0 } as Record<string, number>;
+  return rows.map((r) => ({ ...r, values: { ...r.values, csat: seen[r.prompt_version]++ < k ? 5 : 0 } }));
+};
+const sparseContract = (range?: { min: number; max: number }) => {
+  const c = contract();
+  c.guards[1] = { name: "csat", kind: "mean", unit: "rating 1-5", direction: "higher_is_better", max_harm: 0.2, critical: false, ...(range ? { range } : {}) };
+  return c;
+};
+
+test("a mean guard passes only with a declared range and 30 non-zero values in each arm (S-01)", () => {
+  // The interval is far inside the margin in every case below; only the certificate differs.
+  const few = run(GOOD_BASE, GOOD_CAND, { c: sparseContract({ min: 0, max: 5 }), rows: sparse(29) }).a;
+  assert.ok(few.guards[1].ci!.hi < 0.2, "within the margin by the interval alone");
+  assert.equal(few.guards[1].status, "inconclusive");
+  assert.match(few.guards[1].detail, /not certified.*only 29 baseline and 29 candidate values are non-zero/);
+  assert.equal(few.recommendation, "hold");
+  assert.ok(few.reasons.some((r) => r.includes("csat is inconclusive")));
+  const enough = run(GOOD_BASE, GOOD_CAND, { c: sparseContract({ min: 0, max: 5 }), rows: sparse(30) }).a;
+  assert.equal(enough.guards[1].status, "pass");
+  assert.equal(enough.recommendation, "keep");
+  // The same data with no declared range: no certificate, so keep is impossible.
+  const open = run(GOOD_BASE, GOOD_CAND, { c: sparseContract(), rows: sparse(30) }).a;
+  assert.equal(open.guards[1].status, "inconclusive");
+  assert.match(open.guards[1].detail, /no declared range/);
+  assert.equal(open.recommendation, "hold");
+  // Rate guards are not affected, and a mean guard that breaches still breaches without a range.
+  assert.equal(open.guards[0].status, "pass");
+  const worse = run(GOOD_BASE, { ...GOOD_CAND, csatMean: 3.5 }, { c: sparseContract() }).a;
+  assert.equal(worse.guards[1].status, "breach");
+  assert.equal(worse.recommendation, "revert");
+});
+
+test("an aggregate export that does not count non-zero values cannot certify a mean guard (S-01)", () => {
+  const c = contract();
+  const { s, rows } = run(GOOD_BASE, GOOD_CAND);
+  const aggs = aggregatesOf(rows, c, s, FINAL_AT);
+  const exportOfAggs = (id: string, a: TelemetryAggregate[]) => imp(baseExport({ export_id: id, exported_at: FINAL_AT, window: s.window, assignment: "randomized", aggregates: a }));
+  assert.equal(analyze(s, [exportOfAggs("with", aggs)]).recommendation, "keep");
+  const without = structuredClone(aggs);
+  for (const a of without) { const m = a.metrics.csat; if (m.kind === "mean") delete m.nonzero; }
+  const held = analyze(s, [exportOfAggs("without", without)]);
+  assert.equal(held.guards[1].status, "inconclusive");
+  assert.match(held.guards[1].detail, /does not say how many values are non-zero/);
+  assert.equal(held.recommendation, "hold");
+});
+
+test("a baseline flag that says a guard margin is infeasible makes keep impossible, not revert (S-05)", () => {
+  const withFlag = buildExperimentSpec({
+    pilot_id: "fernhill-support", config_id: CONFIG_ID, contract: contract(), baseline: { prompt_id: BASE_PROMPT, tag: BASE_TAG },
+    candidate: { prompt_id: CAND_PROMPT, tag: CAND_TAG }, baseline_report: { ...fakeReport(600), flags: ["guard_margin_infeasible"] }, start: START,
+  });
+  assert.deepEqual(withFlag.baseline_flags, ["guard_margin_infeasible"]);
+  assert.match(renderExperimentSpec(withFlag, EXPERIMENT_ID), /guard_margin_infeasible/);
+  const rows = makeRows(GOOD_BASE, GOOD_CAND);
+  const kept = analyze(withFlag, [imp(exportOf(rows, FINAL_AT))]);
+  assert.equal(kept.primary.status, "clears");
+  assert.deepEqual(kept.guards.map((g) => g.status), ["pass", "pass"]);
+  assert.ok(kept.flags.includes("guard_margin_infeasible"));
+  assert.equal(kept.recommendation, "hold");
+  assert.ok(kept.reasons.some((r) => /guard_margin_infeasible/.test(r) && /Keep is not possible/.test(r)), kept.reasons.join("\n"));
+  // The same data without the flag is a keep.
+  assert.equal(analyze(spec(), [imp(exportOf(rows, FINAL_AT))]).recommendation, "keep");
+  // A breach still reverts: the flag is about certifying safety, not about seeing harm.
+  const bad = analyze(withFlag, [imp(exportOf(makeRows(GOOD_BASE, { ...GOOD_CAND, escalated: 180 }), FINAL_AT))]);
+  assert.equal(bad.recommendation, "revert");
 });
 
 test("hold: primary point estimate just below min_effect, although the interval is above zero", () => {
@@ -313,6 +417,38 @@ test("hold when missing outcomes pile up in one arm, even under the per-arm limi
   assert.deepEqual(even.flags, []);
 });
 
+test("hold when one unit has many conversations, because the intervals would be too narrow (S-02)", () => {
+  // Assignment is sticky by unit; conversations of one unit are not independent. `per` conversations for each unit.
+  const byUnit = (per: number) => (rows: TelemetryRow[]) => {
+    const seen: Record<string, number> = { [BASE_TAG]: 0, [CAND_TAG]: 0 };
+    return rows.map((r) => ({ ...r, unit_id: `u-${r.prompt_version === CAND_TAG ? "c" : "b"}${String(Math.floor(seen[r.prompt_version]++ / per)).padStart(5, "0")}` }));
+  };
+  const one = run(GOOD_BASE, GOOD_CAND, { rows: byUnit(1) }).a;
+  assert.deepEqual(one.flags, []);
+  assert.equal(one.recommendation, "keep");
+  // Mostly single conversations with some pairs: 7 conversations for 6 units is 1.17, under the 1.2 limit.
+  const mixed = run(GOOD_BASE, GOOD_CAND, { rows: (rows) => {
+    const seen: Record<string, number> = { [BASE_TAG]: 0, [CAND_TAG]: 0 };
+    const unit: Record<string, number> = { [BASE_TAG]: 0, [CAND_TAG]: 0 };
+    return rows.map((r) => {
+      const t = r.prompt_version;
+      if (seen[t]++ % 7 !== 1) unit[t]++; // the second conversation of each cycle joins the first one's unit
+      return { ...r, unit_id: `u-${t === CAND_TAG ? "c" : "b"}${String(unit[t]).padStart(5, "0")}` };
+    });
+  } }).a;
+  assert.ok(!mixed.flags.includes("clustered_units"), mixed.flags.join(","));
+  for (const per of [2, 5]) {
+    const a = run(GOOD_BASE, GOOD_CAND, { rows: byUnit(per) }).a;
+    assert.ok(a.flags.includes("clustered_units"), `per ${per}: ${a.flags}`);
+    assert.equal(a.recommendation, "hold");
+    assert.ok(a.reasons.some((r) => /conversations per unit/.test(r) && /unit_id/.test(r)), a.reasons.join("\n"));
+  }
+  // It also blocks a revert, whose intervals are just as narrow.
+  const breach = run(GOOD_BASE, { ...GOOD_CAND, escalated: 180 }, { rows: byUnit(3) }).a;
+  assert.equal(breach.recommendation, "hold");
+  assert.ok(breach.flags.includes("clustered_units"));
+});
+
 test("hold on ambiguous attribution", () => {
   // 30 customers (unit ids) appear in both arms: their 60 rows are 3% of all rows, above the 2% limit.
   const { a } = run(GOOD_BASE, GOOD_CAND, {
@@ -339,13 +475,34 @@ test("hold when the runtime model changed during the experiment", () => {
   assert.equal(a.recommendation, "hold");
 });
 
+test("hold when the rows do not fall on at least 80% of the window's days, at the final analysis (S-03)", () => {
+  // 14-day window. Rows on the first 11 days only: 11 of 14 is 79%.
+  const thin = run(GOOD_BASE, GOOD_CAND, { days: 11 }).a;
+  assert.ok(thin.flags.includes("window_not_populated"), thin.flags.join(","));
+  assert.equal(thin.recommendation, "hold");
+  assert.ok(thin.reasons.some((r) => /11 of the 14 days/.test(r)), thin.reasons.join("\n"));
+  // 12 of 14 days (86%) is enough.
+  const ok = run(GOOD_BASE, GOOD_CAND, { days: 12 }).a;
+  assert.ok(!ok.flags.includes("window_not_populated"));
+  assert.equal(ok.recommendation, "keep");
+  // All rows inside the first 36 hours: the declared window is a claim the rows do not support.
+  const burst = run(GOOD_BASE, GOOD_CAND, { rows: (rows) => rows.map((r, i) => ({ ...r, started_at: isoAt(START, Math.floor((i * 36 * 60) / rows.length)) })) }).a;
+  assert.ok(burst.flags.includes("window_not_populated"));
+  assert.equal(burst.recommendation, "hold");
+  // An interim look at a part of the window is not flagged: it is meant to be partial.
+  const interim = run({ n: 400, resolved: 160, escalated: 40 }, { n: 400, resolved: 200, escalated: 120 }, { at: INTERIM_AT, days: 6 }).a;
+  assert.ok(!interim.flags.includes("window_not_populated"));
+  assert.equal(interim.recommendation, "revert");
+});
+
 test("hold when the export was made after the cutoff but covers only part of the window", () => {
   // The first seven days only, exported after the cutoff, with more than enough conversations and a clear win.
   const partial = { window: { start: START, end: "2026-10-08T00:00:00Z" } };
   const { a } = run(GOOD_BASE, GOOD_CAND, { days: 7, over: partial });
   assert.equal(a.final, true);
   assert.equal(a.primary.status, "clears");
-  assert.deepEqual(a.flags, ["window_not_covered"]);
+  // Seven of the fourteen days have rows, so the window is also not populated (S-03).
+  assert.deepEqual(a.flags, ["window_not_covered", "window_not_populated"]);
   assert.equal(a.recommendation, "hold");
   assert.ok(a.reasons.some((r) => r.includes("whole experiment window")));
   // Two partial exports that together span the window still leave no export that vouches for all of it.
@@ -379,6 +536,30 @@ test("unreliable telemetry cannot turn a guard breach into a terminal revert", (
     assert.equal(result.recommendation, "hold");
     assert.equal(result.stopped_by, undefined);
   }
+});
+
+test("the early stop is looked at in the final analysis too, and every breached guard is named (S-04)", () => {
+  // 700 conversations per arm where 1000 are needed; escalation 5% -> 14% against a tolerated 3 points. The same
+  // rows revert at an interim look. After the cutoff they used to hold (too few samples) without a word about the breach.
+  const base: ArmPlan = { n: 700, resolved: 280, escalated: 35 };
+  const cand: ArmPlan = { n: 700, resolved: 350, escalated: 98 };
+  const interim = run(base, cand, { required: 1000, at: INTERIM_AT, days: 6 }).a;
+  assert.equal(interim.recommendation, "revert");
+  const final = run(base, cand, { required: 1000 }).a;
+  assert.equal(final.final, true);
+  assert.ok(final.flags.includes("insufficient_samples"));
+  assert.equal(final.recommendation, "revert");
+  assert.equal(final.stopped_by, "early_stop");
+  assert.ok(final.reasons.some((r) => r.startsWith("Early stop") && r.includes("escalated")));
+  // A guard that is breached only at the nominal level is named as well.
+  const both = run(base, { ...cand, csatMean: 3.5 }, { required: 1000 }).a;
+  assert.equal(both.guards[1].status, "breach");
+  assert.equal(both.recommendation, "revert");
+  assert.ok(both.reasons.some((r) => r.includes("csat") && r.includes("beyond")), both.reasons.join("\n"));
+  // A data problem that blocks every terminal decision still shows the breach in the reasons.
+  const blocked = run(GOOD_BASE, { ...GOOD_CAND, escalated: 180 }, { over: { assignment: "observational" } }).a;
+  assert.equal(blocked.recommendation, "hold");
+  assert.ok(blocked.reasons.some((r) => r.includes("escalated") && r.includes("beyond")), blocked.reasons.join("\n"));
 });
 
 test("no revert when harm is real but inside the tolerated margin: the result is hold, not a breach", () => {
@@ -524,6 +705,8 @@ test("an aggregate update may move a unit's conversations to unattributed, and n
   base.unattributed += 10;
   const resolved = base.metrics.resolved;
   if (resolved.kind === "rate") resolved.successes -= 4;
+  const csat = base.metrics.csat;
+  if (csat.kind === "mean" && csat.nonzero !== undefined) csat.nonzero -= 10;
   const first = imp(baseExport({ export_id: "agg-1", exported_at: "2026-10-17T12:00:00Z", window: s.window, assignment: "randomized", aggregates: older }));
   const update = imp(baseExport({ export_id: "agg-2", exported_at: FINAL_AT, window: s.window, assignment: "randomized", aggregates: moved }));
   assert.equal(analyze(s, [first, update]).arms.baseline.unattributed, 10);
@@ -636,7 +819,7 @@ function aggregatesOf(rows: TelemetryRow[], c: MetricContract, s: ExperimentSpec
       const vals = mature.map((r) => r.values[m.name]).filter((v): v is number => v !== null);
       const missing = mature.length - vals.length;
       if (m.kind === "rate") metrics[m.name] = { kind: "rate", successes: vals.reduce((x, y) => x + y, 0), missing };
-      else { const st = meanSummary(vals); metrics[m.name] = { kind: "mean", mean: st.mean!, sd: st.sd!, missing }; }
+      else { const st = meanSummary(vals); metrics[m.name] = { kind: "mean", mean: st.mean!, sd: st.sd!, missing, nonzero: vals.filter((v) => v !== 0).length }; }
     }
     const segments: Record<string, number> = {};
     for (const r of mine) segments[r.segment ?? "(none)"] = (segments[r.segment ?? "(none)"] ?? 0) + 1;
@@ -682,6 +865,33 @@ test("aggregates: only the newest cumulative export is used, and it must start a
   refusal(() => analyze(s, [newer, run(GOOD_BASE, GOOD_CAND).i]), "telemetry_conflict", /some are aggregates/);
   refusal(() => analyze(s, [run(GOOD_BASE, GOOD_CAND, { at: "2026-10-16T12:00:00Z" }).i, newer]), "telemetry_conflict", /some are aggregates/);
   refusal(() => analyze(s, [older, run(GOOD_BASE, GOOD_CAND).i]), "telemetry_conflict", /some are aggregates/);
+});
+
+test("a second final export is refused unless the caller reopens the experiment (M-05)", () => {
+  const s = spec();
+  const better = makeRows(GOOD_BASE, GOOD_CAND);
+  // The first final export lacks 8% of the candidate's resolved values (over the 5% limit): a final hold.
+  let blanked = 0;
+  const rows = better.map((r) => (r.prompt_version === CAND_TAG && blanked++ < 80 ? { ...r, values: { ...r.values, resolved: null } } : r));
+  const first = imp(exportOf(rows, FINAL_AT));
+  const hold = analyzeExperiment({ spec: s, experiment_id: EXPERIMENT_ID, imports: [first], approval_id: APPROVAL_ID });
+  assert.equal(hold.final, true);
+  assert.equal(hold.recommendation, "hold");
+  assert.ok(hold.flags.includes("missing_events"));
+  // A later export, still after the cutoff, fills those values in (a legal update) and turns the hold into a keep.
+  // Without --reopen it is not analysed: the first final result stands.
+  const later = imp(exportOf(better, "2026-10-19T00:00:00Z", { export_id: "later-final" }));
+  const strict = (imports: Stored<TelemetryImport>[]) => analyzeExperiment({ spec: s, experiment_id: EXPERIMENT_ID, imports, approval_id: APPROVAL_ID });
+  refusal(() => strict([first, later]), "conflict", /final export.*reopen/is);
+  const reopened = analyzeExperiment({ spec: s, experiment_id: EXPERIMENT_ID, imports: [first, later], approval_id: APPROVAL_ID, reopen: true });
+  assert.equal(reopened.reopened, true);
+  assert.equal(reopened.recommendation, "keep");
+  assert.ok(reopened.reasons.some((r) => /reopen/i.test(r)));
+  // One final export, an interim look before it, or reopen asked for without need: nothing changes.
+  const interim = imp(exportOf(rows.filter((r) => r.started_at < "2026-10-07T00:00:00Z"), INTERIM_AT, { export_id: "interim" }));
+  assert.equal(strict([interim, first]).reopened, undefined);
+  assert.equal(analyzeExperiment({ spec: s, experiment_id: EXPERIMENT_ID, imports: [first], approval_id: APPROVAL_ID, reopen: true }).reopened, undefined);
+  assert.deepEqual(strict([first]), hold);
 });
 
 test("analysis refusals", () => {
