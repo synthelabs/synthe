@@ -1,4 +1,4 @@
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, truncateSync, unlinkSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalJson } from "../core/evidence.ts";
 import { sha256 } from "../core/safety.ts";
@@ -144,7 +144,10 @@ export class PilotStore {
     if (!existsSync(path)) return [];
     const entries: JournalEntry[] = [];
     let prev: Sha256 | null = null;
-    for (const [i, line] of readBounded(path, MAX_OBJECT_BYTES).split("\n").entries()) {
+    // An entry is appended as one line ending in a newline. A last line without one is an append that a crash cut
+    // off: it never became an entry (the head file is written only after the newline), so it is not read.
+    const text = readBounded(path, MAX_OBJECT_BYTES);
+    for (const [i, line] of text.slice(0, text.lastIndexOf("\n") + 1).split("\n").entries()) {
       if (!line.trim()) continue;
       let e: JournalEntry;
       try { e = JSON.parse(line) as JournalEntry; } catch { throw new PilotError("tampered", `journal.jsonl line ${i + 1} is not valid JSON.`); }
@@ -163,6 +166,15 @@ export class PilotStore {
     }
     if (!head && entries.length > 1) throw new PilotError("tampered", "journal.head is missing, so the journal cannot be checked for removed entries.");
     return entries;
+  }
+
+  // True when the journal ends in a line that a crash cut off before its newline. Readers ignore that line and the
+  // next record() removes it.
+  tornTail(): boolean {
+    const path = this.journalPath();
+    if (!existsSync(path)) return false;
+    const bytes = readFileSync(path);
+    return bytes.length > 0 && bytes[bytes.length - 1] !== 0x0a;
   }
 
   find(step: string, key?: string): JournalEntry[] {
@@ -186,6 +198,8 @@ export class PilotStore {
       const rest = { seq: entries.length + 1, at, step, key, refs, prev: entries.at(-1)?.hash ?? null };
       const entry: JournalEntry = { ...rest, hash: entryHash(rest) };
       mkdirSync(this.dir, { recursive: true });
+      // Without this, the new entry would be glued onto the torn fragment and the journal would never read again.
+      if (this.tornTail()) truncateSync(this.journalPath(), readFileSync(this.journalPath()).lastIndexOf(0x0a) + 1);
       appendFileSync(this.journalPath(), `${JSON.stringify(entry)}\n`, { mode: 0o600 });
       writeAtomic(this.headPath(), `${JSON.stringify({ seq: entry.seq, hash: entry.hash })}\n`);
       return entry;

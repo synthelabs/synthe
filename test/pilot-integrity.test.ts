@@ -2,7 +2,7 @@
 // code before its fix; the commit that fixed it says which.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DEMO, experimentCFinal, experimentCInterim, experimentFailureCases } from "../src/pilot/demo-data.ts";
@@ -261,5 +261,32 @@ test("verify flags an approval recorded while the candidate did not pass replay 
     const result = await run(ctx.dir, ["verify"]);
     assert.equal(result.code, 1, result.lines.join(" | "));
     assert.ok(result.lines.some((l) => /did not pass replay|no replay/.test(l)), result.lines.join(" | "));
+  } finally { await ctx.stop(); }
+});
+
+test("a journal line cut off by a crash is ignored, noted by verify, and removed by the next record", async () => {
+  const ctx = await approvedPilot();
+  try {
+    const path = join(ctx.dir, "journal.jsonl");
+    const before = readFileSync(path, "utf8");
+    const head = readFileSync(join(ctx.dir, "journal.head"), "utf8");
+    const count = ctx.store.journal().length;
+    const next = JSON.stringify({ seq: count + 1, at: "2026-11-01T00:00:00Z", step: "torn.marker", key: "x", refs: {}, prev: ctx.store.journal().at(-1)!.hash, hash: "0".repeat(64) });
+    // Two ways to be cut off: in the middle of a line, and just before its newline (a whole, valid-looking line).
+    for (const torn of [next.slice(0, 70), next]) {
+      writeFileSync(path, before);
+      writeFileSync(join(ctx.dir, "journal.head"), head);
+      appendFileSync(path, torn);
+      assert.equal(ctx.store.journal().length, count, "the torn line is not an entry");
+      const status = await run(ctx.dir, ["status"]);
+      assert.equal(status.code, 0, status.lines.join(" | "));
+      const verified = await run(ctx.dir, ["verify"]);
+      assert.equal(verified.code, 0, verified.lines.join(" | "));
+      assert.ok(verified.lines.some((l) => /^Note: .*unfinished|cut off/i.test(l)), verified.lines.join(" | "));
+      ctx.store.record("worker.step", "after-torn", { a: "1" }, "2026-11-01T00:00:00Z");
+      assert.equal(ctx.store.journal().length, count + 1, "the new entry is appended after the last whole line");
+      assert.ok(readFileSync(path, "utf8").endsWith("\n"));
+      assert.ok(!readFileSync(path, "utf8").includes("torn.m"), "the torn fragment is gone");
+    }
   } finally { await ctx.stop(); }
 });

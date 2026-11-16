@@ -874,6 +874,7 @@ export async function verify(store: PilotStore, flags: Flags, deps: PilotDeps): 
   if (orphans.length) {
     deps.say(`Note: ${orphans.reduce((sum, x) => sum + x.n, 0)} stored record(s) are not named by any journal entry: ${orphans.map((x) => `${x.n} ${x.kind}`).join(", ")}. They are not part of the evidence. An interrupted step leaves such records; so does a journal that was cut back. If no step was interrupted, check the journal against a head you noted earlier (\`verify --head <hash>\`).`);
   }
+  if (store.tornTail()) deps.say("Note: the journal ends in an unfinished line, left by a command that was interrupted while writing it. It was ignored, and the next command that records a step removes it. Nothing was recorded for that step: run it again.");
   const head = journal.at(-1);
   if (head) {
     deps.say(`Journal head: entry ${head.seq}, ${head.hash}`);
