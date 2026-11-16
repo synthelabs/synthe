@@ -159,6 +159,7 @@ Rules that keep the counts honest:
 - Every export of a pilot must carry the same `query_hash` (or none), the baseline's included.
 - An export dated later than the moment it is imported is refused.
 - A refused export leaves no record, so the next correct export still imports.
+- The first export made at or after the cutoff gives the final result. A second one is refused unless the caller reopens the experiment on purpose (`reopen`; the CLI flag is `--reopen`), because a final result that can be redone with new numbers until it reads keep is not predeclared. A reopened decision says so, and every repeat of it needs the same flag (a larger aggregate after the cutoff otherwise turns a hold into a keep).
 - A keep or a revert ends the experiment. It takes no more exports after that, and its candidate gets no second experiment: a stopped change cannot come back as a keep.
 
 ## Conversation pack

@@ -94,7 +94,9 @@ function imp(e: TelemetryExport, c: MetricContract = contract()): Stored<Telemet
   return { id: contentId(value), value };
 }
 
-const analyze = (s: ExperimentSpec, imports: Stored<TelemetryImport>[]) => analyzeExperiment({ spec: s, experiment_id: EXPERIMENT_ID, imports, approval_id: APPROVAL_ID });
+// Most tests here are about how exports merge, and use several exports made after the cutoff. Since M-05 a second final
+// export needs reopen, so this helper reopens; the rule itself is tested with analyzeExperiment called directly.
+const analyze = (s: ExperimentSpec, imports: Stored<TelemetryImport>[]) => analyzeExperiment({ spec: s, experiment_id: EXPERIMENT_ID, imports, approval_id: APPROVAL_ID, reopen: true });
 
 function run(base: ArmPlan, cand: ArmPlan, opts: { at?: string; required?: number; c?: MetricContract; days?: number; over?: Partial<TelemetryExport>; share?: number; rows?: (r: TelemetryRow[]) => TelemetryRow[] } = {}) {
   const c = opts.c ?? contract();
@@ -863,6 +865,33 @@ test("aggregates: only the newest cumulative export is used, and it must start a
   refusal(() => analyze(s, [newer, run(GOOD_BASE, GOOD_CAND).i]), "telemetry_conflict", /some are aggregates/);
   refusal(() => analyze(s, [run(GOOD_BASE, GOOD_CAND, { at: "2026-10-16T12:00:00Z" }).i, newer]), "telemetry_conflict", /some are aggregates/);
   refusal(() => analyze(s, [older, run(GOOD_BASE, GOOD_CAND).i]), "telemetry_conflict", /some are aggregates/);
+});
+
+test("a second final export is refused unless the caller reopens the experiment (M-05)", () => {
+  const s = spec();
+  const better = makeRows(GOOD_BASE, GOOD_CAND);
+  // The first final export lacks 8% of the candidate's resolved values (over the 5% limit): a final hold.
+  let blanked = 0;
+  const rows = better.map((r) => (r.prompt_version === CAND_TAG && blanked++ < 80 ? { ...r, values: { ...r.values, resolved: null } } : r));
+  const first = imp(exportOf(rows, FINAL_AT));
+  const hold = analyzeExperiment({ spec: s, experiment_id: EXPERIMENT_ID, imports: [first], approval_id: APPROVAL_ID });
+  assert.equal(hold.final, true);
+  assert.equal(hold.recommendation, "hold");
+  assert.ok(hold.flags.includes("missing_events"));
+  // A later export, still after the cutoff, fills those values in (a legal update) and turns the hold into a keep.
+  // Without --reopen it is not analysed: the first final result stands.
+  const later = imp(exportOf(better, "2026-10-19T00:00:00Z", { export_id: "later-final" }));
+  const strict = (imports: Stored<TelemetryImport>[]) => analyzeExperiment({ spec: s, experiment_id: EXPERIMENT_ID, imports, approval_id: APPROVAL_ID });
+  refusal(() => strict([first, later]), "conflict", /final export.*reopen/is);
+  const reopened = analyzeExperiment({ spec: s, experiment_id: EXPERIMENT_ID, imports: [first, later], approval_id: APPROVAL_ID, reopen: true });
+  assert.equal(reopened.reopened, true);
+  assert.equal(reopened.recommendation, "keep");
+  assert.ok(reopened.reasons.some((r) => /reopen/i.test(r)));
+  // One final export, an interim look before it, or reopen asked for without need: nothing changes.
+  const interim = imp(exportOf(rows.filter((r) => r.started_at < "2026-10-07T00:00:00Z"), INTERIM_AT, { export_id: "interim" }));
+  assert.equal(strict([interim, first]).reopened, undefined);
+  assert.equal(analyzeExperiment({ spec: s, experiment_id: EXPERIMENT_ID, imports: [first], approval_id: APPROVAL_ID, reopen: true }).reopened, undefined);
+  assert.deepEqual(strict([first]), hold);
 });
 
 test("analysis refusals", () => {

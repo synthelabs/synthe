@@ -276,13 +276,23 @@ export function cohortTest(base: Record<string, number>, cand: Record<string, nu
 }
 
 // Pure, and never reads the clock: the same specification and imports always give the same analysis.
-export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: Sha256; imports: Stored<TelemetryImport>[]; approval_id: Sha256 }): ExperimentAnalysis {
+// reopen (M-05): the first final export gives the experiment's final result. A later export that is also made at or
+// after the cutoff is refused unless the caller passes reopen: true, because a result that can be redone with new numbers
+// until it says keep is not a predeclared result. A reopened analysis says so (reopened: true), and every later call
+// with the same imports must pass reopen: true again (verify and a repeat of the analysis do).
+export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: Sha256; imports: Stored<TelemetryImport>[]; approval_id: Sha256; reopen?: boolean }): ExperimentAnalysis {
   const { spec } = input;
   const baseTag = spec.arms.baseline.tag;
   const candTag = spec.arms.candidate.tag;
   for (const imp of input.imports) {
     if (imp.value.purpose !== "experiment") fail("invalid_telemetry", `Import telemetry:${shortId(imp.id)} was made for the baseline, not this experiment. Import the experiment export with purpose experiment.`);
     if (imp.value.scope_id !== input.experiment_id) fail("invalid_telemetry", `Import telemetry:${shortId(imp.id)} belongs to a different experiment. Import the export again for this experiment.`);
+  }
+  // The same export listed twice is one export (it counts once everywhere else too).
+  const finalExports = input.imports.filter((i, k) => ms(i.value.exported_at) >= ms(spec.analysis_cutoff) && input.imports.findIndex((o) => o.id === i.id) === k);
+  const reopened = finalExports.length > 1;
+  if (reopened && input.reopen !== true) {
+    fail("conflict", `This experiment already has a final export (made at ${finalExports[0].value.exported_at}, at or after the cutoff ${spec.analysis_cutoff}), so its final result stands. A second final export (${finalExports[finalExports.length - 1].value.export_id}, made at ${finalExports[finalExports.length - 1].value.exported_at}) is refused: redoing a final result with new numbers until it reads keep is not a predeclared analysis. If the first export was wrong, reopen the experiment on purpose (--reopen); the decision then says it was reopened.`);
   }
   if (input.imports.length === 0) fail("telemetry_incomplete", "No experiment telemetry has been imported yet. Import the customer's export first.");
   const merged = mergeImports(input.imports);
@@ -471,6 +481,10 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
     rollback: { ...spec.rollback },
   };
   if (stoppedBy) out.stopped_by = stoppedBy;
+  if (reopened) {
+    out.reopened = true;
+    out.reasons.push(`This experiment was reopened: ${finalExports.length} exports were made at or after the cutoff, and this result uses the newest. The earlier final result is in the record.`);
+  }
   return out;
 }
 

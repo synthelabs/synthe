@@ -675,6 +675,8 @@ export interface ExperimentAnalysis {
   recommendation: Recommendation;
   // revert only: "early_stop" or "final".
   stopped_by?: "early_stop" | "final";
+  // Set when more than one export was made at or after the cutoff and the caller reopened the experiment on purpose.
+  reopened?: true;
   reasons: string[];
   rollback: ExperimentSpec["rollback"];
 }
