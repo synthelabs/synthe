@@ -374,6 +374,38 @@ test("hold when missing outcomes pile up in one arm, even under the per-arm limi
   assert.deepEqual(even.flags, []);
 });
 
+test("hold when one unit has many conversations, because the intervals would be too narrow (S-02)", () => {
+  // Assignment is sticky by unit; conversations of one unit are not independent. `per` conversations for each unit.
+  const byUnit = (per: number) => (rows: TelemetryRow[]) => {
+    const seen: Record<string, number> = { [BASE_TAG]: 0, [CAND_TAG]: 0 };
+    return rows.map((r) => ({ ...r, unit_id: `u-${r.prompt_version === CAND_TAG ? "c" : "b"}${String(Math.floor(seen[r.prompt_version]++ / per)).padStart(5, "0")}` }));
+  };
+  const one = run(GOOD_BASE, GOOD_CAND, { rows: byUnit(1) }).a;
+  assert.deepEqual(one.flags, []);
+  assert.equal(one.recommendation, "keep");
+  // Mostly single conversations with some pairs: 7 conversations for 6 units is 1.17, under the 1.2 limit.
+  const mixed = run(GOOD_BASE, GOOD_CAND, { rows: (rows) => {
+    const seen: Record<string, number> = { [BASE_TAG]: 0, [CAND_TAG]: 0 };
+    const unit: Record<string, number> = { [BASE_TAG]: 0, [CAND_TAG]: 0 };
+    return rows.map((r) => {
+      const t = r.prompt_version;
+      if (seen[t]++ % 7 !== 1) unit[t]++; // the second conversation of each cycle joins the first one's unit
+      return { ...r, unit_id: `u-${t === CAND_TAG ? "c" : "b"}${String(unit[t]).padStart(5, "0")}` };
+    });
+  } }).a;
+  assert.ok(!mixed.flags.includes("clustered_units"), mixed.flags.join(","));
+  for (const per of [2, 5]) {
+    const a = run(GOOD_BASE, GOOD_CAND, { rows: byUnit(per) }).a;
+    assert.ok(a.flags.includes("clustered_units"), `per ${per}: ${a.flags}`);
+    assert.equal(a.recommendation, "hold");
+    assert.ok(a.reasons.some((r) => /conversations per unit/.test(r) && /unit_id/.test(r)), a.reasons.join("\n"));
+  }
+  // It also blocks a revert, whose intervals are just as narrow.
+  const breach = run(GOOD_BASE, { ...GOOD_CAND, escalated: 180 }, { rows: byUnit(3) }).a;
+  assert.equal(breach.recommendation, "hold");
+  assert.ok(breach.flags.includes("clustered_units"));
+});
+
 test("hold on ambiguous attribution", () => {
   // 30 customers (unit ids) appear in both arms: their 60 rows are 3% of all rows, above the 2% limit.
   const { a } = run(GOOD_BASE, GOOD_CAND, {

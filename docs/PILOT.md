@@ -212,7 +212,7 @@ The analysis is fixed in the specification before any outcome is seen:
 
 - **Keep**: only at the final analysis (an export made at or after the cutoff), with clean data, when the primary metric's gain is at least `min_effect` and its interval is above zero, and every guard's interval for harm is inside its `max_harm`.
 - **Revert**: at the final analysis with clean data and enough samples, when a guard breaches (the whole interval for its harm is above `max_harm`) or the primary is significantly worse. A critical guard can also revert at the 99.9% early stop, in every analysis including the final one, once both arms have the guard's `min_per_arm` and telemetry integrity checks pass. Its minimum is separate from the final sample target, so too few samples overall do not hide a clear breach, and the decision uses mature outcomes. Every breached guard is named in the reasons, also when a data problem holds the result.
-- **Hold**: everything else. Before the cutoff; too few mature conversations; outcomes still inside the lag; a sample ratio mismatch; a cohort imbalance, or segments reported for one arm only; missing events above the limit, or far more common in one arm than the other; ambiguous attribution above the limit; observational data; more than one runtime model; no single export that covers the whole window; a primary that does not clear; a guard that is not shown to be safe.
+- **Hold**: everything else. Before the cutoff; too few mature conversations; outcomes still inside the lag; a sample ratio mismatch; a cohort imbalance, or segments reported for one arm only; missing events above the limit, or far more common in one arm than the other; ambiguous attribution above the limit; units (`unit_id`) with more than 1.2 conversations each on average (`clustered_units`: conversations of one unit are not independent, so the intervals would be too narrow); observational data; more than one runtime model; no single export that covers the whole window; a primary that does not clear; a guard that is not shown to be safe.
 
 A guard has three outcomes. Pass: the whole interval for harm is inside `max_harm`. Breach: the whole interval is beyond it. Otherwise it is inconclusive, which holds. Harm that is real but may still be inside the margin is not a breach, because the contract says the team tolerates that much; it is not a pass either.
 
@@ -222,7 +222,7 @@ Methods: a rate uses the Newcombe hybrid score interval for the difference of tw
 
 Known limits of the method. Read these before you rely on a decision:
 
-- Conversations are treated as independent. If one customer has many conversations, intervals are too narrow.
+- Conversations are treated as independent. With `unit_id` in the rows, a pilot whose units average more than 1.2 conversations holds (`clustered_units`). Without `unit_id`, or in the aggregates form, this cannot be checked: if one customer has many conversations, the intervals are too narrow.
 - The experiment is sized to detect `min_effect`. A change whose true effect is exactly `min_effect` is kept only about half the time, because keep also needs the measured gain to reach `min_effect`.
 - Each guard is tested on its own. With several guards, a false revert is more likely than alpha suggests.
 - The early stop is a fixed 99.9% check at every look, not a formal sequential boundary. Many looks raise the chance of a false stop.
