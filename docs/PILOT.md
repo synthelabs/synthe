@@ -226,7 +226,9 @@ A mean guard has a stricter rule, because a mean can be carried by a few rare, l
 
 Methods: a rate uses the Newcombe hybrid score interval for the difference of two proportions; a mean uses the Welch interval. Sample ratio and cohort balance use chi-square tests at 0.001. The required sample size is the standard two-sample formula at the contract's alpha and power.
 
-Known limits of the method. Read these before you rely on a decision:
+### Known limits
+
+Read these before you rely on a decision:
 
 - Conversations are treated as independent. With `unit_id` in the rows, a pilot whose units average more than 1.2 conversations holds (`clustered_units`). Without `unit_id`, or in the aggregates form, this cannot be checked: if one customer has many conversations, the intervals are too narrow.
 - The experiment is sized to detect `min_effect`. A change whose true effect is exactly `min_effect` is kept only about half the time, because keep also needs the measured gain to reach `min_effect`.
@@ -238,7 +240,9 @@ Known limits of the method. Read these before you rely on a decision:
 - A second copy of a conversation is recognised only when it is exact (same start time, version, segment and values). A copy with a changed start time or value, or copies in an export with one timestamp per day, cannot be told from more conversations. Send `unit_id`.
 - The outcome lag is the customer's statement of when an outcome is final. If many conversations finish later than it, the last days of the window are missing their slow conversations at the cutoff. The `late rows` count shows this only when there was an earlier export to compare with.
 - A guard that is harmful but not yet shown to be beyond its margin holds; it does not revert. With little data that can take the whole window.
-- A mean metric with heavy tails (refunds, revenue) needs more data than the formula says.
+- A mean metric with heavy tails (refunds, revenue) needs more data than the formula says. That is why a mean guard cannot pass without a declared range and 30 non-zero values per arm (see above). A mean primary metric has no such rule: choose a rate, or size it with care.
+- Corrected outcomes after the lag are refused. Once an outcome is final (older than the outcome lag when exported), a later export that carries a different value for the same conversation is a `telemetry_conflict`, and so is any other change to a recorded value, tag or time. That protects the record from quiet rewriting, but it also means a customer who finds a wrong value after the lag cannot fix it in the same experiment: the export that is wrong stays, and the experiment has to be run again. A journalled, explicit way to supersede the older value would be safer for honest corrections, and it is not built.
+- The standard deviation of a mean metric in the aggregates form is trusted as supplied. Synthe cannot tell whether it was computed per conversation, per day or over a different population, and its meaning is not checked beyond being a finite number of 0 or more (and, for a guard with a range, no larger than the range allows). Two exports with the same sums and different `sd` give different intervals, so a customer who sends a too small `sd` gets a narrow interval and an easier keep. Bucket-level data (the sum and count per hour or day, with the variance taken between buckets) or the sum of squares would fix this, and would narrow the interval for honest data too. It is not built, so prefer rows, and treat an aggregate keep on a mean metric with more caution than a keep on rates.
 
 Each decision file leads with the recommendation and the team's own number, lists every number with its source record and method, and gives the exact rollback target (the baseline tag and prompt id).
 
