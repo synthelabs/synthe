@@ -52,11 +52,16 @@ export function liveModel(
   // so one counted call is one request and the approved limits mean what they say, and each call has a time limit.
   const savedHeaders = process.env.ANTHROPIC_CUSTOM_HEADERS;
   delete process.env.ANTHROPIC_CUSTOM_HEADERS;
+  // A redirect is never followed: a 307 or 308 would send the whole conversation body, and a 301 to 303 the next
+  // request, to a host nobody approved. It is wrapped here, whatever transport is used, so no SDK default or
+  // header decides it. The call then fails like any other failed call.
+  const base = fetchImpl ?? fetch;
+  const noRedirect = ((url: Parameters<typeof fetch>[0], init?: RequestInit) => base(url, { ...init, redirect: "error" })) as typeof fetch;
   let client: Anthropic;
   try {
     client = new Anthropic({
       apiKey: key, authToken: null, baseURL: approval.endpoint, maxRetries: 0, timeout: timeoutMs, logLevel: "off",
-      openTelemetry: { traces: false, propagation: false }, ...(fetchImpl ? { fetch: fetchImpl } : {}),
+      openTelemetry: { traces: false, propagation: false }, fetch: noRedirect,
     });
   } finally {
     if (savedHeaders !== undefined) process.env.ANTHROPIC_CUSTOM_HEADERS = savedHeaders;

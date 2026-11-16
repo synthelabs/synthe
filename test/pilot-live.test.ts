@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { PilotError } from "../src/pilot/errors.ts";
 import { CALL_TIMEOUT_MS, liveModel } from "../src/pilot/live.ts";
@@ -193,5 +195,45 @@ test("a provider that never answers is given up on after the time limit, and the
   } finally {
     clearTimeout(timer);
     for (const reject of pending) reject(new Error("test over"));
+  }
+});
+
+// Two real loopback servers (no mock transport: a stand-in fetch never follows a redirect, so it would pass either way).
+function loopback(handler: (req: { url: string; headers: Record<string, unknown>; body: string }) => { status: number; headers?: Record<string, string>; body?: string }) {
+  const seen: { url: string; headers: Record<string, unknown>; body: string }[] = [];
+  const server: Server = createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => { raw += c; });
+    req.on("end", () => {
+      const entry = { url: req.url ?? "", headers: req.headers as Record<string, unknown>, body: raw };
+      seen.push(entry);
+      const out = handler(entry);
+      res.statusCode = out.status;
+      for (const [k, v] of Object.entries(out.headers ?? {})) res.setHeader(k, v);
+      res.end(out.body ?? "");
+    });
+  });
+  return new Promise<{ url: string; seen: typeof seen; stop: () => Promise<void> }>((resolve) => server.listen(0, "127.0.0.1", () => resolve({
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, seen,
+    stop: () => new Promise<void>((done) => { server.closeAllConnections(); server.close(() => done()); }),
+  })));
+}
+
+test("a redirect from the approved endpoint is never followed: the conversation body reaches no other host", async () => {
+  for (const status of [301, 302, 303, 307, 308]) {
+    const other = await loopback(() => ({ status: 200, headers: { "content-type": "application/json" }, body: "{}" }));
+    const approved = await loopback(() => ({ status, headers: { location: `${other.url}/v1/messages` } }));
+    try {
+      const a: ProviderApproval = { ...approval, endpoint: approved.url, max_calls: 5 };
+      const model = liveModel(a, { live: true, endpoint: approved.url, data_class: a.data_class }, { FERNHILL_PILOT_KEY: KEY }, () => {});
+      let message = "";
+      try { await model.chat(request({ messages: [{ role: "user", text: "Where is ORD-7Q4Z?" }] })); } catch (e) { message = (e as Error).message; }
+      assert.match(message, /^The provider request failed \(/, `HTTP ${status} ends the call with the plain failure message`);
+      assert.equal(approved.seen.length, 1, "the approved host was asked once");
+      assert.equal(other.seen.length, 0, `HTTP ${status}: the second host received no request`);
+      assert.ok(!other.seen.some((r) => r.body.includes("ORD-7Q4Z")));
+    } finally {
+      await approved.stop(); await other.stop();
+    }
   }
 });
