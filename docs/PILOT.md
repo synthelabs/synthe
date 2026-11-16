@@ -60,7 +60,14 @@ All commands are `node src/pilot/cli.ts <command> --dir <pilot directory>`. The 
 
 `--model` is `scripted:<file>` (a local rule file; sends nothing) or `--live` (see [Live model provider](#live-model-provider)). There is no default: a command that needs a model and is not told which one refuses.
 
-Every command can be run again. A repeated step finds its earlier record and adds nothing.
+Most commands can be run again, and a repeated step finds its earlier record and adds nothing: `init`, `baseline`, `discover`, `replay`, `review` (with or without `--publish`), `approve` (the same decision by the same person), `analyze` (the same export, or no export, to see a decision again), `report`, `verify` and `status`. These are **not** re-runnable, and each says why when it refuses:
+
+- `pack --file` for a pack that a promotion has since replaced: only the active pack is accepted again, so after `promote`, version 1 is refused.
+- `promote --request` with a request that was already applied: its pack is already active, and a promotion starts from the active pack.
+- `experiment` for a candidate that already has a keep or revert decision, or while another approved experiment is open.
+- `approve` for an experiment that has a keep or revert decision, or that a newer specification replaced.
+- `analyze --telemetry` with a new export after a keep or revert: a decided experiment takes no more exports.
+- `propose --finding ... --proposer` adds a new candidate each time it runs (the proposer's feedback from earlier attempts changes), where `propose --file` gives the same candidate for the same file.
 
 ## pilot.json
 

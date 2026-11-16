@@ -468,3 +468,19 @@ test("--start must be a real calendar date and time", async () => {
     assert.equal(await ctx.run(["experiment", "--candidate", ctx.eligible, "--start", "2028-02-29T00:00:00Z"]), 0, "a real leap day is fine");
   } finally { await ctx.stop(); }
 });
+
+test("which commands refuse to run a second time (the guide says exactly these)", async () => {
+  const ctx = await completePilot();
+  try {
+    const request = join(ctx.inputs, "promotion.json");
+    // Run again on a finished pilot: the same promotion, the same pack, a new experiment for a decided candidate.
+    assert.equal(await ctx.run(["promote", "--request", request]), 1, "the same promotion request is refused once its pack is active");
+    assert.equal(await ctx.run(["pack", "--file", join(ctx.inputs, "pack.v1.json")]), 1, "pack v1 is refused once a promotion made a newer pack active");
+    assert.equal(await ctx.run(["experiment", "--candidate", ctx.candidate, "--start", "2030-01-01T00:00:00Z"]), 1, "a decided candidate is not measured again");
+    // And these are safe to run again.
+    for (const argv of [["init", "--config", join(ctx.inputs, "pilot.json"), "--repo-dir", ctx.repoDir], ["baseline", "--telemetry", join(ctx.inputs, "baseline.json")], ["analyze", "--experiment", ctx.experiment, "--telemetry", join(ctx.inputs, "final.json")], ["analyze", "--experiment", ctx.experiment], ["report"], ["verify"], ["status"]]) {
+      ctx.on("2026-11-20");
+      assert.equal(await ctx.run(argv), 0, `${argv[0]}: ${ctx.lines.slice(-2).join(" | ")}`);
+    }
+  } finally { await ctx.stop(); }
+});

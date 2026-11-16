@@ -223,7 +223,7 @@ async function armFor(store: PilotStore, pack: Stored<Pack>, promptId: Sha256, c
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Commands. Each returns the process exit code, and can be run again safely.
+// Commands. Each returns the process exit code. Most can be run again safely; docs/PILOT.md lists the ones that cannot.
 // ---------------------------------------------------------------------------------------------------------------
 
 export async function init(store: PilotStore, flags: Flags, deps: PilotDeps): Promise<number> {
