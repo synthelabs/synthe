@@ -584,6 +584,9 @@ export async function approve(store: PilotStore, flags: Flags, deps: PilotDeps):
       throw new PilotError("conflict", `Experiment ${shortId(experimentId)} was replaced by a newer specification for this candidate (${shortId(newest.key)}). Run \`review\` again and approve the experiment that review names.`);
     }
     assertMayRun(store, candidateId, experimentId);
+    // The review that was approved was shown with a passing replay. If the pack has moved on since and the
+    // candidate no longer passes on it, the person approving would be approving what the gate now refuses.
+    eligibleReplay(store, candidateId, activePack(store).id);
   }
   const approval = makeApproval({ pilot_id: f.config.pilot_id, bundle: store.stored<ReviewBundle>("review", entry.key), candidate_id: candidateId, experiment_id: experimentId, approver, decision, at: iso(deps.now()) });
   const id = store.put("approval", approval);
@@ -779,6 +782,20 @@ export async function verify(store: PilotStore, flags: Flags, deps: PilotDeps): 
         const problem = importProblem(imported, f.config.metric.outcome_lag_days);
         if (problem) throw new Error(`${problem}, so it was not written by an import`);
       });
+    }
+    // An approval starts traffic, so the candidate must have passed replay on the pack that was active when it was
+    // recorded (the newest replay of it on that pack, recorded before the approval, decides).
+    {
+      let pack: string | null = null;
+      const verdicts = new Map<string, string>();
+      for (const e of journal) {
+        if (e.step === "pack.frozen" || e.step === "pack.promoted") pack = e.refs.pack;
+        else if (e.step === "replay.paired") verdicts.set(`${e.refs.candidate}:${e.refs.pack}`, e.refs.eligible);
+        else if (e.step === "approval.recorded" && e.refs.decision === "approved") {
+          const verdict = verdicts.get(`${e.refs.candidate}:${pack}`);
+          if (verdict !== "true") problems.push(`approval ${shortId(e.key)}: recorded while candidate ${shortId(e.refs.candidate)} ${verdict === undefined ? "had no replay" : "did not pass replay"} on the active pack ${pack ? shortId(pack) : "(none)"}`);
+        }
+      }
     }
     // The journal must be in an order the commands can produce. A keep or a revert ends an experiment: nothing is
     // imported or decided for it afterwards, and its candidate gets no second experiment.

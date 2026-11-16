@@ -10,7 +10,8 @@ import { canonicalJson } from "../src/core/evidence.ts";
 import { sha256 } from "../src/core/safety.ts";
 import { candidateTag } from "../src/pilot/ids.ts";
 import { main } from "../src/pilot/main.ts";
-import type { Approval, ExperimentAnalysis, PromotionRequest } from "../src/pilot/types.ts";
+import type { Approval, ExperimentAnalysis, PromotionRequest, ReplayReport, ReviewBundle } from "../src/pilot/types.ts";
+import { makeApproval } from "../src/pilot/approval.ts";
 import { PilotStore, type JournalEntry } from "../src/pilot/store.ts";
 import { replayedPilot, tmp, writeExport, json, type Ctx } from "./pilot-cli-helpers.ts";
 
@@ -215,4 +216,50 @@ test("two analyses of the same experiment at once leave a journal that still ver
       assert.equal(ctx.store.find("analysis.decided").length, 1);
     } finally { await ctx.stop(); }
   }
+});
+
+// An eligible candidate with an experiment and a review, whose pack was then promoted to version 2, on which the
+// candidate was replayed again and did not pass.
+async function outgrownPilot(): Promise<Ctx & { candidate: string; experiment: string }> {
+  const ctx = await replayedPilot();
+  const must = async (argv: string[]) => { if (await ctx.run(argv) !== 0) throw new Error(`setup failed at ${argv[0]}: ${ctx.lines.slice(-3).join(" | ")}`); };
+  const candidate = ctx.eligible;
+  await must(["experiment", "--candidate", candidate, "--start", DEMO.experiment_c_start]);
+  const experiment = ctx.last("experiment.specified");
+  await must(["review", "--candidate", candidate]);
+  const request: PromotionRequest = {
+    version: 1, base_pack_id: ctx.last("pack.frozen"), approver: DEMO.quality_lead, at: "2026-10-18T10:00:00Z", existing: [],
+    added: experimentFailureCases().map((c) => ({ case: c, reason: "seen in an earlier experiment", evidence: { experiment_id: experiment } })),
+  };
+  await must(["promote", "--request", ctx.put("promotion.json", json(request))]);
+  await must(["replay", "--candidate", candidate, "--model", ctx.model]);
+  assert.equal(ctx.store.get<ReplayReport>("replay", ctx.last("replay.paired")).gate.eligible, false, "the candidate no longer passes on the new pack");
+  return Object.assign(ctx, { candidate, experiment });
+}
+
+test("approve refuses a candidate whose replay does not pass on the active pack, but a rejection is still recorded", async () => {
+  const ctx = await outgrownPilot();
+  try {
+    const args = ["approve", "--candidate", ctx.candidate, "--experiment", ctx.experiment, "--approver", "Tomas Lindqvist"];
+    assert.equal(await ctx.run(args), 1);
+    assert.ok(ctx.lines.some((l) => l.startsWith("Refused (replay_gate_failed)")), ctx.lines.join(" | "));
+    assert.equal(ctx.store.find("approval.recorded").length, 0);
+    assert.equal(await ctx.run([...args, "--reject"]), 0, "saying no is always allowed");
+  } finally { await ctx.stop(); }
+});
+
+test("verify flags an approval recorded while the candidate did not pass replay on the active pack", async () => {
+  const ctx = await outgrownPilot();
+  try {
+    assert.equal((await run(ctx.dir, ["verify"])).code, 0);
+    // Written straight into the store, as an operator with write access could.
+    const entry = ctx.store.find("review.bundled").at(-1)!;
+    const bundle = { id: entry.key, value: ctx.store.get<ReviewBundle>("review", entry.key) };
+    const approval = makeApproval({ pilot_id: bundle.value.pilot_id, bundle, candidate_id: ctx.candidate, experiment_id: ctx.experiment, approver: "Tomas Lindqvist", decision: "approved", at: "2026-10-26T09:00:00Z" });
+    const id = ctx.store.put("approval", approval);
+    ctx.store.record("approval.recorded", id, { approval: id, candidate: ctx.candidate, experiment: ctx.experiment, decision: "approved" }, approval.at);
+    const result = await run(ctx.dir, ["verify"]);
+    assert.equal(result.code, 1, result.lines.join(" | "));
+    assert.ok(result.lines.some((l) => /did not pass replay|no replay/.test(l)), result.lines.join(" | "));
+  } finally { await ctx.stop(); }
 });
