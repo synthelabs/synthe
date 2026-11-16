@@ -80,6 +80,15 @@ test("guard fields", () => {
   assert.equal(parseMetricContract(withGuard({ max_harm: 1.5 }, 1)).guards[1].max_harm, 1.5);
 });
 
+test("a mean guard may declare the range of one conversation's value, and nothing else may (S-01)", () => {
+  assert.deepEqual(parseMetricContract(withGuard({ range: { min: 0, max: 200 } }, 1)).guards[1].range, { min: 0, max: 200 });
+  refused(withGuard({ range: { min: 0, max: 1 } }, 0), /guards\[0\]\.range.*only for a mean guard/);
+  refused(withGuard({ range: { min: 5, max: 5 } }, 1), /guards\[1\]\.range.*min below max/);
+  refused(withGuard({ range: { min: 0, max: Number.POSITIVE_INFINITY } }, 1), /guards\[1\]\.range/);
+  refused(withGuard({ range: { min: 0, max: 5, step: 1 } }, 1), /unknown field "step"/);
+  refused(withGuard({ range: [0, 5] }, 1), /guards\[1\]\.range/);
+});
+
 test("contract-level fields", () => {
   refused(clone(contract({ denominator: "" })), /denominator/);
   refused(clone(contract({ randomization_unit: "customer" as "conversation" })), /randomization_unit/);

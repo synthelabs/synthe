@@ -75,7 +75,7 @@ Every command can be run again. A repeated step finds its earlier record and add
     "primary": { "name": "resolved", "kind": "rate", "unit": "share of completed conversations resolved without a person", "direction": "higher_is_better", "min_effect": 0.03 },
     "guards": [
       { "name": "escalated", "kind": "rate", "unit": "share of completed conversations handed to a person", "direction": "lower_is_better", "max_harm": 0.02, "critical": true, "early_stop": { "min_per_arm": 400 } },
-      { "name": "refund_usd", "kind": "mean", "unit": "USD refunded per completed conversation", "direction": "lower_is_better", "max_harm": 0.75, "critical": false }
+      { "name": "refund_usd", "kind": "mean", "unit": "USD refunded per completed conversation", "direction": "lower_is_better", "max_harm": 0.75, "critical": false, "range": { "min": 0, "max": 100 } }
     ],
     "denominator": "completed_conversations",
     "randomization_unit": "conversation",
@@ -94,6 +94,7 @@ Every command can be run again. A repeated step finds its earlier record and add
 ```
 
 - `kind` is `rate` (each conversation is 0 or 1) or `mean` (a number per conversation).
+- A mean guard declares `range` (the smallest and largest value one conversation can have). Without it, the guard can never pass, so the pilot can never keep. Choose rate guards or bounded mean guards. See [the experiment and the decision](#the-experiment-and-the-decision).
 - `min_effect` and `max_harm` are absolute, in the metric's own units. For a rate, 0.03 is three percentage points.
 - `outcome_lag_days` is how long an outcome takes to become final. Younger conversations are left out until they mature. A lag longer than the window is refused: that outcome cannot be attributed in the pilot.
 - `baseline_tag` is the tag the customer's telemetry already carries for the current prompt.
@@ -139,11 +140,11 @@ Aggregates form, when rows cannot leave the warehouse: replace `rows_csv` with
 ```json
 "aggregates": [
   { "prompt_version": "juniper-v14", "n": 4480, "immature": 0, "unattributed": 0,
-    "metrics": { "resolved": { "kind": "rate", "successes": 2772, "missing": 0 }, "refund_usd": { "kind": "mean", "mean": 4.2, "sd": 10.0, "missing": 0 } } }
+    "metrics": { "resolved": { "kind": "rate", "successes": 2772, "missing": 0 }, "refund_usd": { "kind": "mean", "mean": 4.2, "sd": 10.0, "missing": 0, "nonzero": 672 } } }
 ]
 ```
 
-`n` counts mature, attributable conversations. Each aggregate export must be cumulative from the experiment start; only the newest is used. With aggregates Synthe cannot check duplicates, unit overlap or a runtime change, so it takes the customer's counts as given.
+`n` counts mature, attributable conversations. Each aggregate export must be cumulative from the experiment start; only the newest is used. For a mean metric, `nonzero` is the number of conversations with a value other than 0; without it a mean guard cannot pass. With aggregates Synthe cannot check duplicates, unit overlap or a runtime change, so it takes the customer's counts as given.
 
 Rules that keep the counts honest:
 
@@ -214,6 +215,8 @@ The analysis is fixed in the specification before any outcome is seen:
 - **Hold**: everything else. Before the cutoff; too few mature conversations; outcomes still inside the lag; a sample ratio mismatch; a cohort imbalance, or segments reported for one arm only; missing events above the limit, or far more common in one arm than the other; ambiguous attribution above the limit; observational data; more than one runtime model; no single export that covers the whole window; a primary that does not clear; a guard that is not shown to be safe.
 
 A guard has three outcomes. Pass: the whole interval for harm is inside `max_harm`. Breach: the whole interval is beyond it. Otherwise it is inconclusive, which holds. Harm that is real but may still be inside the margin is not a breach, because the contract says the team tolerates that much; it is not a pass either.
+
+A mean guard has a stricter rule, because a mean can be carried by a few rare, large values (a refund, a credit) and an interval cannot show they are absent. It reports `pass` only when its metric declares a finite `range` in the contract and each arm has at least 30 non-zero values. Otherwise it is inconclusive, which holds, so keep is impossible. A value outside the declared range refuses the export. A breach is not restricted. Teams should choose a rate (binary) guard, such as "any refund over 50 dollars", or a bounded mean guard. A money-mean guard cannot certify a keep at pilot volumes: with a few events per arm no result can show that a large harm is missing.
 
 Methods: a rate uses the Newcombe hybrid score interval for the difference of two proportions; a mean uses the Welch interval. Sample ratio and cohort balance use chi-square tests at 0.001. The required sample size is the standard two-sample formula at the contract's alpha and power.
 

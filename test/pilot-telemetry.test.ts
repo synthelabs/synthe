@@ -211,6 +211,22 @@ test("aggregates refusals", () => {
   refused(e([]), "telemetry_incomplete", /no conversations/);
 });
 
+test("values outside a mean guard's declared range are refused (S-01)", () => {
+  // The contract says csat is 1 to 5; a bound that the data break is no bound.
+  const rows = tenRows();
+  rows[2] = { ...rows[2], values: { ...rows[2].values, csat: 7 } };
+  refused(exp({ rows }), "invalid_telemetry", /csat is outside the range 1 to 5/);
+  const agg = (metrics: Record<string, unknown>, n = 100) => baseExport({ aggregates: [{
+    prompt_version: BASE_TAG, n, immature: 0, unattributed: 0,
+    metrics: { resolved: { kind: "rate", successes: 40, missing: 0 }, escalated: { kind: "rate", successes: 5, missing: 0 }, csat: { kind: "mean", mean: 4, sd: 1, missing: 0 }, ...metrics },
+  }] as never });
+  refused(agg({ csat: { kind: "mean", mean: 6, sd: 1, missing: 0 } }), "invalid_telemetry", /mean is outside the range 1 to 5/);
+  refused(agg({ csat: { kind: "mean", mean: 3, sd: 3, missing: 0 } }), "invalid_telemetry", /sd is larger than any values inside the range/);
+  refused(agg({ csat: { kind: "mean", mean: 4, sd: 1, missing: 0, nonzero: 101 } }), "invalid_telemetry", /nonzero must be a whole number/);
+  const ok = run(agg({ csat: { kind: "mean", mean: 4, sd: 1, missing: 0, nonzero: 100 } }));
+  assert.equal(ok.aggregates![0].metrics.csat.kind === "mean" && ok.aggregates![0].metrics.csat.nonzero, 100);
+});
+
 test("structural refusals are invalid_telemetry", () => {
   refused("{not json", "invalid_telemetry", /not valid JSON/);
   refused(exp({ format: "other/v1" as never }), "invalid_telemetry", /format/);

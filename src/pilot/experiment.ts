@@ -22,6 +22,9 @@ import {
 const fail = (code: ConstructorParameters<typeof PilotError>[0], message: string): never => { throw new PilotError(code, message); };
 
 export const EARLY_STOP_LEVEL = 0.999;
+// S-01: a mean guard may pass only with this many non-zero values in each arm. Below it, one or two rare large
+// values decide the mean and the interval cannot show that they are absent.
+export const MIN_NONZERO_EVENTS = 30;
 export const INTEGRITY_ALPHA = 0.001;
 // Pearson's chi-square needs expected counts of about 5 or more per cell to be trusted.
 export const MIN_EXPECTED = 5;
@@ -86,7 +89,7 @@ export function buildExperimentSpec(input: {
     required_per_arm: required as number,
     denominator: c.denominator,
     primary: { ...c.primary },
-    guards: c.guards.map((g) => ({ ...g, ...(g.early_stop ? { early_stop: { ...g.early_stop } } : {}) })),
+    guards: c.guards.map((g) => ({ ...g, ...(g.early_stop ? { early_stop: { ...g.early_stop } } : {}), ...(g.range ? { range: { ...g.range } } : {}) })),
     alpha: c.alpha,
     early_stop_level: EARLY_STOP_LEVEL,
     integrity_alpha: INTEGRITY_ALPHA,
@@ -96,7 +99,7 @@ export function buildExperimentSpec(input: {
     methods: {
       rate: `Rate metrics: each arm's estimate is the share of mature, attributable conversations whose value is 1 (a null value is missing and left out); the difference is candidate minus baseline, with a Newcombe hybrid score interval (method 10) at ${pctLevel(level)}.`,
       mean: `Mean metrics: each arm's estimate is the mean over mature, attributable conversations with a value; the difference is candidate minus baseline, with a Welch interval (Welch-Satterthwaite degrees of freedom) at ${pctLevel(level)}.`,
-      keep: `Keep only at the final analysis (an export made at or after ${cutoff}) with none of the data problems listed under hold, when the primary metric's benefit (the difference in its good direction) is at least ${c.primary.min_effect} and the lower bound of its ${pctLevel(level)} interval is above 0, and every guard passes: the upper bound of the ${pctLevel(level)} interval for its harm is at most its max_harm.`,
+      keep: `Keep only at the final analysis (an export made at or after ${cutoff}) with none of the data problems listed under hold, when the primary metric's benefit (the difference in its good direction) is at least ${c.primary.min_effect} and the lower bound of its ${pctLevel(level)} interval is above 0, and every guard passes: the upper bound of the ${pctLevel(level)} interval for its harm is at most its max_harm. A mean guard passes only when its metric declares a finite range and each arm has at least ${MIN_NONZERO_EVENTS} non-zero values; otherwise it is inconclusive, so keep is not possible.`,
       revert: `Revert at the final analysis with no data or sample-size holds when any guard breaches (the lower bound of the ${pctLevel(level)} interval for its harm is above its max_harm) or the primary metric is significantly worse (the upper bound of the ${pctLevel(level)} interval for its benefit is below 0). Before the final analysis only a critical guard's early stop can revert, and only when telemetry integrity checks pass; the early stop is also checked in the final analysis.`,
       hold: `Hold in every other case: before the cutoff; when there are fewer than ${required} conversations with a primary value in either arm, a sample ratio mismatch, a cohort imbalance, missing events above ${pct(c.max_missing_rate)} or far more common in one arm, ambiguous attribution above ${pct(c.max_unattributed_rate)}, observational assignment, more than one runtime model, or outcomes still inside the ${c.outcome_lag_days}-day lag, or no single export covering the whole window; when the primary does not clear; or when a guard is inconclusive.`,
       early_stop: `Early stop: at every analysis, the final one included, a critical guard with early_stop is checked at ${pctLevel(EARLY_STOP_LEVEL)} once both arms have at least its min_per_arm mature values; it reverts when the lower bound of the ${pctLevel(EARLY_STOP_LEVEL)} interval for its harm is above its max_harm, even if the experiment has too few samples or outcomes still inside the lag. A data problem of any other kind blocks it. No other guard and no primary result is acted on before the cutoff.`,
@@ -184,6 +187,17 @@ function guardReadout(g: GuardSpec, base: ArmMetric, cand: ArmMetric, level: num
   // be inside the tolerated margin is not a breach: the contract says the team accepts that much.
   if (hCi !== null && hCi.lo > g.max_harm + EPS) status = "breach";
   else if (hCi !== null && hCi.hi <= g.max_harm + EPS) status = "pass";
+  // A mean can be moved by a few rare, large values, and an interval built from a small number of them does not show
+  // they are absent (S-01). A mean guard passes only when its metric declares a finite range and each arm has enough
+  // non-zero values; otherwise it is inconclusive, so keep is impossible. Breach is not restricted: a harm that large
+  // is not something a missing tail can hide.
+  let uncertified: string | null = null;
+  if (status === "pass" && g.kind === "mean") {
+    if (!g.range) uncertified = "this mean guard has no declared range (range min and max in the contract), so a rare large harm cannot be ruled out; choose a rate or a bounded guard";
+    else if (base.nonzero === null || cand.nonzero === null) uncertified = `the export does not say how many values are non-zero, and ${MIN_NONZERO_EVENTS} per arm are needed to certify a mean guard`;
+    else if (base.nonzero < MIN_NONZERO_EVENTS || cand.nonzero < MIN_NONZERO_EVENTS) uncertified = `only ${base.nonzero} baseline and ${cand.nonzero} candidate values are non-zero, and ${MIN_NONZERO_EVENTS} in each arm are needed to certify a mean guard`;
+    if (uncertified !== null) status = "inconclusive";
+  }
   let early: Interval | null = null;
   let earlyBreach = false;
   if (g.critical && g.early_stop && base.n >= g.early_stop.min_per_arm && cand.n >= g.early_stop.min_per_arm && diff !== null) {
@@ -198,7 +212,9 @@ function guardReadout(g: GuardSpec, base: ArmMetric, cand: ArmMetric, level: num
       ? `${g.name}: ${nums}; the whole interval is above the margin.`
       : status === "pass"
         ? `${g.name}: ${nums}; the whole interval is within the margin.`
-        : `${g.name}: ${nums}; ${hCi === null ? "the interval cannot be computed from these values" : hCi.lo > EPS ? "harm is above zero, but the interval does not show whether it is within or beyond the margin" : "the interval reaches past the margin, so it is not shown to be safe"}.`;
+        : uncertified !== null
+          ? `${g.name}: ${nums}; the interval is within the margin, but it is not certified: ${uncertified}.`
+          : `${g.name}: ${nums}; ${hCi === null ? "the interval cannot be computed from these values" : hCi.lo > EPS ? "harm is above zero, but the interval does not show whether it is within or beyond the margin" : "the interval reaches past the margin, so it is not shown to be safe"}.`;
   return { readout: { ...readout, early_ci: early, status, detail }, earlyBreach, spec: g, harm };
 }
 
@@ -450,7 +466,7 @@ export function renderExperimentSpec(spec: ExperimentSpec, experimentId: Sha256)
   L.push("## Metrics", "", "| Metric | Role | Kind | Unit | Good direction | Threshold |", "|---|---|---|---|---|---|");
   L.push(`| ${p.name} | primary | ${p.kind} | ${p.unit} | ${p.direction.replace(/_/g, " ")} | benefit of at least ${p.min_effect} |`);
   for (const g of spec.guards) {
-    L.push(`| ${g.name} | guard${g.critical ? ", critical" : ""} | ${g.kind} | ${g.unit} | ${g.direction.replace(/_/g, " ")} | harm of at most ${g.max_harm}${g.early_stop ? `; early stop from ${g.early_stop.min_per_arm} per arm` : ""} |`);
+    L.push(`| ${g.name} | guard${g.critical ? ", critical" : ""} | ${g.kind} | ${g.unit} | ${g.direction.replace(/_/g, " ")} | harm of at most ${g.max_harm}${g.kind === "mean" ? (g.range ? `; values from ${g.range.min} to ${g.range.max}` : "; no declared range, so this guard cannot pass and keep is not possible") : ""}${g.early_stop ? `; early stop from ${g.early_stop.min_per_arm} per arm` : ""} |`);
   }
   L.push("", `Denominator: ${spec.denominator}.`, "");
   L.push("## Stop rules", "", `- ${spec.methods.early_stop}`, `- ${spec.methods.revert}`, `- ${spec.methods.keep}`, `- ${spec.methods.hold}`, "");

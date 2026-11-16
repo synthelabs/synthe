@@ -132,7 +132,7 @@ export function asAggregates(x: { header: Record<string, unknown>; csv: string }
       const mean = a.refunds.reduce((s, v) => s + v, 0) / a.n;
       const sd = Math.sqrt(a.refunds.reduce((s, v) => s + (v - mean) ** 2, 0) / (a.n - 1));
       return { prompt_version: tag, n: a.n, immature: a.immature, unattributed: 0, segments: a.segments, metrics: {
-        resolved: { kind: "rate", successes: a.resolved, missing: 0 }, escalated: { kind: "rate", successes: a.escalated, missing: 0 }, refund_usd: { kind: "mean", mean, sd, missing: 0 },
+        resolved: { kind: "rate", successes: a.resolved, missing: 0 }, escalated: { kind: "rate", successes: a.escalated, missing: 0 }, refund_usd: { kind: "mean", mean, sd, missing: 0, nonzero: a.refunds.filter((v) => v !== 0).length },
       } };
     }),
   };

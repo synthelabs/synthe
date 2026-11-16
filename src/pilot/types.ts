@@ -55,6 +55,10 @@ export interface GuardSpec extends MetricSpec {
   // Predeclared early stop, for a critical guard only: looked at before the final analysis, at a stricter
   // confidence level, once each arm has at least min_per_arm mature conversations.
   early_stop?: { min_per_arm: number };
+  // Mean guards only: the smallest and largest value one conversation can have (a rating 1 to 5, a refund 0 to the
+  // largest order). A mean guard may only pass when it declares a finite range, because an interval on a mean with
+  // no bound on single values can hide a rare, large harm (S-01). Values outside the range are refused at import.
+  range?: { min: number; max: number };
 }
 
 export interface MetricContract {
@@ -464,7 +468,8 @@ export interface TelemetryRow {
 
 export type AggregateMetric =
   | { kind: "rate"; successes: number; missing: number }
-  | { kind: "mean"; mean: number; sd: number; missing: number };
+  // nonzero: conversations with a value other than 0 (optional). Without it a mean guard cannot be certified.
+  | { kind: "mean"; mean: number; sd: number; missing: number; nonzero?: number };
 
 export interface TelemetryAggregate {
   prompt_version: string;

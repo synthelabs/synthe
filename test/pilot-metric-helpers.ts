@@ -18,7 +18,7 @@ export function contract(over: Partial<MetricContract> = {}): MetricContract {
     primary: { name: "resolved", kind: "rate", unit: "fraction of conversations", direction: "higher_is_better", min_effect: 0.05 },
     guards: [
       { name: "escalated", kind: "rate", unit: "fraction of conversations", direction: "lower_is_better", max_harm: 0.03, critical: true, early_stop: { min_per_arm: 200 } },
-      { name: "csat", kind: "mean", unit: "rating 1-5", direction: "higher_is_better", max_harm: 0.2, critical: false },
+      { name: "csat", kind: "mean", unit: "rating 1-5", direction: "higher_is_better", max_harm: 0.2, critical: false, range: { min: 1, max: 5 } },
     ],
     denominator: "completed_conversations",
     randomization_unit: "conversation",

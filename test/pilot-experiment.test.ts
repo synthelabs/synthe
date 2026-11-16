@@ -207,6 +207,54 @@ test("a guard with no variation in either arm is decided on its point estimate (
   assert.equal(worse.recommendation, "revert");
 });
 
+// A bounded mean guard where most conversations are 0 and a few are 5: "k non-zero values in each arm".
+const sparse = (k: number) => (rows: TelemetryRow[]) => {
+  const seen = { [BASE_TAG]: 0, [CAND_TAG]: 0 } as Record<string, number>;
+  return rows.map((r) => ({ ...r, values: { ...r.values, csat: seen[r.prompt_version]++ < k ? 5 : 0 } }));
+};
+const sparseContract = (range?: { min: number; max: number }) => {
+  const c = contract();
+  c.guards[1] = { name: "csat", kind: "mean", unit: "rating 1-5", direction: "higher_is_better", max_harm: 0.2, critical: false, ...(range ? { range } : {}) };
+  return c;
+};
+
+test("a mean guard passes only with a declared range and 30 non-zero values in each arm (S-01)", () => {
+  // The interval is far inside the margin in every case below; only the certificate differs.
+  const few = run(GOOD_BASE, GOOD_CAND, { c: sparseContract({ min: 0, max: 5 }), rows: sparse(29) }).a;
+  assert.ok(few.guards[1].ci!.hi < 0.2, "within the margin by the interval alone");
+  assert.equal(few.guards[1].status, "inconclusive");
+  assert.match(few.guards[1].detail, /not certified.*only 29 baseline and 29 candidate values are non-zero/);
+  assert.equal(few.recommendation, "hold");
+  assert.ok(few.reasons.some((r) => r.includes("csat is inconclusive")));
+  const enough = run(GOOD_BASE, GOOD_CAND, { c: sparseContract({ min: 0, max: 5 }), rows: sparse(30) }).a;
+  assert.equal(enough.guards[1].status, "pass");
+  assert.equal(enough.recommendation, "keep");
+  // The same data with no declared range: no certificate, so keep is impossible.
+  const open = run(GOOD_BASE, GOOD_CAND, { c: sparseContract(), rows: sparse(30) }).a;
+  assert.equal(open.guards[1].status, "inconclusive");
+  assert.match(open.guards[1].detail, /no declared range/);
+  assert.equal(open.recommendation, "hold");
+  // Rate guards are not affected, and a mean guard that breaches still breaches without a range.
+  assert.equal(open.guards[0].status, "pass");
+  const worse = run(GOOD_BASE, { ...GOOD_CAND, csatMean: 3.5 }, { c: sparseContract() }).a;
+  assert.equal(worse.guards[1].status, "breach");
+  assert.equal(worse.recommendation, "revert");
+});
+
+test("an aggregate export that does not count non-zero values cannot certify a mean guard (S-01)", () => {
+  const c = contract();
+  const { s, rows } = run(GOOD_BASE, GOOD_CAND);
+  const aggs = aggregatesOf(rows, c, s, FINAL_AT);
+  const exportOfAggs = (id: string, a: TelemetryAggregate[]) => imp(baseExport({ export_id: id, exported_at: FINAL_AT, window: s.window, assignment: "randomized", aggregates: a }));
+  assert.equal(analyze(s, [exportOfAggs("with", aggs)]).recommendation, "keep");
+  const without = structuredClone(aggs);
+  for (const a of without) { const m = a.metrics.csat; if (m.kind === "mean") delete m.nonzero; }
+  const held = analyze(s, [exportOfAggs("without", without)]);
+  assert.equal(held.guards[1].status, "inconclusive");
+  assert.match(held.guards[1].detail, /does not say how many values are non-zero/);
+  assert.equal(held.recommendation, "hold");
+});
+
 test("hold: primary point estimate just below min_effect, although the interval is above zero", () => {
   const { a } = run(GOOD_BASE, { ...GOOD_CAND, resolved: 449 });
   assert.ok(a.primary.difference! < 0.05 && a.primary.ci!.lo > 0, `${a.primary.difference} ${a.primary.ci?.lo}`);
@@ -561,6 +609,8 @@ test("an aggregate update may move a unit's conversations to unattributed, and n
   base.unattributed += 10;
   const resolved = base.metrics.resolved;
   if (resolved.kind === "rate") resolved.successes -= 4;
+  const csat = base.metrics.csat;
+  if (csat.kind === "mean" && csat.nonzero !== undefined) csat.nonzero -= 10;
   const first = imp(baseExport({ export_id: "agg-1", exported_at: "2026-10-17T12:00:00Z", window: s.window, assignment: "randomized", aggregates: older }));
   const update = imp(baseExport({ export_id: "agg-2", exported_at: FINAL_AT, window: s.window, assignment: "randomized", aggregates: moved }));
   assert.equal(analyze(s, [first, update]).arms.baseline.unattributed, 10);
@@ -673,7 +723,7 @@ function aggregatesOf(rows: TelemetryRow[], c: MetricContract, s: ExperimentSpec
       const vals = mature.map((r) => r.values[m.name]).filter((v): v is number => v !== null);
       const missing = mature.length - vals.length;
       if (m.kind === "rate") metrics[m.name] = { kind: "rate", successes: vals.reduce((x, y) => x + y, 0), missing };
-      else { const st = meanSummary(vals); metrics[m.name] = { kind: "mean", mean: st.mean!, sd: st.sd!, missing }; }
+      else { const st = meanSummary(vals); metrics[m.name] = { kind: "mean", mean: st.mean!, sd: st.sd!, missing, nonzero: vals.filter((v) => v !== 0).length }; }
     }
     const segments: Record<string, number> = {};
     for (const r of mine) segments[r.segment ?? "(none)"] = (segments[r.segment ?? "(none)"] ?? 0) + 1;

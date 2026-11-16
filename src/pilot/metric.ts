@@ -62,7 +62,7 @@ export function parseMetricContract(value: unknown): MetricContract {
   const guards: GuardSpec[] = value.guards.map((g: unknown, i: number) => {
     const where = `guards[${i}]`;
     if (!isObject(g)) return bad(`metric.${where} must be an object.`);
-    onlyKeys(g, ["name", "kind", "unit", "direction", "max_harm", "critical", "early_stop"], `.${where}`);
+    onlyKeys(g, ["name", "kind", "unit", "direction", "max_harm", "critical", "early_stop", "range"], `.${where}`);
     const spec = metricSpec(g, where);
     if (spec.name === primary.name) bad(`metric.${where}.name "${spec.name}" is the primary metric. A guard must be a different metric.`);
     if (seen.has(spec.name)) bad(`metric.${where}.name "${spec.name}" appears more than once. Each guard needs its own name.`);
@@ -73,6 +73,13 @@ export function parseMetricContract(value: unknown): MetricContract {
     if (spec.kind === "rate" && (maxHarm as number) >= 1) bad(`metric.${where}.max_harm must be less than 1 for a rate (0.02 is two percentage points).`);
     if (typeof g.critical !== "boolean") bad(`metric.${where}.critical must be true or false.`);
     const guard: GuardSpec = { ...spec, max_harm: maxHarm as number, critical: g.critical as boolean };
+    if (g.range !== undefined) {
+      if (spec.kind !== "mean") bad(`metric.${where}.range is only for a mean guard. A rate is always between 0 and 1.`);
+      if (!isObject(g.range)) return bad(`metric.${where}.range must be an object with min and max.`);
+      onlyKeys(g.range, ["min", "max"], `.${where}.range`);
+      if (!isFiniteNumber(g.range.min) || !isFiniteNumber(g.range.max) || g.range.min >= g.range.max) bad(`metric.${where}.range needs finite numbers with min below max: the smallest and largest value one conversation can have.`);
+      guard.range = { min: g.range.min as number, max: g.range.max as number };
+    }
     if (g.early_stop !== undefined) {
       if (!isObject(g.early_stop)) return bad(`metric.${where}.early_stop must be an object with min_per_arm.`);
       onlyKeys(g.early_stop, ["min_per_arm"], `.${where}.early_stop`);
