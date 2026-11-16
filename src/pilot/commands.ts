@@ -490,12 +490,15 @@ export async function experiment(store: PilotStore, flags: Flags, deps: PilotDep
     throw new PilotError("conflict", "The baseline report was made for a different contract or telemetry tag than this pilot. Run `baseline` again for this pilot.");
   }
   const share = opt(flags, "share");
+  // Baseline flags that make a keep impossible must be named here by the person (comma separated), one by one.
+  const acceptFlags = (opt(flags, "accept-flags") ?? "").split(",").map((x) => x.trim()).filter(Boolean);
   const spec = buildExperimentSpec({
     pilot_id: f.config.pilot_id, config_id: f.config_id, contract: f.config.metric,
     baseline: { prompt_id: f.baseline_prompt_id, tag: f.config.agent.baseline_tag },
     candidate: { prompt_id: candidate.id, tag: candidateTag(candidate.id) },
     baseline_report: baselineReported, start,
     ...(share !== undefined ? { candidate_share: Number(share) } : {}),
+    ...(acceptFlags.length ? { accept_flags: acceptFlags } : {}),
   });
   assertMayRun(store, candidate.id, contentId(spec));
   const id = store.put("experiment", spec);
@@ -647,7 +650,7 @@ async function analyzeLocked(store: PilotStore, flags: Flags, deps: PilotDeps): 
   if (!imports.length) throw new PilotError("telemetry_incomplete", `Experiment ${shortId(experimentId)} has no outcome export yet. Give one with --telemetry <export.json>.`);
   // Analysed before anything is recorded: an export that contradicts an earlier one is refused here and leaves
   // no trace, so the experiment can still be analysed with a correct export.
-  const analysis = analyzeExperiment({ spec, experiment_id: experimentId, imports, approval_id: approval.id, approved_at: approval.value.at });
+  const analysis = analyzeExperiment({ spec, experiment_id: experimentId, imports, approval_id: approval.id, approved_at: approval.value.at, reopen: flags.reopen === true });
   if (fresh) {
     store.put("telemetry", fresh.value);
     store.record("telemetry.imported", fresh.id, { telemetry: fresh.id, purpose: "experiment", scope: experimentId }, at);
@@ -864,7 +867,7 @@ export async function verify(store: PilotStore, flags: Flags, deps: PilotDeps): 
         }
         const before = new Set(importsBefore(stored.experiment_id, e.seq).map((i) => i.id));
         if (stored.telemetry_ids.some((id) => !before.has(id))) throw new Error("it cites telemetry that was not imported for this experiment before the decision");
-        const again = analyzeExperiment({ spec, experiment_id: stored.experiment_id, imports: importsBefore(stored.experiment_id, e.seq), approval_id: stored.approval_id, approved_at: approval.at });
+        const again = analyzeExperiment({ spec, experiment_id: stored.experiment_id, imports: importsBefore(stored.experiment_id, e.seq), approval_id: stored.approval_id, approved_at: approval.at, reopen: stored.reopened === true });
         if (!same(stored, again)) throw new Error(`the stored recommendation (${stored.recommendation}) does not follow from its telemetry imports (recomputed: ${again.recommendation})`);
         if (e.refs.recommendation !== stored.recommendation) throw new Error("the journal names a different recommendation than the stored analysis");
         recomputed++;
