@@ -25,7 +25,8 @@ Find and test a change
   replay      --candidate <id> --model scripted:<file> | --live ...             both prompts on the same frozen cases
 
 Review and experiment
-  experiment  --candidate <id> --start <UTC time> [--share 0.5]   write the specification the customer runs
+  experiment  --candidate <id> --start <UTC time> [--share 0.5] [--allow-past-start]   write the specification the customer runs
+              (the start must be in the future; --allow-past-start is for a split that already began, and holds the result)
   review      --candidate <id>                          write the local review bundle (nothing is published)
               --publish --repo <owner/name> --base <branch> --confirm <full candidate id>   open the pull request
   approve     --candidate <full id> --experiment <full id> --approver <name> [--reject]
@@ -51,7 +52,7 @@ const OPTIONS = {
   start: { type: "string" }, share: { type: "string" }, repo: { type: "string" }, base: { type: "string" }, confirm: { type: "string" },
   experiment: { type: "string" }, approver: { type: "string" }, request: { type: "string" }, out: { type: "string" },
   "confirm-endpoint": { type: "string" }, "confirm-data": { type: "string" }, head: { type: "string" },
-  publish: { type: "boolean" }, live: { type: "boolean" }, reject: { type: "boolean" }, list: { type: "boolean" }, help: { type: "boolean" },
+  publish: { type: "boolean" }, "allow-past-start": { type: "boolean" }, live: { type: "boolean" }, reject: { type: "boolean" }, list: { type: "boolean" }, help: { type: "boolean" },
 } as const;
 
 type Command = (store: PilotStore, flags: Flags, deps: PilotDeps) => Promise<number>;

@@ -474,6 +474,11 @@ export async function experiment(store: PilotStore, flags: Flags, deps: PilotDep
   eligibleReplay(store, candidate.id, active.id);
   const start = need(flags, "start", "when the customer will start the split, as a UTC time like 2026-11-16T00:00:00Z");
   if (Number.isNaN(ms(start))) throw new PilotError("usage", "--start must be a UTC time like 2026-11-16T00:00:00Z.");
+  // The split starts after the approval, which follows this command. A start already behind us would let traffic
+  // run before anyone approved the change; if the split really did start already, say so.
+  if (ms(start) < deps.now().getTime() && flags["allow-past-start"] !== true) {
+    throw new PilotError("usage", `--start ${start} is in the past (now is ${iso(deps.now())}). The split must start after the approval is recorded. If the customer already started it, pass --allow-past-start; conversations that started before the approval then hold the result.`);
+  }
   const baselineEntry = store.last("baseline.reported");
   if (!baselineEntry) throw new PilotError("not_found", "No baseline report yet. Run `baseline --telemetry <export.json>` first: the experiment is sized from it.");
   const baselineReported = store.get<BaselineReport>("baseline", baselineEntry.refs.baseline);
@@ -639,7 +644,7 @@ async function analyzeLocked(store: PilotStore, flags: Flags, deps: PilotDeps): 
   if (!imports.length) throw new PilotError("telemetry_incomplete", `Experiment ${shortId(experimentId)} has no outcome export yet. Give one with --telemetry <export.json>.`);
   // Analysed before anything is recorded: an export that contradicts an earlier one is refused here and leaves
   // no trace, so the experiment can still be analysed with a correct export.
-  const analysis = analyzeExperiment({ spec, experiment_id: experimentId, imports, approval_id: approval.id });
+  const analysis = analyzeExperiment({ spec, experiment_id: experimentId, imports, approval_id: approval.id, approved_at: approval.value.at });
   if (fresh) {
     store.put("telemetry", fresh.value);
     store.record("telemetry.imported", fresh.id, { telemetry: fresh.id, purpose: "experiment", scope: experimentId }, at);
@@ -856,7 +861,7 @@ export async function verify(store: PilotStore, flags: Flags, deps: PilotDeps): 
         }
         const before = new Set(importsBefore(stored.experiment_id, e.seq).map((i) => i.id));
         if (stored.telemetry_ids.some((id) => !before.has(id))) throw new Error("it cites telemetry that was not imported for this experiment before the decision");
-        const again = analyzeExperiment({ spec, experiment_id: stored.experiment_id, imports: importsBefore(stored.experiment_id, e.seq), approval_id: stored.approval_id });
+        const again = analyzeExperiment({ spec, experiment_id: stored.experiment_id, imports: importsBefore(stored.experiment_id, e.seq), approval_id: stored.approval_id, approved_at: approval.at });
         if (!same(stored, again)) throw new Error(`the stored recommendation (${stored.recommendation}) does not follow from its telemetry imports (recomputed: ${again.recommendation})`);
         if (e.refs.recommendation !== stored.recommendation) throw new Error("the journal names a different recommendation than the stored analysis");
         recomputed++;

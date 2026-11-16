@@ -312,3 +312,37 @@ test("an export dated at or after the cutoff is refused when it is even a minute
     assert.equal(ok.code, 0, ok.lines.join(" | "));
   } finally { await ctx.stop(); }
 });
+
+test("an experiment cannot be specified to start in the past unless that is said outright", async () => {
+  const ctx = await replayedPilot();
+  try {
+    const args = (start: string, extra: string[] = []) => ["experiment", "--candidate", ctx.eligible, "--start", start, ...extra];
+    assert.equal(await ctx.run(args("2020-01-01T00:00:00Z")), 1);
+    assert.ok(ctx.lines.some((l) => l.startsWith("Refused (usage)") && /allow-past-start/.test(l)), ctx.lines.join(" | "));
+    assert.equal(ctx.store.find("experiment.specified").length, 0);
+    assert.equal(await ctx.run(args("2020-01-01T00:00:00Z", ["--allow-past-start"])), 0, ctx.lines.join(" | "));
+    assert.equal(ctx.store.find("experiment.specified").length, 1);
+    assert.equal(await ctx.run(args(DEMO.experiment_c_start)), 0, "a start in the future needs no flag");
+  } finally { await ctx.stop(); }
+});
+
+test("an approval recorded after the traffic started holds the result, whatever the export says", async () => {
+  const ctx = await replayedPilot();
+  try {
+    const must = async (argv: string[]) => { if (await ctx.run(argv) !== 0) throw new Error(`setup failed at ${argv[0]}: ${ctx.lines.slice(-3).join(" | ")}`); };
+    await must(["experiment", "--candidate", ctx.eligible, "--start", DEMO.experiment_c_start]);
+    const experiment = ctx.last("experiment.specified");
+    await must(["review", "--candidate", ctx.eligible]);
+    // The split started on 2026-10-27; the approval is recorded two weeks into it.
+    ctx.on("2026-11-10");
+    await must(["approve", "--candidate", ctx.eligible, "--experiment", experiment, "--approver", "Tomas Lindqvist"]);
+    ctx.on("2026-11-13");
+    await must(["analyze", "--experiment", experiment, "--telemetry", writeExport(ctx, "final.json", experimentCFinal(candidateTag(ctx.eligible)))]);
+    const analysis = ctx.store.get<ExperimentAnalysis>("analysis", ctx.last("analysis.decided"));
+    assert.equal(analysis.final, true);
+    assert.ok(analysis.flags.includes("traffic_before_approval"), analysis.flags.join(","));
+    assert.equal(analysis.recommendation, "hold", "the same data with an approval before the split is a keep");
+    assert.ok(analysis.reasons.some((r) => /started before the approval/.test(r)));
+    assert.equal((await run(ctx.dir, ["verify"])).code, 0, "and the decision still verifies");
+  } finally { await ctx.stop(); }
+});

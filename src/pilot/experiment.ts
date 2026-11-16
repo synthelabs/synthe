@@ -32,7 +32,7 @@ const EPS = 1e-12;
 // The flags that hold a final result. Order is the order reasons are given in.
 export const HOLD_FLAGS = [
   "insufficient_samples", "sample_ratio_mismatch", "cohort_imbalance", "missing_events", "missing_imbalance", "attribution_ambiguous",
-  "observational", "runtime_changed", "inside_lag_window", "window_not_covered",
+  "observational", "runtime_changed", "inside_lag_window", "window_not_covered", "traffic_before_approval",
 ] as const;
 
 // A few rows can reach the source late. More than this many, and more than this share of the rows that were on
@@ -227,7 +227,10 @@ export function cohortTest(base: Record<string, number>, cand: Record<string, nu
 }
 
 // Pure, and never reads the clock: the same specification and imports always give the same analysis.
-export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: Sha256; imports: Stored<TelemetryImport>[]; approval_id: Sha256 }): ExperimentAnalysis {
+// `approved_at`: the time of the approval being relied on. Conversations that started before it ran on a change nobody
+// had approved yet, so an approval that follows the traffic holds the result. Row exports only: an aggregate has no
+// start times to compare.
+export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: Sha256; imports: Stored<TelemetryImport>[]; approval_id: Sha256; approved_at?: IsoTime }): ExperimentAnalysis {
   const { spec } = input;
   const baseTag = spec.arms.baseline.tag;
   const candTag = spec.arms.candidate.tag;
@@ -327,6 +330,9 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   const covered = merged.used.some((i) => ms(i.value.window.start) <= ms(spec.window.start) && ms(i.value.window.end) >= ms(spec.window.end));
   if (final && !covered) flags.push("window_not_covered");
   if (merged.superseded.length > 0) flags.push("superseded_aggregate");
+  const approvedAt = input.approved_at;
+  const beforeApproval = approvedAt !== undefined && merged.form === "rows" ? (merged.rows as TelemetryRow[]).filter((r) => ms(r.started_at) < ms(approvedAt)).length : 0;
+  if (beforeApproval > 0) flags.push("traffic_before_approval");
 
   // Recommendation, in the predeclared order.
   const reasons: string[] = [];
@@ -357,7 +363,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
 
   if (recommendation === "hold") {
     if (!final) reasons.push(`This is an interim look: the newest export was made at ${asOf}, before the analysis cutoff ${spec.analysis_cutoff}. A final result needs an export made at or after the cutoff; look again then.`);
-    for (const f of holdFlags) reasons.push(holdReason(f, { spec, pm, arms, srmP, cohortP, worstMissing, unattributedRate, immatureTotal, models, asOf, missingGap }));
+    for (const f of holdFlags) reasons.push(holdReason(f, { spec, pm, arms, srmP, cohortP, worstMissing, unattributedRate, immatureTotal, models, asOf, missingGap, beforeApproval, approvedAt }));
     if (primary.status !== "clears") reasons.push(`The primary metric does not clear: ${primary.detail}`);
     for (const g of guards) {
       if (g.readout.status === "inconclusive") reasons.push(`Guard ${g.spec.name} is inconclusive: ${g.readout.detail}`);
@@ -402,7 +408,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
 function holdReason(flag: string, x: {
   spec: ExperimentSpec; pm: { base: ArmMetric; cand: ArmMetric }; arms: { baseline: ArmCounts; candidate: ArmCounts };
   srmP: number | null; cohortP: number | null; worstMissing: { name: string; arm: string; rate: number }; unattributedRate: number;
-  immatureTotal: number; models: number; asOf: IsoTime; missingGap: { name: string; p: number } | null;
+  immatureTotal: number; models: number; asOf: IsoTime; missingGap: { name: string; p: number } | null; beforeApproval: number; approvedAt: IsoTime | undefined;
 }): string {
   const s = x.spec;
   switch (flag) {
@@ -418,6 +424,7 @@ function holdReason(flag: string, x: {
     case "runtime_changed": return `The rows carry ${x.models} different runtime models, so a difference could come from the model change rather than the prompt. Rerun with one model, or export only the period with one model.`;
     case "window_not_covered": return `No export covers the whole experiment window ${s.window.start} to ${s.window.end}, so days of the planned window are missing. Export every conversation that started in the window, in one export, and analyse again.`;
     case "inside_lag_window": return `${x.immatureTotal} conversations are younger than the ${s.outcome_lag_days}-day outcome lag at ${x.asOf}, so their outcomes are not final and they are left out. Export again after the cutoff ${s.analysis_cutoff}.`;
+    case "traffic_before_approval": return `${x.beforeApproval} conversations started before the approval was recorded (${x.approvedAt}), so they ran on a change nobody had approved yet. Approve before the split starts; to measure this change, write a new experiment that starts after the approval.`;
     default: return flag;
   }
 }
@@ -472,6 +479,7 @@ const FLAG_TEXT: Record<string, string> = {
   runtime_changed: "More than one runtime model appears in the rows.",
   superseded_aggregate: "Older cumulative aggregate exports were replaced by a newer one and not used.",
   window_not_covered: "No single export covers the whole experiment window.",
+  traffic_before_approval: "Some conversations started before the approval was recorded.",
 };
 
 const shown = (r: MetricReadout, x: number | null) => (r.kind === "rate" ? pct(x) : `${fmt(x)} ${r.unit}`);

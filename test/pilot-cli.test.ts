@@ -279,12 +279,17 @@ test("an analysis needs an approval of exactly that candidate and experiment, an
     assert.equal(await ctx.run(["approve", "--candidate", eligible, "--experiment", experiment]), 1, "no approver");
     assert.equal(ctx.store.find("approval.recorded").length, 1, "only the forged record so far");
 
+    // Approved the day before the split starts (2026-10-19): an approval that followed the traffic would hold the result.
+    ctx.on("2026-10-18");
     assert.equal(await ctx.run(["approve", "--candidate", eligible, "--experiment", experiment, "--approver", "Tomas Lindqvist", "--reject"]), 0);
+    ctx.on("2026-10-24");
     assert.equal(await ctx.run(["analyze", "--experiment", experiment, "--telemetry", exported]), 1, "a rejection is not an approval");
+    ctx.on("2026-10-18");
     assert.equal(await ctx.run(["approve", "--candidate", eligible, "--experiment", experiment, "--approver", "Tomas Lindqvist"]), 0);
     assert.equal(await ctx.run(["approve", "--candidate", eligible, "--experiment", experiment, "--approver", "Tomas Lindqvist"]), 0);
     assert.equal(ctx.store.find("approval.recorded").length, 3, "the repeat added nothing");
 
+    ctx.on("2026-10-24");
     // A second change while the first is approved and undecided.
     assert.equal(await ctx.run(["propose", "--finding", ctx.finding, "--file", ctx.put("c.md", HUMAN_CANDIDATE_PROMPT), "--author", "Imogen Hartley", "--rationale", "A second idea."]), 0);
     const second = ctx.last("candidate.created");
