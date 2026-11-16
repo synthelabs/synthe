@@ -19,7 +19,7 @@ import { publishMessage, publishReview } from "./publish.ts";
 import { pairArms, renderReplay, replayArm } from "./replay.ts";
 import { renderPilotReport } from "./report.ts";
 import { buildReviewBundle, MAX_REVIEW_CHARS, renderReview } from "./review.ts";
-import { OBJECT_KINDS, PilotStore, type JournalEntry } from "./store.ts";
+import { OBJECT_KINDS, PilotStore, type JournalEntry, type ObjectKind } from "./store.ts";
 import { baselineReport, importProblem, importTelemetry, renderBaseline } from "./telemetry.ts";
 import type {
   Approval, ArmRun, BaselineReport, Candidate, ChatModel, ExperimentAnalysis, ExperimentSpec, FailureFinding, IsoTime, Pack, PackCase, PilotConfig,
@@ -702,6 +702,24 @@ export async function report(store: PilotStore, _flags: Flags, deps: PilotDeps):
   return 0;
 }
 
+// The records each journal step wrote or relies on: which ref names one, and of what kind.
+const NAMED_RECORDS: Record<string, [string, ObjectKind | "prompt"][]> = {
+  "config.frozen": [["config", "config"], ["baseline_prompt", "prompt"]],
+  "telemetry.imported": [["telemetry", "telemetry"]],
+  "baseline.reported": [["baseline", "baseline"]],
+  "pack.frozen": [["pack", "pack"]],
+  "pack.promoted": [["pack", "pack"], ["parent", "pack"], ["promotion", "promotion"], ["request", "promotion-request"]],
+  "arm.replayed": [["arm", "arm"], ["pack", "pack"], ["prompt", "prompt"]],
+  "finding.found": [["finding", "finding"], ["pack", "pack"]],
+  "candidate.created": [["candidate", "candidate"], ["prompt", "prompt"], ["finding", "finding"]],
+  "replay.paired": [["replay", "replay"], ["candidate", "prompt"], ["pack", "pack"]],
+  "experiment.specified": [["experiment", "experiment"], ["candidate", "prompt"]],
+  "review.bundled": [["review", "review"], ["candidate", "prompt"], ["experiment", "experiment"]],
+  "review.published": [["review", "review"]],
+  "approval.recorded": [["approval", "approval"], ["candidate", "prompt"], ["experiment", "experiment"]],
+  "analysis.decided": [["analysis", "analysis"], ["experiment", "experiment"]],
+};
+
 // Checks that nothing stored was changed and that every decision still follows from its evidence.
 export async function verify(store: PilotStore, flags: Flags, deps: PilotDeps): Promise<number> {
   const problems: string[] = [];
@@ -714,6 +732,16 @@ export async function verify(store: PilotStore, flags: Flags, deps: PilotDeps): 
   if (noted !== undefined && !problems.length) {
     if (!isSha256(noted)) throw new PilotError("usage", "--head must be the 64-character journal head that `verify` or `analyze` printed earlier.");
     if (!store.journal().some((e) => e.hash === noted)) problems.push(`journal: no entry has the hash given with --head (${shortId(noted)}), so entries were removed or rewritten after that head was noted`);
+  }
+  // Every record a journal entry names must still be there. Reading what is present (below) cannot show that a file
+  // was deleted, so the entries are walked: each step names the records it wrote, by kind.
+  if (!problems.length) {
+    for (const e of store.journal()) {
+      for (const [field, kind] of NAMED_RECORDS[e.step] ?? []) {
+        const id = e.refs[field];
+        if (id !== undefined && id !== "" && !store.has(kind, id)) problems.push(`journal entry ${e.seq} (${e.step}) names the ${kind} record ${shortId(id)}, but it is missing from ${store.dir}, so it was deleted after it was written`);
+      }
+    }
   }
   let records = 0;
   for (const kind of OBJECT_KINDS) {
