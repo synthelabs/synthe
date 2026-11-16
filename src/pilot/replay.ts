@@ -312,6 +312,9 @@ interface Judged {
   newBlocking: TurnRef[]; unchecked: TurnRef[]; regressions: TurnRef[]; paired: PairedCase[]; target: string | null; p: number;
 }
 
+// The sign test on wins against losses (ties left out) must reach this, on top of the net-win minimum.
+export const REPLAY_MAX_SIGN_P = 0.1;
+
 const pct = (x: number): string => `${Math.round(x * 100)}%`;
 
 // The gate, with two renderings of every finding: one for the reviewer, who may see held-out cases, and one for the
@@ -360,6 +363,16 @@ function judge(j: Judged): ReplayReport["gate"] {
     if (discNet < gate.min_net_wins) {
       if (lost.length === 0) feedback.push("The change did not improve enough of the cases you can see. Aim at the failing checks in the examples.");
     } else hidden = true;
+  }
+
+  // 4b. Net wins must also be unlikely by luck (S-06). A replay is a sample of cases, not the whole pack, and a candidate
+  // that changes nothing real still flips a few unstable cases either way. A raw count of wins does not grow with the
+  // pack; the sign test on wins against losses does.
+  if (net >= gate.min_net_wins && j.p > REPLAY_MAX_SIGN_P) {
+    reasons.push(`Wins against losses could be luck: ${tally.all.wins} wins and ${tally.all.losses} losses give a sign test p of ${j.p.toFixed(4)}; the gate needs ${REPLAY_MAX_SIGN_P} or less.`);
+    const discP = signP(tally.discovery.wins, tally.discovery.losses);
+    if (discP > REPLAY_MAX_SIGN_P) feedback.push("The change improved too few of the cases you can see, compared with the cases it made worse, to rule out luck. Aim at the failing checks in the examples.");
+    else hidden = true;
   }
 
   // 5. Held-out cases must not lose.

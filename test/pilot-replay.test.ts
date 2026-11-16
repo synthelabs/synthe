@@ -338,8 +338,9 @@ test("a baseline that already fails the same guard is not counted as new, and un
   const r = pair(pack, base, cand);
   assert.deepEqual(r.new_blocking_guard_failures.map((x) => x.case_id), ["D-2"]);
   // a non-blocking guard never blocks
-  const pack2 = makePack([simpleCase("D-1", "discovery", [P("says_shipped"), G("no_promise_refund", false)]), simpleCase("D-2", "discovery", [P("says_shipped")]), simpleCase("H-1", "heldout", [P("says_shipped")])]);
-  const r2 = pair(pack2, { "D-1": [false, true], "D-2": [false], "H-1": [true] }, { "D-1": [true, false], "D-2": [true], "H-1": [true] });
+  // Five wins and no loss: the sign test (p = 0.03) also lets the change through (S-06 needs p of 0.1 or less).
+  const pack2 = makePack([simpleCase("D-1", "discovery", [P("says_shipped"), G("no_promise_refund", false)]), simpleCase("D-2", "discovery", [P("says_shipped")]), simpleCase("D-3", "discovery", [P("says_shipped")]), simpleCase("D-4", "discovery", [P("says_shipped")]), simpleCase("D-5", "discovery", [P("says_shipped")]), simpleCase("H-1", "heldout", [P("says_shipped")])]);
+  const r2 = pair(pack2, { "D-1": [false, true], "D-2": [false], "D-3": [false], "D-4": [false], "D-5": [false], "H-1": [true] }, { "D-1": [true, false], "D-2": [true], "D-3": [true], "D-4": [true], "D-5": [true], "H-1": [true] });
   assert.deepEqual(r2.new_blocking_guard_failures, []);
   assert.equal(r2.gate.eligible, true);
 });
@@ -459,6 +460,37 @@ test("net wins below the minimum blocks", () => {
   const r = pair(pack, { "D-1": [false, true] }, { "D-1": [true, true] }, { ...GATE, min_net_wins: 2 });
   assert.equal(r.gate.eligible, false);
   assert.match(r.gate.reasons.join("\n"), /at least 2/);
+});
+
+// A pack of `wins` + `losses` + `ties` cases, the last of them held out, with the first `wins` won and next `losses` lost.
+function tallyPack(wins: number, losses: number, ties: number): ReplayReport {
+  const total = wins + losses + ties;
+  const cases = Array.from({ length: total }, (_, i) => simpleCase(`${i === total - 1 ? "H" : "D"}-${i + 1}`, i === total - 1 ? "heldout" : "discovery", [P("says_shipped")]));
+  const pack = makePack(cases);
+  const base: Spec = {}; const cand: Spec = {};
+  cases.forEach((c, i) => {
+    if (i < wins) { base[c.id] = [false]; cand[c.id] = [true]; }
+    else if (i < wins + losses) { base[c.id] = [true]; cand[c.id] = [false]; }
+    else { base[c.id] = [true]; cand[c.id] = [true]; }
+  });
+  // The last case is a tie unless there are no ties, so the held-out case does not lose.
+  return pair(pack, base, cand, { min_paired_cases: 10, min_paired_coverage: 0.7, min_net_wins: 3, max_unchecked_blocking_guards: 0 });
+}
+
+test("net wins must also pass the sign test at 0.1, whatever the size of the pack (S-06)", () => {
+  // 3 wins, 0 losses, 8 ties meets the net-win minimum of 3 but is a 1-in-8 split (p = 0.125) by luck alone.
+  const luck = tallyPack(3, 0, 8);
+  assert.equal(luck.tally.all.wins - luck.tally.all.losses, 3);
+  assert.equal(luck.gate.eligible, false);
+  assert.match(luck.gate.reasons.join("\n"), /could be luck.*3 wins and 0 losses.*0\.1250.*0\.1 or less/);
+  assert.ok(luck.gate.proposer_feedback.join("\n").length > 0);
+  // 4 wins and no loss is p = 0.0625.
+  assert.equal(tallyPack(4, 0, 7).gate.eligible, true);
+  // Many wins but also many losses: net 5 passes the minimum, p = 0.133 does not. 10 against 4 gives p = 0.0898.
+  assert.equal(tallyPack(9, 4, 6).gate.eligible, false);
+  assert.equal(tallyPack(10, 4, 6).gate.eligible, true);
+  // The proposer is never told counts from held-out cases: a failure that only the whole pack shows is the fixed sentence.
+  assert.ok(!tallyPack(9, 4, 6).gate.proposer_feedback.join("\n").includes("H-"));
 });
 
 test("proposer_feedback never names held-out cases, turns or counts", () => {
