@@ -101,6 +101,10 @@ test("contract-level fields", () => {
   refused(clone(contract({ min_samples_per_arm: 1 })), /min_samples_per_arm/);
   refused(clone(contract({ min_samples_per_arm: 10.5 })), /min_samples_per_arm/);
   refused(clone(contract({ analysis_window_days: 0 })), /analysis_window_days/);
+  // S-03: a window shorter than a week cannot cover each weekday once.
+  refused(clone(contract({ analysis_window_days: 6 })), /analysis_window_days.*at least 7.*weekday/);
+  refused(clone(contract({ analysis_window_days: 1, outcome_lag_days: 0 })), /analysis_window_days.*at least 7/);
+  assert.equal(parseMetricContract(clone(contract({ analysis_window_days: 7 }))).analysis_window_days, 7);
   refused(clone(contract({ outcome_lag_days: -1 })), /outcome_lag_days/);
   refused(clone(contract({ outcome_lag_days: 15 })), /outcome_lag_days.*cannot be attributed/);
   assert.equal(parseMetricContract(clone(contract({ outcome_lag_days: 14 }))).outcome_lag_days, 14);

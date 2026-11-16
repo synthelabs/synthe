@@ -14,6 +14,9 @@ const isFiniteNumber = (v: unknown): v is number => typeof v === "number" && Num
 const isNonEmpty = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
 const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
 
+// A window shorter than a week cannot cover each weekday once (research A5: 7 days is a floor, not a recommendation).
+export const MIN_WINDOW_DAYS = 7;
+
 const NAME = /^[a-z][a-z0-9_]{0,63}$/;
 // Telemetry row fields and CSV columns. A metric with one of these names would collide with them in a CSV header.
 export const RESERVED_METRIC_NAMES = ["conversation_id", "prompt_version", "started_at", "segment", "unit_id", "model_id", "values"];
@@ -95,7 +98,8 @@ export function parseMetricContract(value: unknown): MetricContract {
   if (!inRange(value.alpha, 0, 0.2, true, false)) bad("metric.alpha must be greater than 0 and at most 0.2 (0.05 gives 95% intervals).");
   if (!inRange(value.power, 0.5, 1, false, true)) bad("metric.power must be at least 0.5 and less than 1 (0.8 is usual).");
   if (!isInt(value.min_samples_per_arm) || value.min_samples_per_arm < 2) bad("metric.min_samples_per_arm must be a whole number of at least 2.");
-  if (!isInt(value.analysis_window_days) || value.analysis_window_days < 1) bad("metric.analysis_window_days must be a whole number of at least 1.");
+  if (!isInt(value.analysis_window_days)) bad(`metric.analysis_window_days must be a whole number of at least ${MIN_WINDOW_DAYS}.`);
+  if ((value.analysis_window_days as number) < MIN_WINDOW_DAYS) bad(`metric.analysis_window_days is ${value.analysis_window_days}. The window must be at least ${MIN_WINDOW_DAYS} days so that each weekday is seen once: traffic and outcomes differ by weekday, and a shorter window can show a calendar effect as a result.`);
   if (!isInt(value.outcome_lag_days) || value.outcome_lag_days < 0) bad("metric.outcome_lag_days must be a whole number of 0 or more.");
   if ((value.outcome_lag_days as number) > (value.analysis_window_days as number)) {
     bad(`metric.outcome_lag_days (${value.outcome_lag_days}) is longer than analysis_window_days (${value.analysis_window_days}). An outcome slower than the window cannot be attributed in the pilot. Lengthen the window or choose a faster outcome.`);

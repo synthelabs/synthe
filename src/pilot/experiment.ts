@@ -35,8 +35,11 @@ const EPS = 1e-12;
 // The flags that hold a final result. Order is the order reasons are given in.
 export const HOLD_FLAGS = [
   "insufficient_samples", "sample_ratio_mismatch", "cohort_imbalance", "missing_events", "missing_imbalance", "attribution_ambiguous",
-  "observational", "runtime_changed", "inside_lag_window", "window_not_covered", "clustered_units",
+  "observational", "runtime_changed", "inside_lag_window", "window_not_covered", "window_not_populated", "clustered_units",
 ] as const;
+
+// S-03: at the final analysis the rows must fall on at least this share of the window's calendar days (UTC).
+export const MIN_POPULATED_DAYS = 0.8;
 
 // S-02: the intervals count conversations as independent. When a unit has several conversations they are not, and
 // the intervals are too narrow. Above this many conversations per unit the result is held, not widened.
@@ -105,7 +108,7 @@ export function buildExperimentSpec(input: {
       mean: `Mean metrics: each arm's estimate is the mean over mature, attributable conversations with a value; the difference is candidate minus baseline, with a Welch interval (Welch-Satterthwaite degrees of freedom) at ${pctLevel(level)}.`,
       keep: `Keep only at the final analysis (an export made at or after ${cutoff}) with none of the data problems listed under hold, when the primary metric's benefit (the difference in its good direction) is at least ${c.primary.min_effect} and the lower bound of its ${pctLevel(level)} interval is above 0, and every guard passes: the upper bound of the ${pctLevel(level)} interval for its harm is at most its max_harm. A mean guard passes only when its metric declares a finite range and each arm has at least ${MIN_NONZERO_EVENTS} non-zero values; otherwise it is inconclusive, so keep is not possible.`,
       revert: `Revert at the final analysis with no data or sample-size holds when any guard breaches (the lower bound of the ${pctLevel(level)} interval for its harm is above its max_harm) or the primary metric is significantly worse (the upper bound of the ${pctLevel(level)} interval for its benefit is below 0). Before the final analysis only a critical guard's early stop can revert, and only when telemetry integrity checks pass; the early stop is also checked in the final analysis.`,
-      hold: `Hold in every other case: before the cutoff; when there are fewer than ${required} conversations with a primary value in either arm, a sample ratio mismatch, a cohort imbalance, missing events above ${pct(c.max_missing_rate)} or far more common in one arm, ambiguous attribution above ${pct(c.max_unattributed_rate)}, more than ${MAX_CONVERSATIONS_PER_UNIT} conversations per unit_id on average, observational assignment, more than one runtime model, or outcomes still inside the ${c.outcome_lag_days}-day lag, or no single export covering the whole window; when the primary does not clear; or when a guard is inconclusive.`,
+      hold: `Hold in every other case: before the cutoff; when there are fewer than ${required} conversations with a primary value in either arm, a sample ratio mismatch, a cohort imbalance, missing events above ${pct(c.max_missing_rate)} or far more common in one arm, ambiguous attribution above ${pct(c.max_unattributed_rate)}, rows on fewer than ${pct(MIN_POPULATED_DAYS)} of the window's days, more than ${MAX_CONVERSATIONS_PER_UNIT} conversations per unit_id on average, observational assignment, more than one runtime model, or outcomes still inside the ${c.outcome_lag_days}-day lag, or no single export covering the whole window; when the primary does not clear; or when a guard is inconclusive.`,
       early_stop: `Early stop: at every analysis, the final one included, a critical guard with early_stop is checked at ${pctLevel(EARLY_STOP_LEVEL)} once both arms have at least its min_per_arm mature values; it reverts when the lower bound of the ${pctLevel(EARLY_STOP_LEVEL)} interval for its harm is above its max_harm, even if the experiment has too few samples or outcomes still inside the lag. A data problem of any other kind blocks it. No other guard and no primary result is acted on before the cutoff.`,
       integrity: `Integrity: rows per arm are tested against the intended allocation (chi-square goodness of fit), and arm against segment (chi-square test of independence, pooling segments with expected counts below ${MIN_EXPECTED}); a p-value below ${INTEGRITY_ALPHA} holds the result as a sample ratio mismatch or a cohort imbalance.`,
     },
@@ -274,6 +277,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   let metricFor: (tag: string, name: string, kind: MetricKind) => ArmMetric;
   let models = 0;
   let perUnit: number | null = null;
+  let populated: { days: number; of: number } | null = null;
   let hasSegments = false;
   let lateRows = 0;
   if (merged.form === "rows") {
@@ -289,6 +293,13 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
     arms = { baseline: armCountsFromRows(rows, classes, baseTag), candidate: armCountsFromRows(rows, classes, candTag) };
     metricFor = (tag, name, kind) => armMetricFromRows(rows, classes, tag, name, kind);
     models = new Set(rows.filter((r) => r.model_id !== undefined).map((r) => r.model_id)).size;
+    const dayOf = (t: number) => Math.floor(t / DAY_MS);
+    const firstDay = dayOf(ms(spec.window.start));
+    const lastDay = dayOf(ms(spec.window.end) - 1);
+    const rowDays = new Set(rows.map((r) => dayOf(ms(r.started_at))));
+    let hit = 0;
+    for (let d = firstDay; d <= lastDay; d++) if (rowDays.has(d)) hit++;
+    populated = { days: hit, of: lastDay - firstDay + 1 };
     const withUnit = rows.filter((r, i) => r.unit_id !== undefined && classes[i] !== "unattributed");
     if (withUnit.length > 0) perUnit = withUnit.length / new Set(withUnit.map((r) => r.unit_id)).size;
     hasSegments = rows.some((r) => r.segment !== undefined);
@@ -349,6 +360,9 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   // days, made after the cutoff, would count as final and skip the days the window was set to cover.
   const covered = merged.used.some((i) => ms(i.value.window.start) <= ms(spec.window.start) && ms(i.value.window.end) >= ms(spec.window.end));
   if (final && !covered) flags.push("window_not_covered");
+  // The window is a claim about when the conversations happened; the rows must support it. Only the final analysis
+  // is judged: an interim look is partial by design.
+  if (final && populated !== null && populated.days < MIN_POPULATED_DAYS * populated.of - EPS) flags.push("window_not_populated");
   if (perUnit !== null && perUnit > MAX_CONVERSATIONS_PER_UNIT + EPS) flags.push("clustered_units");
   if (merged.superseded.length > 0) flags.push("superseded_aggregate");
 
@@ -387,7 +401,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
 
   if (recommendation === "hold") {
     if (!final) reasons.push(`This is an interim look: the newest export was made at ${asOf}, before the analysis cutoff ${spec.analysis_cutoff}. A final result needs an export made at or after the cutoff; look again then.`);
-    for (const f of holdFlags) reasons.push(holdReason(f, { spec, pm, arms, srmP, cohortP, worstMissing, unattributedRate, immatureTotal, models, asOf, missingGap, perUnit }));
+    for (const f of holdFlags) reasons.push(holdReason(f, { spec, pm, arms, srmP, cohortP, worstMissing, unattributedRate, immatureTotal, models, asOf, missingGap, perUnit, populated }));
     if (primary.status !== "clears") reasons.push(`The primary metric does not clear: ${primary.detail}`);
     for (const g of guards) {
       if (g.readout.status === "inconclusive") reasons.push(`Guard ${g.spec.name} is inconclusive: ${g.readout.detail}`);
@@ -432,7 +446,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
 function holdReason(flag: string, x: {
   spec: ExperimentSpec; pm: { base: ArmMetric; cand: ArmMetric }; arms: { baseline: ArmCounts; candidate: ArmCounts };
   srmP: number | null; cohortP: number | null; worstMissing: { name: string; arm: string; rate: number }; unattributedRate: number;
-  immatureTotal: number; models: number; asOf: IsoTime; missingGap: { name: string; p: number } | null; perUnit: number | null;
+  immatureTotal: number; models: number; asOf: IsoTime; missingGap: { name: string; p: number } | null; perUnit: number | null; populated: { days: number; of: number } | null;
 }): string {
   const s = x.spec;
   switch (flag) {
@@ -447,6 +461,7 @@ function holdReason(flag: string, x: {
     case "observational": return "The export says traffic was not randomised (observational), so a difference could come from who saw each prompt rather than the prompt. Run the experiment with a random split.";
     case "runtime_changed": return `The rows carry ${x.models} different runtime models, so a difference could come from the model change rather than the prompt. Rerun with one model, or export only the period with one model.`;
     case "clustered_units": return `Clustered units: the rows carry unit_id, with ${fmt(x.perUnit, 2)} conversations per unit on average, above the limit of ${MAX_CONVERSATIONS_PER_UNIT}. Conversations of one unit are not independent, so every interval here would be too narrow and the result cannot be trusted. Analyse one value per unit (assign and export per conversation, or one row per unit), or run the experiment with units that have about one conversation each.`;
+    case "window_not_populated": return `Window not populated: the rows start on ${x.populated?.days} of the ${x.populated?.of} days of the window ${s.window.start} to ${s.window.end}, and at least ${pct(MIN_POPULATED_DAYS)} of the days need rows. The experiment did not run for the whole window (or the export leaves days out), so weekday patterns are not covered. Export every conversation that started in the window, or run it for the planned window.`;
     case "window_not_covered": return `No export covers the whole experiment window ${s.window.start} to ${s.window.end}, so days of the planned window are missing. Export every conversation that started in the window, in one export, and analyse again.`;
     case "inside_lag_window": return `${x.immatureTotal} conversations are younger than the ${s.outcome_lag_days}-day outcome lag at ${x.asOf}, so their outcomes are not final and they are left out. Export again after the cutoff ${s.analysis_cutoff}.`;
     default: return flag;
@@ -503,6 +518,7 @@ const FLAG_TEXT: Record<string, string> = {
   runtime_changed: "More than one runtime model appears in the rows.",
   superseded_aggregate: "Older cumulative aggregate exports were replaced by a newer one and not used.",
   window_not_covered: "No single export covers the whole experiment window.",
+  window_not_populated: "The rows do not fall on at least 80% of the window's days, so the window was not actually run or the export leaves days out.",
   clustered_units: "Units (unit_id) have more than 1.2 conversations on average, so conversations are not independent and the intervals would be too narrow.",
 };
 

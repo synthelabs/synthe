@@ -432,13 +432,34 @@ test("hold when the runtime model changed during the experiment", () => {
   assert.equal(a.recommendation, "hold");
 });
 
+test("hold when the rows do not fall on at least 80% of the window's days, at the final analysis (S-03)", () => {
+  // 14-day window. Rows on the first 11 days only: 11 of 14 is 79%.
+  const thin = run(GOOD_BASE, GOOD_CAND, { days: 11 }).a;
+  assert.ok(thin.flags.includes("window_not_populated"), thin.flags.join(","));
+  assert.equal(thin.recommendation, "hold");
+  assert.ok(thin.reasons.some((r) => /11 of the 14 days/.test(r)), thin.reasons.join("\n"));
+  // 12 of 14 days (86%) is enough.
+  const ok = run(GOOD_BASE, GOOD_CAND, { days: 12 }).a;
+  assert.ok(!ok.flags.includes("window_not_populated"));
+  assert.equal(ok.recommendation, "keep");
+  // All rows inside the first 36 hours: the declared window is a claim the rows do not support.
+  const burst = run(GOOD_BASE, GOOD_CAND, { rows: (rows) => rows.map((r, i) => ({ ...r, started_at: isoAt(START, Math.floor((i * 36 * 60) / rows.length)) })) }).a;
+  assert.ok(burst.flags.includes("window_not_populated"));
+  assert.equal(burst.recommendation, "hold");
+  // An interim look at a part of the window is not flagged: it is meant to be partial.
+  const interim = run({ n: 400, resolved: 160, escalated: 40 }, { n: 400, resolved: 200, escalated: 120 }, { at: INTERIM_AT, days: 6 }).a;
+  assert.ok(!interim.flags.includes("window_not_populated"));
+  assert.equal(interim.recommendation, "revert");
+});
+
 test("hold when the export was made after the cutoff but covers only part of the window", () => {
   // The first seven days only, exported after the cutoff, with more than enough conversations and a clear win.
   const partial = { window: { start: START, end: "2026-10-08T00:00:00Z" } };
   const { a } = run(GOOD_BASE, GOOD_CAND, { days: 7, over: partial });
   assert.equal(a.final, true);
   assert.equal(a.primary.status, "clears");
-  assert.deepEqual(a.flags, ["window_not_covered"]);
+  // Seven of the fourteen days have rows, so the window is also not populated (S-03).
+  assert.deepEqual(a.flags, ["window_not_covered", "window_not_populated"]);
   assert.equal(a.recommendation, "hold");
   assert.ok(a.reasons.some((r) => r.includes("whole experiment window")));
   // Two partial exports that together span the window still leave no export that vouches for all of it.
