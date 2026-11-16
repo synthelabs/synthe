@@ -456,3 +456,15 @@ test("a journal.head more than one entry behind the journal is refused, one behi
     assert.equal((await run(ctx.dir, ["verify"])).code, 0);
   } finally { await ctx.stop(); }
 });
+
+test("--start must be a real calendar date and time", async () => {
+  const ctx = await replayedPilot();
+  try {
+    for (const start of ["2026-02-31T00:00:00Z", "2026-04-31T00:00:00Z", "2026-13-01T00:00:00Z", "2026-10-27T24:00:00Z", "2026-10-27T00:60:00Z", "2027-02-29T00:00:00Z"]) {
+      assert.equal(await ctx.run(["experiment", "--candidate", ctx.eligible, "--start", start]), 1, start);
+      assert.ok(ctx.lines.some((l) => l.startsWith("Refused (usage)") && /real date/.test(l)), `${start}: ${ctx.lines.at(-1)}`);
+    }
+    assert.equal(ctx.store.find("experiment.specified").length, 0);
+    assert.equal(await ctx.run(["experiment", "--candidate", ctx.eligible, "--start", "2028-02-29T00:00:00Z"]), 0, "a real leap day is fine");
+  } finally { await ctx.stop(); }
+});

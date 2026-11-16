@@ -474,6 +474,9 @@ export async function experiment(store: PilotStore, flags: Flags, deps: PilotDep
   eligibleReplay(store, candidate.id, active.id);
   const start = need(flags, "start", "when the customer will start the split, as a UTC time like 2026-11-16T00:00:00Z");
   if (Number.isNaN(ms(start))) throw new PilotError("usage", "--start must be a UTC time like 2026-11-16T00:00:00Z.");
+  // Date.parse rolls an impossible date (February 31) forward instead of refusing it; the window would then be
+  // stored under a date that is not the one typed.
+  if (new Date(ms(start)).toISOString().slice(0, 19) !== start.slice(0, 19)) throw new PilotError("usage", `--start ${start} is not a real date and time. Use a UTC time like 2026-11-16T00:00:00Z.`);
   // The split starts after the approval, which follows this command. A start already behind us would let traffic
   // run before anyone approved the change; if the split really did start already, say so.
   if (ms(start) < deps.now().getTime() && flags["allow-past-start"] !== true) {
