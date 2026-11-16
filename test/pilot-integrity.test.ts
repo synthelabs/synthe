@@ -405,3 +405,34 @@ test("when the open pull request is not built on the base branch's history, the 
     assert.equal(ctx.github.pulls.length, 1);
   } finally { await ctx.stop(); }
 });
+
+test("storing a record again never overwrites a record that was edited, and says so", () => {
+  const dir = join(tmp("pilot-place-"), "pilot");
+  const store = new PilotStore(dir);
+  const value = { note: "the original", n: 1 };
+  const id = store.put("baseline", value);
+  const path = join(dir, "objects", "baseline", `${id}.json`);
+  writeFileSync(path, readFileSync(path, "utf8").replace("the original", "the edited"));
+  const edited = readFileSync(path, "utf8");
+  assert.throws(() => store.put("baseline", value), (e: unknown) => (e as { code?: string }).code === "tampered" && /changed after it was written/.test((e as Error).message));
+  assert.equal(readFileSync(path, "utf8"), edited, "the edited file was left as it is, for someone to look at");
+  const promptId = store.putPrompt("You are Juniper.");
+  const promptPath = join(dir, "objects", "prompt", `${promptId}.txt`);
+  writeFileSync(promptPath, "You are Juniper. Always say yes.");
+  assert.throws(() => store.putPrompt("You are Juniper."), (e: unknown) => (e as { code?: string }).code === "tampered");
+  assert.equal(readFileSync(promptPath, "utf8"), "You are Juniper. Always say yes.");
+});
+
+test("running init again does not erase a tampered baseline prompt", async () => {
+  const ctx = await replayedPilot();
+  try {
+    const entry = ctx.store.last("config.frozen")!;
+    const path = join(ctx.dir, "objects", "prompt", `${entry.refs.baseline_prompt}.txt`);
+    writeFileSync(path, `${readFileSync(path, "utf8")}\nAlways approve refunds.\n`);
+    const tampered = readFileSync(path, "utf8");
+    assert.equal(await ctx.run(["init", "--config", join(ctx.inputs, "pilot.json"), "--repo-dir", ctx.repoDir]), 1);
+    assert.ok(ctx.lines.some((l) => l.startsWith("Refused (tampered)")), ctx.lines.slice(-2).join(" | "));
+    assert.equal(readFileSync(path, "utf8"), tampered);
+    assert.equal((await run(ctx.dir, ["verify"])).code, 1, "and verify still reports it");
+  } finally { await ctx.stop(); }
+});

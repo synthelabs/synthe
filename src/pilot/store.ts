@@ -60,13 +60,18 @@ export class PilotStore {
     return id;
   }
 
-  // A record's name is the hash of its content, so only one content is right for a name. A file there with any
-  // other content is damaged (a crash, a stray edit) and is put right; a good record is never touched.
+  // A record's name is the hash of its content, so only one content is right for a name. A file there that is empty, or is the start of
+  // the right content, is what an interrupted write could leave, and is put right. A file with any other content was changed after it was
+  // written: it is left exactly as it is, and the command stops, so that re-running a step never erases the
+  // evidence that a record was edited. A good record is never touched.
   private place(path: string, content: string): void {
     try {
       writeOnce(path, content);
     } catch (e) {
       if (!(e instanceof PilotError) || e.code !== "conflict") throw e;
+      if (!content.startsWith(readFileSync(path, "utf8"))) {
+        throw new PilotError("tampered", `${path} already exists with content that does not match its name, so it was changed after it was written. It was not overwritten. Compare it with a backup, or start a new pilot directory.`);
+      }
       writeAtomic(path, content);
     }
   }
