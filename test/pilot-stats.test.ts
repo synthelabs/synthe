@@ -139,9 +139,14 @@ test("sample size per arm", () => {
   assert.equal(sampleSizeProportions(0.5, 0.1, "lower_is_better", 0.05, 0.8), 388);
   // 0.2 -> 0.25: (1.959964*sqrt(2*.225*.775) + 0.841621*sqrt(.16+.1875))^2 / .0025 = 1093.7 -> 1094.
   assert.equal(sampleSizeProportions(0.2, 0.05, "higher_is_better", 0.05, 0.8), 1094);
-  // A target past 1 is clamped inside (0, 1), so the size is finite.
-  const clamped = sampleSizeProportions(0.95, 0.1, "higher_is_better", 0.05, 0.8);
+  // A target that lands exactly on 1 is clamped just inside (0, 1), so the size is finite.
+  const clamped = sampleSizeProportions(0.95, 0.05, "higher_is_better", 0.05, 0.8);
   assert.ok(clamped !== null && clamped > 0 && Number.isFinite(clamped));
+  // M-03: a gain that would take the rate past 0 or 1 is impossible. It used to be sized for the gain that was left
+  // (0.99 + 0.03 clamped to 0.99, a 0.01 change, 781 per arm), which promised a power the experiment cannot have.
+  assert.equal(sampleSizeProportions(0.99, 0.03, "higher_is_better", 0.05, 0.8), null);
+  assert.equal(sampleSizeProportions(0.95, 0.1, "higher_is_better", 0.05, 0.8), null);
+  assert.equal(sampleSizeProportions(0.01, 0.03, "lower_is_better", 0.05, 0.8), null);
   // Nothing to improve: a zero rate cannot go lower.
   assert.equal(sampleSizeProportions(0, 0.05, "lower_is_better", 0.05, 0.8), null);
   assert.equal(sampleSizeProportions(Number.NaN, 0.05, "higher_is_better", 0.05, 0.8), null);

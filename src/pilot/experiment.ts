@@ -57,7 +57,7 @@ export function buildExperimentSpec(input: {
   if (input.baseline_report.config_id !== input.config_id) fail("conflict", "The baseline report was made for a different pilot configuration. Make a baseline report for the current configuration first.");
   const required = input.baseline_report.required_per_arm.value;
   if (required === null) {
-    fail("invalid_telemetry", "The baseline report could not compute the required conversations per arm (no usable baseline values for the primary metric). Import a baseline export with mature outcomes and make the report again.");
+    fail("invalid_telemetry", "The baseline report could not compute the required conversations per arm (the baseline has no usable values for the primary metric, or min_effect asks for a rate past 0 or 1: the Required per arm line of the baseline report says which). Fix that and make the report again.");
   }
   const start = input.start;
   const end = addDays(start, c.analysis_window_days);

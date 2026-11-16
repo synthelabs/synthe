@@ -328,6 +328,17 @@ test("baseline report numbers on a small hand-checkable export", () => {
   assert.doesNotMatch(md, /c-\d{6}/);
 });
 
+test("a primary gain that would pass 100% cannot be sized, and the baseline says so", () => {
+  // M-03: resolved is 9 of 10; a gain of 0.15 would need a rate of 1.05.
+  const c = contract({ primary: { name: "resolved", kind: "rate", unit: "fraction of conversations", direction: "higher_is_better", min_effect: 0.15 } });
+  const rows = tenRows().map((r, i) => ({ ...r, values: { ...r.values, resolved: i === 0 ? 0 : 1 } }));
+  const imp = store(run(exp({ rows }), { contract: c }));
+  const r = baselineReport({ config_id: CONFIG_ID, contract: c, tag: BASE_TAG, imports: [imp] });
+  assert.equal(r.required_per_arm.value, null);
+  assert.match(r.required_per_arm.method, /impossible/);
+  assert.doesNotMatch(r.required_per_arm.method, /no usable resolved values/);
+});
+
 test("importing the same export twice does not change any count", () => {
   const imp = store(run(exp()));
   const once = baselineReport({ config_id: CONFIG_ID, contract: C, tag: BASE_TAG, imports: [imp] });

@@ -726,7 +726,7 @@ export function baselineReport(input: { config_id: Sha256; contract: MetricContr
   const requiredPerArm: Sourced = {
     value: required, source,
     method: power === null
-      ? `cannot be computed: ${powerMethod}. The baseline has no usable ${p.name} values to size from.`
+      ? `cannot be computed: ${powerMethod}. ${primary.estimate === null || (p.kind === "mean" && primary.stats.sd === null) ? `The baseline has no usable ${p.name} values to size from.` : p.kind === "rate" ? `The baseline ${p.name} is ${fmt(primary.estimate)}, so a change of ${fmt(p.min_effect)} ${p.direction === "higher_is_better" ? "up" : "down"} would pass ${p.direction === "higher_is_better" ? "1" : "0"}: that gain is impossible. Lower min_effect or choose another primary metric.` : `The baseline spread (sd) is not positive, so there is nothing to size from.`}`
       : `max(min_samples_per_arm ${contract.min_samples_per_arm}, ${power} from ${powerMethod})`,
   };
   const daysTo = required !== null && dailyVolume.value !== null && dailyVolume.value > 0 ? Math.ceil((2 * required) / dailyVolume.value) : null;

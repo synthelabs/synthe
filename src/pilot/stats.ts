@@ -273,7 +273,8 @@ export function chiSquareIndependence(table: number[][]): ChiSquare | null {
 
 // Conversations per arm for a two-sided test of two proportions (normal approximation, no continuity correction):
 // n = (z_{1-a/2} sqrt(2 pbar qbar) + z_{power} sqrt(p1 q1 + p2 q2))^2 / (p1 - p2)^2, with p2 = p1 + delta in the good
-// direction, clamped inside (0, 1). Null when the clamped target leaves no change to detect.
+// direction, clamped inside (0, 1) when it lands on the boundary. Null when the gain is impossible: a target past 0
+// or 1 cannot be reached, and sizing for the smaller gain that is left would promise a power the experiment lacks.
 export const PROPORTION_CLAMP = 1e-6;
 export function sampleSizeProportions(p1: number, delta: number, direction: Direction, alpha: number, power: number): number | null {
   if (!finite(p1) || p1 < 0 || p1 > 1 || !finite(delta) || delta <= 0) return null;
@@ -281,6 +282,7 @@ export function sampleSizeProportions(p1: number, delta: number, direction: Dire
   const zb = normalQuantile(power);
   if (za === null || zb === null) return null;
   const raw = direction === "higher_is_better" ? p1 + delta : p1 - delta;
+  if (raw > 1 + 1e-12 || raw < -1e-12) return null;
   const p2 = Math.min(1 - PROPORTION_CLAMP, Math.max(PROPORTION_CLAMP, raw));
   const diff = Math.abs(p2 - p1);
   if (diff < PROPORTION_CLAMP || Math.sign(p2 - p1) !== Math.sign(raw - p1)) return null;
