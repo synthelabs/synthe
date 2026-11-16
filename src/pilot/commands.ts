@@ -168,10 +168,13 @@ function assertNoHoldoutLeak(store: PilotStore, pack: Pack, added: Set<string> =
 }
 
 // An export cannot have been made after it is imported. Its own date decides what counts as final, so a date in
-// the future would let an unfinished experiment read as finished.
+// the future would let an unfinished experiment read as finished. A few minutes of clock difference between the
+// customer's warehouse and this machine are tolerated, except for an export dated at or after the analysis cutoff:
+// that one would be read as the final analysis, so it gets no tolerance at all.
 const CLOCK_SKEW_MS = 5 * 60_000;
-function assertNotFromTheFuture(imported: TelemetryImport, now: Date): void {
-  if (ms(imported.exported_at) > now.getTime() + CLOCK_SKEW_MS) {
+function assertNotFromTheFuture(imported: TelemetryImport, now: Date, cutoff?: IsoTime): void {
+  const skew = cutoff !== undefined && ms(imported.exported_at) >= ms(cutoff) ? 0 : CLOCK_SKEW_MS;
+  if (ms(imported.exported_at) > now.getTime() + skew) {
     throw new PilotError("invalid_telemetry", `The export says it was made at ${imported.exported_at}, which is later than now (${iso(now)}). Check the export's clock and time zone (times must be UTC), then export again.`);
   }
 }
@@ -614,7 +617,7 @@ async function analyzeLocked(store: PilotStore, flags: Flags, deps: PilotDeps): 
       text: readBounded(file), readSibling: (name) => readBounded(inside(dirname(file), name)),
       purpose: "experiment", scope_id: experimentId, contract: f.config.metric, tags: [spec.arms.baseline.tag, spec.arms.candidate.tag], window: spec.window,
     });
-    assertNotFromTheFuture(imported, deps.now());
+    assertNotFromTheFuture(imported, deps.now(), spec.analysis_cutoff);
     const id = contentId(imported);
     if (existing.some((i) => i.id === id)) deps.say(`This export was already imported (${shortId(id)}); nothing is counted twice.`);
     else {

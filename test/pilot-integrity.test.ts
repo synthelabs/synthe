@@ -290,3 +290,25 @@ test("a journal line cut off by a crash is ignored, noted by verify, and removed
     }
   } finally { await ctx.stop(); }
 });
+
+test("an export dated at or after the cutoff is refused when it is even a minute ahead of the clock, an interim one is allowed the usual skew", async () => {
+  const ctx = await approvedPilot();
+  try {
+    const tag = candidateTag(ctx.candidate);
+    const imports = () => ctx.store.find("telemetry.imported").filter((e) => e.refs.purpose === "experiment").length;
+    // The final export says it was made at the cutoff, 00:00 on 2026-11-12. The clock says 23:56 the day before:
+    // accepted, it would read as a final analysis four minutes before the experiment is allowed to end.
+    const final = writeExport(ctx, "final.json", experimentCFinal(tag));
+    const refusal = await run(ctx.dir, ["analyze", "--experiment", ctx.experiment, "--telemetry", final], "2026-11-11T23:56:00Z");
+    assert.equal(refusal.code, 1, refusal.lines.join(" | "));
+    assert.equal(imports(), 0);
+    assert.ok(refusal.lines.some((l) => l.startsWith("Refused (invalid_telemetry)") && /later than now/.test(l)), refusal.lines.join(" | "));
+    // An interim look (the day-6 export, made 2026-11-02T00:00Z) three minutes ahead of the clock is within the skew.
+    const interim = writeExport(ctx, "day6.json", experimentCInterim(tag));
+    const early = await run(ctx.dir, ["analyze", "--experiment", ctx.experiment, "--telemetry", interim], "2026-11-01T23:57:00Z");
+    assert.equal(early.code, 0, early.lines.join(" | "));
+    // The same final export a minute after its own time is fine.
+    const ok = await run(ctx.dir, ["analyze", "--experiment", ctx.experiment, "--telemetry", final], "2026-11-12T00:01:00Z");
+    assert.equal(ok.code, 0, ok.lines.join(" | "));
+  } finally { await ctx.stop(); }
+});
