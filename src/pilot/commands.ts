@@ -276,7 +276,16 @@ export async function init(store: PilotStore, flags: Flags, deps: PilotDeps): Pr
   return 0;
 }
 
-export async function baseline(store: PilotStore, flags: Flags, deps: PilotDeps): Promise<number> {
+// An import is read, checked against what was imported before, computed on and then recorded. Two of these at once
+// would each see the journal as it was before the other, and both would record a result that leaves out the other's
+// export. One at a time, and everything that reads the journal happens inside the lock, so it reads it afresh.
+const EVIDENCE_LOCK_STALE_MS = 10 * 60_000;
+const EVIDENCE_LOCK = "evidence";
+
+export const baseline = (store: PilotStore, flags: Flags, deps: PilotDeps): Promise<number> =>
+  store.exclusive(EVIDENCE_LOCK, EVIDENCE_LOCK_STALE_MS, () => baselineLocked(store, flags, deps));
+
+async function baselineLocked(store: PilotStore, flags: Flags, deps: PilotDeps): Promise<number> {
   const f = frozen(store);
   const file = need(flags, "telemetry", "the customer's baseline export (JSON)");
   const imported = importTelemetry({
@@ -584,7 +593,10 @@ export async function approve(store: PilotStore, flags: Flags, deps: PilotDeps):
   return 0;
 }
 
-export async function analyze(store: PilotStore, flags: Flags, deps: PilotDeps): Promise<number> {
+export const analyze = (store: PilotStore, flags: Flags, deps: PilotDeps): Promise<number> =>
+  store.exclusive(EVIDENCE_LOCK, EVIDENCE_LOCK_STALE_MS, () => analyzeLocked(store, flags, deps));
+
+async function analyzeLocked(store: PilotStore, flags: Flags, deps: PilotDeps): Promise<number> {
   const f = frozen(store);
   const experimentId = store.resolve("experiment", need(flags, "experiment", "the experiment id"));
   const spec = store.get<ExperimentSpec>("experiment", experimentId);

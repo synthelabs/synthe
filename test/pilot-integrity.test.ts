@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DEMO, experimentCFinal, experimentFailureCases } from "../src/pilot/demo-data.ts";
+import { DEMO, experimentCFinal, experimentCInterim, experimentFailureCases } from "../src/pilot/demo-data.ts";
 import { canonicalJson } from "../src/core/evidence.ts";
 import { sha256 } from "../src/core/safety.ts";
 import { candidateTag } from "../src/pilot/ids.ts";
@@ -180,5 +180,39 @@ test("an empty or half-written lock is a live owner that has not finished writin
     utimesSync(lock, old, old);
     store.record("step", `old-${text}`, { a: "1" }, "2026-11-01T00:00:00Z");
     assert.ok(!existsSync(lock));
+  }
+});
+
+// A pilot with an approved experiment, ready for a final export, and the path of that export.
+async function approvedPilot(): Promise<Ctx & { candidate: string; experiment: string; exported: string }> {
+  const ctx = await replayedPilot();
+  const must = async (argv: string[]) => { if (await ctx.run(argv) !== 0) throw new Error(`setup failed at ${argv[0]}: ${ctx.lines.slice(-3).join(" | ")}`); };
+  const candidate = ctx.eligible;
+  await must(["experiment", "--candidate", candidate, "--start", DEMO.experiment_c_start]);
+  const experiment = ctx.last("experiment.specified");
+  await must(["review", "--candidate", candidate]);
+  ctx.on("2026-10-26");
+  await must(["approve", "--candidate", candidate, "--experiment", experiment, "--approver", "Tomas Lindqvist"]);
+  const exported = writeExport(ctx, "final.json", experimentCFinal(candidateTag(candidate)));
+  return Object.assign(ctx, { candidate, experiment, exported });
+}
+
+test("two analyses of the same experiment at once leave a journal that still verifies", async () => {
+  // Before the fix both read the journal, both found nothing imported, and both recorded their own import and
+  // a decision, so the stored decision of the first no longer followed from the imports recorded before the second.
+  for (let round = 0; round < 3; round++) {
+    const ctx = await approvedPilot();
+    try {
+      // Two different exports, as when the customer sends the day-6 look and the final one close together.
+      const interim = writeExport(ctx, "day6.json", experimentCInterim(candidateTag(ctx.candidate)));
+      const job = (file: string) => ["main", ctx.dir, "2026-11-13T00:00:00Z", "analyze", "--experiment", ctx.experiment, "--telemetry", file];
+      const done = await inParallel([job(interim), job(ctx.exported)]);
+      const results = done.map((d) => JSON.parse(d.out) as { code: number; lines: string[] });
+      assert.ok(results.some((r) => r.code === 0), "one of them decided");
+      for (const r of results.filter((x) => x.code !== 0)) assert.ok(r.lines.some((l) => /Another pilot command/.test(l)), `the other was told to wait: ${r.lines.join(" | ")}`);
+      const verified = await run(ctx.dir, ["verify"]);
+      assert.equal(verified.code, 0, `round ${round}: ${verified.lines.join(" | ")}`);
+      assert.equal(ctx.store.find("analysis.decided").length, 1);
+    } finally { await ctx.stop(); }
   }
 });
