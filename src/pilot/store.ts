@@ -169,6 +169,11 @@ export class PilotStore {
     if (head && (entries.length < head.seq || entries[head.seq - 1].hash !== head.hash)) {
       throw new PilotError("tampered", `journal.jsonl has ${entries.length} entries but its recorded head is entry ${head.seq}, so entries were removed or changed.`);
     }
+    // The head is written right after each append, so it is at most one entry behind (a crash between the two).
+    // Further behind, entries were added without it, or the head was rolled back.
+    if (head && entries.length > head.seq + 1) {
+      throw new PilotError("tampered", `journal.jsonl has ${entries.length} entries but its recorded head is entry ${head.seq}, ${entries.length - head.seq} behind. A crash leaves it at most one behind, so entries were added to the journal or the head was rolled back.`);
+    }
     if (!head && entries.length > 1) throw new PilotError("tampered", "journal.head is missing, so the journal cannot be checked for removed entries.");
     return entries;
   }

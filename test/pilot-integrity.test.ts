@@ -436,3 +436,23 @@ test("running init again does not erase a tampered baseline prompt", async () =>
     assert.equal((await run(ctx.dir, ["verify"])).code, 1, "and verify still reports it");
   } finally { await ctx.stop(); }
 });
+
+test("a journal.head more than one entry behind the journal is refused, one behind (a crash between the two writes) is not", async () => {
+  const ctx = await approvedPilot();
+  try {
+    const entries = ctx.store.journal();
+    const headPath = join(ctx.dir, "journal.head");
+    const real = readFileSync(headPath, "utf8");
+    const pointAt = (n: number) => writeFileSync(headPath, `${JSON.stringify({ seq: n, hash: entries[n - 1].hash })}\n`);
+    pointAt(entries.length - 1);
+    assert.equal((await run(ctx.dir, ["verify"])).code, 0, "one behind is what a crash between the append and the head update leaves");
+    for (const behind of [2, 3]) {
+      pointAt(entries.length - behind);
+      const result = await run(ctx.dir, ["verify"]);
+      assert.equal(result.code, 1, result.lines.join(" | "));
+      assert.ok(result.lines.some((l) => /behind/.test(l)), result.lines.join(" | "));
+    }
+    writeFileSync(headPath, real);
+    assert.equal((await run(ctx.dir, ["verify"])).code, 0);
+  } finally { await ctx.stop(); }
+});
