@@ -207,9 +207,21 @@ export class PilotStore {
     try { return await fn(); } finally { release(); }
   }
 
+  // The lock file holds its owner's process id. Several things make it look abandoned when it is not, and each
+  // must be waited out rather than taken over: it can vanish between our failed create and our read (its owner
+  // released it), it can be empty (its owner created it and has not written the id yet), and its content can be
+  // half-written. Only a lock whose owner is gone, or that is older than `staleMs`, is removed, and only after
+  // reading it again and finding the same content, so a lock that was replaced in between is not removed.
   private acquire(file: string, staleMs: number): () => void {
     mkdirSync(this.dir, { recursive: true });
     const lock = join(this.dir, file);
+    const pause = new Int32Array(new SharedArrayBuffer(4));
+    const read = (): { text: string; age: number } | null => {
+      try { return { text: readFileSync(lock, "utf8"), age: Date.now() - statSync(lock).mtimeMs }; } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw e;
+      }
+    };
     for (let attempt = 0; ; attempt++) {
       try {
         const fd = openSync(lock, "wx", 0o600);
@@ -218,17 +230,33 @@ export class PilotStore {
         break;
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-        const owner = Number(readFileSync(lock, "utf8").trim());
-        // A lock with this process's id is live only while this process still holds it (two commands running in
-        // one process); otherwise it was left by an earlier process that had the same id.
-        let alive = Number.isInteger(owner) && owner > 0 && (owner === process.pid ? HELD.has(lock) : true);
-        if (alive && owner !== process.pid) { try { process.kill(owner, 0); } catch (e) { alive = (e as NodeJS.ErrnoException).code !== "ESRCH"; } }
-        try { if (Date.now() - statSync(lock).mtimeMs > staleMs) alive = false; } catch { alive = false; }
-        if (alive || attempt >= 2) throw new PilotError("conflict", `Another pilot command (process ${owner}) is working in ${this.dir} (${file}). Wait for it to finish and run this again.`);
+        const seen = read();
+        if (seen === null) continue; // released between our create and our read: try to create it again
+        const owner = Number(seen.text.trim());
+        const known = seen.text.trim() !== "" && Number.isInteger(owner) && owner > 0;
+        let alive = true;
+        if (known) {
+          // A lock with this process's id is live only while this process still holds it (two commands running in
+          // one process); otherwise it was left by an earlier process that had the same id.
+          alive = owner === process.pid ? HELD.has(lock) : true;
+          if (alive && owner !== process.pid) { try { process.kill(owner, 0); } catch (err) { alive = (err as NodeJS.ErrnoException).code !== "ESRCH"; } }
+        } else if (attempt < 40) {
+          // Empty or unreadable: its owner is most likely between creating it and writing its id. Give it a moment.
+          Atomics.wait(pause, 0, 0, 5);
+          continue;
+        }
+        if (seen.age > staleMs) alive = false;
+        if (alive || attempt >= 400) throw new PilotError("conflict", `Another pilot command${known ? ` (process ${owner})` : ""} is working in ${this.dir} (${file}). Wait for it to finish and run this again.`);
+        const again = read();
+        if (again === null || again.text !== seen.text) continue; // it changed hands while we looked: judge it afresh
         try { unlinkSync(lock); } catch { /* another process removed it first */ }
       }
     }
-    return () => { HELD.delete(lock); try { unlinkSync(lock); } catch { /* already gone */ } };
+    return () => {
+      HELD.delete(lock);
+      // Only our own lock: if it was taken over as stale while we ran, the file now belongs to someone else.
+      try { if (readFileSync(lock, "utf8") === String(process.pid)) unlinkSync(lock); } catch { /* already gone */ }
+    };
   }
 
   // A rendering of stored records. Safe to overwrite: the records, not the report, are the evidence.

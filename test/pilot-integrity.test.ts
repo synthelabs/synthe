@@ -1,7 +1,8 @@
 // Integrity defects found in review of the pilot's store, approval and publish paths. Each test here failed on the
 // code before its fix; the commit that fixed it says which.
 import assert from "node:assert/strict";
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DEMO, experimentCFinal, experimentFailureCases } from "../src/pilot/demo-data.ts";
@@ -135,4 +136,49 @@ test("verify fails a decision whose approval was followed by a rejection before 
     assert.ok(result.lines.some((l) => /followed by a rejection/.test(l)), result.lines.join(" | "));
     assert.ok(readFileSync(join(copy, "journal.jsonl"), "utf8").includes('"decision":"rejected"'));
   } finally { await ctx.stop(); }
+});
+
+// Starts several test/pilot-worker.ts processes, releases them together, and returns what each printed.
+async function inParallel(jobs: string[][]): Promise<{ code: number | null; out: string }[]> {
+  const root = tmp("pilot-procs-");
+  const go = join(root, "go");
+  const children = jobs.map((job, i) => {
+    const child = spawn(process.execPath, [join(import.meta.dirname, "pilot-worker.ts"), join(root, `ready-${i}`), go, ...job], { stdio: ["ignore", "pipe", "ignore"], env: { PATH: process.env.PATH ?? "" } });
+    let out = "";
+    child.stdout.on("data", (d) => { out += d; });
+    return new Promise<{ code: number | null; out: string }>((resolve) => { child.on("close", (code) => { resolve({ code, out }); }); });
+  });
+  const deadline = Date.now() + 60_000;
+  while (jobs.some((_, i) => !existsSync(join(root, `ready-${i}`))) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+  writeFileSync(go, "go");
+  return Promise.all(children);
+}
+
+test("two processes appending to one journal never fork it", async () => {
+  // Before the fix a process could take a lock that another had just released or not yet written, so two of them
+  // wrote the same sequence number: most runs of this broke the chain.
+  for (let round = 0; round < 3; round++) {
+    const dir = join(tmp("pilot-lock-"), "pilot");
+    mkdirSync(dir, { recursive: true });
+    const done = await inParallel([1, 2, 3].map((n) => ["record", dir, `w${n}`, "40"]));
+    for (const d of done) assert.equal(d.code, 0, d.out);
+    const entries = new PilotStore(dir).journal();
+    assert.equal(entries.length, 120, `round ${round}: every entry from every process is in one unbroken chain`);
+  }
+});
+
+test("an empty or half-written lock is a live owner that has not finished writing, until it is old", () => {
+  const dir = join(tmp("pilot-emptylock-"), "pilot");
+  mkdirSync(dir, { recursive: true });
+  const store = new PilotStore(dir);
+  const lock = join(dir, "journal.lock");
+  for (const text of ["", "12ab"]) {
+    writeFileSync(lock, text);
+    assert.throws(() => store.record("step", "k", { a: "1" }, "2026-11-01T00:00:00Z"), (e: unknown) => (e as { code?: string }).code === "conflict", `fresh lock holding "${text}"`);
+    assert.equal(readFileSync(lock, "utf8"), text, "a live lock is left alone");
+    const old = new Date(Date.now() - 5 * 60_000);
+    utimesSync(lock, old, old);
+    store.record("step", `old-${text}`, { a: "1" }, "2026-11-01T00:00:00Z");
+    assert.ok(!existsSync(lock));
+  }
 });
