@@ -153,6 +153,26 @@ test("the specification sets the window, cutoff, allocation and predeclared meth
   }
 });
 
+test("baseline flags about a short window, too little volume or missing events need an explicit acceptance (M-02)", () => {
+  const base = { pilot_id: "fernhill-support", config_id: CONFIG_ID, contract: contract(), baseline: { prompt_id: BASE_PROMPT, tag: BASE_TAG }, candidate: { prompt_id: CAND_PROMPT, tag: CAND_TAG }, start: START };
+  const flagged = { ...fakeReport(600), flags: ["short_window", "window_too_short_for_required_samples", "missing_events"] };
+  // Without acceptance the specification is not written, and the refusal names each flag and the way to accept it.
+  refusal(() => buildExperimentSpec({ ...base, baseline_report: flagged }), "conflict", /short_window.*window_too_short_for_required_samples.*missing_events.*--accept-flag/s);
+  // Naming only some is not enough.
+  refusal(() => buildExperimentSpec({ ...base, baseline_report: flagged, accept_flags: ["short_window", "missing_events"] }), "conflict", /window_too_short_for_required_samples/);
+  // Naming a flag the baseline did not raise is a typo, not an acceptance.
+  refusal(() => buildExperimentSpec({ ...base, baseline_report: flagged, accept_flags: ["short_window", "window_too_short_for_required_samples", "missing_events", "short_windows"] }), "usage", /short_windows/);
+  const s = buildExperimentSpec({ ...base, baseline_report: flagged, accept_flags: ["short_window", "window_too_short_for_required_samples", "missing_events"] });
+  assert.deepEqual(s.baseline_flags, ["short_window", "window_too_short_for_required_samples", "missing_events"]);
+  assert.deepEqual(s.accepted_baseline_flags, ["short_window", "window_too_short_for_required_samples", "missing_events"]);
+  const md = renderExperimentSpec(s, EXPERIMENT_ID);
+  assert.match(md, /## Baseline flags/);
+  assert.match(md, /short_window.*accepted/);
+  // A clean baseline needs nothing, and a flag that is not one of the three needs no acceptance (it has its own rule).
+  assert.equal(buildExperimentSpec({ ...base, baseline_report: fakeReport(600) }).accepted_baseline_flags, undefined);
+  assert.doesNotThrow(() => buildExperimentSpec({ ...base, baseline_report: { ...fakeReport(600), flags: ["guard_margin_infeasible"] } }));
+});
+
 test("the specification refuses bad inputs", () => {
   const base = { pilot_id: "fernhill-support", config_id: CONFIG_ID, contract: contract(), baseline: { prompt_id: BASE_PROMPT, tag: BASE_TAG }, candidate: { prompt_id: CAND_PROMPT, tag: CAND_TAG }, baseline_report: fakeReport(600), start: START };
   refusal(() => buildExperimentSpec({ ...base, start: "2026-10-01" }), "usage", /start/);

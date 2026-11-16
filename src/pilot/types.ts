@@ -622,6 +622,8 @@ export interface ExperimentSpec {
   rollback: { prompt_id: Sha256; tag: string; instructions: string };
   // The baseline report's flags when the specification was written. Absent in older records.
   baseline_flags?: string[];
+  // Of those, the ones a person accepted by name (--accept-flag) to get the specification written.
+  accepted_baseline_flags?: string[];
 }
 
 export type Recommendation = "keep" | "hold" | "revert";

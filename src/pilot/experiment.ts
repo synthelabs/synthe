@@ -54,11 +54,23 @@ export const KEEP_BLOCKERS = ["guard_margin_infeasible"] as const;
 const LATE_ROWS_MIN = 5;
 const LATE_ROWS_SHARE = 0.02;
 
+const BASELINE_FLAG_WARNING: Record<(typeof ACCEPTABLE_BASELINE_FLAGS)[number], string> = {
+  short_window: "the baseline covers less than 7 days, so weekly patterns are not in it.",
+  window_too_short_for_required_samples: "at the measured volume the experiment cannot reach the required conversations per arm inside the window, so it will most likely end in hold.",
+  missing_events: "some metric is missing for more conversations than the contract allows, so its outcome logging is unreliable.",
+};
+
 const pctLevel = (level: number) => `${Number((level * 100).toFixed(2))}%`;
+
+// Baseline problems that make an experiment likely to end in hold, or its keep less trustworthy. The specification is
+// written only when the person names each one that was raised (M-02).
+export const ACCEPTABLE_BASELINE_FLAGS = ["short_window", "window_too_short_for_required_samples", "missing_events"] as const;
 
 export function buildExperimentSpec(input: {
   pilot_id: string; config_id: Sha256; contract: MetricContract; baseline: ArmRef; candidate: ArmRef;
   baseline_report: BaselineReport; start: IsoTime;
+  // Baseline flags the person accepts by name (the CLI's repeatable --accept-flag).
+  accept_flags?: string[];
   // Intended share of traffic for the candidate. Absent: 0.5.
   candidate_share?: number;
 }): ExperimentSpec {
@@ -72,6 +84,14 @@ export function buildExperimentSpec(input: {
   const required = input.baseline_report.required_per_arm.value;
   if (required === null) {
     fail("invalid_telemetry", "The baseline report could not compute the required conversations per arm (the baseline has no usable values for the primary metric, or min_effect asks for a rate past 0 or 1: the Required per arm line of the baseline report says which). Fix that and make the report again.");
+  }
+  const raised = ACCEPTABLE_BASELINE_FLAGS.filter((f) => input.baseline_report.flags.includes(f));
+  const accepted = input.accept_flags ?? [];
+  const unknown = accepted.filter((f) => !raised.includes(f as (typeof ACCEPTABLE_BASELINE_FLAGS)[number]));
+  if (unknown.length > 0) fail("usage", `--accept-flag names ${unknown.join(", ")}, which the baseline report did not raise${raised.length > 0 ? ` (it raised: ${raised.join(", ")})` : " (it raised none of the flags that need acceptance)"}. Check the spelling.`);
+  const unaccepted = raised.filter((f) => !accepted.includes(f));
+  if (unaccepted.length > 0) {
+    fail("conflict", `The baseline report raised ${unaccepted.join(", ")}. ${unaccepted.map((f) => `${f}: ${BASELINE_FLAG_WARNING[f]}`).join(" ")} Fix the baseline, or accept each one by name: ${unaccepted.map((f) => `--accept-flag ${f}`).join(" ")}.`);
   }
   const start = input.start;
   const end = addDays(start, c.analysis_window_days);
@@ -118,6 +138,7 @@ export function buildExperimentSpec(input: {
     },
     telemetry_fields: fields,
     baseline_flags: [...input.baseline_report.flags],
+    ...(raised.length > 0 ? { accepted_baseline_flags: [...raised] } : {}),
     rollback: {
       prompt_id: input.baseline.prompt_id,
       tag: input.baseline.tag,
@@ -506,7 +527,9 @@ export function renderExperimentSpec(spec: ExperimentSpec, experimentId: Sha256)
   L.push("## Stop rules", "", `- ${spec.methods.early_stop}`, `- ${spec.methods.revert}`, `- ${spec.methods.keep}`, `- ${spec.methods.hold}`, "");
   if ((spec.baseline_flags ?? []).length > 0) {
     L.push("## Baseline flags", "", "The baseline report raised these flags when this plan was written. Read them before the experiment starts:", "");
-    for (const f of spec.baseline_flags as string[]) L.push(`- ${f}${f === "guard_margin_infeasible" ? ": at the planned size some guard cannot be shown safe, so keep is not possible; a harmful result can still revert" : ""}`);
+    for (const f of spec.baseline_flags as string[]) {
+      L.push(`- ${f}${f === "guard_margin_infeasible" ? ": at the planned size some guard cannot be shown safe, so keep is not possible; a harmful result can still revert" : ""}${(spec.accepted_baseline_flags ?? []).includes(f) ? " (accepted by name when this plan was written)" : ""}`);
+    }
     L.push("");
   }
   L.push("## What to export", "");
