@@ -18,6 +18,11 @@ export const TASK_FILES = {
   "5": ["src/metric/types.ts", "src/metric/command.ts", "test/metric-conformance.ts", "test/metric-source.test.ts"],
   "6": ["src/live/assign.ts", "docs/assign-vectors.json", "test/live-assign.test.ts"],
   "7": ["src/cli/metric-check.ts", "src/live/plan.ts", "src/cli/main.ts", "dist/cli.js", "dist/action.mjs", "test/live-plan.test.ts", "test/metric-check.test.ts"],
+  // 2026-11-17 plan (notes product/plans/2026-11-17-live-gate-msprt-tasks.md): review items, then mSPRT.
+  "8": ["src/live/rule.ts", "src/live/gate.ts", "docs/assign-vectors.json", "scripts/simulate-live-gate.ts", "test/live-rule.test.ts", "test/live-gate.test.ts", "test/live-assign.test.ts", "test/live-simulate.test.ts"],
+  "9": ["src/live/stats.ts", "test/live-stats.test.ts"],
+  "10": ["src/live/rule.ts", "src/live/gate.ts", "scripts/mutation-check.mjs", "test/live-rule.test.ts", "test/live-gate.test.ts"],
+  "11": ["scripts/simulate-live-gate.ts", "test/live-simulate.test.ts"],
 };
 const ALL_FILES = [...new Set(Object.values(TASK_FILES).flat())];
 
