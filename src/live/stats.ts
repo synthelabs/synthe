@@ -77,25 +77,28 @@ export function rateTest(
   return { diff, se, z, p: twoSided(z) };
 }
 
+// One arm of a mean: its mean, and the variance of that mean (sample variance over n). Null when the sums
+// are impossible for real data.
+function meanArm(a: { units: number; sum: number; sum_sq: number }): { m: number; v: number } | null {
+  const m = a.sum / a.units;
+  const num = a.sum_sq - a.units * m * m;
+  // Returns null when the sums are impossible for real data: a sum of squares below sum^2 / n means a
+  // negative variance, so the test must not promote on it.
+  if (num < -1e-12 * a.sum_sq) return null;
+  // Below the threshold the subtraction is rounding noise, as when every value in the arm is the
+  // same: treat it as zero, so a constant arm gives se 0 and a null test.
+  const v = num <= 1e-12 * a.sum_sq ? 0 : num / (a.units - 1);
+  return { m, v: v / a.units };
+}
+
 // Welch-style z-test for a mean, built from sums so a rule never needs the raw values.
 export function meanTest(
   base: { units: number; sum: number; sum_sq: number },
   test: { units: number; sum: number; sum_sq: number },
 ): Test | null {
   if (base.units < 2 || test.units < 2) return null;
-  // Returns null when the sums are impossible for real data: a sum of squares below sum^2 / n means a
-  // negative variance, so the test must not promote on it.
-  const arm = (a: { units: number; sum: number; sum_sq: number }) => {
-    const m = a.sum / a.units;
-    const num = a.sum_sq - a.units * m * m;
-    if (num < -1e-12 * a.sum_sq) return null;
-    // Below the threshold the subtraction is rounding noise, as when every value in the arm is the
-    // same: treat it as zero, so a constant arm gives se 0 and a null test.
-    const v = num <= 1e-12 * a.sum_sq ? 0 : num / (a.units - 1);
-    return { m, v: v / a.units };
-  };
-  const b = arm(base);
-  const t = arm(test);
+  const b = meanArm(base);
+  const t = meanArm(test);
   if (b === null || t === null) return null;
   const se = Math.sqrt(b.v + t.v);
   if (se === 0) return null;
@@ -123,4 +126,66 @@ export function srmP(units: [number, number], weights: [number, number]): number
 export function interval(t: Test, alpha: number): [number, number] {
   const q = normalQuantile(1 - alpha / 2);
   return [t.diff - q * t.se, t.diff + q * t.se];
+}
+
+// Variance of the rate difference for mSPRT: p(1-p)/(n-1) per arm, summed. Unpooled because research
+// A1 section 3.2 specifies the Welch form for V: V must estimate Var(D) at the true difference, since the
+// interval [D - h, D + h] is inverted at a non-zero delta. The pooled variance of rateTest is valid only
+// at delta = 0. On equal arms the two are nearly equal, so the choice matters for unequal arms.
+// Null when an arm has fewer than 2 units, or when the counts are impossible.
+export function rateVariance(
+  base: { units: number; events: number },
+  test: { units: number; events: number },
+): number | null {
+  const arm = (a: { units: number; events: number }) => {
+    if (!Number.isFinite(a.units) || !(a.events >= 0 && a.events <= a.units)) return null;
+    if (a.units < 2) return null;
+    const p = a.events / a.units;
+    return (p * (1 - p)) / (a.units - 1);
+  };
+  const b = arm(base);
+  const t = arm(test);
+  if (b === null || t === null) return null;
+  return b + t;
+}
+
+// Variance of the mean difference, the same value as meanTest's se squared. Null below 2 units per arm,
+// or when the sums are impossible.
+export function meanVariance(
+  base: { units: number; sum: number; sum_sq: number },
+  test: { units: number; sum: number; sum_sq: number },
+): number | null {
+  if (base.units < 2 || test.units < 2) return null;
+  const b = meanArm(base);
+  const t = meanArm(test);
+  if (b === null || t === null) return null;
+  return b.v + t.v;
+}
+
+// ln of the mSPRT likelihood ratio for an effect d with variance v and prior scale tau:
+//   ln L = 0.5 ln(V / (V + tau^2)) + tau^2 D^2 / (2 V (V + tau^2)).
+// Computed in logs, so a very strong reading cannot overflow into a wrong decision. Null on bad input.
+export function msprtLog(d: number, v: number, tau: number): number | null {
+  if (!Number.isFinite(d) || !Number.isFinite(v) || !Number.isFinite(tau)) return null;
+  if (v <= 0 || tau <= 0) return null;
+  const t2 = tau * tau;
+  return 0.5 * Math.log(v / (v + t2)) + (t2 / (v + t2)) * ((d * d) / (2 * v));
+}
+
+// The mSPRT likelihood ratio itself. It may be Infinity for very strong readings; compare it with the
+// threshold, or use msprtLog, rather than doing arithmetic on it.
+export function msprt(d: number, v: number, tau: number): number | null {
+  const l = msprtLog(d, v, tau);
+  return l === null ? null : Math.exp(l);
+}
+
+// Half-width h such that |d| >= h exactly when the mSPRT ratio reaches 1/alpha:
+//   h = sqrt( (2 V (V + tau^2) / tau^2) * ( ln(1/alpha) + 0.5 ln((V + tau^2) / V) ) ).
+// Null on bad input.
+export function msprtHalfWidth(v: number, tau: number, alpha: number): number | null {
+  if (!Number.isFinite(v) || !Number.isFinite(tau) || !Number.isFinite(alpha)) return null;
+  if (v <= 0 || tau <= 0 || alpha <= 0 || alpha >= 1) return null;
+  const t2 = tau * tau;
+  const h2 = ((2 * v * (v + t2)) / t2) * (Math.log(1 / alpha) + 0.5 * Math.log((v + t2) / v));
+  return Math.sqrt(h2);
 }
