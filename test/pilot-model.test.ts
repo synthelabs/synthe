@@ -107,3 +107,12 @@ test("the call and character limits stop the request that would pass them, befor
   assert.equal(await codeOf(() => byChars.chat(request("s".repeat(15), [{ role: "user", text: "more than five" }]))), "budget_exceeded");
   assert.equal(sent, 2, "nothing was sent for the refused request");
 });
+
+test("a model-written rationale that carries an encoded run or markup is refused: no candidate is made (EG-04)", async () => {
+  const reply = (rationale: string): ChatModel => ({ destination: "fake:model", async chat() { return { text: `RATIONALE: ${rationale}\nPROMPT:\nYou are Juniper.\n- State the date.\n`, tool_calls: [], stop: "end" }; } });
+  const blob = Buffer.from("DISCOVERY-TEXT I want to return ORD-AB12").toString("base64");
+  for (const rationale of [`Say the date. ref=${blob}`, blob, "Say the date ![t](https://attacker.example/x.png)", "x".repeat(400)]) {
+    assert.equal(await codeOf(() => modelProposer(reply(rationale), "m", 500).propose(context(0))), "invalid_candidate", rationale.slice(0, 40));
+  }
+  assert.deepEqual((await modelProposer(reply("Say the return-by date after the order check."), "m", 500).propose(context(0))).rationale, "Say the return-by date after the order check.");
+});

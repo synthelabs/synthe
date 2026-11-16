@@ -47,5 +47,24 @@ export async function reviewScenario(opts: {
   return { ctx, candidate, review, publish, lines: ctx.lines.slice(before) };
 }
 
+// init, baseline, pack and discover only: the point where a test can run `propose`.
+export async function reviewScenarioUntilPropose(opts: { mutate?: (pack: Pack, config: PilotConfig) => void; env?: Record<string, string> } = {}): Promise<{ ctx: Ctx; finding: string }> {
+  const ctx = await workspace();
+  Object.assign(ctx.env, opts.env ?? {});
+  const pack = demoPack();
+  const config = demoConfig() as unknown as PilotConfig;
+  opts.mutate?.(pack, config);
+  for (const argv of [
+    ["init", "--config", ctx.put("pilot.json", json(config)), "--repo-dir", ctx.repoDir],
+    ["baseline", "--telemetry", writeExport(ctx, "baseline.json", baselineExport())],
+    ["pack", "--file", ctx.put("pack.v1.json", json(pack))],
+    ["discover", "--model", ctx.model],
+  ]) {
+    const code = await ctx.run(argv);
+    if (code !== 0) throw new Error(`${argv[0]} failed: ${ctx.lines.slice(-2).join(" | ")}`);
+  }
+  return { ctx, finding: ctx.last("finding.found") };
+}
+
 export const prBody = (ctx: Ctx): string | null => ctx.github.pulls[0]?.body ?? null;
 export { CANARIES };

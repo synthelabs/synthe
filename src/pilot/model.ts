@@ -1,3 +1,4 @@
+import { modelTextProblem } from "./egress.ts";
 import { PilotError } from "./errors.ts";
 import { contentId, shortId } from "./ids.ts";
 import type { ChatMessage, ChatModel, ChatReply, ChatRequest, Proposer, ProposerContext, ToolCall } from "./types.ts";
@@ -196,7 +197,11 @@ export function modelProposer(model: ChatModel, modelName: string, maxTokens: nu
       });
       const match = /RATIONALE:[ \t]*([^\n]+)\n+PROMPT:[ \t]*\n([\s\S]+)$/.exec(reply.text);
       if (reply.stop !== "end" || !match) throw new PilotError("invalid_candidate", "The proposer's reply was not in the expected form, so no candidate was made. Run propose again, or give a human-written candidate with --file.");
-      return { rationale: match[1].trim(), prompt: `${match[2].replace(/\n*$/, "")}\n` };
+      // The rationale goes into the review and the pull request, so it must be plain words (see modelTextProblem).
+      const rationale = match[1].trim();
+      const problem = modelTextProblem(rationale);
+      if (problem) throw new PilotError("invalid_candidate", `The proposer's rationale was refused, so no candidate was made: ${problem}. Run propose again, or give a human-written candidate with --file.`);
+      return { rationale, prompt: `${match[2].replace(/\n*$/, "")}\n` };
     },
   };
 }
