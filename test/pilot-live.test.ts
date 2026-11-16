@@ -237,3 +237,31 @@ test("a redirect from the approved endpoint is never followed: the conversation 
     }
   }
 });
+
+test("the endpoint host must be api.anthropic.com unless the operator names another host for this run; a loopback server needs no flag (EG-06)", async () => {
+  const at = (endpoint: string): ProviderApproval => ({ ...approval, endpoint });
+  const attempt = async (endpoint: string, allow_host?: string) => {
+    const t = transport([message([{ type: "text", text: "ok" }], "end_turn")]);
+    const said: string[] = [];
+    let code = "built";
+    try { liveModel(at(endpoint), { live: true, endpoint, data_class: approval.data_class, ...(allow_host !== undefined ? { allow_host } : {}) }, { FERNHILL_PILOT_KEY: KEY }, (l) => said.push(l), t.fetcher); } catch (e) { code = e instanceof PilotError ? e.code : "crash"; }
+    return { code, said, seen: t.seen.length };
+  };
+  assert.equal((await attempt("https://api.anthropic.com")).code, "built");
+  assert.equal((await attempt("https://api.anthropic.com/v1-gateway")).code, "built");
+  for (const loopback of ["http://127.0.0.1:8089", "http://localhost:8089", "http://[::1]:8089"]) assert.equal((await attempt(loopback)).code, "built", loopback);
+  for (const host of ["https://attacker.example", "https://attacker.example/anthropic-proxy", "https://api.anthropic.com.attacker.example", "https://127.0.0.1.nip.io", "https://api.anthropic.com.evil.example:8443", "https://claude.ai"]) {
+    const r = await attempt(host);
+    assert.equal(r.code, "live_not_approved", host);
+    assert.deepEqual(r.said, [], "nothing was announced and nothing was sent");
+  }
+  const refusal = await (async () => { try { liveModel(at("https://attacker.example"), { live: true, endpoint: "https://attacker.example", data_class: approval.data_class }, { FERNHILL_PILOT_KEY: KEY }, () => {}, transport([]).fetcher); } catch (e) { return (e as Error).message; } return ""; })();
+  assert.match(refusal, /attacker\.example/);
+  assert.match(refusal, /--allow-endpoint-host attacker\.example/, "the message says how to allow it on purpose");
+  // The flag must name exactly this host: not a different one, not a part of it, not a loose match.
+  assert.equal((await attempt("https://attacker.example", "attacker.example")).code, "built");
+  for (const wrong of ["other.example", "example", "attacker.example.evil.example", "ATTACKER.EXAMPLE.", "*", "attacker.example:8443", ""]) {
+    assert.equal((await attempt("https://attacker.example", wrong)).code, "live_not_approved", `--allow-endpoint-host ${JSON.stringify(wrong)}`);
+  }
+  assert.equal((await attempt("https://attacker.example:8443", "attacker.example:8443")).code, "built", "a port is part of the host");
+});

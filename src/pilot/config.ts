@@ -65,7 +65,9 @@ function parseProvider(v: unknown): ProviderApproval | null {
   if (url.protocol !== "https:" && !isLoopback(endpoint)) bad("provider.endpoint must be https");
   if (url.username || url.password || url.search || url.hash) bad("provider.endpoint must be a plain base URL with no credentials or query");
   const keyEnv = text(v.key_env, "provider.key_env");
-  if (!/^[A-Z][A-Z0-9_]{2,63}$/.test(keyEnv)) bad("provider.key_env must be the name of one environment variable, in capitals");
+  // Only a variable made for this pilot: GITHUB_TOKEN, AWS_* or ANTHROPIC_API_KEY would send a credential that the
+  // machine uses for something else to the provider endpoint.
+  if (!/^[A-Z][A-Z0-9_]{0,50}_PILOT_KEY$/.test(keyEnv)) bad("provider.key_env must be the name of one environment variable made for this pilot, in capitals and ending in _PILOT_KEY (for example FERNHILL_PILOT_KEY)");
   const approvedAt = text(v.approved_at, "provider.approved_at");
   if (Number.isNaN(ms(approvedAt))) bad("provider.approved_at must be a UTC time like 2026-10-01T00:00:00Z");
   return {

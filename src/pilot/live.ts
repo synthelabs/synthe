@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { isLoopback } from "./config.ts";
 import { PilotError } from "./errors.ts";
 import { bounded } from "./model.ts";
 import type { ChatMessage, ChatModel, ChatReply, ChatRequest, ProviderApproval } from "./types.ts";
@@ -16,7 +17,14 @@ export interface LiveOptIn {
   // data somewhere the customer did not approve.
   endpoint: string | undefined;
   data_class: string | undefined;
+  // --allow-endpoint-host <host>, typed for this run: the one host other than api.anthropic.com that may receive
+  // data. A value in pilot.json is never enough.
+  allow_host?: string | undefined;
 }
+
+// The only host that receives data without the operator naming another one for the run. A loopback address is the
+// operator's own machine (a local stand-in or gateway) and needs no flag either.
+export const PROVIDER_HOST = "api.anthropic.com";
 
 // One call may take this long. The SDK's own default is ten minutes for each call, which a stalled endpoint would
 // use in full for every case.
@@ -39,6 +47,10 @@ export function liveModel(
   if (approval === null) return refuse("pilot.json has provider: null, so only scripted models may run. Record the customer's approval in pilot.json (provider) and start a new pilot directory.");
   if (optIn.endpoint !== approval.endpoint) return refuse(`--confirm-endpoint must repeat the approved endpoint exactly: ${approval.endpoint}`);
   if (optIn.data_class !== approval.data_class) return refuse(`--confirm-data must repeat the approved data class exactly: "${approval.data_class}"`);
+  const host = new URL(approval.endpoint).host;
+  if (host !== PROVIDER_HOST && !isLoopback(approval.endpoint) && optIn.allow_host !== host) {
+    return refuse(`The approved endpoint is on ${host}, not ${PROVIDER_HOST}, and a value in pilot.json is not enough to send data to another host. If the customer approved ${host}, run again with --allow-endpoint-host ${host}.`);
+  }
   const key = env[approval.key_env]?.trim();
   if (!key) return refuse(`The key must be in ${approval.key_env}, the one variable the approval names. No other variable is read.`);
 
