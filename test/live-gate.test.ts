@@ -74,10 +74,12 @@ test("gate: no reading at all, or arms of different kinds, never promote", () =>
 test("gate: a guard arm with no units is skipped, not divided by", () => {
   // Without the skip, base 5/0 is Infinity and this would drop as a guard breach.
   const g = { name: "escalation rate", direction: "higher" as const, max_worse: 0.01, base: { units: 0, events: 5 }, test: { units: 5000, events: 10 } };
-  const v = decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 360 }), guards: [g] });
+  // Under guard_missing "ignore" this is today's behaviour: the missing guard is skipped and the win stands.
+  const ignore = { ...DEFAULT_RULE, guard_missing: "ignore" as const };
+  const v = decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 360 }), guards: [g], rule: ignore });
   assert.deepEqual(pick(v), ["promote", "win"]);
   // The min-units check also skips a 0-unit arm, so with min 0 only the zero-unit skip stops the breach.
-  const alone = { ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 360 }), guards: [g], rule: { ...DEFAULT_RULE, min_units_per_arm: 0 } };
+  const alone = { ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 360 }), guards: [g], rule: { ...ignore, min_units_per_arm: 0 } };
   assert.deepEqual(pick(decide(alone)), ["promote", "win"]);
 });
 test("gate: an arm under min units is too early, even with enough events", () => {
@@ -161,4 +163,59 @@ test("gate: one sparse arm is too early on its own (base arm units)", () => {
 });
 test("gate: one sparse arm is too early on its own (test arm events)", () => {
   assert.deepEqual(pick(decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 20 }), direction: "lower" })), ["continue", "too_early"]);
+});
+
+// M4: a guard with too little data blocks a promotion by default (fail closed). It never causes a drop before the end.
+const missingGuard = (units: number) => ({
+  name: "escalation rate", direction: "lower" as const, max_worse: 0.01,
+  base: { units, events: 0 }, test: { units: 5000, events: 250 },
+});
+test("gate: a missing guard blocks a promotion at the final decision, and names the guard", () => {
+  const v = decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 360 }), guards: [missingGuard(0)] });
+  assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard_no_data", "escalation rate"]);
+});
+test("gate: a missing guard before the end is continue, not drop", () => {
+  const { rule, changed } = resolveRule({ method: "looks", looks: 4 });
+  const v = decide({ ...at(7, { units: 10000, events: 300 }, { units: 10000, events: 400 }), rule, changed, guards: [missingGuard(0)] });
+  assert.deepEqual([v.action, v.reason, v.guard, v.look], ["continue", "guard_no_data", "escalation rate", 1]);
+});
+test("gate: guard_missing ignore promotes the same input, and the setting is listed as changed", () => {
+  const { rule, changed } = resolveRule({ guard_missing: "ignore" });
+  const v = decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 360 }), rule, changed, guards: [missingGuard(0)] });
+  assert.deepEqual([v.action, v.reason], ["promote", "win"]);
+  assert.deepEqual(v.changed, ["guard_missing"]);
+});
+test("gate: a guard with 50 units is missing too (below min_units_per_arm 100)", () => {
+  const v = decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 360 }), guards: [missingGuard(50)] });
+  assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard_no_data", "escalation rate"]);
+});
+test("gate: a missing guard never changes running, too early, worse or no difference", () => {
+  const g = [missingGuard(0)];
+  assert.deepEqual(pick(decide({ ...at(10, { units: 10000, events: 300 }, { units: 10000, events: 400 }), guards: g })), ["continue", "running"]);
+  assert.deepEqual(pick(decide({ ...at(3, { units: 10000, events: 300 }, { units: 10000, events: 400 }), guards: g })), ["continue", "too_early"]);
+  assert.deepEqual(pick(decide({ ...at(28, { units: 10000, events: 360 }, { units: 10000, events: 300 }), guards: g })), ["drop", "worse"]);
+  assert.deepEqual(pick(decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 305 }), guards: g })), ["drop", "no_difference"]);
+});
+test("gate: a missing guard with a tie is no difference, not a guard drop", () => {
+  const g = { ...missingGuard(0), base: { units: 0, events: 5 } };
+  assert.deepEqual(pick(decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 305 }), guards: [g] })), ["drop", "no_difference"]);
+});
+// Guard arms with unusable numbers are missing data, not a skip that lets a promotion through.
+const badGuard = (base: ArmData, test: ArmData) => ({
+  name: "escalation rate", direction: "lower" as const, max_worse: 0.01, base, test,
+});
+test("gate: a guard arm with NaN units blocks a promotion as no guard data", () => {
+  const g = badGuard({ units: 5000, events: 250 }, { units: Number.NaN, events: 5 });
+  const v = decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 360 }), guards: [g] });
+  assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard_no_data", "escalation rate"]);
+});
+test("gate: a guard arm with events above units blocks a promotion as no guard data", () => {
+  const g = badGuard({ units: 5000, events: 6000 }, { units: 5000, events: 250 });
+  const v = decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 360 }), guards: [g] });
+  assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard_no_data", "escalation rate"]);
+});
+test("gate: a guard with a rate arm and a mean arm blocks a promotion as no guard data", () => {
+  const g = badGuard({ units: 5000, events: 250 }, { units: 5000, sum: 1, sum_sq: 1 });
+  const v = decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 360 }), guards: [g] });
+  assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard_no_data", "escalation rate"]);
 });

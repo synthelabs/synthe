@@ -4,4 +4,27 @@
   { "unit": "conv-1", "salt": "e2", "bucket": 417 },
   { "unit": "", "salt": "e1", "bucket": 7704 },
   { "unit": "客户-7", "salt": "e1", "bucket": 667 }
+],
+"pick": [
+  { "arms": [{ "id": "base", "weight": 45 }, { "id": "test", "weight": 45 }, { "id": "hold", "weight": 10 }], "unit": "conv-1", "salt": "e1", "arm": "hold" },
+  { "arms": [{ "id": "base", "weight": 45 }, { "id": "test", "weight": 45 }, { "id": "hold", "weight": 10 }], "unit": "conv-2", "salt": "e1", "arm": "test" },
+  { "arms": [{ "id": "base", "weight": 45 }, { "id": "test", "weight": 45 }, { "id": "hold", "weight": 10 }], "unit": "conv-1", "salt": "e2", "arm": "base" },
+  { "arms": [{ "id": "base", "weight": 45 }, { "id": "test", "weight": 45 }, { "id": "hold", "weight": 10 }], "unit": "", "salt": "e1", "arm": "test" },
+  { "arms": [{ "id": "base", "weight": 45 }, { "id": "test", "weight": 45 }, { "id": "hold", "weight": 10 }], "unit": "客户-7", "salt": "e1", "arm": "base" },
+  { "arms": [{ "id": "base", "weight": 1 }, { "id": "test", "weight": 1 }], "unit": "conv-1", "salt": "e1", "arm": "test" },
+  { "arms": [{ "id": "base", "weight": 1 }, { "id": "test", "weight": 1 }], "unit": "conv-2", "salt": "e1", "arm": "test" },
+  { "arms": [{ "id": "base", "weight": 1 }, { "id": "test", "weight": 1 }], "unit": "conv-1", "salt": "e2", "arm": "base" },
+  { "arms": [{ "id": "base", "weight": 1 }, { "id": "test", "weight": 1 }], "unit": "", "salt": "e1", "arm": "test" },
+  { "arms": [{ "id": "base", "weight": 1 }, { "id": "test", "weight": 1 }], "unit": "客户-7", "salt": "e1", "arm": "base" },
+  { "arms": [{ "id": "base", "weight": 0 }, { "id": "test", "weight": 5 }], "unit": "conv-1", "salt": "e1", "arm": "test" },
+  { "arms": [{ "id": "base", "weight": 0 }, { "id": "test", "weight": 5 }], "unit": "conv-2", "salt": "e1", "arm": "test" },
+  { "arms": [{ "id": "base", "weight": 0 }, { "id": "test", "weight": 5 }], "unit": "conv-1", "salt": "e2", "arm": "test" },
+  { "arms": [{ "id": "base", "weight": 0 }, { "id": "test", "weight": 5 }], "unit": "", "salt": "e1", "arm": "test" },
+  { "arms": [{ "id": "base", "weight": 0 }, { "id": "test", "weight": 5 }], "unit": "客户-7", "salt": "e1", "arm": "test" },
+  { "arms": [{ "id": "base", "weight": 95 }, { "id": "test", "weight": 5 }], "unit": "conv-1", "salt": "e1", "arm": "base" },
+  { "arms": [{ "id": "base", "weight": 95 }, { "id": "test", "weight": 5 }], "unit": "conv-2", "salt": "e1", "arm": "base" },
+  { "arms": [{ "id": "base", "weight": 95 }, { "id": "test", "weight": 5 }], "unit": "conv-1", "salt": "e2", "arm": "base" },
+  { "arms": [{ "id": "base", "weight": 95 }, { "id": "test", "weight": 5 }], "unit": "", "salt": "e1", "arm": "base" },
+  { "arms": [{ "id": "base", "weight": 95 }, { "id": "test", "weight": 5 }], "unit": "客户-7", "salt": "e1", "arm": "base" },
+  { "arms": [{ "id": "base", "weight": 95 }, { "id": "test", "weight": 5 }], "unit": "u143", "salt": "e1", "arm": "test" }
 ] }

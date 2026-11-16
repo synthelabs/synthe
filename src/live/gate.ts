@@ -31,7 +31,7 @@ export interface GateInput {
   changed: string[];
 }
 
-export type Reason = "no_data" | "guard" | "split" | "too_early" | "running" | "win" | "no_difference" | "worse";
+export type Reason = "no_data" | "guard" | "guard_no_data" | "split" | "too_early" | "running" | "win" | "no_difference" | "worse";
 
 export interface Verdict {
   action: "promote" | "drop" | "continue" | "invalid";
@@ -98,6 +98,13 @@ function noData(base: ArmData, test: ArmData): boolean {
   return !armUsable(base) || !armUsable(test) || isRate(base) !== isRate(test);
 }
 
+// A guard with too little data to judge: an arm that is not usable, arms of different kinds, or an arm under
+// min_units_per_arm. Such a guard is never a breach; it only blocks a promotion (fail closed).
+function guardMissing(guard: GuardReading, rule: LiveRule): boolean {
+  if (noData(guard.base, guard.test)) return true;
+  return guard.base.units < rule.min_units_per_arm || guard.test.units < rule.min_units_per_arm;
+}
+
 // Step 3: the arms must have the share they were set to. A null result means bad weights, so it fails closed.
 // A NaN p fails too, which is why this is written as "not at least srm_p".
 function splitBroken(base: ArmData, test: ArmData, input: GateInput): boolean {
@@ -136,8 +143,7 @@ export function decide(input: GateInput): Verdict {
 
   // 2. Guards: a breach of a guard drops at once. Points are compared in the guard metric's own units.
   for (const guard of input.guards ?? []) {
-    if (guard.base.units <= 0 || guard.test.units <= 0) continue;
-    if (guard.base.units < rule.min_units_per_arm || guard.test.units < rule.min_units_per_arm) continue;
+    if (guardMissing(guard, rule)) continue;
     const worse =
       guard.direction === "lower"
         ? pointOf(guard.test) - pointOf(guard.base)
@@ -182,7 +188,16 @@ export function decide(input: GateInput): Verdict {
   const diff = t ? t.diff : 0;
   const good = input.direction === "higher" ? diff > 0 : diff < 0;
   const bad = input.direction === "higher" ? diff < 0 : diff > 0;
-  if (takesLook && t && t.p < limit && good) return out("promote", "win", extra);
+  if (takesLook && t && t.p < limit && good) {
+    // A guard with too little data cannot clear a promotion. Only a promotion is changed: at the end it drops,
+    // before the end it waits for the next look.
+    const missing = rule.guard_missing === "block" ? (input.guards ?? []).find((g) => guardMissing(g, rule)) : undefined;
+    if (missing) {
+      const reason = now >= final ? "drop" : "continue";
+      return out(reason, "guard_no_data", { ...extra, guard: missing.name });
+    }
+    return out("promote", "win", extra);
+  }
 
   if (takesLook && now < final) return out("continue", "running", extra);
 

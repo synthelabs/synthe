@@ -3,6 +3,7 @@
 // value fails before any run starts and says which setting to fix.
 
 export type Method = "fixed" | "looks";
+export type GuardMissing = "block" | "ignore";
 
 export interface LiveRule {
   alpha: number;
@@ -12,6 +13,7 @@ export interface LiveRule {
   max_days: number;
   min_units_per_arm: number;
   min_events_per_arm: number; // rates only
+  guard_missing: GuardMissing; // block: a guard with too little data stops a promotion
   srm_p: number; // 0 turns the split check off
   aa_first: boolean;
   holdout_share: number; // 0 turns the holdout off
@@ -25,7 +27,8 @@ export const DEFAULT_RULE: Readonly<LiveRule> = Object.freeze({
   max_days: 28,
   min_units_per_arm: 100,
   min_events_per_arm: 25,
-  srm_p: 0.001,
+  guard_missing: "block",
+  srm_p: 0.0001,
   aa_first: true,
   holdout_share: 0.05,
 });
@@ -74,6 +77,9 @@ export function resolveRule(partial?: Partial<LiveRule>): { rule: LiveRule; chan
   }
   if (!isWhole(rule.min_events_per_arm)) {
     throw new Error("min_events_per_arm must be a whole number, 0 or more.");
+  }
+  if (rule.guard_missing !== "block" && rule.guard_missing !== "ignore") {
+    throw new Error("guard_missing must be block or ignore.");
   }
   if (!(isNumber(rule.srm_p) && rule.srm_p >= 0 && rule.srm_p < 1)) {
     throw new Error("srm_p must be 0 or more and below 1.");

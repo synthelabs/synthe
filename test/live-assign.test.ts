@@ -6,6 +6,7 @@ import { ASSIGN_RULE, bucket, pickArm } from "../src/live/assign.ts";
 const vectors = JSON.parse(readFileSync(new URL("../docs/assign-vectors.json", import.meta.url), "utf8")) as {
   rule: string;
   vectors: { unit: string; salt: string; bucket: number }[];
+  pick: { arms: { id: string; weight: number }[]; unit: string; salt: string; arm: string }[];
 };
 
 test("assign: the rule name is sha256-v1 and matches the vector file", () => {
@@ -71,4 +72,10 @@ test("assign: bucket rejects ids and salts that are not text", () => {
   assert.throws(() => bucket(null as never, "e1"), /must be text/);
   assert.throws(() => bucket(100 as never, "e1"), /must be text/);
   assert.throws(() => bucket("u", {} as never), /must be text/);
+});
+
+// M10: the arm each rule picks. Every item must match pickArm, and the table has 4 rows x 5 units, plus one.
+test("assign: every pick item in the file matches pickArm", () => {
+  assert.equal(vectors.pick.length, 21);
+  for (const p of vectors.pick) assert.equal(pickArm(p.arms, p.unit, p.salt), p.arm, JSON.stringify(p));
 });

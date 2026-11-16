@@ -5,6 +5,14 @@ import { DEFAULT_RULE, resolveRule } from "../src/live/rule.ts";
 test("rule: defaults", () => {
   assert.deepEqual(resolveRule(), { rule: DEFAULT_RULE, changed: [] });
   assert.equal(DEFAULT_RULE.alpha, 0.05); assert.equal(DEFAULT_RULE.min_days, 7); assert.equal(DEFAULT_RULE.max_days, 28);
+  assert.equal(DEFAULT_RULE.srm_p, 0.0001);
+  assert.equal(DEFAULT_RULE.guard_missing, "block");
+});
+test("rule: guard_missing is block or ignore; anything else names the setting", () => {
+  assert.equal(resolveRule({ guard_missing: "ignore" }).rule.guard_missing, "ignore");
+  assert.deepEqual(resolveRule({ guard_missing: "ignore" }).changed, ["guard_missing"]);
+  assert.throws(() => resolveRule({ guard_missing: "skip" as never }), /guard_missing must be block or ignore\./);
+  assert.throws(() => resolveRule({ guard_missing: true as never }), /guard_missing must be block or ignore\./);
 });
 test("rule: each changed setting is listed, an equal value is not", () => {
   assert.deepEqual(resolveRule({ min_days: 3, alpha: 0.05, aa_first: false }).changed, ["aa_first", "min_days"]);
