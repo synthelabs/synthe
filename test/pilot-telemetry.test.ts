@@ -355,6 +355,35 @@ test("a primary gain that would pass 100% cannot be sized, and the baseline says
   assert.doesNotMatch(r.required_per_arm.method, /no usable resolved values/);
 });
 
+test("the baseline flags a guard margin the planned sample cannot make narrow enough (S-05)", () => {
+  // resolved 50%, escalated 10%: the experiment is sized at 1565 per arm for the primary. The 95% interval for a
+  // difference in escalation at that size is about +/-0.021 even if nothing changes.
+  const guardOf = (max_harm: number, kind: "rate" | "mean" = "rate") => kind === "rate"
+    ? { name: "escalated", kind: "rate" as const, unit: "fraction of conversations", direction: "lower_is_better" as const, max_harm, critical: true, early_stop: { min_per_arm: 200 } }
+    : { name: "csat", kind: "mean" as const, unit: "rating 1-5", direction: "higher_is_better" as const, max_harm, critical: false, range: { min: 1, max: 5 } };
+  const report = (g: ReturnType<typeof guardOf>) => {
+    const c = contract({ guards: [g] });
+    const names = ["resolved", g.name];
+    const rows = tenRows().map((r) => ({ ...r, values: Object.fromEntries(names.map((k) => [k, r.values[k]])) }));
+    const units = Object.fromEntries(names.map((k) => [k, UNITS[k as keyof typeof UNITS]]));
+    return baselineReport({ config_id: CONFIG_ID, contract: c, tag: BASE_TAG, imports: [store(run(exp({ rows, units }), { contract: c }))] });
+  };
+  const tight = report(guardOf(0.02));
+  assert.equal(tight.required_per_arm.value, 1565);
+  assert.ok(tight.flags.includes("guard_margin_infeasible"), tight.flags.join(","));
+  assert.equal(tight.guard_margins![0].name, "escalated");
+  const hw = tight.guard_margins![0].half_width!;
+  assert.ok(hw > 0.0205 && hw < 0.0215, String(hw));
+  assert.match(renderBaseline(tight, contract({ guards: [guardOf(0.02)] }), "f".repeat(64)), /guard_margin_infeasible: .*escalated/);
+  // A margin the interval can fit inside is not flagged, and the required size is not changed by the flag.
+  const roomy = report(guardOf(0.03));
+  assert.ok(!roomy.flags.includes("guard_margin_infeasible"));
+  assert.equal(roomy.required_per_arm.value, 1565);
+  // A mean guard is judged from the baseline sd (1.49 here): +/-0.104 at 1565 per arm.
+  assert.ok(report(guardOf(0.1, "mean")).flags.includes("guard_margin_infeasible"));
+  assert.ok(!report(guardOf(0.2, "mean")).flags.includes("guard_margin_infeasible"));
+});
+
 test("importing the same export twice does not change any count", () => {
   const imp = store(run(exp()));
   const once = baselineReport({ config_id: CONFIG_ID, contract: C, tag: BASE_TAG, imports: [imp] });

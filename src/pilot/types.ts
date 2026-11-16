@@ -579,6 +579,9 @@ export interface BaselineReport {
   required_per_arm: Sourced;
   // Days of traffic at the measured daily volume to fill both arms at an even split.
   days_to_required: Sourced;
+  // Per guard: the half-width of the interval for a difference between the arms at the planned size, if the arms
+  // do not differ, against max_harm (S-05). Absent in older records.
+  guard_margins?: { name: string; max_harm: number; half_width: number | null }[];
   flags: string[];
 }
 
@@ -617,6 +620,8 @@ export interface ExperimentSpec {
   // What the customer must export.
   telemetry_fields: string[];
   rollback: { prompt_id: Sha256; tag: string; instructions: string };
+  // The baseline report's flags when the specification was written. Absent in older records.
+  baseline_flags?: string[];
 }
 
 export type Recommendation = "keep" | "hold" | "revert";
@@ -663,7 +668,7 @@ export interface ExperimentAnalysis {
   guards: MetricReadout[];
   // Named data problems: observational, attribution_ambiguous, cohort_imbalance, missing_events, inside_lag_window,
   // missing_imbalance, sample_ratio_mismatch, insufficient_samples, runtime_changed, before_cutoff,
-  // window_not_covered, window_not_populated, clustered_units, superseded_aggregate.
+  // window_not_covered, window_not_populated, clustered_units, guard_margin_infeasible, superseded_aggregate.
   flags: string[];
   recommendation: Recommendation;
   // revert only: "early_stop" or "final".

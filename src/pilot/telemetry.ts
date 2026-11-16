@@ -11,7 +11,7 @@ import { unsafeKey } from "./io.ts";
 import { personalDataKinds } from "./pii.ts";
 import { canonicalJson } from "../core/evidence.ts";
 import {
-  meanSummary, oneSampleT, sampleSizeMeans, sampleSizeProportions, wilsonInterval, type MeanStats,
+  meanSummary, normalQuantile, oneSampleT, sampleSizeMeans, sampleSizeProportions, wilsonInterval, type MeanStats,
 } from "./stats.ts";
 import {
   TELEMETRY_FORMAT,
@@ -746,16 +746,28 @@ export function baselineReport(input: { config_id: Sha256; contract: MetricContr
     method: `ceil(2 x required per arm ${required ?? "n/a"} / daily volume ${fmt(dailyVolume.value, 2)}), at an even split`,
   };
 
+  // S-05: the planned size is chosen for the primary metric. A guard can only be shown safe when its interval is
+  // narrower than max_harm, and at the planned size the interval for no difference at all has this half-width:
+  // z * sqrt(2 * variance / n), the variance from the baseline (p (1 - p) for a rate, sd squared for a mean).
+  const z = normalQuantile(1 - contract.alpha / 2);
+  const guardMargins = contract.guards.map((g) => {
+    const m = summaries.get(g.name) as ArmMetric;
+    const variance = g.kind === "rate" ? (m.estimate === null ? null : m.estimate * (1 - m.estimate)) : m.stats.sd === null ? null : m.stats.sd ** 2;
+    const half = required === null || z === null || variance === null ? null : z * Math.sqrt((2 * variance) / required);
+    return { name: g.name, max_harm: g.max_harm, half_width: half };
+  });
+
   const flags: string[] = [];
   if (days < 7) flags.push("short_window");
   if (counts.mature > 0 && metrics.some((m) => m.missing / counts.mature > contract.max_missing_rate)) flags.push("missing_events");
   if (daysTo !== null && daysTo > contract.analysis_window_days) flags.push("window_too_short_for_required_samples");
   if (counts.mature === 0) flags.push("no_mature_rows");
+  if (guardMargins.some((g) => g.half_width !== null && g.half_width >= g.max_harm)) flags.push("guard_margin_infeasible");
 
   return {
     version: 1, config_id: input.config_id, telemetry_ids: merged.used.map((i) => i.id), tag, window: merged.window,
     rows: counts.rows, mature: counts.mature, immature: counts.immature, daily_volume: dailyVolume, metrics,
-    required_per_arm: requiredPerArm, days_to_required: daysToRequired, flags,
+    required_per_arm: requiredPerArm, days_to_required: daysToRequired, guard_margins: guardMargins, flags,
   };
 }
 
@@ -764,6 +776,7 @@ const BASELINE_FLAG_TEXT: Record<string, string> = {
   missing_events: "Some metric is missing for more conversations than the contract allows (max_missing_rate). Fix the outcome logging before the experiment starts.",
   window_too_short_for_required_samples: "At the measured volume the experiment cannot reach the required conversations per arm inside analysis_window_days. Lengthen the window, raise min_effect, or accept that the result will be hold.",
   no_mature_rows: "No conversation is old enough for its outcome to be final. Export again after the outcome lag has passed.",
+  guard_margin_infeasible: "At the planned size, the interval for a guard cannot be narrower than its max_harm even when nothing changes, so that guard cannot be shown safe and keep is not possible. Widen max_harm, choose a less noisy guard, or accept a longer experiment.",
 };
 
 const ciText = (ci: { lo: number; hi: number } | null) => (ci === null ? "n/a" : `${fmt(ci.lo)} to ${fmt(ci.hi)}`);
@@ -788,7 +801,10 @@ export function renderBaseline(report: BaselineReport, contract: MetricContract,
   if (report.flags.length === 0) lines.push("No data problems found.");
   else {
     lines.push("## Problems", "");
-    for (const f of report.flags) lines.push(`- ${f}: ${BASELINE_FLAG_TEXT[f] ?? f}`);
+    for (const f of report.flags) {
+    const which = f === "guard_margin_infeasible" ? ` Guards: ${(report.guard_margins ?? []).filter((g) => g.half_width !== null && g.half_width >= g.max_harm).map((g) => `${g.name} (interval about +/-${fmt(g.half_width)} against max_harm ${g.max_harm})`).join(", ")}.` : "";
+    lines.push(`- ${f}: ${BASELINE_FLAG_TEXT[f] ?? f}${which}`);
+  }
   }
   lines.push("", "## Ids", "", `- Baseline report: ${baselineId}`, `- Configuration: ${report.config_id}`, ...report.telemetry_ids.map((id) => `- Telemetry import: ${id}`));
   if (report.required_per_arm.value === null) lines.push("", "Next: export a baseline with mature outcomes for the primary metric, so the experiment can be sized.");

@@ -255,6 +255,27 @@ test("an aggregate export that does not count non-zero values cannot certify a m
   assert.equal(held.recommendation, "hold");
 });
 
+test("a baseline flag that says a guard margin is infeasible makes keep impossible, not revert (S-05)", () => {
+  const withFlag = buildExperimentSpec({
+    pilot_id: "fernhill-support", config_id: CONFIG_ID, contract: contract(), baseline: { prompt_id: BASE_PROMPT, tag: BASE_TAG },
+    candidate: { prompt_id: CAND_PROMPT, tag: CAND_TAG }, baseline_report: { ...fakeReport(600), flags: ["guard_margin_infeasible"] }, start: START,
+  });
+  assert.deepEqual(withFlag.baseline_flags, ["guard_margin_infeasible"]);
+  assert.match(renderExperimentSpec(withFlag, EXPERIMENT_ID), /guard_margin_infeasible/);
+  const rows = makeRows(GOOD_BASE, GOOD_CAND);
+  const kept = analyze(withFlag, [imp(exportOf(rows, FINAL_AT))]);
+  assert.equal(kept.primary.status, "clears");
+  assert.deepEqual(kept.guards.map((g) => g.status), ["pass", "pass"]);
+  assert.ok(kept.flags.includes("guard_margin_infeasible"));
+  assert.equal(kept.recommendation, "hold");
+  assert.ok(kept.reasons.some((r) => /guard_margin_infeasible/.test(r) && /Keep is not possible/.test(r)), kept.reasons.join("\n"));
+  // The same data without the flag is a keep.
+  assert.equal(analyze(spec(), [imp(exportOf(rows, FINAL_AT))]).recommendation, "keep");
+  // A breach still reverts: the flag is about certifying safety, not about seeing harm.
+  const bad = analyze(withFlag, [imp(exportOf(makeRows(GOOD_BASE, { ...GOOD_CAND, escalated: 180 }), FINAL_AT))]);
+  assert.equal(bad.recommendation, "revert");
+});
+
 test("hold: primary point estimate just below min_effect, although the interval is above zero", () => {
   const { a } = run(GOOD_BASE, { ...GOOD_CAND, resolved: 449 });
   assert.ok(a.primary.difference! < 0.05 && a.primary.ci!.lo > 0, `${a.primary.difference} ${a.primary.ci?.lo}`);

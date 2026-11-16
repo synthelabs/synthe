@@ -45,6 +45,10 @@ export const MIN_POPULATED_DAYS = 0.8;
 // the intervals are too narrow. Above this many conversations per unit the result is held, not widened.
 export const MAX_CONVERSATIONS_PER_UNIT = 1.2;
 
+// Flags that only stop a keep. They say the result could not certify safety, not that the data are wrong, so a
+// guard that is clearly beyond its margin can still revert. Reasons come first, in this order.
+export const KEEP_BLOCKERS = ["guard_margin_infeasible"] as const;
+
 // A few rows can reach the source late. More than this many, and more than this share of the rows that were on
 // time, is worth telling the reader.
 const LATE_ROWS_MIN = 5;
@@ -113,6 +117,7 @@ export function buildExperimentSpec(input: {
       integrity: `Integrity: rows per arm are tested against the intended allocation (chi-square goodness of fit), and arm against segment (chi-square test of independence, pooling segments with expected counts below ${MIN_EXPECTED}); a p-value below ${INTEGRITY_ALPHA} holds the result as a sample ratio mismatch or a cohort imbalance.`,
     },
     telemetry_fields: fields,
+    baseline_flags: [...input.baseline_report.flags],
     rollback: {
       prompt_id: input.baseline.prompt_id,
       tag: input.baseline.tag,
@@ -365,6 +370,10 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   if (final && populated !== null && populated.days < MIN_POPULATED_DAYS * populated.of - EPS) flags.push("window_not_populated");
   if (perUnit !== null && perUnit > MAX_CONVERSATIONS_PER_UNIT + EPS) flags.push("clustered_units");
   if (merged.superseded.length > 0) flags.push("superseded_aggregate");
+  // From the baseline, carried in the specification: the planned size cannot make some guard's interval narrower than
+  // its margin, so no result could show that guard safe.
+  for (const f of KEEP_BLOCKERS) if (spec.baseline_flags?.includes(f)) flags.push(f);
+  const keepBlockers = KEEP_BLOCKERS.filter((f) => flags.includes(f));
 
   // Recommendation, in the predeclared order.
   const reasons: string[] = [];
@@ -396,7 +405,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   } else if (!final || holdFlags.length > 0) {
     recommendation = "hold";
   } else {
-    recommendation = primary.status === "clears" && guards.every((g) => g.readout.status === "pass") ? "keep" : "hold";
+    recommendation = primary.status === "clears" && guards.every((g) => g.readout.status === "pass") && keepBlockers.length === 0 ? "keep" : "hold";
   }
 
   if (recommendation === "hold") {
@@ -409,6 +418,7 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
         reasons.push(`${breachNote(g)} It cannot revert here: ${g.earlyBreach && !canStopEarly ? "telemetry integrity checks block its early stop" : holdFlags.length > 0 ? "the data problems listed above block a revert" : g.spec.critical && g.spec.early_stop ? `it has not met its ${pctLevel(spec.early_stop_level)} early-stop rule` : "it has no predeclared early stop"}. A later decision needs valid evidence.`);
       }
     }
+    if (keepBlockers.includes("guard_margin_infeasible")) reasons.push(`Keep is not possible for this experiment: the baseline report said that at ${spec.required_per_arm} conversations per arm the interval for some guard cannot be narrower than its max_harm even if nothing changes (guard_margin_infeasible), so that guard cannot be shown safe. A harmful result can still revert.`);
     if (final && holdFlags.length === 0 && reasons.length === 0) reasons.push("The result does not meet the keep rule.");
   }
   if (recommendation === "keep") {
@@ -494,6 +504,11 @@ export function renderExperimentSpec(spec: ExperimentSpec, experimentId: Sha256)
   }
   L.push("", `Denominator: ${spec.denominator}.`, "");
   L.push("## Stop rules", "", `- ${spec.methods.early_stop}`, `- ${spec.methods.revert}`, `- ${spec.methods.keep}`, `- ${spec.methods.hold}`, "");
+  if ((spec.baseline_flags ?? []).length > 0) {
+    L.push("## Baseline flags", "", "The baseline report raised these flags when this plan was written. Read them before the experiment starts:", "");
+    for (const f of spec.baseline_flags as string[]) L.push(`- ${f}${f === "guard_margin_infeasible" ? ": at the planned size some guard cannot be shown safe, so keep is not possible; a harmful result can still revert" : ""}`);
+    L.push("");
+  }
   L.push("## What to export", "");
   L.push(`One JSON file with format "${TELEMETRY_FORMAT}", export_id, source, exported_at, window (start and end as above), assignment "randomized", denominator "${spec.denominator}", units (each metric name to its unit, word for word as below), expected_rows (how many conversations the source holds for the window), and exactly one of rows (inline), rows_csv (a CSV file next to it, with a header line) or aggregates (one summary per prompt version: n, immature, unattributed, metrics, optional segments). Each row has only these fields; anything else is refused:`, "");
   for (const f of spec.telemetry_fields) L.push(`- ${f}`);
@@ -518,6 +533,7 @@ const FLAG_TEXT: Record<string, string> = {
   runtime_changed: "More than one runtime model appears in the rows.",
   superseded_aggregate: "Older cumulative aggregate exports were replaced by a newer one and not used.",
   window_not_covered: "No single export covers the whole experiment window.",
+  guard_margin_infeasible: "The baseline report said that at the planned size some guard's interval cannot be narrower than its max_harm, so that guard cannot be shown safe: keep is not possible.",
   window_not_populated: "The rows do not fall on at least 80% of the window's days, so the window was not actually run or the export leaves days out.",
   clustered_units: "Units (unit_id) have more than 1.2 conversations on average, so conversations are not independent and the intervals would be too narrow.",
 };
