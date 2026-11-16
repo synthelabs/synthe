@@ -41,13 +41,16 @@ test("requireApproval needs the exact ids", () => {
   assert.throws(() => requireApproval([], cand, exp), code("unknown_approval"));
 });
 
-test("a rejection after an approval refuses; an approval after a rejection is accepted", () => {
+test("the last decision in journal order wins, whatever the times say", () => {
   const yes = make("approved", "2026-10-20T10:00:00Z");
   const no = make("rejected", "2026-10-21T10:00:00Z");
   assert.throws(() => requireApproval([yes, no], cand, exp), (e: unknown) => code("unknown_approval")(e) && /rejection/.test((e as Error).message));
-  assert.throws(() => requireApproval([no, yes], cand, exp), code("unknown_approval"));
+  // The order the journal recorded them in decides, not the clock: a later entry stamped earlier still comes last.
+  assert.equal(requireApproval([no, yes], cand, exp).id, yes.id, "an approval recorded after a rejection is accepted");
+  const early = make("rejected", "2026-10-19T09:00:00Z");
+  assert.throws(() => requireApproval([yes, early], cand, exp), code("unknown_approval"), "a rejection recorded later but stamped earlier still refuses");
   const later = make("approved", "2026-10-22T10:00:00Z");
-  assert.equal(requireApproval([later, no], cand, exp).id, later.id);
+  assert.throws(() => requireApproval([later, no], cand, exp), code("unknown_approval"));
 });
 
 test("a tie on time goes to the later entry", () => {

@@ -814,6 +814,14 @@ export async function verify(store: PilotStore, flags: Flags, deps: PilotDeps): 
         const spec = store.get<ExperimentSpec>("experiment", stored.experiment_id);
         const approval = store.get<Approval>("approval", stored.approval_id);
         if (approval.decision !== "approved" || approval.experiment_id !== stored.experiment_id || approval.candidate_id !== spec.arms.candidate.prompt_id || !validApprovals.has(stored.approval_id)) throw new Error("the approval it cites is not a recorded approval of this candidate and experiment, answering one of this pilot's review bundles");
+        // The last decision recorded before the analysis decides, as `analyze` applied it: a rejection recorded after
+        // the cited approval, and before the analysis, means the analysis should not have run.
+        const decisions = journal.filter((x) => x.step === "approval.recorded" && x.seq < e.seq && x.refs.candidate === approval.candidate_id && x.refs.experiment === approval.experiment_id);
+        const citedAt = decisions.find((x) => x.refs.approval === stored.approval_id);
+        if (!citedAt) throw new Error("the approval it cites was not recorded before the decision");
+        if (decisions.some((x) => x.seq > citedAt.seq && store.get<Approval>("approval", x.refs.approval).decision === "rejected")) {
+          throw new Error("the approval it cites was followed by a rejection recorded before the decision, so the analysis should not have run");
+        }
         const before = new Set(importsBefore(stored.experiment_id, e.seq).map((i) => i.id));
         if (stored.telemetry_ids.some((id) => !before.has(id))) throw new Error("it cites telemetry that was not imported for this experiment before the decision");
         const again = analyzeExperiment({ spec, experiment_id: stored.experiment_id, imports: importsBefore(stored.experiment_id, e.seq), approval_id: stored.approval_id });

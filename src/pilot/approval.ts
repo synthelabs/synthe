@@ -22,17 +22,12 @@ export function makeApproval(input: {
 }
 
 // The approval for exactly this candidate and experiment. Throws PilotError unknown_approval when there is none
-// or the only ones are rejections. A prefix or short id never matches: the comparison is exact.
+// or the last decision is a rejection. `approvals` is in journal order and the last matching one decides: the
+// time on an approval is whatever the operator's clock said, and a clock that stepped back must not let an
+// earlier-stamped approval outrank a rejection recorded after it. A prefix or short id never matches.
 export function requireApproval(approvals: Stored<Approval>[], candidateId: Sha256, experimentId: Sha256): Stored<Approval> {
-  let latest: Stored<Approval> | null = null;
-  let latestAt = -Infinity;
-  for (const a of approvals) {
-    if (a.value.candidate_id !== candidateId || a.value.experiment_id !== experimentId) continue;
-    const at = ms(a.value.at);
-    const t = Number.isNaN(at) ? -Infinity : at;
-    if (latest === null || t >= latestAt) { latest = a; latestAt = t; } // a tie goes to the later entry
-  }
-  if (latest === null) throw new PilotError("unknown_approval", "No approval names this exact candidate and experiment. Run the approve command from REVIEW.md with the full ids.");
-  if (latest.value.decision === "rejected") throw new PilotError("unknown_approval", `The latest decision for this candidate and experiment is a rejection (by ${latest.value.approver}). Approve it again, with a later time, to go ahead.`);
+  const latest = approvals.filter((a) => a.value.candidate_id === candidateId && a.value.experiment_id === experimentId).at(-1);
+  if (latest === undefined) throw new PilotError("unknown_approval", "No approval names this exact candidate and experiment. Run the approve command from REVIEW.md with the full ids.");
+  if (latest.value.decision === "rejected") throw new PilotError("unknown_approval", `The latest decision for this candidate and experiment is a rejection (by ${latest.value.approver}). Approve it again to go ahead.`);
   return latest;
 }
