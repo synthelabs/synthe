@@ -394,6 +394,30 @@ test("unreliable telemetry cannot turn a guard breach into a terminal revert", (
   }
 });
 
+test("the early stop is looked at in the final analysis too, and every breached guard is named (S-04)", () => {
+  // 700 conversations per arm where 1000 are needed; escalation 5% -> 14% against a tolerated 3 points. The same
+  // rows revert at an interim look. After the cutoff they used to hold (too few samples) without a word about the breach.
+  const base: ArmPlan = { n: 700, resolved: 280, escalated: 35 };
+  const cand: ArmPlan = { n: 700, resolved: 350, escalated: 98 };
+  const interim = run(base, cand, { required: 1000, at: INTERIM_AT, days: 6 }).a;
+  assert.equal(interim.recommendation, "revert");
+  const final = run(base, cand, { required: 1000 }).a;
+  assert.equal(final.final, true);
+  assert.ok(final.flags.includes("insufficient_samples"));
+  assert.equal(final.recommendation, "revert");
+  assert.equal(final.stopped_by, "early_stop");
+  assert.ok(final.reasons.some((r) => r.startsWith("Early stop") && r.includes("escalated")));
+  // A guard that is breached only at the nominal level is named as well.
+  const both = run(base, { ...cand, csatMean: 3.5 }, { required: 1000 }).a;
+  assert.equal(both.guards[1].status, "breach");
+  assert.equal(both.recommendation, "revert");
+  assert.ok(both.reasons.some((r) => r.includes("csat") && r.includes("beyond")), both.reasons.join("\n"));
+  // A data problem that blocks every terminal decision still shows the breach in the reasons.
+  const blocked = run(GOOD_BASE, { ...GOOD_CAND, escalated: 180 }, { over: { assignment: "observational" } }).a;
+  assert.equal(blocked.recommendation, "hold");
+  assert.ok(blocked.reasons.some((r) => r.includes("escalated") && r.includes("beyond")), blocked.reasons.join("\n"));
+});
+
 test("no revert when harm is real but inside the tolerated margin: the result is hold, not a breach", () => {
   // Escalation rises from 10% to 12.5% over 4000 per arm: clearly above zero, but below the 3-point margin.
   const { a } = run({ n: 4000, resolved: 1600, escalated: 400 }, { n: 4000, resolved: 2000, escalated: 500 }, { required: 600 });

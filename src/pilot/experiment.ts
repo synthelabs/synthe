@@ -97,9 +97,9 @@ export function buildExperimentSpec(input: {
       rate: `Rate metrics: each arm's estimate is the share of mature, attributable conversations whose value is 1 (a null value is missing and left out); the difference is candidate minus baseline, with a Newcombe hybrid score interval (method 10) at ${pctLevel(level)}.`,
       mean: `Mean metrics: each arm's estimate is the mean over mature, attributable conversations with a value; the difference is candidate minus baseline, with a Welch interval (Welch-Satterthwaite degrees of freedom) at ${pctLevel(level)}.`,
       keep: `Keep only at the final analysis (an export made at or after ${cutoff}) with none of the data problems listed under hold, when the primary metric's benefit (the difference in its good direction) is at least ${c.primary.min_effect} and the lower bound of its ${pctLevel(level)} interval is above 0, and every guard passes: the upper bound of the ${pctLevel(level)} interval for its harm is at most its max_harm.`,
-      revert: `Revert at the final analysis with no data or sample-size holds when any guard breaches (the lower bound of the ${pctLevel(level)} interval for its harm is above its max_harm) or the primary metric is significantly worse (the upper bound of the ${pctLevel(level)} interval for its benefit is below 0). Before the final analysis only a critical guard's early stop can revert, and only when telemetry integrity checks pass.`,
+      revert: `Revert at the final analysis with no data or sample-size holds when any guard breaches (the lower bound of the ${pctLevel(level)} interval for its harm is above its max_harm) or the primary metric is significantly worse (the upper bound of the ${pctLevel(level)} interval for its benefit is below 0). Before the final analysis only a critical guard's early stop can revert, and only when telemetry integrity checks pass; the early stop is also checked in the final analysis.`,
       hold: `Hold in every other case: before the cutoff; when there are fewer than ${required} conversations with a primary value in either arm, a sample ratio mismatch, a cohort imbalance, missing events above ${pct(c.max_missing_rate)} or far more common in one arm, ambiguous attribution above ${pct(c.max_unattributed_rate)}, observational assignment, more than one runtime model, or outcomes still inside the ${c.outcome_lag_days}-day lag, or no single export covering the whole window; when the primary does not clear; or when a guard is inconclusive.`,
-      early_stop: `Early stop: before the cutoff, a critical guard with early_stop is checked at ${pctLevel(EARLY_STOP_LEVEL)} once both arms have at least its min_per_arm mature values; it reverts when the lower bound of the ${pctLevel(EARLY_STOP_LEVEL)} interval for its harm is above its max_harm. No other guard and no primary result is acted on before the cutoff.`,
+      early_stop: `Early stop: at every analysis, the final one included, a critical guard with early_stop is checked at ${pctLevel(EARLY_STOP_LEVEL)} once both arms have at least its min_per_arm mature values; it reverts when the lower bound of the ${pctLevel(EARLY_STOP_LEVEL)} interval for its harm is above its max_harm, even if the experiment has too few samples or outcomes still inside the lag. A data problem of any other kind blocks it. No other guard and no primary result is acted on before the cutoff.`,
       integrity: `Integrity: rows per arm are tested against the intended allocation (chi-square goodness of fit), and arm against segment (chi-square test of independence, pooling segments with expected counts below ${MIN_EXPECTED}); a p-value below ${INTEGRITY_ALPHA} holds the result as a sample ratio mismatch or a cohort imbalance.`,
     },
     telemetry_fields: fields,
@@ -337,18 +337,24 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
   const holdFlags = HOLD_FLAGS.filter((f) => flags.includes(f));
   // Interim guards have their own mature-sample minimum. Integrity failures still block every terminal decision.
   const canStopEarly = holdFlags.every((flag) => flag === "insufficient_samples" || flag === "inside_lag_window");
-  if (!final && canStopEarly && earlyStops.length > 0) {
+  const finalRevert = final && holdFlags.length === 0 && (finalBreaches.length > 0 || primary.status === "breach");
+  // A breached guard is always named, whatever the recommendation turns out to be.
+  const breachNote = (g: GuardEval) => `Guard ${g.spec.name} is beyond its tolerated ${g.spec.max_harm} at the ${pctLevel(level)} level: ${g.readout.detail}`;
+  if (finalRevert) {
+    recommendation = "revert";
+    stoppedBy = "final";
+    for (const g of finalBreaches) reasons.push(`Guard breach at the final analysis: ${g.readout.detail}`);
+    if (primary.status === "breach") reasons.push(`The primary metric is significantly worse at the final analysis: ${primary.detail}`);
+  } else if (canStopEarly && earlyStops.length > 0) {
+    // The early-stop rule is looked at in every analysis, the final one included: too few samples or outcomes still
+    // inside the lag do not make a guard that is clearly beyond its margin safe.
     recommendation = "revert";
     stoppedBy = "early_stop";
     for (const g of earlyStops) {
       const e = benefitOf(g.spec.direction, g.readout.difference, g.readout.early_ci ?? null).hCi as Oriented;
       reasons.push(`Early stop: critical guard ${g.spec.name} has harm ${fmt(g.harm)}, and the ${pctLevel(spec.early_stop_level)} interval for harm (${ciStr(e)}) is wholly above its tolerated ${g.spec.max_harm}, with ${g.readout.baseline.n} baseline and ${g.readout.candidate.n} candidate values (at least ${g.spec.early_stop?.min_per_arm} each).`);
     }
-  } else if (final && holdFlags.length === 0 && (finalBreaches.length > 0 || primary.status === "breach")) {
-    recommendation = "revert";
-    stoppedBy = "final";
-    for (const g of finalBreaches) reasons.push(`Guard breach at the final analysis: ${g.readout.detail}`);
-    if (primary.status === "breach") reasons.push(`The primary metric is significantly worse at the final analysis: ${primary.detail}`);
+    for (const g of guards) if (g.readout.status === "breach" && !g.earlyBreach) reasons.push(breachNote(g));
   } else if (!final || holdFlags.length > 0) {
     recommendation = "hold";
   } else {
@@ -361,8 +367,8 @@ export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: 
     if (primary.status !== "clears") reasons.push(`The primary metric does not clear: ${primary.detail}`);
     for (const g of guards) {
       if (g.readout.status === "inconclusive") reasons.push(`Guard ${g.spec.name} is inconclusive: ${g.readout.detail}`);
-      if (g.readout.status === "breach" && !final) {
-        reasons.push(`Guard ${g.spec.name} looks harmful at the ${pctLevel(level)} level (${g.readout.detail}) but ${g.earlyBreach && !canStopEarly ? "telemetry integrity checks block its early stop" : g.spec.critical && g.spec.early_stop ? `has not met its ${pctLevel(spec.early_stop_level)} early-stop rule` : "has no predeclared early stop"}. A later decision needs valid evidence.`);
+      if (g.readout.status === "breach") {
+        reasons.push(`${breachNote(g)} It cannot revert here: ${g.earlyBreach && !canStopEarly ? "telemetry integrity checks block its early stop" : holdFlags.length > 0 ? "the data problems listed above block a revert" : g.spec.critical && g.spec.early_stop ? `it has not met its ${pctLevel(spec.early_stop_level)} early-stop rule` : "it has no predeclared early stop"}. A later decision needs valid evidence.`);
       }
     }
     if (final && holdFlags.length === 0 && reasons.length === 0) reasons.push("The result does not meet the keep rule.");
