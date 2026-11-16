@@ -5,7 +5,7 @@ import { DEFAULT_RUNS, improveFile, parseImproveConfig, type Direction, type Imp
 import type { Exec } from "../improve/exec.ts";
 import { DEFAULT_BUDGET_USD, DEFAULT_ROUNDS, FIRST_ROUND_ESTIMATE_USD, LESSONS_FILE, publish, removeScratchCheckouts, runLoop, type LoopHooks, type RoundRecord } from "../improve/loop.ts";
 import { presetsForRepo, type Preset } from "../improve/presets.ts";
-import { promptModeProtect } from "../improve/protect.ts";
+import { metricOnlyFiles, promptModeProtect } from "../improve/protect.ts";
 import { candidateDiff, RECORD_NOTICE, recorded, startRecord, type RunRecord } from "../improve/receipt.ts";
 import { baselineLine, loopPrBody, loopPrTitle, money, movement, quantity, taskCard, triedLines } from "../improve/text.ts";
 import { measureAt } from "../improve/worktree.ts";
@@ -396,8 +396,10 @@ async function settle(io: ImproveIo, o: ImproveOptions, presets: Preset[], defau
   let mode = o.mode;
   if (!mode) mode = (await io.ask(`Merge winning changes into ${defaultBranch} automatically? y/n (press Enter for n: review) `)).trim().toLowerCase() === "y" ? "auto" : "review";
 
-  return {
+  const draft: ImproveConfig = {
     version: 1, goal, metric: { preset: preset.id, label, unit, command, direction, runs }, guard: { command: guard },
     protect: o.protect, promptFiles: promptModeProtect(top), mode, baseline: { commit: "", median: 0, runs: [], at: "" },
   };
+  const helpers = metricOnlyFiles(top, draft);
+  return helpers.length ? { ...draft, metricOnly: helpers } : draft;
 }

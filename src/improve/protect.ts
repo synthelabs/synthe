@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join, posix } from "node:path";
 import { GOAL_FILE } from "../core/goal.ts";
 import { SENSITIVE_PATHS } from "../core/safety.ts";
 import type { ImproveConfig } from "./config.ts";
@@ -41,6 +42,8 @@ export function protectedPathProblem(path: string, config: ImproveConfig): strin
   for (const [rule, why] of RULES) if (rule.test(path)) return `${path} ${why}`;
   const named = commandPaths(config).find((w) => under(path, w));
   if (named) return `${path} is used by the metric or the regression check (${named}); Synthe measures with it as it is.`;
+  const helper = config.metricOnly?.find((e) => under(path, e));
+  if (helper) return `${path} is imported by the metric or the regression check and by no other file, so it is part of how the number is measured; Synthe measures with it as it is.`;
   const extra = config.protect.find((e) => under(path, e));
   if (extra) return `${path} is protected for this run (--protect ${extra}).`;
   const prompt = config.promptFiles?.find((e) => under(path, e));
@@ -67,4 +70,64 @@ export function promptModeProtect(top: string): string[] {
     };
     return [...new Set([...clean(goal?.prompt?.path), ...clean(goal?.scenarios)])];
   } catch { return []; }
+}
+
+// Helper files only the metric decides with. A metric script often imports a scoring helper (scoring.py next to eval.py);
+// editing that helper changes the number without changing the product, so it is protected like the script. A file the
+// script imports that any other tracked file also imports is product code (the app or its tests use it), and stays
+// editable: that is what the metric measures. Direct imports only, relative JS/TS imports and Python imports.
+const JS_FILE = /\.(?:m?js|cjs|ts|mts|cts|jsx|tsx)$/;
+const PY_FILE = /\.py$/;
+const JS_IMPORTS = [/\brequire\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)/g, /\bfrom\s+["'](\.{1,2}\/[^"']+)["']/g, /\bimport\s*\(?\s*["'](\.{1,2}\/[^"']+)["']/g];
+const JS_TRIES = ["", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx", "/index.js", "/index.ts"];
+const MAX_SCANNED = 5000;
+const MAX_BYTES = 512 * 1024;
+
+export function importsOf(file: string, text: string, tracked: Set<string>): string[] {
+  const dir = posix.dirname(file);
+  const found = new Set<string>();
+  const inRepo = (p: string) => (p.startsWith("../") || p === ".." ? null : p);
+  if (JS_FILE.test(file)) {
+    for (const re of JS_IMPORTS) for (const m of text.matchAll(re)) {
+      const base = inRepo(posix.normalize(posix.join(dir, m[1])));
+      const hit = base === null ? undefined : JS_TRIES.map((t) => base + t).find((p) => tracked.has(p));
+      if (hit) found.add(hit);
+    }
+  } else if (PY_FILE.test(file)) {
+    const roots = [...new Set([dir, ".", "src"])];
+    const module = (from: string, name: string) => {
+      const rel = name.replace(/\./g, "/");
+      for (const root of from ? [from] : roots) {
+        const base = inRepo(posix.normalize(posix.join(root, rel)));
+        const hit = base === null ? undefined : [`${base}.py`, `${base}/__init__.py`].find((p) => tracked.has(p));
+        if (hit) { found.add(hit); return; }
+      }
+    };
+    for (const m of text.matchAll(/^[ \t]*from[ \t]+(\.*)([\w.]*)[ \t]+import[ \t]+\(?([\w ,\t]+)/gm)) {
+      const dots = m[1].length;
+      const from = dots ? posix.normalize(posix.join(dir, ...Array(dots - 1).fill(".."))) : "";
+      if (m[2]) module(from, m[2]);
+      else for (const n of m[3].split(",")) module(from, n.trim().split(/\s+/)[0]);
+    }
+    for (const m of text.matchAll(/^[ \t]*import[ \t]+([\w.]+(?:[ \t]*,[ \t]*[\w.]+)*)/gm)) for (const n of m[1].split(",")) module("", n.trim());
+  }
+  found.delete(file);
+  return [...found];
+}
+
+export function metricOnlyFiles(top: string, config: ImproveConfig): string[] {
+  let tracked: string[];
+  try { tracked = execFileSync("git", ["-C", top, "ls-files", "-z"], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).split("\0").filter(Boolean); } catch { return []; }
+  const known = new Set(tracked);
+  const read = (f: string) => { try { return statSync(join(top, f)).size > MAX_BYTES ? null : readFileSync(join(top, f), "utf8"); } catch { return null; } };
+  const scripts = commandPaths(config).filter((p) => known.has(p) && (JS_FILE.test(p) || PY_FILE.test(p)));
+  const used = new Set(scripts.flatMap((s) => { const t = read(s); return t === null ? [] : importsOf(s, t, known); }));
+  for (const s of scripts) used.delete(s);
+  if (!used.size) return [];
+  for (const f of tracked.filter((f) => (JS_FILE.test(f) || PY_FILE.test(f)) && !scripts.includes(f)).slice(0, MAX_SCANNED)) {
+    const t = read(f);
+    if (t !== null) for (const i of importsOf(f, t, known)) used.delete(i);
+    if (!used.size) break;
+  }
+  return [...used].sort();
 }
