@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { assertEgressSafe, egressProblems, rendered, sensitiveIndex, words } from "../src/pilot/egress.ts";
 import { PilotError } from "../src/pilot/errors.ts";
+import { renderReview } from "../src/pilot/review.ts";
+import { fixture } from "./pilot-review-helpers.ts";
+import { CANARIES, prBody, reviewScenario } from "./pilot-egress-helpers.ts";
 import { BASELINE_PROMPT, CANARY_ORDER, CANARY_SENTENCE, CANARY_TOOL_ARG, makeCase, makePack } from "./pilot-review-helpers.ts";
 
 // Three cases: c1 holds the planted customer text; all three share the agent's and the tool's boilerplate.
@@ -101,18 +104,45 @@ test("text that may leave is allowed: the baseline prompt, and what reports prin
 
 test("an identifier the reports print passes only as a whole: it does not make its words allowed", () => {
   const pack = makePack([
-    makeCase("ret-okonkwo-07", "discovery", { messages: [{ role: "user", text: "This is Mrs Okonkwo about the stove." }, { role: "assistant", text: "Let me look." }] }),
+    makeCase("ret-07", "discovery", { messages: [{ role: "user", text: "This is Mrs Okonkwo about the stove." }, { role: "assistant", text: "Let me look." }] }),
     makeCase("c2", "discovery"), makeCase("h1", "heldout"),
   ]);
-  pack.check_catalog.looks_up_order = "The agent checks the Okonkwo account before answering.";
+  pack.check_catalog.looks_up_order = "The agent checks the account before answering.";
   pack.tools[0].description = "Find the order of a customer such as Okonkwo.";
-  const frame = "Fixes: case ret-okonkwo-07, turn 1, check looks_up_order: The agent checks the Okonkwo account before answering.";
+  const frame = "Fixes: case ret-07, turn 1, check looks_up_order: The agent checks the account before answering.";
   const i = sensitiveIndex([pack], [BASELINE_PROMPT, frame]);
   assert.deepEqual(egressProblems(frame, i), [], "the generated wording itself passes");
-  assert.deepEqual(egressProblems("It fails in case ret-okonkwo-07 on check looks_up_order.", i), [], "whole identifiers pass in free text too");
+  assert.deepEqual(egressProblems("It fails in case ret-07 on check looks_up_order.", i), [], "whole identifiers pass in free text too");
   assert.ok(flagged("Mrs Okonkwo was promised a refund.", i), "the name is not allowed by the case id, the catalog or the tool description");
-  assert.ok(flagged("see ret-okonkwo-07b", i), "a longer token that starts with an identifier is not the identifier");
-  assert.ok(flagged("case ret-okonkwo", i), "part of an identifier is not the identifier");
+  assert.ok(flagged("see ret-07b Okonkwo", i));
+  assert.ok(flagged("case ret", i) === false, "part of an identifier is just two short words");
+});
+
+// Changed on purpose (EG-02): this test used a case id and a catalog sentence that contained the customer's name,
+// and expected both to be exempt as identifiers. An identifier that carries a name is a leak, so it is not exempt.
+test("an identifier or a catalog sentence that carries a name, a quote or a token gets no exemption", () => {
+  const make = (id: string, sentence: string) => {
+    const pack = makePack([
+      makeCase(id, "discovery", { messages: [{ role: "user", text: "This is Mrs Okonkwo about the stove, order ORD-9ZK2 and my ankle boots." }, { role: "assistant", text: "Let me look." }] }),
+      makeCase("c2", "discovery"), makeCase("h1", "heldout"),
+    ]);
+    pack.check_catalog.looks_up_order = sentence;
+    return pack;
+  };
+  const clean = make("ret-07", "The agent checks the account before answering.");
+  assert.deepEqual(egressProblems("case ret-07 check looks_up_order: The agent checks the account before answering.", sensitiveIndex([clean])), []);
+  for (const [id, sentence, text] of [
+    ["ret-okonkwo-07", "The agent checks the account before answering.", "case ret-okonkwo-07"],
+    ["ret-07", "The agent checks the Okonkwo account before answering.", "The agent checks the Okonkwo account before answering."],
+    ["ret-07", "Mentions ORD-9ZK2 when it checks.", "Mentions ORD-9ZK2 when it checks."],
+    ["ret-ORD-9ZK2", "The agent checks the account before answering.", "case ret-ORD-9ZK2"],
+  ] as const) {
+    assert.ok(flagged(text, sensitiveIndex([make(id, sentence)])), text);
+  }
+  // Longer than the limit: not an identifier either.
+  const long = `${"The agent checks the account before answering. ".repeat(6)}`.trim();
+  assert.ok(long.length > 200);
+  assert.equal(sensitiveIndex([make("ret-07", long)]).identifiers!.test(long), false);
 });
 
 test("a name is caught however many conversations it is in, with look-alike letters, and when it is short", () => {
@@ -175,4 +205,74 @@ test("a name cut up by markup, spaces or hyphens is still found, and ordinary sp
   assert.deepEqual(egressProblems("It may be slower. Use <instructions> tags and **bold** text, 100% of the time.", i), []);
   // A mixed-alphabet word hidden behind a reference is still a mixed-alphabet word.
   assert.ok(egressProblems("Th&#1072;ddeus", null).some((p) => /mixes alphabets/.test(p)));
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// What a review prints from the pack and from pilot.json (EG-02, EG-03). Driven through the command line's `main`.
+// ---------------------------------------------------------------------------------------------------------------
+
+const TARGET = "states-return-deadline";
+// Markdown that would do something if it were rendered: a mention, a closing keyword, an image, HTML, a comment.
+const MARKUP = "@octocat please look. Fixes #1. ![t](https://attacker.example/px.png?x=1) <img src=\"https://attacker.example/i.png\"> <!-- hidden --> <details><summary>x</summary>y</details>";
+
+test("a check sentence that holds a customer's words and an order token stops the review: nothing is written or published", async () => {
+  const quote = `${CANARIES.discovery_words} on ${CANARIES.discovery_order}`;
+  const r = await reviewScenario({ mutate: (pack) => { pack.check_catalog[TARGET] = quote; } });
+  try {
+    assert.equal(r.review, 1);
+    assert.equal(r.publish, null);
+    assert.ok(r.lines.some((l) => l.startsWith("Refused (egress_blocked)")), r.lines.join("\n"));
+    assert.equal(r.ctx.github.writes().length, 0, "nothing reached GitHub");
+    assert.equal(prBody(r.ctx), null);
+    assert.ok(!r.lines.join("\n").includes("zipper"), "the refusal does not repeat the words");
+    assert.ok(!r.lines.join("\n").includes("CANARY"), "or the token");
+  } finally { await r.ctx.stop(); }
+});
+
+test("a case id or a check id that carries a name is not an identifier the review may print", () => {
+  const f = fixture();
+  const NAME = "ret-d01-Thaddeus-Quillfeather";
+  const pack = structuredClone(f.pack.value);
+  pack.cases[0].id = NAME;
+  pack.cases[0].messages[0] = { role: "user", text: "Hi, this is Thaddeus Quillfeather and I want to return my boots." };
+  const regression = { case_id: NAME, split: "discovery" as const, turn: 1, check_id: "looks_up_order", role: "primary" as const, blocking: false };
+  const bundle = { ...f.bundle.value, replay: { ...f.bundle.value.replay, regressions: [regression] } };
+  assert.throws(() => renderReview(bundle, f.bundle.id, pack, "looks_up_order"), (e: unknown) => e instanceof PilotError && e.code === "egress_blocked" && !/thaddeus|quillfeather/i.test(e.message));
+  // The same id in the allow-list path: it gets no exemption either.
+  const idx = sensitiveIndex([pack], [BASELINE_PROMPT]);
+  assert.ok(flagged(`see case ${NAME}`, idx), "the case id does not exempt the name");
+  // Control: a clean id passes.
+  pack.cases[0].id = "ret-d01";
+  assert.doesNotThrow(() => renderReview({ ...bundle, replay: { ...bundle.replay, regressions: [{ ...regression, case_id: "ret-d01" }] } }, f.bundle.id, pack, "looks_up_order"));
+});
+
+test("config strings that carry conversation content stop the review too, and over-long sentences are not printed", () => {
+  const f = fixture();
+  const pack = structuredClone(f.pack.value);
+  const bundle = structuredClone(f.bundle.value);
+  bundle.metric.primary.unit = `${CANARY_SENTENCE} per week`;
+  assert.throws(() => renderReview(bundle, f.bundle.id, pack, "looks_up_order"), (e: unknown) => e instanceof PilotError && e.code === "egress_blocked");
+  const long = structuredClone(f.pack.value);
+  long.check_catalog.looks_up_order = "The agent looks up the order before answering a question about it, ".repeat(10);
+  const md = renderReview(f.bundle.value, f.bundle.id, long, "looks_up_order");
+  assert.ok(!md.includes("The agent looks up the order before answering a question about it, The agent"), "a sentence over the limit is not printed");
+  assert.match(md, /a check sentence of \d+ characters is not shown: the limit is 200/);
+});
+
+test("customer-origin and config-origin strings in the published body are inline code: mentions, closing keywords, images, HTML and comments do nothing", async () => {
+  const r = await reviewScenario({ mutate: (pack, config) => {
+    pack.check_catalog[TARGET] = `Tells the date. ${MARKUP}`;
+    pack.check_catalog["returns-stay-polite"] = "Stays polite `with` a ``fence`` of backticks";
+    config.metric.signed_off.by = "Tomas L. @octocat";
+  } });
+  try {
+    assert.deepEqual([r.review, r.publish], [0, 0], r.lines.join("\n"));
+    const body = prBody(r.ctx) ?? "";
+    // Take out the two places where text is shown literally (fenced blocks and inline code spans): nothing active is left outside.
+    const plain = body.replace(/^(`{3,})[^\n]*\n[\s\S]*?\n\1\s*$/gm, "").replace(/(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g, "");
+    for (const active of ["@octocat", "Fixes #1", "attacker.example", "<img", "<!--", "<details>", "![", "https://"]) assert.ok(!plain.includes(active), `${active} is outside code: ${plain.split("\n").find((l) => l.includes(active))}`);
+    assert.ok(body.includes("@octocat please look."), "the text is still shown, as typed, inside the span");
+    // And the rendered review file is the same body.
+    assert.equal(r.ctx.github.pulls[0].body, body);
+  } finally { await r.ctx.stop(); }
 });

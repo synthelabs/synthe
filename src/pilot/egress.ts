@@ -11,6 +11,8 @@ export interface SensitiveIndex {
   readonly names: ReadonlySet<string>;
   // Matches the identifiers the reports print by design, as whole identifiers; null when the packs have none.
   readonly identifiers: RegExp | null;
+  // The same content before anything is allowed: only what the conversations themselves hold.
+  readonly conversation: { readonly phrases: ReadonlySet<string>; readonly names: ReadonlySet<string> };
 }
 
 const RUN = 3; // words in a run copied from a conversation
@@ -94,14 +96,23 @@ export function rendered(text: string): string {
 
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+// Longest identifier and catalog sentence the reports print as they are. A longer one is not shown and is not
+// allowed to leave as an identifier.
+export const MAX_SENTENCE_CHARS = 200;
+export const MAX_ID_CHARS = 80;
+
 // Case ids, check ids, catalog sentences and tool names are printed by the reports by design. They may leave as
-// whole identifiers only: a name inside a case id does not make that name an allowed word anywhere else.
-function identifierPattern(packs: Pack[]): RegExp | null {
+// whole identifiers only: a name inside a case id does not make that name an allowed word anywhere else. An
+// identifier that carries conversation content (a quote, a name, an order token) is not an identifier: it gets no
+// exemption, so the text check sees it like any other text. `clean` is that test, made against the
+// conversations only.
+function identifierPattern(packs: Pack[], clean: (text: string) => boolean): RegExp | null {
   const ids = new Set<string>();
+  const add = (text: string, cap: number) => { if (text.length <= cap && clean(text)) ids.add(text); };
   for (const pack of packs) {
-    for (const [id, sentence] of Object.entries(pack.check_catalog)) { ids.add(id); ids.add(sentence); }
-    for (const tool of pack.tools) ids.add(tool.name);
-    for (const c of pack.cases) ids.add(c.id);
+    for (const [id, sentence] of Object.entries(pack.check_catalog)) { add(id, MAX_ID_CHARS); add(sentence, MAX_SENTENCE_CHARS); }
+    for (const tool of pack.tools) add(tool.name, MAX_ID_CHARS);
+    for (const c of pack.cases) add(c.id, MAX_ID_CHARS);
   }
   const list = [...ids].filter((s) => s.trim() !== "").sort((a, b) => b.length - a.length || (a < b ? -1 : 1));
   if (list.length === 0) return null;
@@ -121,7 +132,6 @@ const withoutIdentifiers = (text: string, identifiers: RegExp | null): string =>
 // `allow` is text that may leave: the baseline prompt (already in the customer's repo) and the review's own
 // generated wording. Identifiers the reports print are taken out of it first, so they allow nothing else.
 export function sensitiveIndex(packs: Pack[], allow: string[] = []): SensitiveIndex {
-  const identifiers = identifierPattern(packs);
   const byCase = new Map<string, Set<string>>();
   const always = new Set<string>();
   const capital = new Set<string>();
@@ -159,24 +169,59 @@ export function sensitiveIndex(packs: Pack[], allow: string[] = []): SensitiveIn
       }
     }
   }
+  const cases = new Map<string, number>();
+  for (const items of byCase.values()) for (const item of items) cases.set(item, (cases.get(item) ?? 0) + 1);
+  // "A few cases": two, or 2% of the pack when that is more.
+  const few = Math.max(2, Math.ceil(byCase.size * 0.02));
+  const all = new Set<string>();
+  for (const [item, count] of cases) if (count <= few) all.add(item);
+  for (const word of always) all.add(word);
+  // A word that some conversation also writes in lowercase is an ordinary word, not a name.
+  const allNames = new Set<string>();
+  for (const word of capital) if (!lower.has(word)) { all.add(word); allNames.add(word); }
+
+  // Identifiers that carry conversation content are no identifiers (see identifierPattern).
+  const identifiers = identifierPattern(packs, (text) => !carriesConversation(text, all, allNames));
   const allowed = new Set<string>();
   for (const t of allow) {
     const w = words(withoutIdentifiers(t, identifiers));
     for (const word of w) allowed.add(word);
     for (const run of runsOf(w)) allowed.add(run);
   }
+  const phrases = new Set([...all].filter((x) => !allowed.has(x)));
+  const names = new Set([...allNames].filter((x) => !allowed.has(x)));
+  return { phrases, names, identifiers, conversation: { phrases: all, names: allNames } };
+}
 
-  const cases = new Map<string, number>();
-  for (const items of byCase.values()) for (const item of items) cases.set(item, (cases.get(item) ?? 0) + 1);
-  // "A few cases": two, or 2% of the pack when that is more.
-  const few = Math.max(2, Math.ceil(byCase.size * 0.02));
-  const phrases = new Set<string>();
-  for (const [item, count] of cases) if (count <= few && !allowed.has(item)) phrases.add(item);
-  for (const word of always) if (!allowed.has(word)) phrases.add(word);
-  // A word that some conversation also writes in lowercase is an ordinary word, not a name.
-  const names = new Set<string>();
-  for (const word of capital) if (!lower.has(word) && !allowed.has(word)) { phrases.add(word); names.add(word); }
-  return { phrases, names, identifiers };
+// Whether a short text (a catalog sentence, an id, a setting) carries content of particular conversations: a
+// copied run of words, a name, or a token with a digit. A single rare lowercase word is not counted here: a
+// sentence about "refunds" is not a leak because one customer wrote the word once. The full text check
+// (egressProblems) is the stricter one.
+function carriesConversation(text: string, phrases: ReadonlySet<string>, names: ReadonlySet<string>, byName = true): boolean {
+  for (const form of new Set([text, rendered(text)])) {
+    const w = words(form);
+    for (const run of runsOf(w)) if (phrases.has(run)) return true;
+    for (const word of w) if (((byName && names.has(word)) || /\p{N}/u.test(word)) && phrases.has(word)) return true;
+    if (!byName) continue;
+    for (let i = 0; i < w.length; i++) {
+      if (/\p{N}/u.test(w[i])) continue;
+      let joined = w[i];
+      for (let j = i + 1; j < w.length && j < i + JOIN_WORDS && !/\p{N}/u.test(w[j]); j++) {
+        joined += w[j];
+        if (joined.length > JOIN_CHARS) break;
+        if (joined.length >= JOIN_MIN && names.has(joined)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Case-specific content of the conversations alone: nothing is allowed, no identifier is exempt. A review
+// checks each customer-origin or config-origin string it prints against this. `byName` is false for settings
+// whose words are the operator's own vocabulary (a unit, a denominator): a brand or a currency that customers
+// write with a capital is not a leak there, but a copied quote or an order token still is.
+export function carriesConversationContent(text: string, index: SensitiveIndex, byName = true): boolean {
+  return carriesConversation(text, index.conversation.phrases, index.conversation.names, byName);
 }
 
 const listed = (lines: number[]): string => (lines.length === 0 ? "" : `; line${lines.length === 1 ? "" : "s"} ${lines.slice(0, 8).join(", ")}${lines.length > 8 ? " and more" : ""}`);
