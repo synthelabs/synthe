@@ -1,5 +1,5 @@
 // The enterprise pilot's commands, as one function. This module has no side effects when imported, so the main
-// Synthe CLI can import it later (docs/PILOT.md, "What is not wired yet"). The entry point is src/pilot/cli.ts.
+// Synthe CLI loads it for `npx synthe pilot` (src/cli/main.ts). From a checkout the entry point is src/pilot/cli.ts.
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import * as commands from "./commands.ts";
@@ -8,10 +8,14 @@ import { PilotError } from "./errors.ts";
 import { PilotStore } from "./store.ts";
 
 export const DEFAULT_DIR = ".synthe-pilot";
+// How the person started the pilot, so help and hints name a command they can type: `npx synthe pilot` from the
+// product CLI, this from a checkout.
+export const CHECKOUT_PROG = "node src/pilot/cli.ts";
+export const GUIDE_URL = "https://github.com/synthelabs/synthe/blob/main/docs/PILOT.md";
 
-export const HELP = `Synthe enterprise pilot: one agent, one metric, reviewed changes, a keep / hold / revert recommendation.
+export const helpText = (prog: string): string => `Synthe enterprise pilot: one agent, one metric, reviewed changes, a keep / hold / revert recommendation.
 
-  node src/pilot/cli.ts <command> [--dir <pilot directory>] [options]      (default directory: ${DEFAULT_DIR})
+  ${prog} <command> [--dir <pilot directory>] [options]      (default directory: ${DEFAULT_DIR})
 
 Set up
   init        --config pilot.json --repo-dir <customer checkout> [--rev <commit>]   freeze the contract and baseline prompt
@@ -43,7 +47,9 @@ Close the loop
 
 A live model provider is used only with --live --confirm-endpoint <url> --confirm-data "<data class>" (a host other than api.anthropic.com also needs --allow-endpoint-host <host>), and only when
 pilot.json records the customer's approval. Everything stays in the pilot directory unless you publish a review.
-Guide: docs/PILOT.md`;
+Guide: docs/PILOT.md (${GUIDE_URL})`;
+
+export const HELP = helpText(CHECKOUT_PROG);
 
 const OPTIONS = {
   dir: { type: "string" }, config: { type: "string" }, "repo-dir": { type: "string" }, rev: { type: "string" },
@@ -62,25 +68,25 @@ const COMMANDS: Record<string, Command> = {
   promote: commands.promotePack, report: commands.report, verify: commands.verify, status: commands.status,
 };
 
-export async function main(argv: string[], deps: PilotDeps): Promise<number> {
+export async function main(argv: string[], deps: PilotDeps, prog: string = CHECKOUT_PROG): Promise<number> {
   const name = argv[0];
-  if (!name || name === "help" || name === "--help" || name === "-h") { deps.say(HELP); return name ? 0 : 1; }
+  if (!name || name === "help" || name === "--help" || name === "-h") { deps.say(helpText(prog)); return name ? 0 : 1; }
   let flags: Flags;
   try {
     flags = parseArgs({ args: argv.slice(1), options: OPTIONS, strict: true, allowPositionals: false }).values as Flags;
   } catch (e) {
-    deps.say(`${(e as Error).message}. Run \`node src/pilot/cli.ts help\` for the options.`);
+    deps.say(`${(e as Error).message}. Run \`${prog} help\` for the options.`);
     return 1;
   }
-  if (flags.help === true) { deps.say(HELP); return 0; }
+  if (flags.help === true) { deps.say(helpText(prog)); return 0; }
   try {
     if (name === "demo") {
       // Loaded on demand: the demo carries a fake GitHub server and a data generator the real commands never need.
       const { demo } = await import("./demo.ts");
-      return await demo(flags, deps);
+      return await demo(flags, deps, prog);
     }
     const command = COMMANDS[name];
-    if (!command) { deps.say(`"${name}" is not a pilot command. Run \`node src/pilot/cli.ts help\` for the list.`); return 1; }
+    if (!command) { deps.say(`"${name}" is not a pilot command. Run \`${prog} help\` for the list.`); return 1; }
     return await command(new PilotStore(resolve(typeof flags.dir === "string" ? flags.dir : DEFAULT_DIR)), flags, deps);
   } catch (e) {
     if (e instanceof PilotError) {

@@ -287,6 +287,10 @@ Then:
   npx synthe calibrate     check that your checks are marked steadily and the way you mean them (event code or own key)
   npx synthe migrate --to <model>   compare your prompt on another model, changing nothing (needs ANTHROPIC_API_KEY; add --dry-run to spend nothing)
 
+Enterprise pilot (one support agent, one production metric, changes a person reviews):
+  npx synthe pilot help   every pilot command: replay recorded conversations offline, then keep, hold or revert from the experiment export your team produces
+  npx synthe pilot demo --out DIR   the whole pilot on invented data, in a few seconds (no credentials, no network)
+
 More: https://github.com/synthelabs/synthe#readme`;
 
 async function main() {
@@ -309,6 +313,15 @@ async function main() {
   else if (command === "undo") await undoRound();
   else if (command === "calibrate") await calibrateChecks();
   else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.ANTHROPIC_API_KEY });
+  else if (command === "pilot") {
+    // Loaded on demand, so no other command pays for the pilot's code. The pilot reports its own refusals and
+    // returns an exit code. An error that still escapes is not printed: its text can quote customer data.
+    const pilot = await import("../pilot/main.ts");
+    process.exitCode = await pilot.main(process.argv.slice(3), pilot.defaultDeps(), "npx synthe pilot").catch(() => {
+      console.error("The pilot command hit an unexpected error and stopped.");
+      return 1;
+    });
+  }
   else console.log(HELP);
 }
 

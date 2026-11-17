@@ -34,7 +34,7 @@ function filesUnder(dir: string): string[] {
   });
 }
 
-export async function demo(flags: Flags, deps: PilotDeps): Promise<number> {
+export async function demo(flags: Flags, deps: PilotDeps, prog = "node src/pilot/cli.ts"): Promise<number> {
   const outFlag = flags.out;
   if (typeof outFlag !== "string" || !outFlag.trim()) throw new PilotError("usage", "--out is required: a new, empty directory for the demo's inputs, pilot records and reports.");
   const out = resolve(outFlag);
@@ -78,7 +78,7 @@ export async function demo(flags: Flags, deps: PilotDeps): Promise<number> {
   const run = async (title: string, argv: string[]): Promise<number> => {
     say("");
     say(`[${++step}] ${title}`);
-    say(`  $ node src/pilot/cli.ts ${argv.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a).replaceAll(out, "<out>")).join(" ")}`);
+    say(`  $ ${prog} ${argv.map((a) => (/\s/.test(a) ? JSON.stringify(a) : a).replaceAll(out, "<out>")).join(" ")}`);
     return main([...argv, "--dir", dir], inner);
   };
   const expect = (what: string, ok: boolean): void => {

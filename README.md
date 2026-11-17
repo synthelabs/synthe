@@ -41,6 +41,10 @@ That output is from a test run with a fake model. A first real run on a small si
 - **No event code or key?** `npx synthe improve --handoff` measures the current code and prints a task card for the coding agent you already use. Have it make ONE small change on the branch the card names, commit it, then run `npx synthe submit`. Nothing is sent to a model.
 - **With a coding agent**, tell it: Set up Synthe in this repo. Run `npx synthe@latest guide` and follow it. Give it the codes in the same message. It asks you the four questions, runs `improve` for you and shows each round.
 
+## Enterprise pilot (a production metric)
+
+`npx synthe pilot` is a review-first loop for one support agent and one business metric that your own telemetry measures. It replays recorded conversations offline as a gate, writes the plan for an experiment you run with your own rollout controls, and says keep, hold or revert from the outcome export you produce. Nothing leaves your machine unless you publish a review, and a pull request needs a person's confirmation. Try it on invented data with `npx synthe pilot demo --out /tmp/synthe-pilot-demo` (no credentials, no network). Guide: [docs/PILOT.md](docs/PILOT.md).
+
 ## Data
 
 During Crimson Hacks, new installs use `"share": "full"` until November 9, 2026 at 23:59 UTC. This shares the prompt at the start of round 1, the full test-case file (train and holdout), the final prompt when the run stops, and how the run goes. After the cutoff, a full install automatically behaves like detail and stops sending the prompt and test-case file. New installs after the cutoff default to `"share": "detail"`.
@@ -125,6 +129,8 @@ The test cases are simulated single messages, not real users or full conversatio
 | `npx synthe calibrate` | Check that your checks are marked the same way each time and the way you mean them, and reword any that aren't (event code or own key in the environment) |
 | `npx synthe verify FILE` | Check one round's evidence record, for example `.synthe/evidence/round-3.json` |
 | `npx synthe undo N` | Open a pull request that puts back the prompt from before round N |
+| `npx synthe pilot help` | Enterprise pilot: every command of the review-first loop for one agent and one production metric ([docs/PILOT.md](docs/PILOT.md)) |
+| `npx synthe pilot demo --out DIR` | Run the whole pilot on invented data (no credentials, no network) |
 
 Local `try` saves only candidate fingerprints in `.synthe-local/try-history.json`, not prompts, replies or test cases. It rejects repeated text (including case, spacing and punctuation variants) before scoring, both within a round and across runs with the same goal and prompt. It keeps the latest 1,000 fingerprints; differently worded versions of the same idea can still get through. Keep `.synthe-local/` out of version control. Remove the history file explicitly to start fresh; corrupt history stops the run instead of silently forgetting it. No prompt file is written. `try --noise` does not read or write this history.
 

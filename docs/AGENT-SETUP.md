@@ -22,6 +22,7 @@ First find out whether the app sends a system prompt to an AI model: a `.md` or 
 
 - **No AI prompt, or the person wants a code change measured by a number** (tests passing, bundle size, build time, or a command of theirs): use **improve mode**. Go to section 9 and skip sections 1 to 8. Synthe itself proposes and measures the code changes, so it needs the person's event code and team code, or their own Anthropic key (section 9, step 1). Without either, section 9 has a fallback where you make the change.
 - **The app has a prompt and the person wants that prompt improved:** continue with section 1.
+- **The person asks for the enterprise pilot, or wants a prompt change judged by a production metric from their own telemetry:** go to section 10. Do not start it on your own: it needs a signed-off metric and data the team exports.
 
 ## 1. Prerequisites
 
@@ -216,3 +217,28 @@ Use this when the person has no event code, team code or key. Nothing is sent to
 
    A win prints `Pull request: <url>`, and in auto mode `Merged into <branch>. Run git pull.` Show the person the result and the link as written.
 4. If it prints `Not merged:` and a reason (within noise, worse, the regression check failed, or it broke a test that passed before), show it as written. If the person wants another try, make a different small change on the same branch, commit, and run `npx synthe@latest submit --agent` again (at most 3 attempts in all, unless they ask for more).
+
+## 10. Enterprise pilot (a production metric)
+
+`npx synthe pilot` is a separate, review-first loop for one support agent and one business metric. It replays recorded conversations offline as a gate, writes the plan for an experiment the team runs with its own rollout controls, and then says keep, hold or revert from the outcome export the team produces. People decide; Synthe proposes and measures. The full guide is `docs/PILOT.md` in the Synthe repo: https://github.com/synthelabs/synthe/blob/main/docs/PILOT.md
+
+```
+npx synthe pilot help
+npx synthe pilot demo --out <new empty folder>
+```
+
+- `help` lists every pilot command. If your Synthe version answers `pilot` with the general help, it is too old to have the pilot.
+- `demo` runs the whole loop on invented data in a few seconds, with no credentials and no network. Use it to show the person what the pilot produces before they give it any data.
+
+### Rules
+
+- The pilot directory (`--dir`, default `.synthe-pilot`) holds the team's conversations and telemetry. Never commit it, never copy it into the repo, an issue, a pull request or a chat, and never paste its contents into your own replies. `init` writes a `.gitignore` inside it; leave that file alone.
+- Never write or change `pilot.json`, a telemetry export, a conversation pack or a promotion request yourself. The team produces them and a named person signs off the metric. If one is refused, show the person the exact message.
+- Never run `approve` for the person, and never pass `--publish`, `--confirm`, `--reopen`, `--allow-past-start`, `--accept-flags`, `--live` or `--allow-endpoint-host` unless the person typed that exact command or told you to run it. Each one records a person's decision, sends data out, or opens a pull request.
+- `--live` sends conversations to a model provider and costs money. It runs only when `pilot.json` records the team's approval. Ask first, every time.
+- Do not edit files under the pilot directory. Records are write-once; `npx synthe pilot verify` fails after an edit.
+- When a command prints `Refused (...)`, show the message as written and do what it says. Do not retry with different flags to get past it.
+
+### What you may run without asking
+
+`npx synthe pilot status`, `report` and `verify` only read the pilot directory and rebuild local reports. Show the person the recommendation line and the report path, not the data.

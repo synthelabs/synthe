@@ -2,16 +2,17 @@
 
 One support agent, one business metric, reviewed prompt changes, and a **keep / hold / revert** recommendation from an experiment the customer runs. This is a review-first loop: Synthe proposes and measures, and people decide.
 
-Status: built and tested on synthetic data only. It is not wired into `npx synthe` yet (see [What is not wired yet](#what-is-not-wired-yet)). No real customer data, provider or GitHub repo has been used.
+Status: built and tested on synthetic data only. No real customer data, provider or GitHub repo has been used. It is part of the Synthe CLI as `npx synthe pilot <command>` (see [How to run it](#how-to-run-it)).
 
 ## Run the synthetic pilot
 
-From a clean checkout, with no credentials:
+With no credentials:
 
 ```
-npm ci
-node src/pilot/cli.ts demo --out /tmp/synthe-pilot-demo
+npx synthe pilot demo --out /tmp/synthe-pilot-demo
 ```
+
+From a clean checkout, the same demo is `npm ci`, then `node src/pilot/cli.ts demo --out /tmp/synthe-pilot-demo`.
 
 It takes a few seconds, sends nothing anywhere, and exits 0 only if every expectation holds. The data is invented (Fernhill Outfitters, support agent Juniper). It shows, in order:
 
@@ -40,7 +41,7 @@ The inputs the demo generated are in `<out>/inputs/`. Read them as examples of e
 
 ## The operator flow
 
-All commands are `node src/pilot/cli.ts <command> --dir <pilot directory>`. The directory holds customer data (packs, telemetry rows). Keep it in the operator's environment. `init` writes a `.gitignore` inside it so it cannot be committed by accident.
+All commands are `npx synthe pilot <command> --dir <pilot directory>` (from a checkout: `node src/pilot/cli.ts <command>`, with the same options). `npx synthe pilot help` lists them. The directory holds customer data (packs, telemetry rows). Keep it in the operator's environment. `init` writes a `.gitignore` inside it so it cannot be committed by accident.
 
 | Step | Command | What it does |
 |---|---|---|
@@ -309,7 +310,7 @@ A live model runs only when `pilot.json` records the approval and the operator o
 ```
 
 ```
-node src/pilot/cli.ts replay --candidate <id> --live --confirm-endpoint https://api.anthropic.com --confirm-data "redacted support conversations (pack)"
+npx synthe pilot replay --candidate <id> --live --confirm-endpoint https://api.anthropic.com --confirm-data "redacted support conversations (pack)"
 ```
 
 - The key is read from the one variable `key_env` names. There is no fallback to `ANTHROPIC_API_KEY`, `SYNTHE_ANTHROPIC_KEY` or an event code, and Synthe's event proxy is never used.
@@ -368,15 +369,13 @@ node scripts/pilot-build.mjs                 # one-file bundle in .synthe-local/
 node scripts/pilot-mutation-check.mjs        # in its own worktree, never two at once
 ```
 
-## What is not wired yet
+## How to run it
 
-Left out on purpose, because other work in flight owns these files:
+- **From the Synthe CLI:** `npx synthe pilot <command>`. The `pilot` command is in every Synthe version that lists it in `npx synthe --help`; version 1.10.0 and earlier do not have it. It loads the pilot's code only when you run it, so no other Synthe command changes.
+- **From a checkout:** `node src/pilot/cli.ts <command>` with Node 22.18 or later (the runtime the repo's tests use).
+- **As one file:** `node scripts/pilot-build.mjs` bundles the pilot alone into `.synthe-local/pilot/synthe-pilot.mjs`.
 
-1. **`npx synthe pilot`.** In `src/cli/main.ts`, add a `pilot` command that calls `main(process.argv.slice(3), defaultDeps())` from `src/pilot/main.ts` (that module has no side effects on import), and a line in `HELP`. Then `npm run build` and commit `dist/cli.js`.
-2. **`package.json`.** Optional scripts: `"pilot": "node src/pilot/cli.ts"` and `"mutation:pilot": "node scripts/pilot-mutation-check.mjs"`.
-3. **`README.md`.** One line pointing here.
-
-Until then, run from a checkout with Node 22.18 or later (the runtime the repo's tests use), or build the bundle.
+The three forms run the same code and take the same options. The CLI bundle is built for Node 20 and is tested in CI on Node 24; it has not been run on Node 20.
 
 ## What a real pilot still needs
 

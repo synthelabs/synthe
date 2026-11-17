@@ -98,7 +98,7 @@ test("rendered review has the diff, every full id, the sentence, the approve com
     assert.ok(md.includes(id), `missing id ${id}`);
   }
   assert.ok(md.includes("Replay shows checks on recorded conversations. It is not an estimate of business impact."));
-  assert.ok(md.includes(`node src/pilot/cli.ts approve --candidate ${f.bundle.value.candidate_id} --experiment ${f.experiment.id} --approver <your name>`));
+  assert.ok(md.includes(`npx synthe pilot approve --candidate ${f.bundle.value.candidate_id} --experiment ${f.experiment.id} --approver <your name>`));
   assert.ok(md.includes("Merging this pull request is a human decision"));
   assert.ok(md.includes("Synthe never changes traffic"));
   assert.ok(md.includes(f.pack.value.check_catalog.looks_up_order));
