@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DEMO, demoConfig, demoPack, HUMAN_CANDIDATE_PROMPT } from "../src/pilot/demo-data.ts";
+import { BASELINE_PROMPT, CANARIES, DEMO, demoConfig, demoPack, HUMAN_CANDIDATE_PROMPT } from "../src/pilot/demo-data.ts";
 import { git, json, replayedPilot, workspace } from "./pilot-cli-helpers.ts";
 
 const refused = (lines: string[], code: string): boolean => lines.some((l) => l.startsWith(`Refused (${code})`));
@@ -121,6 +121,7 @@ test("the review's egress check treats a telemetry conversation id as customer t
     const before = ctx.lines.length;
     assert.equal(await ctx.run(["review", "--candidate", leaking]), 1);
     assert.ok(refused(ctx.lines, "egress_blocked"), ctx.lines.slice(before).join(" | "));
+    assert.match(ctx.lines.at(-1) ?? "", /the candidate's rationale/, "the refusal names the part to change");
     assert.ok(!ctx.lines.slice(before).join("\n").includes(id), "the refusal does not repeat the id");
     assert.equal(ctx.store.find("review.bundled").length, 0);
     assert.ok(!existsSync(join(ctx.dir, "reports", `review-${leaking.slice(0, 12)}`)));
@@ -135,4 +136,18 @@ test("the review's egress check treats a telemetry conversation id as customer t
     assert.equal(await other.run(["experiment", "--candidate", clean, "--start", DEMO.experiment_b_start]), 0, other.lines.at(-1) ?? "");
     assert.equal(await other.run(["review", "--candidate", clean]), 0, other.lines.slice(-3).join(" | "));
   } finally { await other.stop(); }
+});
+
+test("a refusal names the part of the review to change: the rationale or the prompt", async () => {
+  const ctx = await replayedPilot();
+  try {
+    const leaking = `${BASELINE_PROMPT}- After you check eligibility, tell the customer the return-by date. Example: order ${CANARIES.discovery_order}, where ${CANARIES.discovery_words}.\n`;
+    assert.equal(await ctx.run(["propose", "--finding", ctx.finding, "--file", ctx.put("leaking.md", leaking), "--author", "A reviewer", "--rationale", "Adds an example."]), 0);
+    const candidate = ctx.last("candidate.created");
+    assert.equal(await ctx.run(["replay", "--candidate", candidate, "--model", ctx.model]), 0);
+    assert.equal(await ctx.run(["experiment", "--candidate", candidate, "--start", DEMO.experiment_b_start]), 0);
+    assert.equal(await ctx.run(["review", "--candidate", candidate]), 1);
+    assert.ok(refused(ctx.lines, "egress_blocked"));
+    assert.match(ctx.lines.at(-1) ?? "", /the candidate prompt/, "the refusal names the prompt, not the whole bundle");
+  } finally { await ctx.stop(); }
 });

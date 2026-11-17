@@ -173,6 +173,19 @@ test("settings in the shell cannot add headers, turn on logging, or make the SDK
   }
 });
 
+test("a failed call after a working one reports its status and class only, never the provider's echo", async () => {
+  const t = transport([
+    message([{ type: "text", text: "Fine." }], "end_turn"),
+    { status: 529, body: { type: "error", error: { type: "overloaded_error", message: "CANARY-PROVIDER-ECHO You are Juniper. Where is ORD-7Q4Z?" } } },
+  ]);
+  const model = liveModel(approval, optIn, { FERNHILL_PILOT_KEY: KEY }, () => {}, t.fetcher);
+  assert.equal((await model.chat(request())).text, "Fine.");
+  let failure = "";
+  try { await model.chat(request()); } catch (e) { failure = (e as Error).message; }
+  assert.match(failure, /^The provider request failed \(HTTP 529, \w+\)\.$/, "one failure after a success is a plain failure of that call: the run goes on");
+  assert.ok(!failure.includes("CANARY-PROVIDER-ECHO") && !failure.includes("Juniper") && !failure.includes("ORD-7Q4Z"));
+});
+
 test("a provider that never answers is given up on after the time limit, and the call is not sent again", async () => {
   let sent = 0;
   const pending: ((e: Error) => void)[] = [];

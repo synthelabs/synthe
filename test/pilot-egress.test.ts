@@ -120,6 +120,23 @@ test("an identifier the reports print passes only as a whole: it does not make i
   assert.ok(flagged("case ret", i) === false, "part of an identifier is just two short words");
 });
 
+test("a check sentence with a rare ordinary word passes as a whole identifier, and allows nothing else", () => {
+  // "stove" is in one conversation only, so it is flagged as a single rare word. A check sentence that uses it holds no
+  // quote, name or token, so it is an identifier the reports print as it is.
+  const pack = makePack([
+    makeCase("ret-07", "discovery", { messages: [{ role: "user", text: "My stove has a crack." }, { role: "assistant", text: "Let me look." }] }),
+    makeCase("c2", "discovery"), makeCase("h1", "heldout"),
+  ]);
+  const sentence = "The agent asks about the stove politely.";
+  pack.check_catalog.looks_up_order = sentence;
+  const frame = `Fixes: case ret-07, turn 1, check looks_up_order: ${sentence}`;
+  const i = sensitiveIndex([pack], [BASELINE_PROMPT, frame]);
+  assert.ok(flagged("The customer called about a stove.", sensitiveIndex([pack])), "the word is flagged on its own");
+  assert.deepEqual(egressProblems(frame, i), [], "the sentence passes as a whole identifier, rare word and all");
+  assert.deepEqual(egressProblems(sentence, i), [], "and in free text too");
+  assert.ok(flagged("The customer called about a stove.", i), "the sentence in the frame does not make the word allowed elsewhere");
+});
+
 // Changed on purpose (EG-02): this test used a case id and a catalog sentence that contained the customer's name,
 // and expected both to be exempt as identifiers. An identifier that carries a name is a leak, so it is not exempt.
 test("an identifier or a catalog sentence that carries a name, a quote or a token gets no exemption", () => {

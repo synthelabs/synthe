@@ -140,7 +140,13 @@ const allMutations = [
   ["publish: the base may move before the first write", PUBLISH, 'if (await repo.headSha(base) !== baseSha) throw', 'if (false) throw'],
   ["revert: interim integrity problems are ignored", EXPERIMENT, "} else if (canStopEarly && earlyStops.length > 0) {", "} else if (earlyStops.length > 0) {"],
   ["publish: an ambient GitHub token is used", COMMANDS, "const token = deps.env[GITHUB_TOKEN_ENV]?.trim();", "const token = (deps.env[GITHUB_TOKEN_ENV] ?? deps.env.GITHUB_TOKEN)?.trim();"],
-  ["review: a local bundle is written without the egress check", COMMANDS, 'assertEgressSafe(body, sensitive, "review bundle");', ""],
+  // The whole-body check in commands.ts overlaps the checks on the rationale and the prompt (which are there so a refusal
+  // names the part) and the check of every pack or config string as it is printed (review.ts). Removing any one of
+  // them leaves another to refuse, so a mutation of the body check alone is not observable; the others are, through
+  // the part named in the refusal.
+  ["review: a refusal does not name the rationale", COMMANDS, 'assertEgressSafe(candidate.value.rationale, sensitive, "candidate\'s rationale");', ""],
+  ["review: a refusal does not name the prompt", COMMANDS, 'assertEgressSafe(candidatePrompt, sensitive, "candidate prompt");', ""],
+  ["review: a string from the pack or pilot.json that holds conversation text is printed", REVIEW, "if (carriesConversationContent(text, index, byName)) {", "if (false) {"],
   ["review: a missing published review is recreated", COMMANDS, "expectedPr: published ? Number(published.refs.pr) : undefined", "expectedPr: undefined"],
   ["approval: a rejection counts as approval", APPROVAL, 'if (latest.value.decision === "rejected") throw', "if (false) throw"],
   ["approval: a record that answers no review counts", COMMANDS, "\n    && reviews.some((r) => r.key === a.value.review_id && r.refs.candidate === a.value.candidate_id && r.refs.experiment === a.value.experiment_id));", ");"],
