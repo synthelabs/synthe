@@ -1,16 +1,16 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { canonicalJson } from "../core/evidence.ts";
 import { pilotGithubRepo, type PilotRepo } from "./github.ts";
 import { makeApproval, requireApproval } from "./approval.ts";
 import { CONFIG_FILE, GITHUB_API, parsePilotConfig } from "./config.ts";
 import { discoverFailures, makeCandidate, proposerContext, renderFindings } from "./discover.ts";
-import { assertEgressSafe, sensitiveIndex, words } from "./egress.ts";
+import { assertEgressSafe, sensitiveIndex, telemetryIdentifiers, words } from "./egress.ts";
 import { PilotError } from "./errors.ts";
 import { analyzeExperiment, buildExperimentSpec, renderDecision, renderExperimentSpec } from "./experiment.ts";
 import { candidateTag, contentId, isSha256, ms, shortId } from "./ids.ts";
-import { inside, readBounded, unsafeKey, writeOnce } from "./io.ts";
+import { inside, printable, readBounded, unsafeKey, writeOnce } from "./io.ts";
 import { liveModel, type LiveOptIn } from "./live.ts";
 import { modelProposer, parseModelScript, parseProposerScript, scriptedModel, scriptedProposer } from "./model.ts";
 import { packSummary, parsePack } from "./pack.ts";
@@ -183,8 +183,27 @@ function assertNotFromTheFuture(imported: TelemetryImport, now: Date, cutoff?: I
 // Models. Nothing runs unless the operator names it.
 // ---------------------------------------------------------------------------------------------------------------
 
+// The pilot directory holds customer data. A bare `*` line in its own .gitignore keeps `git add -A` from staging it,
+// even when a .gitignore already exists there. A pilot directory that is itself a repository root, or whose files a
+// surrounding repository already tracks, cannot be protected by an ignore file, so say so (or refuse).
+function protectDirectory(dir: string, say: (t: string) => void): void {
+  if (existsSync(join(dir, ".git"))) {
+    throw new PilotError("usage", "The pilot directory is a git repository root. It holds customer data; use a directory that is not a repository, or a subdirectory with its own .gitignore.");
+  }
+  const file = join(dir, ".gitignore");
+  if (!existsSync(file)) writeOnce(file, "*\n");
+  else {
+    const lines = readFileSync(file, "utf8").split(/\r?\n/).map((l) => l.trim());
+    if (!lines.includes("*")) appendFileSync(file, `${readFileSync(file, "utf8").endsWith("\n") ? "" : "\n"}*\n`);
+  }
+  try {
+    const tracked = execFileSync("git", ["-C", dir, "ls-files", "--", "."], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    if (tracked) say("Warning: a surrounding git repository already tracks files in this directory. An ignore file does not untrack them; run `git rm -r --cached` on it before you commit.");
+  } catch { /* not inside a repository */ }
+}
+
 function liveOptIn(flags: Flags): LiveOptIn {
-  return { live: flags.live === true, endpoint: opt(flags, "confirm-endpoint"), data_class: opt(flags, "confirm-data") };
+  return { live: flags.live === true, endpoint: opt(flags, "confirm-endpoint"), data_class: opt(flags, "confirm-data"), allow_host: opt(flags, "allow-endpoint-host") };
 }
 
 function chatModel(flags: Flags, config: PilotConfig, deps: PilotDeps): ChatModel {
@@ -267,7 +286,7 @@ export async function init(store: PilotStore, flags: Flags, deps: PilotDeps): Pr
   store.put("config", config);
   store.record("config.frozen", configId, { config: configId, baseline_prompt: promptId, commit }, iso(deps.now()));
   // The directory holds customer data (packs, telemetry rows). Keep all of it out of any surrounding git repo.
-  if (!existsSync(join(store.dir, ".gitignore"))) writeOnce(join(store.dir, ".gitignore"), "*\n");
+  protectDirectory(store.dir, deps.say);
 
   const m = config.metric;
   deps.say(`Pilot ${config.pilot_id} frozen. Contract ${configId}`);
@@ -337,7 +356,7 @@ export async function pack(store: PilotStore, flags: Flags, deps: PilotDeps): Pr
   store.put("pack", parsed);
   store.record("pack.frozen", id, { pack: id }, iso(deps.now()));
   const s = packSummary(parsed, id);
-  deps.say(`Pack ${id} frozen: ${s.name} version ${s.pack_version}.`);
+  deps.say(`Pack ${id} frozen: ${printable(s.name)} version ${printable(String(s.pack_version), 40)}.`);
   deps.say(`${s.cases} cases (${s.by_split.discovery} discovery, ${s.by_split.heldout} held out), ${s.assistant_turns} assistant turns, ${s.checks} checks, ${s.regression_cases} regression cases.`);
   deps.say("Next: `discover --model scripted:<file>` (or --live) to find recurring failures on the discovery cases.");
   return 0;
@@ -538,7 +557,9 @@ export async function review(store: PilotStore, flags: Flags, deps: PilotDeps): 
   // review rendered with its two free-text parts, the rationale and the prompt change, left out. Anything those
   // two parts add is checked against the conversations.
   const frame = renderReview({ ...bundle, rationale: "", diff: "" }, id, active.value, replayed.value.target_check_id);
-  const sensitive = sensitiveIndex(allPacks(store).map((p) => p.value), [baselinePrompt, frame, publishMessage(bundle)]);
+  // Conversation and unit ids from every stored export count as customer text too.
+  const telemetryIds = store.list("telemetry").flatMap((tid) => telemetryIdentifiers(store.get<TelemetryImport>("telemetry", tid).rows ?? []));
+  const sensitive = sensitiveIndex(allPacks(store).map((p) => p.value), [baselinePrompt, frame, publishMessage(bundle)], telemetryIds);
   // The two free-text parts first, so a refusal names the part and the line to change.
   assertEgressSafe(candidate.value.rationale, sensitive, "candidate's rationale");
   assertEgressSafe(candidatePrompt, sensitive, "candidate prompt");

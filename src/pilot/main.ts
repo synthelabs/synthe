@@ -41,7 +41,7 @@ Close the loop
 
   demo        --out <directory>                         run the whole loop on synthetic data (no credentials, no network)
 
-A live model provider is used only with --live --confirm-endpoint <url> --confirm-data "<data class>", and only when
+A live model provider is used only with --live --confirm-endpoint <url> --confirm-data "<data class>" (a host other than api.anthropic.com also needs --allow-endpoint-host <host>), and only when
 pilot.json records the customer's approval. Everything stays in the pilot directory unless you publish a review.
 Guide: docs/PILOT.md`;
 
@@ -51,7 +51,7 @@ const OPTIONS = {
   finding: { type: "string" }, author: { type: "string" }, rationale: { type: "string" }, candidate: { type: "string" },
   start: { type: "string" }, share: { type: "string" }, repo: { type: "string" }, base: { type: "string" }, confirm: { type: "string" },
   experiment: { type: "string" }, approver: { type: "string" }, request: { type: "string" }, out: { type: "string" },
-  "confirm-endpoint": { type: "string" }, "confirm-data": { type: "string" }, head: { type: "string" },
+  "confirm-endpoint": { type: "string" }, "allow-endpoint-host": { type: "string" }, "confirm-data": { type: "string" }, head: { type: "string" },
   publish: { type: "boolean" }, "allow-past-start": { type: "boolean" }, reopen: { type: "boolean" }, "accept-flags": { type: "string" }, live: { type: "boolean" }, reject: { type: "boolean" }, list: { type: "boolean" }, help: { type: "boolean" },
 } as const;
 
