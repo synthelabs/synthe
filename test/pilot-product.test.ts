@@ -70,6 +70,7 @@ test("the product help names the pilot, and the other commands still answer as b
   // A command that needs a set-up project still says so; the pilot wiring did not change that path.
   const status = run(["status"], tmp("pilot-product-status-"));
   assert.match(status.stdout, /Synthe isn't set up in this folder/);
+  assert.equal(status.status, 1, "status in a folder with no setup still fails, as on main");
 });
 
 test("the product CLI loads the pilot only when the pilot command runs", () => {

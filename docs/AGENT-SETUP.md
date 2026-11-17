@@ -227,14 +227,15 @@ npx synthe pilot help
 npx synthe pilot demo --out <new empty folder>
 ```
 
-- `help` lists every pilot command. If your Synthe version answers `pilot` with the general help, it is too old to have the pilot.
+- `help` lists every pilot command. If your Synthe version answers `pilot` with the general help, it is too old to have the pilot (1.10.0 and older): use `node src/pilot/cli.ts <command>` from a Synthe checkout instead.
 - `demo` runs the whole loop on invented data in a few seconds, with no credentials and no network. Use it to show the person what the pilot produces before they give it any data.
 
 ### Rules
 
-- The pilot directory (`--dir`, default `.synthe-pilot`) holds the team's conversations and telemetry. Never commit it, never copy it into the repo, an issue, a pull request or a chat, and never paste its contents into your own replies. `init` writes a `.gitignore` inside it; leave that file alone.
+- The pilot directory (`--dir`, default `.synthe-pilot`) holds the team's conversations and telemetry. Never open, read, `cat` or search its packs, telemetry exports or call logs: reading them sends customer conversations to your own model provider, which the team did not approve. Never commit it, never copy it into the repo, an issue, a pull request or a chat, and never paste its contents into your own replies. `init` writes a `.gitignore` inside it; leave that file alone.
 - Never write or change `pilot.json`, a telemetry export, a conversation pack or a promotion request yourself. The team produces them and a named person signs off the metric. If one is refused, show the person the exact message.
-- Never run `approve` for the person, and never pass `--publish`, `--confirm`, `--reopen`, `--allow-past-start`, `--accept-flags`, `--live` or `--allow-endpoint-host` unless the person typed that exact command or told you to run it. Each one records a person's decision, sends data out, or opens a pull request.
+- Never run `approve`, `analyze`, `promote --request` or `propose --file --author` for the person: each records a person's decision. Run them only when the person typed that exact command or told you to run it.
+- Never pass `--publish`, `--confirm`, `--reopen`, `--allow-past-start`, `--accept-flags`, `--live` or `--allow-endpoint-host` unless the person typed that exact command or told you to run it. Each one records a person's decision, sends data out, or opens a pull request.
 - `--live` sends conversations to a model provider and costs money. It runs only when `pilot.json` records the team's approval. Ask first, every time.
 - Do not edit files under the pilot directory. Records are write-once; `npx synthe pilot verify` fails after an edit.
 - When a command prints `Refused (...)`, show the message as written and do what it says. Do not retry with different flags to get past it.

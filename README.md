@@ -43,7 +43,7 @@ That output is from a test run with a fake model. A first real run on a small si
 
 ## Enterprise pilot (a production metric)
 
-`npx synthe pilot` is a review-first loop for one support agent and one business metric that your own telemetry measures. It replays recorded conversations offline as a gate, writes the plan for an experiment you run with your own rollout controls, and says keep, hold or revert from the outcome export you produce. Nothing leaves your machine unless you publish a review, and a pull request needs a person's confirmation. Try it on invented data with `npx synthe pilot demo --out /tmp/synthe-pilot-demo` (no credentials, no network). Guide: [docs/PILOT.md](docs/PILOT.md).
+`npx synthe pilot` is a review-first loop for one support agent and one business metric that your own telemetry measures. It replays recorded conversations offline as a gate, writes the plan for an experiment you run with your own rollout controls, and says keep, hold or revert from the outcome export you produce. Data leaves your machine in two ways only: publishing a review (a pull request, which needs a person's confirmation), and `--live` on `replay`, `discover` or `propose`, which sends redacted conversations to a model provider after the team's recorded approval. The `pilot` command needs a Synthe release newer than 1.10.0; until then run it from a checkout with `node src/pilot/cli.ts <command>`. Try it on invented data with `npx synthe pilot demo --out /tmp/synthe-pilot-demo` (no credentials, no network). Guide: [docs/PILOT.md](docs/PILOT.md).
 
 ## Data
 

@@ -254,6 +254,7 @@ Read these before you rely on a decision:
 - There is no command to purge customer text from the store. Raw messages and conversation ids stay in write-once records, and editing a record makes `verify` fail. To remove customer data, delete the whole pilot directory (it is kept out of git on purpose). A purge that leaves a tombstone and keeps `verify` meaningful is not built yet.
 - A unit that appears in both arms is dropped from the analysis. That is right when `unit_id` is the true assignment key. If the customer randomised by conversation and reused one `unit_id` across both arms, all of those rows are excluded; use the real assignment key as `unit_id`.
 - Some error messages print a customer-supplied export or file name as written (length-capped where the code was changed, not everywhere). Do not put customer text in export file names.
+- A review pull request published before the review body gained the release note (2026-11-17) is refused with `conflict` on a publish retry, because the body is rendered again and compared byte for byte. Nothing stored depends on the body text; publish a new review instead.
 - The full pilot mutation check (`node scripts/pilot-mutation-check.mjs`, about 160 mutations) takes over an hour and is not part of CI. It killed 157 of 157 before the egress branch merged. After that merge, a full run killed 158 of 162 before it was stopped for time; new tests were written for the four survivors and shown to kill them and the related mutations, but the whole script was not run again to the end. Run it once when time allows and record the result in the ledger.
 
 Each decision file leads with the recommendation and the team's own number, lists every number with its source record and method, and gives the exact rollback target (the baseline tag and prompt id).
@@ -371,7 +372,7 @@ node scripts/pilot-mutation-check.mjs        # in its own worktree, never two at
 
 ## How to run it
 
-- **From the Synthe CLI:** `npx synthe pilot <command>`. The `pilot` command is in every Synthe version that lists it in `npx synthe --help`; version 1.10.0 and earlier do not have it. It loads the pilot's code only when you run it, so no other Synthe command changes.
+- **From the Synthe CLI:** `npx synthe pilot <command>`. The `pilot` command is in every Synthe version that lists it in `npx synthe --help`. **No released version has it yet:** 1.10.0 (the latest on npm) answers `pilot` with the general help, exits 0 and records nothing. Until the next release, use the checkout form below. Other Synthe commands behave as before; the pilot adds about 380 KB to `dist/cli.js` and its Node built-in imports (including `node:http`) load at startup for every command.
 - **From a checkout:** `node src/pilot/cli.ts <command>` with Node 22.18 or later (the runtime the repo's tests use).
 - **As one file:** `node scripts/pilot-build.mjs` bundles the pilot alone into `.synthe-local/pilot/synthe-pilot.mjs`.
 
