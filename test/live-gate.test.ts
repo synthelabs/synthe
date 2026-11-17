@@ -381,9 +381,47 @@ test("msprt review: p_av and the interval on the Lambda 21.99 win", () => {
   assert.ok(v.interval[0] > 0, "0 must be outside the interval");
 });
 test("msprt review: a good crossing before, then a latest reading in the bad direction with no bad crossing, does not promote", () => {
-  // Day 7 is good (Lambda 2427, a decision reading). Day 14 has D < 0 with Lambda 0.5: no bad crossing, no promotion.
+  // Day 7 is good (Lambda 2427, a decision reading). Day 14 has D < 0 with Lambda about 0.28: no bad crossing, no promotion.
   assert.deepEqual(pick(decide(msInput([
     reading(7, R(300, 10000), R(420, 10000)),
     reading(14, R(600, 20000), R(590, 20000)),
   ]))), ["continue", "running"]);
+});
+// Re-review of c0a379b: each test below fails against one named mutant and passes on the current code.
+test("msprt re-review: a split-broken earlier reading is not replayed into the maxima", () => {
+  // Day 7 is strong but its arms are split 10000 vs 13000 (broken). Day 8 is weak. No promotion.
+  const { rule, changed } = msRule({ whole_weeks: false });
+  assert.deepEqual(pick(decide({ ...msInput([
+    reading(7, R(300, 10000), R(900, 13000)),
+    reading(8, R(300, 10000), R(360, 10000)),
+  ]), rule, changed })), ["continue", "running"]);
+});
+test("msprt re-review: the threshold is ln(1/alpha), not a fixed ln(20)", () => {
+  // Lambda 21.99 clears ln(20) but not ln(100), the threshold at alpha 0.01.
+  const { rule, changed } = msRule({ alpha: 0.01 });
+  assert.deepEqual(pick(decide({ ...msAt(7, R(300, 10000), R(379, 10000)), rule, changed })), ["continue", "running"]);
+});
+test("msprt re-review: max_days decides, so no promotion after the end", () => {
+  const { rule, changed } = msRule({ max_days: 10 });
+  assert.deepEqual(pick(decide({ ...msInput([
+    reading(7, R(300, 10000), R(360, 10000)),
+    reading(10, R(430, 14300), R(515, 14300)), // the end: no difference, so drop
+    reading(14, R(600, 20000), R(780, 20000)), // strong good, but after the end
+  ]), rule, changed })), ["drop", "no_difference"]);
+});
+test("msprt re-review: a worse drop stays a drop on a later non-decision reading", () => {
+  assert.deepEqual(pick(decide(msInput([
+    reading(7, R(300, 10000), R(300, 10000)),
+    reading(10, R(430, 14000), R(300, 14000)), // bad, Lambda 14921
+    reading(14, R(600, 20000), R(610, 20000)), // decision: drop worse
+    reading(15, R(640, 21000), R(650, 21000)), // week 2 again: not a decision reading
+  ]))), ["drop", "worse"]);
+});
+test("msprt re-review: an earlier decision at max_days is final, even when it could have promoted", () => {
+  // Day 28 would have promoted (Lambda 7.79), so the first decision reading at max_days ends the experiment.
+  // The strong good day 29 reading does not promote.
+  assert.deepEqual(pick(decide(msInput([
+    reading(28, R(300, 10000), R(420, 10000)),
+    reading(29, R(310, 10400), R(460, 10400)),
+  ]))), ["drop", "no_difference"]);
 });

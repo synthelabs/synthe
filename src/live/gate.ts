@@ -170,9 +170,11 @@ function maxOf(max: number | null, ln: number): number {
 // The mSPRT rule for method "msprt" (research A1, A5). Every usable reading adds its ln Lambda to a running
 // maximum, kept apart for readings in the good direction and in the bad direction. A decision reading is the
 // first reading of each new whole week (week 1 or later), or every reading with whole_weeks off, or any reading
-// from max_days on. A drop is final: the first decision reading with the bad side crossed, or the first at
-// max_days without a promotion, ends the experiment, and every later reading returns that drop. A promotion is
-// only made at the latest reading, and only when its own numbers are usable and point in the good direction.
+// from max_days on. A drop is final: the first decision reading with the bad side crossed ends the experiment, and
+// so does the first decision reading at or after max_days, whatever it returned; every later reading returns that
+// drop. A promotion is only made at the latest reading, and only when its own numbers are usable and point in the
+// good direction. A caller stops at the first promote or drop, and retries a failed read without appending a
+// reading: decide on the same ledger is deterministic.
 function decideMsprt(input: GateInput, days: number, tau: number, out: Out): Verdict {
   const { rule, readings } = input;
   const threshold = Math.log(1 / rule.alpha); // compared in logs: exp(ln) can overflow
