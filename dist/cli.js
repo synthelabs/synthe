@@ -31250,9 +31250,11 @@ var DEFAULT_RULE = Object.freeze({
   max_days: 28,
   min_units_per_arm: 100,
   min_events_per_arm: 25,
-  srm_p: 1e-3,
+  guard_missing: "block",
+  srm_p: 1e-4,
   aa_first: true,
-  holdout_share: 0.05
+  holdout_share: 0.05,
+  whole_weeks: true
 });
 var KEYS = Object.keys(DEFAULT_RULE);
 
