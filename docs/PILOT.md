@@ -313,6 +313,11 @@ node src/pilot/cli.ts replay --candidate <id> --live --confirm-endpoint https://
 - Settings in the shell cannot change the request: the base URL, a second credential, extra headers, request logging and tracing are all fixed or off.
 - `replay.model` must equal the approved model. Both prompts must run on the same model.
 - Model output is data. A tool call is only used to look up a recorded result.
+- `key_env` must end in `_PILOT_KEY` (for example `FERNHILL_PILOT_KEY`), so `GITHUB_TOKEN`, `AWS_*` and `ANTHROPIC_API_KEY` are refused.
+- The endpoint host must be `api.anthropic.com` (or a loopback address). Another host needs the operator to name it for that run with `--allow-endpoint-host <host>`; a value in pilot.json is never enough, and `--confirm-endpoint` is still required.
+- A redirect from the endpoint is never followed. If the provider fails the first call, or three calls in a row, the command stops with exit 1 and says so: it does not report "no check failed".
+- What the proposer sees is fenced under a random token, one line at a time, so conversation text cannot pose as an instruction. Its rationale must be plain words (300 characters at most, no encoded run, no link or image), and a candidate may not add a link, image, placeholder or HTML tag.
+- The review shows each string from the pack and from pilot.json as inline code, never as markdown, after checking it against the conversations; a quote, a name or an order token in one stops the review. The signer's name is not in the review. Encoded (base64, hex, rot13) and look-alike spellings of conversation text are refused, not redacted.
 
 A live run sends pack conversations to the provider. That needs the customer's written agreement first.
 

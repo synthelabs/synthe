@@ -1,5 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { isLoopback } from "./config.ts";
 import { PilotError } from "./errors.ts";
+import { printable } from "./io.ts";
 import { bounded } from "./model.ts";
 import type { ChatMessage, ChatModel, ChatReply, ChatRequest, ProviderApproval } from "./types.ts";
 
@@ -16,7 +18,14 @@ export interface LiveOptIn {
   // data somewhere the customer did not approve.
   endpoint: string | undefined;
   data_class: string | undefined;
+  // --allow-endpoint-host <host>, typed for this run: the one host other than api.anthropic.com that may receive
+  // data. A value in pilot.json is never enough.
+  allow_host?: string | undefined;
 }
+
+// The only host that receives data without the operator naming another one for the run. A loopback address is the
+// operator's own machine (a local stand-in or gateway) and needs no flag either.
+export const PROVIDER_HOST = "api.anthropic.com";
 
 // One call may take this long. The SDK's own default is ten minutes for each call, which a stalled endpoint would
 // use in full for every case.
@@ -39,11 +48,15 @@ export function liveModel(
   if (approval === null) return refuse("pilot.json has provider: null, so only scripted models may run. Record the customer's approval in pilot.json (provider) and start a new pilot directory.");
   if (optIn.endpoint !== approval.endpoint) return refuse(`--confirm-endpoint must repeat the approved endpoint exactly: ${approval.endpoint}`);
   if (optIn.data_class !== approval.data_class) return refuse(`--confirm-data must repeat the approved data class exactly: "${approval.data_class}"`);
+  const host = new URL(approval.endpoint).host;
+  if (host !== PROVIDER_HOST && !isLoopback(approval.endpoint) && optIn.allow_host !== host) {
+    return refuse(`The approved endpoint is on ${host}, not ${PROVIDER_HOST}, and a value in pilot.json is not enough to send data to another host. If the customer approved ${host}, run again with --allow-endpoint-host ${host}.`);
+  }
   const key = env[approval.key_env]?.trim();
   if (!key) return refuse(`The key must be in ${approval.key_env}, the one variable the approval names. No other variable is read.`);
 
-  say(`Sending "${approval.data_class}" to ${approval.provider} at ${approval.endpoint} (model ${approval.model}).`);
-  say(`Approved by ${approval.approved_by} on ${approval.approved_at}. Limits for this command: ${approval.max_calls} calls, ${approval.max_input_chars} characters.`);
+  say(`Sending "${printable(approval.data_class)}" to ${approval.provider} at ${printable(approval.endpoint, 120)} (model ${printable(approval.model, 60)}).`);
+  say(`Approved by ${printable(approval.approved_by, 60)} on ${printable(approval.approved_at, 30)}. Limits for this command: ${approval.max_calls} calls, ${approval.max_input_chars} characters.`);
 
   // Nothing in the shell may shape the request. baseURL and apiKey are passed explicitly and authToken is nulled
   // (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN). The SDK also reads ANTHROPIC_CUSTOM_HEADERS when a client is
@@ -52,11 +65,16 @@ export function liveModel(
   // so one counted call is one request and the approved limits mean what they say, and each call has a time limit.
   const savedHeaders = process.env.ANTHROPIC_CUSTOM_HEADERS;
   delete process.env.ANTHROPIC_CUSTOM_HEADERS;
+  // A redirect is never followed: a 307 or 308 would send the whole conversation body, and a 301 to 303 the next
+  // request, to a host nobody approved. It is wrapped here, whatever transport is used, so no SDK default or
+  // header decides it. The call then fails like any other failed call.
+  const base = fetchImpl ?? fetch;
+  const noRedirect = ((url: Parameters<typeof fetch>[0], init?: RequestInit) => base(url, { ...init, redirect: "error" })) as typeof fetch;
   let client: Anthropic;
   try {
     client = new Anthropic({
       apiKey: key, authToken: null, baseURL: approval.endpoint, maxRetries: 0, timeout: timeoutMs, logLevel: "off",
-      openTelemetry: { traces: false, propagation: false }, ...(fetchImpl ? { fetch: fetchImpl } : {}),
+      openTelemetry: { traces: false, propagation: false }, fetch: noRedirect,
     });
   } finally {
     if (savedHeaders !== undefined) process.env.ANTHROPIC_CUSTOM_HEADERS = savedHeaders;
@@ -91,6 +109,13 @@ export function liveModel(
     return out;
   };
 
+  // A provider that fails every call must not read as "no check fails": a failed call only makes one turn
+  // inconclusive, so a dead endpoint would leave a run with nothing scored. The run stops instead when the first
+  // call fails (nothing has worked yet) or when this many calls in a row have failed.
+  const MAX_CONSECUTIVE_FAILURES = 3;
+  let succeeded = 0;
+  let failedInARow = 0;
+
   const model: ChatModel = {
     destination: `${approval.provider}:${approval.endpoint}:${approval.model}`,
     async chat(request: ChatRequest): Promise<ChatReply> {
@@ -115,8 +140,14 @@ export function liveModel(
         }
         // A provider error can echo the request back. Only its status and class go on from here.
         const status = e instanceof Anthropic.APIError && typeof e.status === "number" ? `HTTP ${e.status}` : "no response";
-        throw new Error(`The provider request failed (${status}, ${e instanceof Error ? e.name : "error"}).`);
+        const what = `The provider request failed (${status}, ${e instanceof Error ? e.name : "error"}).`;
+        failedInARow++;
+        if (succeeded === 0) throw new PilotError("live_not_approved", `${what} No call has worked, so nothing was scored. Check the endpoint and the network, then run the command again.`);
+        if (failedInARow >= MAX_CONSECUTIVE_FAILURES) throw new PilotError("live_not_approved", `${what} ${failedInARow} calls in a row have failed, so the run was stopped. Run the command again; finished work is kept.`);
+        throw new Error(what);
       }
+      succeeded++;
+      failedInARow = 0;
       const text = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
       const calls = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
       if (calls.length) raw.set(calls[0].id, response.content);

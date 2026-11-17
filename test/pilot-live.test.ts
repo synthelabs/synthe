@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 import { PilotError } from "../src/pilot/errors.ts";
 import { CALL_TIMEOUT_MS, liveModel } from "../src/pilot/live.ts";
@@ -162,7 +164,7 @@ test("settings in the shell cannot add headers, turn on logging, or make the SDK
     assert.equal(t.seen[0].headers.get("x-injected"), null);
     assert.equal(t.seen[0].headers.get("x-api-key"), null);
     assert.ok(t.seen[0].url.startsWith(ENDPOINT));
-    assert.match(message, /^The provider request failed \(HTTP 529, \w+\)\.$/, "status and error class only");
+    assert.match(message, /^The provider request failed \(HTTP 529, \w+\)\. No call has worked, so nothing was scored\./, "status and error class only, then the plain consequence");
     assert.ok(!message.includes("CANARY-PROVIDER-ECHO") && !message.includes("Juniper"), "the provider's echo of the request is not passed on");
     assert.deepEqual(printed.filter((l) => l.includes("Juniper") || l.includes("ORD-7Q4Z")), [], "nothing about the request was logged");
   } finally {
@@ -187,11 +189,109 @@ test("a provider that never answers is given up on after the time limit, and the
       model.chat(request()).then(() => "answered", (e: unknown) => (e as Error).message),
       new Promise<string>((resolve) => { timer = setTimeout(() => resolve("still waiting after 3 seconds"), 3000); }),
     ]);
-    assert.match(outcome, /^The provider request failed \(no response, \w+\)\.$/);
+    assert.match(outcome, /^The provider request failed \(no response, \w+\)\. No call has worked/);
     assert.equal(sent, 1, "a timed-out call is not retried");
     assert.ok(CALL_TIMEOUT_MS <= 120_000, "the default limit for one call is two minutes or less");
   } finally {
     clearTimeout(timer);
     for (const reject of pending) reject(new Error("test over"));
   }
+});
+
+// Two real loopback servers (no mock transport: a stand-in fetch never follows a redirect, so it would pass either way).
+function loopback(handler: (req: { url: string; headers: Record<string, unknown>; body: string }) => { status: number; headers?: Record<string, string>; body?: string }) {
+  const seen: { url: string; headers: Record<string, unknown>; body: string }[] = [];
+  const server: Server = createServer((req, res) => {
+    let raw = "";
+    req.on("data", (c) => { raw += c; });
+    req.on("end", () => {
+      const entry = { url: req.url ?? "", headers: req.headers as Record<string, unknown>, body: raw };
+      seen.push(entry);
+      const out = handler(entry);
+      res.statusCode = out.status;
+      for (const [k, v] of Object.entries(out.headers ?? {})) res.setHeader(k, v);
+      res.end(out.body ?? "");
+    });
+  });
+  return new Promise<{ url: string; seen: typeof seen; stop: () => Promise<void> }>((resolve) => server.listen(0, "127.0.0.1", () => resolve({
+    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, seen,
+    stop: () => new Promise<void>((done) => { server.closeAllConnections(); server.close(() => done()); }),
+  })));
+}
+
+test("a redirect from the approved endpoint is never followed: the conversation body reaches no other host", async () => {
+  for (const status of [301, 302, 303, 307, 308]) {
+    const other = await loopback(() => ({ status: 200, headers: { "content-type": "application/json" }, body: "{}" }));
+    const approved = await loopback(() => ({ status, headers: { location: `${other.url}/v1/messages` } }));
+    try {
+      const a: ProviderApproval = { ...approval, endpoint: approved.url, max_calls: 5 };
+      const model = liveModel(a, { live: true, endpoint: approved.url, data_class: a.data_class }, { FERNHILL_PILOT_KEY: KEY }, () => {});
+      let message = "";
+      try { await model.chat(request({ messages: [{ role: "user", text: "Where is ORD-7Q4Z?" }] })); } catch (e) { message = (e as Error).message; }
+      assert.match(message, /^The provider request failed \(/, `HTTP ${status} ends the call with the plain failure message`);
+      assert.equal(approved.seen.length, 1, "the approved host was asked once");
+      assert.equal(other.seen.length, 0, `HTTP ${status}: the second host received no request`);
+      assert.ok(!other.seen.some((r) => r.body.includes("ORD-7Q4Z")));
+    } finally {
+      await approved.stop(); await other.stop();
+    }
+  }
+});
+
+test("the endpoint host must be api.anthropic.com unless the operator names another host for this run; a loopback server needs no flag (EG-06)", async () => {
+  const at = (endpoint: string): ProviderApproval => ({ ...approval, endpoint });
+  const attempt = async (endpoint: string, allow_host?: string) => {
+    const t = transport([message([{ type: "text", text: "ok" }], "end_turn")]);
+    const said: string[] = [];
+    let code = "built";
+    try { liveModel(at(endpoint), { live: true, endpoint, data_class: approval.data_class, ...(allow_host !== undefined ? { allow_host } : {}) }, { FERNHILL_PILOT_KEY: KEY }, (l) => said.push(l), t.fetcher); } catch (e) { code = e instanceof PilotError ? e.code : "crash"; }
+    return { code, said, seen: t.seen.length };
+  };
+  assert.equal((await attempt("https://api.anthropic.com")).code, "built");
+  assert.equal((await attempt("https://api.anthropic.com/v1-gateway")).code, "built");
+  for (const loopback of ["http://127.0.0.1:8089", "http://localhost:8089", "http://[::1]:8089"]) assert.equal((await attempt(loopback)).code, "built", loopback);
+  for (const host of ["https://attacker.example", "https://attacker.example/anthropic-proxy", "https://api.anthropic.com.attacker.example", "https://127.0.0.1.nip.io", "https://api.anthropic.com.evil.example:8443", "https://claude.ai"]) {
+    const r = await attempt(host);
+    assert.equal(r.code, "live_not_approved", host);
+    assert.deepEqual(r.said, [], "nothing was announced and nothing was sent");
+  }
+  const refusal = await (async () => { try { liveModel(at("https://attacker.example"), { live: true, endpoint: "https://attacker.example", data_class: approval.data_class }, { FERNHILL_PILOT_KEY: KEY }, () => {}, transport([]).fetcher); } catch (e) { return (e as Error).message; } return ""; })();
+  assert.match(refusal, /attacker\.example/);
+  assert.match(refusal, /--allow-endpoint-host attacker\.example/, "the message says how to allow it on purpose");
+  // The flag must name exactly this host: not a different one, not a part of it, not a loose match.
+  assert.equal((await attempt("https://attacker.example", "attacker.example")).code, "built");
+  for (const wrong of ["other.example", "example", "attacker.example.evil.example", "ATTACKER.EXAMPLE.", "*", "attacker.example:8443", ""]) {
+    assert.equal((await attempt("https://attacker.example", wrong)).code, "live_not_approved", `--allow-endpoint-host ${JSON.stringify(wrong)}`);
+  }
+  assert.equal((await attempt("https://attacker.example:8443", "attacker.example:8443")).code, "built", "a port is part of the host");
+});
+
+test("a provider that fails every call stops the run with a plain message; one failure among successes does not (EG-13)", async () => {
+  const fail = { status: 503, body: { type: "error", error: { type: "overloaded_error", message: "CANARY-ECHO" } } };
+  const ok = () => message([{ type: "text", text: "ok" }], "end_turn");
+  const big: ProviderApproval = { ...approval, max_calls: 50 };
+  const build = (t: ReturnType<typeof transport>) => liveModel(big, optIn, { FERNHILL_PILOT_KEY: KEY }, () => {}, t.fetcher);
+  // Nothing has worked: the first failure ends the run, as a PilotError (the command line exits 1).
+  const dead = build(transport([fail, fail, fail]));
+  let err: unknown;
+  try { await dead.chat(request()); } catch (e) { err = e; }
+  assert.ok(err instanceof PilotError && err.code === "live_not_approved", String(err));
+  assert.match((err as Error).message, /nothing was scored/);
+  assert.ok(!(err as Error).message.includes("CANARY-ECHO"));
+  // A failure after successes is only that turn's problem, until three in a row.
+  const flaky = build(transport([ok(), fail, ok(), fail, fail, fail]));
+  const outcome = async () => { try { await flaky.chat(request()); } catch (e) { return e instanceof PilotError ? `stopped:${e.code}` : "plain failure"; } return "answered"; };
+  assert.deepEqual([await outcome(), await outcome(), await outcome(), await outcome(), await outcome(), await outcome()],
+    ["answered", "plain failure", "answered", "plain failure", "plain failure", "stopped:live_not_approved"]);
+});
+
+test("customer-supplied approval strings are printed without control characters and cut to length (EG-10)", () => {
+  const nasty: ProviderApproval = { ...approval, data_class: `redacted \u001b[2J\u001b[31mFAKE\nline ${"x".repeat(300)}`, approved_by: "Rhea\r\nApproved by someone else \u001b[0m", model: "approved-model" };
+  const said: string[] = [];
+  liveModel(nasty, { live: true, endpoint: ENDPOINT, data_class: nasty.data_class }, { FERNHILL_PILOT_KEY: KEY }, (l) => said.push(l), transport([]).fetcher);
+  const text = said.join("\n");
+  assert.ok(!/[\u0000-\u0009\u000b-\u001f\u007f]/.test(text), "no control character or escape sequence");
+  assert.equal(said.length, 2, "no line break in a value made another line");
+  assert.ok(text.length < 500, `long values are cut: ${text.length}`);
+  assert.match(text, /\(cut at 80 characters\)/);
 });

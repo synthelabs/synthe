@@ -71,3 +71,12 @@ test("a provider approval must say where the data goes, under whose approval, wi
   }
   assert.equal(code(config((c) => { c.provider = { ...approval, endpoint: "http://127.0.0.1:8089" }; })), "accepted", "a loopback test server may use http");
 });
+
+test("the key variable must be a pilot's own: it cannot name a token or credential the machine uses for something else (EG-06)", () => {
+  for (const name of ["FERNHILL_PILOT_KEY", "A_PILOT_KEY", "ACME_2_PILOT_KEY"]) {
+    assert.equal(code(config((c) => { c.provider = { ...approval, key_env: name }; })), "accepted", name);
+  }
+  for (const name of ["GITHUB_TOKEN", "SYNTHE_PILOT_GITHUB_TOKEN", "AWS_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID", "ANTHROPIC_API_KEY", "SYNTHE_ANTHROPIC_KEY", "OPENAI_API_KEY", "PILOT_KEY", "_PILOT_KEY", "fernhill_pilot_key", "FERNHILL_PILOT_KEY_2", "FERNHILL_PILOT_KEY\n"]) {
+    assert.match(code(config((c) => { c.provider = { ...approval, key_env: name }; })), /^invalid_config: pilot\.json: provider\.key_env/, name);
+  }
+});

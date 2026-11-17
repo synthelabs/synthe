@@ -1,6 +1,8 @@
 // The review bundle a person reads before the customer-run experiment. Lane: evidence and review workflow.
+import { carriesConversationContent, MAX_ID_CHARS, MAX_SENTENCE_CHARS, sensitiveIndex, type SensitiveIndex } from "./egress.ts";
 import { PilotError } from "./errors.ts";
 import { candidateTag, promptId, reviewBranch, shortId } from "./ids.ts";
+import { personalDataKinds } from "./pii.ts";
 import type { Candidate, ExperimentSpec, Pack, PilotConfig, ReplayReport, ReviewBundle, Sha256, Stored, TurnRef } from "./types.ts";
 
 const CONTEXT = 3;
@@ -124,8 +126,33 @@ export function buildReviewBundle(input: {
 }
 
 const pct = (x: number) => `${Math.round(x * 1000) / 10}%`;
-const sentence = (pack: Pack, checkId: string) => pack.check_catalog[checkId] ?? "(no sentence in the pack's check catalog)";
-const refLine = (pack: Pack, t: TurnRef) => `- case ${t.case_id}, turn ${t.turn}, check ${t.check_id}: ${sentence(pack, t.check_id)}`;
+
+// A string that came from the customer (a pack, pilot.json) is shown as an inline code span, never as markdown:
+// an @name, "Fixes #1", an image, HTML or a comment in it is displayed as typed and does nothing. The span's
+// fence is longer than any run of backticks inside, and line breaks and control characters are taken out.
+export function inline(text: string): string {
+  const flat = text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").trim();
+  const longest = Math.max(0, ...(flat.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longest + 1);
+  // Padding is needed only where the text itself starts or ends with a backtick.
+  const pad = flat.startsWith("`") || flat.endsWith("`") || flat === "" ? " " : "";
+  return `${fence}${pad}${flat}${pad}${fence}`;
+}
+
+// What a review may print of a customer-origin or config-origin string: nothing that is a conversation's content
+// (a quote, a name, an order token) or personal data, at most `cap` characters, and as an inline code span. A
+// string that fails the first test stops the review, and the message does not repeat it.
+function shower(index: SensitiveIndex) {
+  return (what: string, text: string, cap: number, byName = true): string => {
+    if (text.length > cap) return `(a ${what} of ${text.length} characters is not shown: the limit is ${cap})`;
+    const kinds = personalDataKinds(text);
+    if (kinds.length > 0) throw new PilotError("egress_blocked", `Nothing was sent: the review bundle contains what looks like ${/^[aeiou]/.test(kinds[0]) ? "an" : "a"} ${kinds[0]} (in a ${what}). Remove that content and try again.`);
+    if (carriesConversationContent(text, index, byName)) {
+      throw new PilotError("egress_blocked", `Nothing was sent: the review bundle contains wording, a name or an identifier that belongs to particular pack conversations (in a ${what} from the pack or pilot.json). Remove that content there and try again.`);
+    }
+    return inline(text);
+  };
+}
 
 // Markdown used for REVIEW.md and for the pull request body. It holds ids, counts, check ids, catalog sentences and
 // the prompt diff, and no conversation text: the pack is read only for its catalog.
@@ -140,6 +167,9 @@ export function renderReview(bundle: ReviewBundle, reviewId: Sha256, pack: Pack,
   const m = bundle.metric;
   const rp = bundle.replay;
   const ex = bundle.experiment;
+  const show = shower(sensitiveIndex([pack]));
+  const sentence = (checkId: string) => (pack.check_catalog[checkId] === undefined ? "(no sentence in the pack's check catalog)" : show("check sentence", pack.check_catalog[checkId], MAX_SENTENCE_CHARS));
+  const refLine = (t: TurnRef) => `- case ${show("case id", t.case_id, MAX_ID_CHARS)}, turn ${t.turn}, check ${show("check id", t.check_id, MAX_ID_CHARS)}: ${sentence(t.check_id)}`;
   const tallyRow = (name: string, t: ReviewBundle["replay"]["tally"]["all"]) => `| ${name} | ${t.cases} | ${t.paired} | ${t.wins} | ${t.losses} | ${t.ties} | ${t.excluded} |`;
   // The rationale and the diff are free text, from a person or a model. Both are shown as literal text, never
   // as markdown: markup in them is displayed as typed, so it cannot render into something the egress check did
@@ -150,17 +180,17 @@ export function renderReview(bundle: ReviewBundle, reviewId: Sha256, pack: Pack,
   };
   const why: string[] = [];
   if (targetCheckId !== null && pack.check_catalog[targetCheckId] !== undefined) {
-    why.push(`Target behaviour (check ${targetCheckId}): ${pack.check_catalog[targetCheckId]}`);
+    why.push(`Target behaviour (check ${show("check id", targetCheckId, MAX_ID_CHARS)}): ${sentence(targetCheckId)}`);
   } else {
     const named = [...new Set(rp.regressions.map((t) => t.check_id))].filter((id) => pack.check_catalog[id] !== undefined);
-    if (named.length > 0) why.push(`Checks named in the evidence below: ${named.map((id) => `${id} (${pack.check_catalog[id]})`).join("; ")}`);
+    if (named.length > 0) why.push(`Checks named in the evidence below: ${named.map((id) => `${show("check id", id, MAX_ID_CHARS)} (${sentence(id)})`).join("; ")}`);
   }
   const lines = [
     `# Synthe pilot ${bundle.pilot_id}: candidate ${shortId(bundle.candidate_id)}`,
     "",
     "## What changes",
     "",
-    `The system prompt file \`${bundle.repo.prompt_path}\` on \`${bundle.repo.base}\` changes as follows.`,
+    `The system prompt file ${show("prompt path", bundle.repo.prompt_path, MAX_ID_CHARS, false)} on ${show("branch name", bundle.repo.base, MAX_ID_CHARS, false)} changes as follows.`,
     "",
     ...literal(bundle.diff, "diff"),
     "",
@@ -171,12 +201,12 @@ export function renderReview(bundle: ReviewBundle, reviewId: Sha256, pack: Pack,
     ...why.flatMap((p) => [p, ""]),
     "## Metric contract",
     "",
-    `- Primary metric: ${m.primary.name}, ${m.primary.kind}, unit ${m.primary.unit}, ${m.primary.direction.replace(/_/g, " ")}. Smallest effect worth acting on: ${m.primary.min_effect}.`,
-    ...m.guards.map((g) => `- Guard: ${g.name}, ${g.kind}, unit ${g.unit}, ${g.direction.replace(/_/g, " ")}. Tolerated harm: ${g.max_harm}. ${g.critical ? "Critical: may stop the experiment early." : "Not critical."}`),
-    `- Denominator: ${m.denominator}.`,
+    `- Primary metric: ${show("metric name", m.primary.name, MAX_ID_CHARS, false)}, ${m.primary.kind}, unit ${show("metric unit", m.primary.unit, MAX_SENTENCE_CHARS, false)}, ${m.primary.direction.replace(/_/g, " ")}. Smallest effect worth acting on: ${m.primary.min_effect}.`,
+    ...m.guards.map((g) => `- Guard: ${show("metric name", g.name, MAX_ID_CHARS, false)}, ${g.kind}, unit ${show("metric unit", g.unit, MAX_SENTENCE_CHARS, false)}, ${g.direction.replace(/_/g, " ")}. Tolerated harm: ${g.max_harm}. ${g.critical ? "Critical: may stop the experiment early." : "Not critical."}`),
+    `- Denominator: ${show("denominator", m.denominator, MAX_ID_CHARS, false)}.`,
     `- Analysis window: ${m.analysis_window_days} days. Outcome lag: ${m.outcome_lag_days} days.`,
     `- Minimum samples per arm: ${m.min_samples_per_arm}.`,
-    `- Signed off by ${m.signed_off.by} at ${m.signed_off.at}.`,
+    `- Metric contract signed off at ${m.signed_off.at}. The signer is named in the contract record (config ${shortId(bundle.config_id)}), not here.`,
     "",
     "## Replay evidence",
     "",
@@ -190,10 +220,10 @@ export function renderReview(bundle: ReviewBundle, reviewId: Sha256, pack: Pack,
     `- Sign test p (one-sided, wins against losses, ties left out): ${rp.sign_p < 0.0001 ? "below 0.0001" : rp.sign_p.toFixed(4)}.`,
     `- Checks the candidate fixes: ${rp.fixes}.`,
     `- Regressions (a check the baseline passed and the candidate fails):${rp.regressions.length === 0 ? " none." : ""}`,
-    ...rp.regressions.slice(0, LISTED).map((t) => refLine(pack, t).replace(/^- /, "  - ")),
+    ...rp.regressions.slice(0, LISTED).map((t) => refLine(t).replace(/^- /, "  - ")),
     ...(rp.regressions.length > LISTED ? [`  - ... and ${rp.regressions.length - LISTED} more, listed in the replay record ${bundle.replay_id}.`] : []),
     `- New blocking guard failures:${rp.new_blocking_guard_failures.length === 0 ? " none." : ""}`,
-    ...rp.new_blocking_guard_failures.map((t) => refLine(pack, t).replace(/^- /, "  - ")),
+    ...rp.new_blocking_guard_failures.map((t) => refLine(t).replace(/^- /, "  - ")),
     `- Blocking guard checks that could not be checked for the candidate: ${rp.unchecked_blocking_guards}.`,
     `- Gate verdict: ${rp.gate.eligible ? "eligible for review" : "not eligible"}.${rp.gate.reasons.length > 0 ? ` ${rp.gate.reasons.join(" ")}` : ""}`,
     "",
@@ -201,8 +231,8 @@ export function renderReview(bundle: ReviewBundle, reviewId: Sha256, pack: Pack,
     "",
     "## Experiment plan",
     "",
-    `- Baseline arm: tag \`${ex.arms.baseline.tag}\`, prompt ${ex.arms.baseline.prompt_id}.`,
-    `- Candidate arm: tag \`${ex.arms.candidate.tag}\`, prompt ${ex.arms.candidate.prompt_id}.`,
+    `- Baseline arm: tag ${show("tag", ex.arms.baseline.tag, MAX_ID_CHARS, false)}, prompt ${ex.arms.baseline.prompt_id}.`,
+    `- Candidate arm: tag ${show("tag", ex.arms.candidate.tag, MAX_ID_CHARS, false)}, prompt ${ex.arms.candidate.prompt_id}.`,
     `- Intended allocation: baseline ${pct(ex.allocation.baseline)}, candidate ${pct(ex.allocation.candidate)}.`,
     `- Window: ${ex.window.start} to ${ex.window.end}. Analysis cutoff: ${ex.analysis_cutoff}.`,
     `- Required conversations per arm: ${ex.required_per_arm}.`,
@@ -215,7 +245,7 @@ export function renderReview(bundle: ReviewBundle, reviewId: Sha256, pack: Pack,
     "",
     "## Rollback",
     "",
-    `To roll back, serve prompt ${bundle.rollback.prompt_id} (tag \`${bundle.rollback.tag}\`) again.`,
+    `To roll back, serve prompt ${bundle.rollback.prompt_id} (tag ${show("tag", bundle.rollback.tag, MAX_ID_CHARS, false)}) again.`,
     "",
     bundle.rollback.instructions,
     "",

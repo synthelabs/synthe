@@ -1,5 +1,6 @@
 // Recurring failures from discovery cases, the proposer's context, and candidates. Lane: replay and failure discovery.
 import { candidateProblem } from "../core/safety.ts";
+import { addedLineProblem } from "./safety.ts";
 import { PilotError } from "./errors.ts";
 import { promptId } from "./ids.ts";
 import { discoveryCases, turnCount } from "./pack.ts";
@@ -110,6 +111,8 @@ export function makeCandidate(input: {
   if (typeof input.rationale !== "string" || input.rationale.trim() === "") invalid("it has no rationale");
   const problem = candidateProblem(input.prompt, { kind: "file", path: "prompt.md" });
   if (problem) invalid(problem);
+  const added = addedLineProblem(input.baseline_prompt, input.prompt);
+  if (added) invalid(added);
   if (input.prompt === input.baseline_prompt) invalid("it is identical to the current prompt");
   const changed = changedLines(input.baseline_prompt, input.prompt);
   if (changed > input.max_changed_lines) throw new PilotError("candidate_not_narrow", `The candidate changes ${changed} lines; the limit is ${input.max_changed_lines}. Make a smaller change.`);
