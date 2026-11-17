@@ -21,7 +21,7 @@ test("rule: bad values name the setting", () => {
   assert.throws(() => resolveRule({ alpha: 0 }), /alpha must be above 0 and below 1/);
   assert.throws(() => resolveRule({ min_days: -1 }), /min_days must be 0 or more/);
   assert.throws(() => resolveRule({ min_days: 10, max_days: 5 }), /max_days must be at least min_days/);
-  assert.throws(() => resolveRule({ method: "magic" as never }), /method must be fixed or looks/);
+  assert.throws(() => resolveRule({ method: "magic" as never }), /method must be fixed, looks or msprt/);
   assert.throws(() => resolveRule({ looks: 0 }), /looks must be a whole number from 1 to 60/);
   assert.throws(() => resolveRule({ holdout_share: 0.6 }), /holdout_share must be from 0 to 0.5/);
 });
@@ -60,6 +60,6 @@ test("rule: msprt is a method; whole_weeks defaults to true and is listed when c
   assert.deepEqual(resolveRule({ method: "msprt", whole_weeks: false }).changed, ["method", "whole_weeks"]);
 });
 test("rule: method error names msprt, whole_weeks must be true or false", () => {
-  assert.throws(() => resolveRule({ method: "magic" as never }), /method must be fixed or looks, or msprt\./);
+  assert.throws(() => resolveRule({ method: "magic" as never }), /method must be fixed, looks or msprt\./);
   assert.throws(() => resolveRule({ whole_weeks: "yes" as never }), /whole_weeks must be true or false\./);
 });

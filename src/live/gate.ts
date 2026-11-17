@@ -167,19 +167,21 @@ function maxOf(max: number | null, ln: number): number {
   return max === null ? ln : Math.max(max, ln);
 }
 
-// The mSPRT rule for method "msprt". Every usable reading adds its ln Lambda to a running maximum, kept
-// apart for readings that favour the good direction and readings that favour the bad one. A bad reading can
-// never make a promotion. The decision is taken at a decision reading only: with whole_weeks, the first
-// reading of each new whole week; otherwise every reading. From day max_days on, every reading decides.
+// The mSPRT rule for method "msprt" (research A1, A5). Every usable reading adds its ln Lambda to a running
+// maximum, kept apart for readings in the good direction and in the bad direction. A decision reading is the
+// first reading of each new whole week (week 1 or later), or every reading with whole_weeks off, or any reading
+// from max_days on. A drop is final: the first decision reading with the bad side crossed, or the first at
+// max_days without a promotion, ends the experiment, and every later reading returns that drop. A promotion is
+// only made at the latest reading, and only when its own numbers are usable and point in the good direction.
 function decideMsprt(input: GateInput, days: number, tau: number, out: Out): Verdict {
   const { rule, readings } = input;
   const threshold = Math.log(1 / rule.alpha); // compared in logs: exp(ln) can overflow
+  const last = readings.length - 1;
   let goodMax: number | null = null;
   let badMax: number | null = null;
   let priorWeek = -Infinity;
-  let decision = false;
-  let latest: { d: number; v: number; ln: number } | null = null;
-  const last = readings.length - 1;
+  let ended: { action: Verdict["action"]; reason: Reason } | null = null;
+  let latest: { d: number; v: number | null; ln: number | null; g: number; decides: boolean } | null = null;
   for (let j = 0; j <= last; j++) {
     const { base, test } = readings[j].arms;
     const dayOf = daysAt(readings, j);
@@ -194,15 +196,18 @@ function decideMsprt(input: GateInput, days: number, tau: number, out: Out): Ver
       if (g > 0) goodMax = maxOf(goodMax, ln);
       else if (g < 0) badMax = maxOf(badMax, ln);
     }
-    if (j === last) {
-      decision = !rule.whole_weeks || dayOf >= rule.max_days || week > priorWeek;
-      if (ln !== null && v !== null) latest = { d, v, ln };
-    }
+    const decides = !rule.whole_weeks || dayOf >= rule.max_days || (week >= 1 && week > priorWeek);
     priorWeek = Math.max(priorWeek, week);
+    if (j === last) {
+      latest = { d, v, ln, g, decides };
+    } else if (decides && !ended) {
+      if (badMax !== null && badMax >= threshold) ended = { action: "drop", reason: "worse" };
+      else if (dayOf >= rule.max_days) ended = { action: "drop", reason: "no_difference" };
+    }
   }
 
   const extra: Partial<Verdict> = {};
-  if (latest) {
+  if (latest && latest.ln !== null && latest.v !== null) {
     const h = msprtHalfWidth(latest.v, tau, rule.alpha);
     extra.msprt = {
       d: latest.d,
@@ -215,15 +220,16 @@ function decideMsprt(input: GateInput, days: number, tau: number, out: Out): Ver
     if (h !== null) extra.interval = [latest.d - h, latest.d + h];
   }
 
-  if (!decision) return out("continue", "running", extra);
+  if (ended) return out(ended.action, ended.reason, extra);
+  if (!latest || !latest.decides) return out("continue", "running", extra);
+  if (badMax !== null && badMax >= threshold) return out("drop", "worse", extra);
   const final = days >= rule.max_days;
-  if (goodMax !== null && goodMax >= threshold) {
+  if (goodMax !== null && goodMax >= threshold && latest.ln !== null && latest.g > 0) {
     // M4 applies here too: a promotion needs usable guard data.
     const missing = rule.guard_missing === "block" ? (input.guards ?? []).find((g) => guardMissing(g, rule)) : undefined;
     if (missing) return out(final ? "drop" : "continue", "guard_no_data", { ...extra, guard: missing.name });
     return out("promote", "win", extra);
   }
-  if (badMax !== null && badMax >= threshold) return out("drop", "worse", extra);
   if (final) return out("drop", "no_difference", extra);
   return out("continue", "running", extra);
 }

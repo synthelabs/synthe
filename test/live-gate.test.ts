@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { decide, type ArmData, type GateInput, type Reading, type Verdict } from "../src/live/gate.ts";
-import { DEFAULT_RULE, resolveRule } from "../src/live/rule.ts";
+import { DEFAULT_RULE, resolveRule, type LiveRule } from "../src/live/rule.ts";
+import { msprtHalfWidth, rateVariance } from "../src/live/stats.ts";
 
 const DAY = 86400000;
 const START = "2026-01-01T00:00:00Z";
@@ -307,4 +308,82 @@ test("msprt: the default method is still fixed, and a fixed verdict has no msprt
   const v = decide(at(28, R(300, 10000), R(360, 10000)));
   assert.equal(v.msprt, undefined);
   assert.equal(DEFAULT_RULE.method, "fixed");
+});
+
+// Review of Task 10 (2026-11-17): a drop is final, the bad side wins, the latest reading must be usable and
+// good, week 0 never decides, and the threshold and earlier-reading filter are pinned.
+const M = (units: number, sum: number, sum_sq: number): ArmData => ({ units, sum, sum_sq });
+const msRule = (partial: Partial<LiveRule> = {}) => resolveRule({ method: "msprt", ...partial });
+test("msprt review: an old good crossing does not promote a reading that is now worse", () => {
+  const v = decide(msInput([
+    reading(7, R(300, 10000), R(360, 10000)),
+    reading(8, R(340, 11400), R(470, 11400)), // good, Lambda 4045; not a decision reading (week 1)
+    reading(14, R(700, 20000), R(560, 20000)), // bad, Lambda 460
+  ]));
+  assert.deepEqual(pick(v), ["drop", "worse"]);
+});
+test("msprt review: a latest reading with no usable ln, or not good, cannot promote", () => {
+  const { rule, changed } = msRule({ whole_weeks: false });
+  const v = decide({
+    ...msInput([
+      reading(7, M(1000, 12000, 244000), M(1000, 14000, 296000)), // good, Lambda about 171: a decision reading
+      reading(8, M(1000, 12000, 244000), M(1000, 14000, 1000)), // impossible variance: no ln
+    ]),
+    rule, changed, min_effect: 0.5,
+  });
+  assert.deepEqual(pick(v), ["continue", "running"]);
+  assert.equal(v.msprt, undefined);
+});
+test("msprt review: a drop at max_days is final; a later strong good reading does not promote", () => {
+  assert.deepEqual(pick(decide(msInput([
+    reading(28, R(300, 10000), R(330, 10000)),
+    reading(29, R(310, 10400), R(460, 10400)), // Lambda 139834, good
+  ]))), ["drop", "no_difference"]);
+});
+test("msprt review: a drop for worse is final; a later strong good reading does not promote", () => {
+  assert.deepEqual(pick(decide(msInput([
+    reading(7, R(300, 10000), R(300, 10000)),
+    reading(10, R(430, 14000), R(300, 14000)), // bad, Lambda 14921
+    reading(14, R(600, 20000), R(610, 20000)),
+    reading(21, R(900, 30000), R(1250, 30000)), // strong good
+  ]))), ["drop", "worse"]);
+});
+test("msprt review: when both sides have crossed, the bad side wins", () => {
+  assert.deepEqual(pick(decide(msInput([
+    reading(7, R(300, 10000), R(300, 10000)),
+    reading(10, R(430, 14000), R(300, 14000)), // bad, Lambda 14921
+    reading(12, R(480, 16800), R(600, 16800)), // good, Lambda 158; week 1, not a decision
+    reading(14, R(600, 20000), R(700, 20000)), // good, Lambda 10.98
+  ]))), ["drop", "worse"]);
+});
+test("msprt review: week 0 never decides, even when min_days is below 7", () => {
+  const { rule, changed } = msRule({ min_days: 3 });
+  assert.deepEqual(pick(decide({ ...msInput([reading(3, R(300, 10000), R(420, 10000))]), rule, changed })), ["continue", "running"]);
+  assert.deepEqual(pick(decide({ ...msInput([reading(3, R(300, 10000), R(420, 10000)), reading(7, R(300, 10000), R(420, 10000))]), rule, changed })), ["promote", "win"]);
+});
+test("msprt review: the threshold is ln(1/alpha): Lambda 18.19 continues, Lambda 21.99 promotes", () => {
+  assert.deepEqual(pick(decide(msAt(7, R(300, 10000), R(377, 10000)))), ["continue", "running"]);
+  assert.deepEqual(pick(decide(msAt(7, R(300, 10000), R(379, 10000)))), ["promote", "win"]);
+});
+test("msprt review: a reading too early under min_days is not replayed into the maxima", () => {
+  // Day 5 is too early (min_days 7) and has Lambda 2427; the day 7 reading alone is not good enough.
+  assert.deepEqual(pick(decide(msInput([reading(5, R(300, 10000), R(420, 10000)), reading(7, R(600, 20000), R(640, 20000))]))), ["continue", "running"]);
+});
+test("msprt review: p_av and the interval on the Lambda 21.99 win", () => {
+  const v = decide(msAt(7, R(300, 10000), R(379, 10000)));
+  assert.ok(v.msprt);
+  assert.ok(Math.abs(v.msprt.p_av - Math.exp(-v.msprt.ln_max_good!)) < 1e-12);
+  assert.ok(v.msprt.p_av < 0.05, String(v.msprt.p_av));
+  assert.ok(v.interval);
+  const h = msprtHalfWidth(rateVariance({ units: 10000, events: 300 }, { units: 10000, events: 379 })!, 0.006, 0.05)!;
+  assert.ok(Math.abs(v.interval[0] - (v.msprt.d - h)) < 1e-12);
+  assert.ok(Math.abs(v.interval[1] - (v.msprt.d + h)) < 1e-12);
+  assert.ok(v.interval[0] > 0, "0 must be outside the interval");
+});
+test("msprt review: a good crossing before, then a latest reading in the bad direction with no bad crossing, does not promote", () => {
+  // Day 7 is good (Lambda 2427, a decision reading). Day 14 has D < 0 with Lambda 0.5: no bad crossing, no promotion.
+  assert.deepEqual(pick(decide(msInput([
+    reading(7, R(300, 10000), R(420, 10000)),
+    reading(14, R(600, 20000), R(590, 20000)),
+  ]))), ["continue", "running"]);
 });

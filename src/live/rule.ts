@@ -61,7 +61,7 @@ export function resolveRule(partial?: Partial<LiveRule>): { rule: LiveRule; chan
     throw new Error("alpha must be above 0 and below 1.");
   }
   if (rule.method !== "fixed" && rule.method !== "looks" && rule.method !== "msprt") {
-    throw new Error("method must be fixed or looks, or msprt.");
+    throw new Error("method must be fixed, looks or msprt.");
   }
   if (!(Number.isInteger(rule.looks) && rule.looks >= 1 && rule.looks <= 60)) {
     throw new Error("looks must be a whole number from 1 to 60.");
