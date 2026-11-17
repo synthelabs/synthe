@@ -413,3 +413,10 @@ test("the signer's name stays out of the pull request body (EG-12)", async () =>
     assert.match(body, /signed off at /);
   } finally { await r.ctx.stop(); }
 });
+
+test("an email address in a config string the review prints stops the review without repeating it (EG-02)", () => {
+  const f = fixture();
+  const bundle = structuredClone(f.bundle.value);
+  bundle.metric.primary.unit = "share of conversations (owner: tomas.lindqvist@fernhill.example)";
+  assert.throws(() => renderReview(bundle, f.bundle.id, f.pack.value, "looks_up_order"), (e: unknown) => e instanceof PilotError && e.code === "egress_blocked" && /email address/.test(e.message) && !e.message.includes("fernhill"));
+});

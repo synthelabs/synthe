@@ -523,11 +523,11 @@ test("two experiments written before any approval: once one is approved, the oth
   } finally { await ctx.stop(); }
 });
 
-test("an email address in the contract is not written into a review, local or published", async () => {
+test("an email address in the sign-off is not written into a review, local or published", async () => {
   const ctx = await workspace();
   try {
-    // The sign-off names a person by address. The review prints the sign-off, so the review as a whole is refused,
-    // although the candidate's own text is clean.
+    // Changed on purpose (EG-12): this test expected the review to be refused because it printed the sign-off. The
+    // review no longer names the signer at all, so the address never reaches it: the review is made and holds no address.
     const config = structuredClone(demoConfig()) as Record<string, unknown> & { metric: { signed_off: { by: string } } };
     config.metric.signed_off.by = "Tomas Lindqvist (tomas.lindqvist@fernhill.example)";
     const must = async (argv: string[]) => { assert.equal(await ctx.run(argv), 0, `${argv[0]}: ${ctx.lines.slice(-2).join(" | ")}`); };
@@ -541,13 +541,11 @@ test("an email address in the contract is not written into a review, local or pu
     const candidate = ctx.last("candidate.created");
     await must(["replay", "--candidate", candidate, "--model", ctx.model]);
     await must(["experiment", "--candidate", candidate, "--start", DEMO.experiment_b_start]);
-    assert.equal(await ctx.run(["review", "--candidate", candidate]), 1);
-    const said = ctx.lines.at(-1) ?? "";
-    assert.ok(refused([said], "egress_blocked") && /the review bundle contains what looks like an email address/.test(said), said);
-    assert.ok(!said.includes("fernhill.example"), "the refusal does not repeat the address");
-    assert.equal(ctx.store.find("review.bundled").length, 0);
-    assert.ok(!existsSync(join(ctx.dir, "reports", `review-${candidate.slice(0, 12)}`)), "no review file was written");
-    assert.equal(ctx.github.requests.length, 0);
+    assert.equal(await ctx.run(["review", "--candidate", candidate]), 0, ctx.lines.at(-1) ?? "");
+    const review = readFileSync(join(ctx.dir, "reports", `review-${candidate.slice(0, 12)}`, "REVIEW.md"), "utf8");
+    assert.ok(!review.includes("fernhill.example") && !review.includes("Lindqvist"), "the review holds neither the address nor the name");
+    assert.equal(await ctx.run(["review", "--candidate", candidate, "--publish", "--repo", DEMO.slug, "--base", DEMO.base, "--confirm", candidate]), 0, ctx.lines.at(-1) ?? "");
+    assert.ok(!JSON.stringify(ctx.github.requests).includes("fernhill.example"), "and nothing sent to GitHub does");
   } finally { await ctx.stop(); }
 });
 
