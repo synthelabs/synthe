@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { scopeProblem, staleDistProblem, statusPaths, TASK_FILES, testRunProblem } from "../scripts/verify-live.mjs";
+import { findCountProblem, scopeProblem, staleDistProblem, statusPaths, TASK_FILES, testRunProblem } from "../scripts/verify-live.mjs";
 
 test("scope: a file outside the task's list is named", () => {
   assert.equal(scopeProblem(["src/live/rule.ts"], ["src/live/rule.ts"]), null);
@@ -46,4 +46,21 @@ test("G4: dist/ that changed during npm test is not a fresh build", () => {
     staleDistProblem({ "dist/cli.js": "a", "dist/action.mjs": "b" }, { "dist/cli.js": "x", "dist/action.mjs": "b" }),
     "dist/ is not a fresh build of src/: run npm run build and include dist/ in the commit.",
   );
+});
+
+// G6: a mutation's find text must occur exactly once in its file, or the mutation is stale or ambiguous.
+test("G6: a find text that occurs once is accepted", () => {
+  assert.equal(findCountProblem("const a = 1;\nconst b = 2;\n", "const b = 2;", "b is two"), null);
+});
+
+test("G6: a find text with no match is named, with its count of 0", () => {
+  const problem = findCountProblem("const a = 1;\n", "const z = 9;", "z is nine") ?? "";
+  assert.match(problem, /z is nine/);
+  assert.match(problem, /occurs 0 times/);
+});
+
+test("G6: a find text that occurs twice is named, with its count of 2", () => {
+  const problem = findCountProblem("x = 1;\nx = 1;\n", "x = 1;", "x is one") ?? "";
+  assert.match(problem, /x is one/);
+  assert.match(problem, /occurs 2 times/);
 });

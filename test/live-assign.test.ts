@@ -74,8 +74,8 @@ test("assign: bucket rejects ids and salts that are not text", () => {
   assert.throws(() => bucket("u", {} as never), /must be text/);
 });
 
-// M10: the arm each rule picks. Every item must match pickArm, and the table has 4 rows x 5 units, plus one.
+// M10: the arm each rule picks. Every item must match pickArm: 4 rows x 5 units, plus one, plus 4 range-edge items (task 13).
 test("assign: every pick item in the file matches pickArm", () => {
-  assert.equal(vectors.pick.length, 21);
+  assert.equal(vectors.pick.length, 25);
   for (const p of vectors.pick) assert.equal(pickArm(p.arms, p.unit, p.salt), p.arm, JSON.stringify(p));
 });

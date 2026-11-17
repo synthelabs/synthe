@@ -61,6 +61,14 @@ export function testRunProblem(output, testFiles) {
   return null;
 }
 
+// A mutation's find text must occur exactly once in its file: zero means it is stale, two or more means the
+// mutation would hit an unclear place. Returns null when it is exactly once, else a sentence naming the entry.
+export function findCountProblem(fileText, find, name) {
+  const count = find ? fileText.split(find).length - 1 : 0;
+  if (count === 1) return null;
+  return `Mutation "${name}": its find text occurs ${count} times in its file, not exactly once. Update the find text to match the file once.`;
+}
+
 // Porcelain lines from git status run with --no-renames: a rename shows as a delete and an add.
 export function statusPaths(lines) {
   return lines.map((line) => line.slice(3));
@@ -190,7 +198,8 @@ function g6(allowed, testFiles, state) {
       const path = join(ROOT, entry.file);
       if (!existsSync(path)) return fail(`Stale mutation "${entry.name}": ${entry.file} does not exist.`);
       const original = readFileSync(path, "utf8");
-      if (!original.includes(entry.find)) return fail(`Stale mutation "${entry.name}": its find text is not in ${entry.file}.`);
+      const countProblem = findCountProblem(original, entry.find, entry.name);
+      if (countProblem) return fail(countProblem);
       mutated = { path, original };
       writeFileSync(path, original.replace(entry.find, () => entry.replace));
       // A mutation that makes a test loop forever must not hang the gate. A timeout ends with no exit status,
@@ -253,7 +262,7 @@ function main(id) {
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const id = process.argv[2];
   if (!id || !(id === "all" || Object.hasOwn(TASK_FILES, id))) {
-    console.error("Usage: node scripts/verify-live.mjs <task-id>\n  task-id: 0 to 7, or all");
+    console.error("Usage: node scripts/verify-live.mjs <task-id>\n  task-id: 0 to 13, or all");
     process.exit(2);
   }
   main(id);

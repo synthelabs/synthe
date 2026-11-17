@@ -20,6 +20,9 @@ export interface SimulateOptions {
   splitUnits?: boolean;
   // msprt only: the smallest effect worth detecting, in metric units. Passed to the gate as min_effect.
   minEffect?: number;
+  // The day (1-based) whose test-arm reading is glitched: its reported test events are the cumulative count
+  // times 1.25, rounded. The true count carries on unchanged, and every other day's reading is honest.
+  glitchDay?: number;
 }
 
 export interface SimulateResult {
@@ -85,12 +88,13 @@ export function simulate(o: SimulateOptions): SimulateResult {
       testUnits += dayTest;
       baseEvents += dailyEvents(rng, dayBase, o.baseRate);
       testEvents += dailyEvents(rng, dayTest, o.testRate);
+      const readTestEvents = day === o.glitchDay ? Math.round(testEvents * 1.25) : testEvents;
       const to = new Date(Date.parse(START) + day * DAY_MS).toISOString();
       ledger.push({
         from: START,
         to,
         read_at: to,
-        arms: { base: { units: baseUnits, events: baseEvents }, test: { units: testUnits, events: testEvents } },
+        arms: { base: { units: baseUnits, events: baseEvents }, test: { units: testUnits, events: readTestEvents } },
       });
       const verdict = decide({
         direction: "higher",
@@ -184,8 +188,15 @@ function scenarios(): Scenario[] {
       label: "Planted lift, msprt (fixed: see the line above)",
       opts: { runs: 2000, baseRate: 0.03, testRate: 0.036, unitsPerArmPerDay: 497, rule: msprtRule, seed: 7, minEffect: MSPRT_MIN_EFFECT },
       measure: "promote",
-      limit: "0.43 to 0.55 (Python estimate 0.49, within 0.06)",
-      ok: (p) => Math.abs(p - 0.49) <= 0.06,
+      limit: "0.40 to 0.50 (Python estimate 0.448)",
+      ok: (p) => p >= 0.4 && p <= 0.5,
+    },
+    {
+      label: "A/A, msprt, one glitched reading on a non-deciding day",
+      opts: { runs: 4000, baseRate: 0.03, testRate: 0.03, unitsPerArmPerDay: 500, rule: msprtRule, seed: 9, minEffect: MSPRT_MIN_EFFECT, glitchDay: 8 },
+      measure: "promote",
+      limit: "<= 0.05",
+      ok: (p) => p <= 0.05,
     },
     {
       label: "Planted loss, msprt",

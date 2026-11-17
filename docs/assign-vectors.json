@@ -26,5 +26,9 @@
   { "arms": [{ "id": "base", "weight": 95 }, { "id": "test", "weight": 5 }], "unit": "conv-1", "salt": "e2", "arm": "base" },
   { "arms": [{ "id": "base", "weight": 95 }, { "id": "test", "weight": 5 }], "unit": "", "salt": "e1", "arm": "base" },
   { "arms": [{ "id": "base", "weight": 95 }, { "id": "test", "weight": 5 }], "unit": "客户-7", "salt": "e1", "arm": "base" },
-  { "arms": [{ "id": "base", "weight": 95 }, { "id": "test", "weight": 5 }], "unit": "u143", "salt": "e1", "arm": "test" }
+  { "arms": [{ "id": "base", "weight": 95 }, { "id": "test", "weight": 5 }], "unit": "u143", "salt": "e1", "arm": "test" },
+  { "arms": [{ "id": "base", "weight": 45 }, { "id": "test", "weight": 45 }, { "id": "hold", "weight": 10 }], "unit": "k7555", "salt": "e1", "arm": "base" },
+  { "arms": [{ "id": "base", "weight": 45 }, { "id": "test", "weight": 45 }, { "id": "hold", "weight": 10 }], "unit": "k34399", "salt": "e1", "arm": "test" },
+  { "arms": [{ "id": "base", "weight": 45 }, { "id": "test", "weight": 45 }, { "id": "hold", "weight": 10 }], "unit": "k13951", "salt": "e1", "arm": "test" },
+  { "arms": [{ "id": "base", "weight": 45 }, { "id": "test", "weight": 45 }, { "id": "hold", "weight": 10 }], "unit": "k7412", "salt": "e1", "arm": "hold" }
 ] }
