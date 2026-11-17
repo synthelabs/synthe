@@ -26,6 +26,7 @@ export const TASK_FILES = {
   // Final review fixes (same plan, section "Final review fixes").
   "12": ["src/live/gate.ts", "test/live-gate.test.ts", "scripts/mutation-check.mjs"],
   "13": ["scripts/simulate-live-gate.ts", "test/live-simulate.test.ts", "scripts/verify-live.mjs", "scripts/verify-live.d.mts", "test/live-verify.test.ts", "docs/assign-vectors.json", "test/live-assign.test.ts"],
+  "14": ["src/live/gate.ts", "test/live-gate.test.ts", "scripts/mutation-check.mjs"],
 };
 const ALL_FILES = [...new Set(Object.values(TASK_FILES).flat())];
 
@@ -262,7 +263,7 @@ function main(id) {
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const id = process.argv[2];
   if (!id || !(id === "all" || Object.hasOwn(TASK_FILES, id))) {
-    console.error("Usage: node scripts/verify-live.mjs <task-id>\n  task-id: 0 to 13, or all");
+    console.error("Usage: node scripts/verify-live.mjs <task-id>\n  task-id: 0 to 14, or all");
     process.exit(2);
   }
   main(id);
