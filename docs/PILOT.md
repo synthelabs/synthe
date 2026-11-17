@@ -2,16 +2,17 @@
 
 One support agent, one business metric, reviewed prompt changes, and a **keep / hold / revert** recommendation from an experiment the customer runs. This is a review-first loop: Synthe proposes and measures, and people decide.
 
-Status: built and tested on synthetic data only. It is not wired into `npx synthe` yet (see [What is not wired yet](#what-is-not-wired-yet)). No real customer data, provider or GitHub repo has been used.
+Status: built and tested on synthetic data only. No real customer data, provider or GitHub repo has been used. It is part of the Synthe CLI as `npx synthe pilot <command>` (see [How to run it](#how-to-run-it)).
 
 ## Run the synthetic pilot
 
-From a clean checkout, with no credentials:
+With no credentials:
 
 ```
-npm ci
-node src/pilot/cli.ts demo --out /tmp/synthe-pilot-demo
+npx synthe pilot demo --out /tmp/synthe-pilot-demo
 ```
+
+From a clean checkout, the same demo is `npm ci`, then `node src/pilot/cli.ts demo --out /tmp/synthe-pilot-demo`.
 
 It takes a few seconds, sends nothing anywhere, and exits 0 only if every expectation holds. The data is invented (Fernhill Outfitters, support agent Juniper). It shows, in order:
 
@@ -40,7 +41,7 @@ The inputs the demo generated are in `<out>/inputs/`. Read them as examples of e
 
 ## The operator flow
 
-All commands are `node src/pilot/cli.ts <command> --dir <pilot directory>`. The directory holds customer data (packs, telemetry rows). Keep it in the operator's environment. `init` writes a `.gitignore` inside it so it cannot be committed by accident.
+All commands are `npx synthe pilot <command> --dir <pilot directory>` (from a checkout: `node src/pilot/cli.ts <command>`, with the same options). `npx synthe pilot help` lists them. The directory holds customer data (packs, telemetry rows). Keep it in the operator's environment. `init` writes a `.gitignore` inside it so it cannot be committed by accident.
 
 | Step | Command | What it does |
 |---|---|---|
@@ -253,6 +254,7 @@ Read these before you rely on a decision:
 - There is no command to purge customer text from the store. Raw messages and conversation ids stay in write-once records, and editing a record makes `verify` fail. To remove customer data, delete the whole pilot directory (it is kept out of git on purpose). A purge that leaves a tombstone and keeps `verify` meaningful is not built yet.
 - A unit that appears in both arms is dropped from the analysis. That is right when `unit_id` is the true assignment key. If the customer randomised by conversation and reused one `unit_id` across both arms, all of those rows are excluded; use the real assignment key as `unit_id`.
 - Some error messages print a customer-supplied export or file name as written (length-capped where the code was changed, not everywhere). Do not put customer text in export file names.
+- A review pull request published before the review body gained the release note (2026-11-17) is refused with `conflict` on a publish retry, because the body is rendered again and compared byte for byte. Nothing stored depends on the body text; publish a new review instead.
 - The full pilot mutation check (`node scripts/pilot-mutation-check.mjs`, about 160 mutations) takes over an hour and is not part of CI. It killed 157 of 157 before the egress branch merged. After that merge, a full run killed 158 of 162 before it was stopped for time; new tests were written for the four survivors and shown to kill them and the related mutations, but the whole script was not run again to the end. Run it once when time allows and record the result in the ledger.
 
 Each decision file leads with the recommendation and the team's own number, lists every number with its source record and method, and gives the exact rollback target (the baseline tag and prompt id).
@@ -309,7 +311,7 @@ A live model runs only when `pilot.json` records the approval and the operator o
 ```
 
 ```
-node src/pilot/cli.ts replay --candidate <id> --live --confirm-endpoint https://api.anthropic.com --confirm-data "redacted support conversations (pack)"
+npx synthe pilot replay --candidate <id> --live --confirm-endpoint https://api.anthropic.com --confirm-data "redacted support conversations (pack)"
 ```
 
 - The key is read from the one variable `key_env` names. There is no fallback to `ANTHROPIC_API_KEY`, `SYNTHE_ANTHROPIC_KEY` or an event code, and Synthe's event proxy is never used.
@@ -368,15 +370,13 @@ node scripts/pilot-build.mjs                 # one-file bundle in .synthe-local/
 node scripts/pilot-mutation-check.mjs        # in its own worktree, never two at once
 ```
 
-## What is not wired yet
+## How to run it
 
-Left out on purpose, because other work in flight owns these files:
+- **From the Synthe CLI:** `npx synthe pilot <command>`. The `pilot` command is in every Synthe version that lists it in `npx synthe --help`. **No released version has it yet:** 1.10.0 (the latest on npm) answers `pilot` with the general help, exits 0 and records nothing. Until the next release, use the checkout form below. Other Synthe commands behave as before; the pilot adds about 380 KB to `dist/cli.js` and its Node built-in imports (including `node:http`) load at startup for every command.
+- **From a checkout:** `node src/pilot/cli.ts <command>` with Node 22.18 or later (the runtime the repo's tests use).
+- **As one file:** `node scripts/pilot-build.mjs` bundles the pilot alone into `.synthe-local/pilot/synthe-pilot.mjs`.
 
-1. **`npx synthe pilot`.** In `src/cli/main.ts`, add a `pilot` command that calls `main(process.argv.slice(3), defaultDeps())` from `src/pilot/main.ts` (that module has no side effects on import), and a line in `HELP`. Then `npm run build` and commit `dist/cli.js`.
-2. **`package.json`.** Optional scripts: `"pilot": "node src/pilot/cli.ts"` and `"mutation:pilot": "node scripts/pilot-mutation-check.mjs"`.
-3. **`README.md`.** One line pointing here.
-
-Until then, run from a checkout with Node 22.18 or later (the runtime the repo's tests use), or build the bundle.
+The three forms run the same code and take the same options. The CLI bundle is built for Node 20 and is tested in CI on Node 24; it has not been run on Node 20.
 
 ## What a real pilot still needs
 
