@@ -466,6 +466,15 @@ const settledBy = (store: PilotStore, experimentId: Sha256): JournalEntry | unde
   store.find("analysis.decided").find((e) => e.refs.experiment === experimentId && (e.refs.recommendation === "keep" || e.refs.recommendation === "revert"));
 const settled = (store: PilotStore, experimentId: Sha256): boolean => settledBy(store, experimentId) !== undefined;
 
+// The experiments a person approved that have no keep or revert yet: the ones whose exports are still being read.
+// Read-only; `watch` uses it to find what to look at.
+export function openExperiments(store: PilotStore): Stored<ExperimentSpec>[] {
+  const approved = approvals(store);
+  return store.find("experiment.specified")
+    .filter((e) => approved.filter((a) => a.value.experiment_id === e.key).at(-1)?.value.decision === "approved" && settledBy(store, e.key) === undefined)
+    .map((e) => store.stored<ExperimentSpec>("experiment", e.key));
+}
+
 // One change in flight per agent: two live changes at once cannot be told apart in the telemetry. That holds for
 // two experiments on the same candidate too, because both would read the same tagged conversations, and a
 // candidate that already has a keep or a revert is not measured again under a second experiment.
