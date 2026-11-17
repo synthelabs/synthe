@@ -40,3 +40,12 @@ test("aggregate counts above 2^53 are refused with a PilotError, never analysed"
     assert.fail(`imported and analysed: ${a.recommendation}`);
   }, (e: unknown) => e instanceof PilotError);
 });
+
+// The ceiling itself, below 2^53: a count the double still holds exactly, yet larger than any pilot can have.
+test("a count above 1e12 is refused even when it is still an exact integer; 1e12 itself is read", () => {
+  const read = (n: number) => importTelemetry({ text: exportOf(n), purpose: "experiment", scope_id: EXP, contract, tags: [B, C], window: spec.window });
+  assert.ok(Number.isSafeInteger(4e12));
+  assert.throws(() => read(4e12), (e: unknown) => e instanceof PilotError && e.code === "invalid_telemetry");
+  assert.throws(() => read(1e12 + 2), (e: unknown) => e instanceof PilotError && e.code === "invalid_telemetry");
+  assert.equal(read(1e12).arms.length, 2);
+});

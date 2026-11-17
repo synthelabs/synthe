@@ -47,3 +47,12 @@ test("a specification whose assignment is not randomized never keeps", () => {
 test("a specification with no guards array is refused with a PilotError, not a TypeError", () => {
   assert.equal(decide({ guards: undefined as never }), "refused");
 });
+test("an allocation whose shares do not add up to 1, or with a share of 0, is refused", () => {
+  assert.equal(decide({ allocation: { baseline: 0.5, candidate: 0.6 } }), "refused");
+  assert.equal(decide({ allocation: { baseline: 0.3, candidate: 0.3 } }), "refused");
+  assert.equal(decide({ allocation: { baseline: 1, candidate: 0 } }), "refused");
+  assert.equal(decide({ allocation: { baseline: 0, candidate: 1 } }), "refused");
+  // A plan the experiment command can write: an uneven split that adds up to 1 is analysed (it holds on this
+  // 50/50 export, because the split is far from the plan).
+  assert.equal(decide({ allocation: { baseline: 0.8, candidate: 0.2 } }), "hold");
+});
