@@ -219,3 +219,92 @@ test("gate: a guard with a rate arm and a mean arm blocks a promotion as no guar
   const v = decide({ ...at(28, { units: 10000, events: 300 }, { units: 10000, events: 360 }), guards: [g] });
   assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard_no_data", "escalation rate"]);
 });
+
+// Task 10: method "msprt". Reference values from Python on 2026-11-17, min_effect 0.006.
+const MS = resolveRule({ method: "msprt" });
+const msInput = (readings: Reading[], extra: Partial<GateInput> = {}): GateInput => ({
+  ...input(readings), rule: MS.rule, changed: MS.changed, min_effect: 0.006, ...extra,
+});
+const msAt = (day: number, base: ArmData, test: ArmData, extra: Partial<GateInput> = {}): GateInput =>
+  msInput([reading(day, base, test)], extra);
+const R = (events: number, units: number): ArmData => ({ units, events });
+
+test("msprt: a win at day 7 promotes, and the method is the only change", () => {
+  const v = decide(msAt(7, R(300, 10000), R(420, 10000)));
+  assert.deepEqual(pick(v), ["promote", "win"]);
+  assert.deepEqual(v.changed, ["method"]);
+  assert.ok(v.msprt);
+  assert.ok(Math.abs(Math.exp(v.msprt.ln_lambda) / 2427.46 - 1) < 1e-4, String(Math.exp(v.msprt.ln_lambda)));
+});
+test("msprt: a weak reading at day 7 keeps running", () => {
+  assert.deepEqual(pick(decide(msAt(7, R(300, 10000), R(360, 10000)))), ["continue", "running"]);
+});
+test("msprt: lower is better, the rate falls at day 7: promote", () => {
+  assert.deepEqual(pick(decide({ ...msAt(7, R(420, 10000), R(300, 10000)), direction: "lower" })), ["promote", "win"]);
+});
+test("msprt: trap, a strong bad reading is kept apart from good ones and never promotes", () => {
+  const v = decide(msInput([
+    reading(7, R(300, 10000), R(300, 10000)),
+    reading(10, R(430, 14000), R(300, 14000)), // bad: Lambda 14921.8
+    reading(14, R(600, 20000), R(610, 20000)), // good but weak: Lambda 0.29
+  ]));
+  assert.deepEqual(pick(v), ["drop", "worse"]);
+  assert.ok(v.msprt);
+  assert.ok(v.msprt.ln_max_bad !== null && v.msprt.ln_max_bad > 9, String(v.msprt.ln_max_bad));
+});
+test("msprt: a reading in the same week as an earlier one is not a decision reading", () => {
+  assert.deepEqual(pick(decide(msInput([reading(7, R(300, 10000), R(360, 10000)), reading(8, R(300, 10000), R(420, 10000))]))), ["continue", "running"]);
+});
+test("msprt: with whole_weeks false the same readings promote", () => {
+  const { rule, changed } = resolveRule({ method: "msprt", whole_weeks: false });
+  const v = decide({ ...msInput([reading(7, R(300, 10000), R(360, 10000)), reading(8, R(300, 10000), R(420, 10000))]), rule, changed });
+  assert.deepEqual(pick(v), ["promote", "win"]);
+  assert.deepEqual(v.changed, ["method", "whole_weeks"]);
+});
+test("msprt: at day 28 a small difference is drop, no_difference", () => {
+  const v = decide(msAt(28, R(300, 10000), R(330, 10000)));
+  assert.deepEqual(pick(v), ["drop", "no_difference"]);
+  assert.ok(Math.abs(Math.exp(v.msprt!.ln_lambda) - 0.72) < 0.01, String(Math.exp(v.msprt!.ln_lambda)));
+});
+test("msprt: min_effect missing, 0, negative or not finite is invalid, never a silent switch", () => {
+  for (const bad of [undefined, 0, -0.01, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const v = decide({ ...msAt(28, R(300, 10000), R(420, 10000)), min_effect: bad });
+    assert.deepEqual(pick(v), ["invalid", "no_min_effect"], String(bad));
+  }
+});
+test("msprt: the min_effect check runs before the too-early check", () => {
+  assert.deepEqual(pick(decide({ ...msAt(3, R(300, 10000), R(420, 10000)), min_effect: 0 })), ["invalid", "no_min_effect"]);
+});
+test("msprt: a very strong reading is compared in logs and still promotes", () => {
+  const v = decide(msAt(7, R(300, 10000), R(3000, 10000)));
+  assert.deepEqual(pick(v), ["promote", "win"]);
+  assert.ok(Number.isFinite(v.msprt!.ln_lambda));
+});
+test("msprt: the verdict keeps every number through JSON", () => {
+  const v = decide(msAt(7, R(300, 10000), R(420, 10000)));
+  assert.deepEqual(JSON.parse(JSON.stringify(v)), v);
+});
+test("msprt: a reading whose msprt log is null adds to no maximum and puts no NaN in the verdict", () => {
+  const { rule, changed } = resolveRule({ method: "msprt", min_events_per_arm: 0 });
+  const v = decide({ ...msAt(28, R(0, 10000), R(10000, 10000)), rule, changed });
+  assert.deepEqual(pick(v), ["drop", "no_difference"]);
+  assert.equal(v.msprt, undefined);
+  assert.ok(!JSON.stringify(v).includes("NaN"));
+  const early = decide({ ...msAt(7, R(0, 10000), R(10000, 10000)), rule, changed });
+  assert.deepEqual(pick(early), ["continue", "running"]);
+});
+test("msprt: a missing guard blocks a promotion at the end, and before the end it waits", () => {
+  const g = { name: "escalation rate", direction: "lower" as const, max_worse: 0.01, base: { units: 0, events: 0 }, test: { units: 5000, events: 250 } };
+  assert.deepEqual(pick(decide({ ...msAt(28, R(300, 10000), R(420, 10000)), guards: [g] })), ["drop", "guard_no_data"]);
+  assert.deepEqual(pick(decide({ ...msAt(7, R(300, 10000), R(420, 10000)), guards: [g] })), ["continue", "guard_no_data"]);
+});
+test("msprt: a guard breach drops at once", () => {
+  const g = { name: "escalation rate", direction: "lower" as const, max_worse: 0.01, base: { units: 5000, events: 250 }, test: { units: 5000, events: 400 } };
+  const v = decide({ ...msAt(7, R(300, 10000), R(420, 10000)), guards: [g] });
+  assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard", "escalation rate"]);
+});
+test("msprt: the default method is still fixed, and a fixed verdict has no msprt field", () => {
+  const v = decide(at(28, R(300, 10000), R(360, 10000)));
+  assert.equal(v.msprt, undefined);
+  assert.equal(DEFAULT_RULE.method, "fixed");
+});

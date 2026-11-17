@@ -2,7 +2,17 @@
 // of checks below matters. The first check that matches wins, and a promotion is only ever made at a look.
 
 import { type LiveRule } from "./rule.ts";
-import { interval, meanTest, rateTest, srmP, type Test } from "./stats.ts";
+import {
+  interval,
+  meanTest,
+  meanVariance,
+  msprtHalfWidth,
+  msprtLog,
+  rateTest,
+  rateVariance,
+  srmP,
+  type Test,
+} from "./stats.ts";
 
 export type ArmData = { units: number; events: number } | { units: number; sum: number; sum_sq: number };
 
@@ -29,9 +39,30 @@ export interface GateInput {
   guards?: GuardReading[];
   rule: LiveRule;
   changed: string[];
+  min_effect?: number; // msprt only: the smallest effect worth detecting, in metric units, frozen at start
 }
 
-export type Reason = "no_data" | "guard" | "guard_no_data" | "split" | "too_early" | "running" | "win" | "no_difference" | "worse";
+export type Reason =
+  | "no_data"
+  | "guard"
+  | "guard_no_data"
+  | "split"
+  | "too_early"
+  | "running"
+  | "win"
+  | "no_difference"
+  | "worse"
+  | "no_min_effect";
+
+// msprt numbers are logs: Lambda can be Infinity, and JSON writes Infinity as null.
+export interface MsprtVerdict {
+  d: number;
+  v: number;
+  ln_lambda: number;
+  ln_max_good: number | null;
+  ln_max_bad: number | null;
+  p_av: number;
+}
 
 export interface Verdict {
   action: "promote" | "drop" | "continue" | "invalid";
@@ -39,6 +70,7 @@ export interface Verdict {
   guard?: string;
   test?: Test;
   interval?: [number, number];
+  msprt?: MsprtVerdict;
   days: number;
   look?: number;
   changed: string[];
@@ -123,6 +155,79 @@ function tooEarly(base: ArmData, test: ArmData, days: number, rule: LiveRule): b
   return !enoughEvents(base) || !enoughEvents(test);
 }
 
+type Out = (action: Verdict["action"], reason: Reason, extra?: Partial<Verdict>) => Verdict;
+
+function varianceOf(base: ArmData, test: ArmData): number | null {
+  if (isRate(base) && isRate(test)) return rateVariance(base, test);
+  if (!isRate(base) && !isRate(test)) return meanVariance(base, test);
+  return null;
+}
+
+function maxOf(max: number | null, ln: number): number {
+  return max === null ? ln : Math.max(max, ln);
+}
+
+// The mSPRT rule for method "msprt". Every usable reading adds its ln Lambda to a running maximum, kept
+// apart for readings that favour the good direction and readings that favour the bad one. A bad reading can
+// never make a promotion. The decision is taken at a decision reading only: with whole_weeks, the first
+// reading of each new whole week; otherwise every reading. From day max_days on, every reading decides.
+function decideMsprt(input: GateInput, days: number, tau: number, out: Out): Verdict {
+  const { rule, readings } = input;
+  const threshold = Math.log(1 / rule.alpha); // compared in logs: exp(ln) can overflow
+  let goodMax: number | null = null;
+  let badMax: number | null = null;
+  let priorWeek = -Infinity;
+  let decision = false;
+  let latest: { d: number; v: number; ln: number } | null = null;
+  const last = readings.length - 1;
+  for (let j = 0; j <= last; j++) {
+    const { base, test } = readings[j].arms;
+    const dayOf = daysAt(readings, j);
+    if (noData(base, test) || splitBroken(base, test, input) || tooEarly(base, test, dayOf, rule)) continue;
+    const week = Math.floor(dayOf / 7);
+    const v = varianceOf(base, test);
+    const d = pointOf(test) - pointOf(base);
+    const raw = v === null ? null : msprtLog(d, v, tau);
+    const ln = raw !== null && Number.isFinite(raw) ? raw : null;
+    const g = input.direction === "higher" ? d : -d;
+    if (ln !== null) {
+      if (g > 0) goodMax = maxOf(goodMax, ln);
+      else if (g < 0) badMax = maxOf(badMax, ln);
+    }
+    if (j === last) {
+      decision = !rule.whole_weeks || dayOf >= rule.max_days || week > priorWeek;
+      if (ln !== null && v !== null) latest = { d, v, ln };
+    }
+    priorWeek = Math.max(priorWeek, week);
+  }
+
+  const extra: Partial<Verdict> = {};
+  if (latest) {
+    const h = msprtHalfWidth(latest.v, tau, rule.alpha);
+    extra.msprt = {
+      d: latest.d,
+      v: latest.v,
+      ln_lambda: latest.ln,
+      ln_max_good: goodMax,
+      ln_max_bad: badMax,
+      p_av: goodMax === null ? 1 : Math.min(1, Math.exp(-goodMax)),
+    };
+    if (h !== null) extra.interval = [latest.d - h, latest.d + h];
+  }
+
+  if (!decision) return out("continue", "running", extra);
+  const final = days >= rule.max_days;
+  if (goodMax !== null && goodMax >= threshold) {
+    // M4 applies here too: a promotion needs usable guard data.
+    const missing = rule.guard_missing === "block" ? (input.guards ?? []).find((g) => guardMissing(g, rule)) : undefined;
+    if (missing) return out(final ? "drop" : "continue", "guard_no_data", { ...extra, guard: missing.name });
+    return out("promote", "win", extra);
+  }
+  if (badMax !== null && badMax >= threshold) return out("drop", "worse", extra);
+  if (final) return out("drop", "no_difference", extra);
+  return out("continue", "running", extra);
+}
+
 export function decide(input: GateInput): Verdict {
   const { rule, changed, readings } = input;
   const last = readings[readings.length - 1];
@@ -154,8 +259,17 @@ export function decide(input: GateInput): Verdict {
   // 3. Split.
   if (splitBroken(base, test, input)) return out("invalid", "split");
 
+  // msprt needs a usable effect to detect. Checked before step 4, so the team learns it at once. Never a silent
+  // switch to another method.
+  const tau = input.min_effect;
+  if (rule.method === "msprt" && !(tau !== undefined && Number.isFinite(tau) && tau > 0)) {
+    return out("invalid", "no_min_effect");
+  }
+
   // 4. Too early.
   if (tooEarly(base, test, days, rule)) return out("continue", "too_early");
+
+  if (rule.method === "msprt") return decideMsprt(input, days, tau as number, out);
 
   // 5-6. Looks. A look is taken once, at the first reading where it is due and where the numbers were usable.
   const final = rule.method === "looks" ? rule.looks : 1;

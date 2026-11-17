@@ -228,6 +228,10 @@ const allMutations = [
   ["live gate: days before min_days are not too early", "src/live/gate.ts", "days < rule.min_days ||", "false ||"],
   ["live gate: a guard breach never drops", "src/live/gate.ts", "if (worse > guard.max_worse) return", "if (false) return"],
   ["live gate: a tie promotes", "src/live/gate.ts", "return out(\"drop\", \"no_difference\", extra);", "return out(\"promote\", \"win\", extra);"],
+  ["msprt: the good and bad running maxima are mixed","src/live/gate.ts","if (g > 0) goodMax","if (g !== 0) goodMax"],
+  ["msprt: every reading decides, whole weeks ignored","src/live/gate.ts","week > priorWeek","true"],
+  ["msprt: a missing or bad min_effect is not checked","src/live/gate.ts","if (rule.method === \"msprt\" && !(tau !== undefined && Number.isFinite(tau) && tau > 0)) {","if (false) {"],
+  ["msprt: the threshold is not ln(1/alpha)","src/live/gate.ts","const threshold = Math.log(1 / rule.alpha);","const threshold = Math.log(1 / rule.alpha) * 0.4;"],
 ];
 
 const selectedFiles = process.argv.slice(2);

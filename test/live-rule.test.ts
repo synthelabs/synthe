@@ -50,3 +50,16 @@ test("rule: returns a fresh object and never mutates the defaults", () => {
   assert.equal(DEFAULT_RULE.min_days, 7);
   assert.throws(() => { (DEFAULT_RULE as { alpha: number }).alpha = 0.1; }, TypeError);
 });
+
+// Task 10: method "msprt" and whole_weeks. The method error keeps the phrase the older test checks for.
+test("rule: msprt is a method; whole_weeks defaults to true and is listed when changed", () => {
+  assert.equal(DEFAULT_RULE.method, "fixed");
+  assert.equal(DEFAULT_RULE.whole_weeks, true);
+  assert.deepEqual(resolveRule({ method: "msprt" }).changed, ["method"]);
+  assert.equal(resolveRule({ method: "msprt" }).rule.whole_weeks, true);
+  assert.deepEqual(resolveRule({ method: "msprt", whole_weeks: false }).changed, ["method", "whole_weeks"]);
+});
+test("rule: method error names msprt, whole_weeks must be true or false", () => {
+  assert.throws(() => resolveRule({ method: "magic" as never }), /method must be fixed or looks, or msprt\./);
+  assert.throws(() => resolveRule({ whole_weeks: "yes" as never }), /whole_weeks must be true or false\./);
+});

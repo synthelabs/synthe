@@ -2,7 +2,7 @@
 // that sets nothing gets the same rule. Each change is checked here, so a bad
 // value fails before any run starts and says which setting to fix.
 
-export type Method = "fixed" | "looks";
+export type Method = "fixed" | "looks" | "msprt";
 export type GuardMissing = "block" | "ignore";
 
 export interface LiveRule {
@@ -17,6 +17,7 @@ export interface LiveRule {
   srm_p: number; // 0 turns the split check off
   aa_first: boolean;
   holdout_share: number; // 0 turns the holdout off
+  whole_weeks: boolean; // msprt only: decide at the first reading of each new whole week
 }
 
 export const DEFAULT_RULE: Readonly<LiveRule> = Object.freeze({
@@ -31,6 +32,7 @@ export const DEFAULT_RULE: Readonly<LiveRule> = Object.freeze({
   srm_p: 0.0001,
   aa_first: true,
   holdout_share: 0.05,
+  whole_weeks: true,
 });
 
 const KEYS = Object.keys(DEFAULT_RULE) as (keyof LiveRule)[];
@@ -58,8 +60,8 @@ export function resolveRule(partial?: Partial<LiveRule>): { rule: LiveRule; chan
   if (!(isNumber(rule.alpha) && rule.alpha > 0 && rule.alpha < 1)) {
     throw new Error("alpha must be above 0 and below 1.");
   }
-  if (rule.method !== "fixed" && rule.method !== "looks") {
-    throw new Error("method must be fixed or looks.");
+  if (rule.method !== "fixed" && rule.method !== "looks" && rule.method !== "msprt") {
+    throw new Error("method must be fixed or looks, or msprt.");
   }
   if (!(Number.isInteger(rule.looks) && rule.looks >= 1 && rule.looks <= 60)) {
     throw new Error("looks must be a whole number from 1 to 60.");
@@ -89,6 +91,10 @@ export function resolveRule(partial?: Partial<LiveRule>): { rule: LiveRule; chan
   }
   if (!(isNumber(rule.holdout_share) && rule.holdout_share >= 0 && rule.holdout_share <= 0.5)) {
     throw new Error("holdout_share must be from 0 to 0.5.");
+  }
+
+  if (typeof rule.whole_weeks !== "boolean") {
+    throw new Error("whole_weeks must be true or false.");
   }
 
   const changed = (Object.keys(given) as (keyof LiveRule)[])
