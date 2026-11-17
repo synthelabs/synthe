@@ -3,7 +3,7 @@
 // counted and reported, never hidden. Messages name counts and fields, never an id or a value from the log.
 import { join } from "node:path";
 import { contractMetrics, importTelemetry } from "./telemetry.ts";
-import { readCallLog, type CallLog } from "./calllog.ts";
+import { readCallLog, valuesBefore, type CallLog } from "./calllog.ts";
 import { frozen, type Flags, type PilotDeps } from "./commands.ts";
 import { PilotError } from "./errors.ts";
 import { ms, shortId } from "./ids.ts";
@@ -33,6 +33,7 @@ export interface LeftOut {
   other_agent: number; // conversations of other agents in the same log
   outcome_before_call: number; // a note: these rows are in the export
   other_version_after_outcome: number; // a note: a later call under another version; the row is unchanged
+  outcome_after_other_version: number; // a note: of those, conversations with a later outcome line that was not used
 }
 
 export interface LogExport {
@@ -63,7 +64,7 @@ export function buildLogExport(input: LogExportInput): LogExport {
   if (startMs >= endMs) throw new PilotError("usage", "The window is empty: it must start before both its end and the time of the export.");
 
   const exportedMs = ms(input.exported_at);
-  const left: LeftOut = { no_outcome: 0, outcome_without_call: 0, served_two_versions: 0, outside_window: 0, other_agent: 0, outcome_before_call: 0, other_version_after_outcome: 0 };
+  const left: LeftOut = { no_outcome: 0, outcome_without_call: 0, served_two_versions: 0, outside_window: 0, other_agent: 0, outcome_before_call: 0, other_version_after_outcome: 0, outcome_after_other_version: 0 };
   const noOutcomeBy: Record<string, number> = {};
   const twoBy: Record<string, number> = {};
   const otherTags: Record<string, number> = {};
@@ -91,15 +92,19 @@ export function buildLogExport(input: LogExportInput): LogExport {
     const started = seconds(first.started_at ?? first.at);
     // Judged by its start only: a conversation outside the window is not part of this export and is not a defect.
     if (ms(started) < startMs || ms(started) >= endMs) { left.outside_window++; continue; }
-    // Calls under another version. One made after the newest outcome cannot have influenced it: the row stands.
-    // One made before or with it (or with no outcome at all) contaminates the outcome: the conversation stays in the
-    // arm it was assigned to, with every value empty, so it counts as a missing outcome there and is never dropped.
+    // Calls under another version. Once another version has served the conversation, only what was recorded before
+    // that call can be credited to the first version: an outcome recorded at the same time or later may have been
+    // influenced by the other prompt and is not used. With nothing recorded before it, the conversation stays in the
+    // arm it was assigned to with every value empty, so it counts as a missing outcome there and is never dropped.
+    // Outcome lines after that call never change the row, so a retry cannot rewrite what an earlier export said.
     const others = c.calls.filter((x) => x.prompt_version !== first.prompt_version);
-    const newestOutcome = c.newest_outcome_at;
-    const contaminated = others.some((x) => newestOutcome === undefined || Date.parse(x.at) <= newestOutcome);
     let values = metrics.map((m) => c.values.get(m) ?? null);
-    if (contaminated) { left.served_two_versions++; bump(twoBy, first.prompt_version); values = metrics.map(() => null); }
-    else if (others.length > 0) left.other_version_after_outcome++;
+    if (others.length > 0) {
+      const before = valuesBefore(c, Math.min(...others.map((x) => Date.parse(x.at))));
+      if (before.lines === 0) { left.served_two_versions++; bump(twoBy, first.prompt_version); values = metrics.map(() => null); }
+      else { left.other_version_after_outcome++; values = metrics.map((m) => before.values.get(m) ?? null); }
+      if (before.lines > 0 && before.later > 0) left.outcome_after_other_version++;
+    }
     // A call with no outcome is a row with empty values too: the analysis checks missing outcomes in each arm and
     // between the arms, and a failure whose outcome was never recorded must not simply disappear. Inside the outcome
     // lag it is not yet known; a later export fills it in.
@@ -192,6 +197,7 @@ export function writeLogExport(input: {
   if (l.outcome_without_call) notes.push(`${plural(l.outcome_without_call, "conversation has", "conversations have")} an outcome but no recorded call, so ${l.outcome_without_call === 1 ? "it was" : "they were"} left out. Check that every agent call goes through the recorder.`);
   if (l.served_two_versions) notes.push(`${plural(l.served_two_versions, "conversation was", "conversations were")} served by a second prompt version before or with the outcome (by first-served version: ${Object.entries(built.two_versions_by).sort().map(([t, n]) => `${printable(t, 40)} ${n}`).join(", ")}). Their outcome cannot be credited to one prompt, so they are in the export under the first version with empty values and count as missing outcomes there.`);
   if (l.other_version_after_outcome) notes.push(`${plural(l.other_version_after_outcome, "conversation was", "conversations were")} served by another prompt version only after the outcome was recorded. The row is unchanged.`);
+  if (l.outcome_after_other_version) notes.push(`${plural(l.outcome_after_other_version, "of them has", "of them have")} an outcome recorded again after that call. It is not used: it may have been influenced by the other prompt.`);
   if (l.outside_window) notes.push(`${plural(l.outside_window, "conversation", "conversations")} in the log started outside the window and ${l.outside_window === 1 ? "is" : "are"} not in this export.`);
   if (log.malformed) notes.push(`${plural(log.malformed, "line", "lines")} of the log could not be read and ${log.malformed === 1 ? "was" : "were"} skipped.`);
   for (const [kind, n] of Object.entries(log.problems)) notes.push(`The recorder logged ${plural(n, "problem", "problems")} of kind ${kind}: some calls or outcomes may be missing from the log.`);

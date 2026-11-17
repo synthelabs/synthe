@@ -46,7 +46,7 @@ function pilotRecorder(options) {
   const clock = () => {
     try {
       const d = options.now ? options.now() : /* @__PURE__ */ new Date();
-      if (d instanceof Date && !Number.isNaN(d.getTime())) return d;
+      if (d instanceof Date && !Number.isNaN(d.getTime())) return new Date(d.getTime());
     } catch {
     }
     return /* @__PURE__ */ new Date();

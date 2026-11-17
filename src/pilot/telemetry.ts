@@ -301,7 +301,12 @@ export function versionCheck(tags: string[], allowed: string[], noun: string): v
   const unexpected = tags.filter((t) => !allowed.includes(t));
   if (unexpected.length === 0) return;
   const distinct = [...new Set(unexpected)].sort();
-  fail("telemetry_version_mismatch", `${unexpected.length} ${noun}${unexpected.length === 1 ? "" : "s"} carry a prompt_version that is not expected here (${distinct.slice(0, 3).join(", ")}${distinct.length > 3 ? `, and ${distinct.length - 3} more` : ""}). Expected only: ${allowed.join(", ")}. Export only the tags the pilot names.`);
+  // A value shaped like a recorder token is an id (an export query that picked the wrong column), so it is counted
+  // and never repeated.
+  const plain = distinct.filter((t) => !TOKEN_SHAPE.test(t));
+  const hidden = distinct.length - plain.length;
+  const named = [plain.slice(0, 3).join(", "), plain.length > 3 ? `and ${plain.length - 3} more` : "", hidden > 0 ? `${hidden} value${hidden === 1 ? "" : "s"} shaped like a recorder id token, not shown` : ""].filter(Boolean).join(", ");
+  fail("telemetry_version_mismatch", `${unexpected.length} ${noun}${unexpected.length === 1 ? "" : "s"} carry a prompt_version that is not expected here (${named}). Expected only: ${allowed.join(", ")}. Export only the tags the pilot names.`);
 }
 
 // Classifies each row as unattributed (its unit appears under more than one tag), immature (outcome not final by

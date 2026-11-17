@@ -105,7 +105,7 @@ export function pilotRecorder(options: PilotRecorderOptions): PilotRecorder {
   let problemCount = 0;
 
   const clock = (): Date => {
-    try { const d = options.now ? options.now() : new Date(); if (d instanceof Date && !Number.isNaN(d.getTime())) return d; } catch { /* use the real clock */ }
+    try { const d = options.now ? options.now() : new Date(); if (d instanceof Date && !Number.isNaN(d.getTime())) return new Date(d.getTime()); } catch { /* use the real clock */ }
     return new Date();
   };
 

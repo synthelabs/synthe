@@ -30,6 +30,22 @@ export interface LoggedConversation {
   // Time (ms) of the first outcome line.
   oldest_outcome_at?: number;
   values: Map<string, number | null>;
+  // Every outcome line, in the order written, so a reader can ask what was recorded before a given time.
+  outcomes: { at: number; values: [string, number | null][] }[];
+}
+
+// The outcome as it stood before a time: for each metric the newest line recorded before `before` wins (at the same
+// time the line written later wins). `lines` is how many outcome lines were used and `later` how many were not.
+export function valuesBefore(c: LoggedConversation, before: number): { values: Map<string, number | null>; lines: number; later: number } {
+  const values = new Map<string, number | null>();
+  const seen = new Map<string, number>();
+  let lines = 0;
+  for (const o of c.outcomes) {
+    if (!(o.at < before)) continue;
+    lines++;
+    for (const [k, v] of o.values) if ((seen.get(k) ?? -Infinity) <= o.at) { seen.set(k, o.at); values.set(k, v); }
+  }
+  return { values, lines, later: c.outcomes.length - lines };
 }
 
 export interface CallLog {
@@ -67,7 +83,7 @@ export function readCallLog(dir: string): CallLog {
   const conversation = (agent: string, id: string): LoggedConversation => {
     const key = agentKey(agent, id);
     let c = log.conversations.get(key);
-    if (!c) { c = { agent, conversation_id: id, calls: [], outcome_lines: 0, values: new Map() }; log.conversations.set(key, c); }
+    if (!c) { c = { agent, conversation_id: id, calls: [], outcome_lines: 0, values: new Map(), outcomes: [] }; log.conversations.set(key, c); }
     return c;
   };
 
@@ -115,6 +131,7 @@ export function readCallLog(dir: string): CallLog {
         const at = Date.parse(line.at);
         c.newest_outcome_at = Math.max(c.newest_outcome_at ?? -Infinity, at);
         c.oldest_outcome_at = Math.min(c.oldest_outcome_at ?? Infinity, at);
+        c.outcomes.push({ at, values: entries as [string, number | null][] });
         // The newest line wins a metric; at the same time the line written later wins.
         for (const [k, v] of entries) {
           if ((seen.get(k) ?? -Infinity) <= at) { seen.set(k, at); c.values.set(k, v as number | null); }

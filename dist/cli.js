@@ -30673,7 +30673,10 @@ function versionCheck(tags, allowed, noun) {
   const unexpected = tags.filter((t) => !allowed.includes(t));
   if (unexpected.length === 0) return;
   const distinct = [...new Set(unexpected)].sort();
-  fail("telemetry_version_mismatch", `${unexpected.length} ${noun}${unexpected.length === 1 ? "" : "s"} carry a prompt_version that is not expected here (${distinct.slice(0, 3).join(", ")}${distinct.length > 3 ? `, and ${distinct.length - 3} more` : ""}). Expected only: ${allowed.join(", ")}. Export only the tags the pilot names.`);
+  const plain = distinct.filter((t) => !TOKEN_SHAPE.test(t));
+  const hidden = distinct.length - plain.length;
+  const named = [plain.slice(0, 3).join(", "), plain.length > 3 ? `and ${plain.length - 3} more` : "", hidden > 0 ? `${hidden} value${hidden === 1 ? "" : "s"} shaped like a recorder id token, not shown` : ""].filter(Boolean).join(", ");
+  fail("telemetry_version_mismatch", `${unexpected.length} ${noun}${unexpected.length === 1 ? "" : "s"} carry a prompt_version that is not expected here (${named}). Expected only: ${allowed.join(", ")}. Export only the tags the pilot names.`);
 }
 function classifyRows(rows, lagDays, asOf, rowAsOf) {
   const tagsByUnit = /* @__PURE__ */ new Map();
@@ -34257,6 +34260,20 @@ var init_commands = __esm({
 // src/pilot/calllog.ts
 import { readdirSync as readdirSync4 } from "node:fs";
 import { join as join21 } from "node:path";
+function valuesBefore(c, before) {
+  const values = /* @__PURE__ */ new Map();
+  const seen = /* @__PURE__ */ new Map();
+  let lines2 = 0;
+  for (const o of c.outcomes) {
+    if (!(o.at < before)) continue;
+    lines2++;
+    for (const [k, v] of o.values) if ((seen.get(k) ?? -Infinity) <= o.at) {
+      seen.set(k, o.at);
+      values.set(k, v);
+    }
+  }
+  return { values, lines: lines2, later: c.outcomes.length - lines2 };
+}
 function readCallLog(dir) {
   let names2;
   try {
@@ -34272,7 +34289,7 @@ function readCallLog(dir) {
     const key = agentKey(agent, id);
     let c = log.conversations.get(key);
     if (!c) {
-      c = { agent, conversation_id: id, calls: [], outcome_lines: 0, values: /* @__PURE__ */ new Map() };
+      c = { agent, conversation_id: id, calls: [], outcome_lines: 0, values: /* @__PURE__ */ new Map(), outcomes: [] };
       log.conversations.set(key, c);
     }
     return c;
@@ -34343,6 +34360,7 @@ function readCallLog(dir) {
         const at = Date.parse(line.at);
         c.newest_outcome_at = Math.max(c.newest_outcome_at ?? -Infinity, at);
         c.oldest_outcome_at = Math.min(c.oldest_outcome_at ?? Infinity, at);
+        c.outcomes.push({ at, values: entries });
         for (const [k, v] of entries) {
           if ((seen.get(k) ?? -Infinity) <= at) {
             seen.set(k, at);
@@ -34387,7 +34405,7 @@ function buildLogExport(input) {
   if (Number.isNaN(startMs) || Number.isNaN(endMs)) throw new PilotError("usage", "The window and the export time must be UTC times like 2026-11-01T00:00:00Z.");
   if (startMs >= endMs) throw new PilotError("usage", "The window is empty: it must start before both its end and the time of the export.");
   const exportedMs = ms(input.exported_at);
-  const left2 = { no_outcome: 0, outcome_without_call: 0, served_two_versions: 0, outside_window: 0, other_agent: 0, outcome_before_call: 0, other_version_after_outcome: 0 };
+  const left2 = { no_outcome: 0, outcome_without_call: 0, served_two_versions: 0, outside_window: 0, other_agent: 0, outcome_before_call: 0, other_version_after_outcome: 0, outcome_after_other_version: 0 };
   const noOutcomeBy = {};
   const twoBy = {};
   const otherTags = {};
@@ -34419,14 +34437,19 @@ function buildLogExport(input) {
       continue;
     }
     const others = c.calls.filter((x) => x.prompt_version !== first.prompt_version);
-    const newestOutcome = c.newest_outcome_at;
-    const contaminated = others.some((x) => newestOutcome === void 0 || Date.parse(x.at) <= newestOutcome);
     let values = metrics.map((m) => c.values.get(m) ?? null);
-    if (contaminated) {
-      left2.served_two_versions++;
-      bump(twoBy, first.prompt_version);
-      values = metrics.map(() => null);
-    } else if (others.length > 0) left2.other_version_after_outcome++;
+    if (others.length > 0) {
+      const before = valuesBefore(c, Math.min(...others.map((x) => Date.parse(x.at))));
+      if (before.lines === 0) {
+        left2.served_two_versions++;
+        bump(twoBy, first.prompt_version);
+        values = metrics.map(() => null);
+      } else {
+        left2.other_version_after_outcome++;
+        values = metrics.map((m) => before.values.get(m) ?? null);
+      }
+      if (before.lines > 0 && before.later > 0) left2.outcome_after_other_version++;
+    }
     if (c.outcome_lines === 0) {
       left2.no_outcome++;
       bump(noOutcomeBy, first.prompt_version);
@@ -34512,6 +34535,7 @@ function writeLogExport(input) {
   if (l.outcome_without_call) notes.push(`${plural2(l.outcome_without_call, "conversation has", "conversations have")} an outcome but no recorded call, so ${l.outcome_without_call === 1 ? "it was" : "they were"} left out. Check that every agent call goes through the recorder.`);
   if (l.served_two_versions) notes.push(`${plural2(l.served_two_versions, "conversation was", "conversations were")} served by a second prompt version before or with the outcome (by first-served version: ${Object.entries(built.two_versions_by).sort().map(([t, n]) => `${printable2(t, 40)} ${n}`).join(", ")}). Their outcome cannot be credited to one prompt, so they are in the export under the first version with empty values and count as missing outcomes there.`);
   if (l.other_version_after_outcome) notes.push(`${plural2(l.other_version_after_outcome, "conversation was", "conversations were")} served by another prompt version only after the outcome was recorded. The row is unchanged.`);
+  if (l.outcome_after_other_version) notes.push(`${plural2(l.outcome_after_other_version, "of them has", "of them have")} an outcome recorded again after that call. It is not used: it may have been influenced by the other prompt.`);
   if (l.outside_window) notes.push(`${plural2(l.outside_window, "conversation", "conversations")} in the log started outside the window and ${l.outside_window === 1 ? "is" : "are"} not in this export.`);
   if (log.malformed) notes.push(`${plural2(log.malformed, "line", "lines")} of the log could not be read and ${log.malformed === 1 ? "was" : "were"} skipped.`);
   for (const [kind, n] of Object.entries(log.problems)) notes.push(`The recorder logged ${plural2(n, "problem", "problems")} of kind ${kind}: some calls or outcomes may be missing from the log.`);

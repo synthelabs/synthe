@@ -39,7 +39,7 @@ const input = (lines: Line[], over: Partial<LogExportInput> = {}): LogExportInpu
 const V = { resolved: 1, escalated: 0, refund_usd: 0 };
 const done = (id: string, at = "2026-11-02T10:00:00Z", version = BASE, extra: Line = {}): Line[] => [call(id, at, version, extra), outcome(id, "2026-11-09T10:00:00Z", V)];
 const csvRows = (csv: string) => parseCsv(csv, "x.csv").map((r) => r.fields);
-const ZERO = { no_outcome: 0, outcome_without_call: 0, served_two_versions: 0, outside_window: 0, other_agent: 0, outcome_before_call: 0, other_version_after_outcome: 0 };
+const ZERO = { no_outcome: 0, outcome_without_call: 0, served_two_versions: 0, outside_window: 0, other_agent: 0, outcome_before_call: 0, other_version_after_outcome: 0, outcome_after_other_version: 0 };
 const refused = (fn: () => unknown, code: string, pattern?: RegExp) => assert.throws(fn, (e) => { assert.ok(e instanceof PilotError, String(e)); assert.equal(e.code, code, e.message); if (pattern) assert.match(e.message, pattern); return true; });
 
 test("one row per conversation with a call; a call with no outcome is a row with empty values; the others are counted by reason", () => {
@@ -92,6 +92,18 @@ test("a conversation served by two versions before its outcome stays in its firs
   assert.equal(after.left_out.other_version_after_outcome, 1);
   assert.equal(after.left_out.served_two_versions, 0);
   assert.equal(csvRows(after.csv)[1][6], "1", "its values stand");
+  // Once another version has served the conversation, only an outcome recorded before that call is used. A later
+  // line never changes the row, whether it repeats the value or changes it, so a retry cannot rewrite an earlier export.
+  const late = (values: Record<string, number | null>) => buildLogExport(input([...done("p"), call("p", "2026-11-10T00:00:00Z", CAND), outcome("p", "2026-11-11T00:00:00Z", values)]));
+  for (const values of [V, { ...V, resolved: 0 }]) {
+    const again = late(values);
+    assert.equal(csvRows(again.csv)[1].join(","), csvRows(after.csv)[1].join(","), "the row is the one from before the other version");
+    assert.deepEqual([again.left_out.other_version_after_outcome, again.left_out.outcome_after_other_version, again.left_out.served_two_versions], [1, 1, 0]);
+  }
+  // An outcome at the very time of the other version's call is not before it: nothing can be credited.
+  const same = buildLogExport(input([...ok, call("q", "2026-11-02T10:00:00Z", BASE), outcome("q", "2026-11-03T00:00:00Z", V), call("q", "2026-11-03T00:00:00Z", CAND)]));
+  assert.equal(same.left_out.served_two_versions, 1);
+  assert.equal(csvRows(same.csv).find((r) => r[0] === "q")?.[6], "");
   refused(() => buildLogExport(input([...ok.slice(0, 194), ...two("x1"), ...two("x2"), ...two("x3")])), "telemetry_incomplete", /3 of 100 .*0\.02.*sticky/s);
   refused(() => buildLogExport(input([...two("x1")])), "telemetry_incomplete", /sticky/);
 });

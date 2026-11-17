@@ -45,6 +45,18 @@ test("the call line is written before fn runs", async () => {
   assert.equal(seen.length, 1);
 });
 
+test("a clock hook that returns a broken Date never breaks the call or the line", async () => {
+  // A Date whose own methods throw (a test double, a patched clock) is copied to a plain Date first.
+  const broken = () => { const d = new Date(T0); d.toISOString = () => { throw new Error("no ISO"); }; return d; };
+  const dir = join(tmp("pilot-wrap-"), "log");
+  const rec = pilotRecorder({ logDir: dir, agent: "A", idKey: "clock-hook-test-key-0123456789", now: broken });
+  assert.equal(await rec.call({ promptVersion: "v1", conversationId: "c1" }, () => 7), 7);
+  rec.outcome("c1", { resolved: 1 });
+  rec.outcome("c1", { resolved: Number.NaN });
+  assert.equal(rec.problems(), 1, "only the invalid outcome is a problem");
+  assert.deepEqual(lines(dir).map((l) => l.type), ["call", "outcome", "problem"]);
+});
+
 test("a logging failure never breaks the call: fn runs once, the result is intact, the problem is counted", async () => {
   const root = tmp("pilot-wrap-");
   const blocker = join(root, "not-a-folder");
