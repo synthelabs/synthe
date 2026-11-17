@@ -229,6 +229,8 @@ npx synthe pilot demo --out <new empty folder>
 
 - `help` lists every pilot command. If your Synthe version answers `pilot` with the general help, it is too old to have the pilot (1.10.0 and older): use `node src/pilot/cli.ts <command>` from a Synthe checkout instead.
 - `demo` runs the whole loop on invented data in a few seconds, with no credentials and no network. Use it to show the person what the pilot produces before they give it any data.
+- A wrapper exists for recording calls and outcomes: `import { pilotRecorder } from "synthe/pilot"` (see "Recording calls and outcomes" in `docs/PILOT.md`), and `npx synthe pilot export` turns its log into the export. Help the person wire it into their code; give it an `agent` and an `idKey` or, only if they say so, `rawIds: true`.
+- Never read, `cat`, search or open the call log the wrapper writes (its `logDir`): it holds the team's customer ids, and reading it sends them to your model provider.
 
 ### Rules
 

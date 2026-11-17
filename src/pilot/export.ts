@@ -15,6 +15,7 @@ type Assignment = "none" | "randomized" | "observational";
 
 export interface LogExportInput {
   log: CallLog;
+  agent: string; // only this agent's conversations are exported
   contract: MetricContract;
   tags: string[]; // prompt versions the export may contain
   window: { start: IsoTime; end: IsoTime }; // conversations that started in [start, end)
@@ -24,12 +25,21 @@ export interface LogExportInput {
   csv_name: string;
 }
 
+export interface LeftOut {
+  no_outcome: number;
+  outcome_without_call: number; // unattributed: counted in the refusal rate
+  served_two_versions: number; // unattributed: counted in the refusal rate
+  outside_window: number;
+  other_agent: number; // conversations of other agents in the same log
+  outcome_before_call: number; // a note: these rows are in the export
+}
+
 export interface LogExport {
   header: Record<string, unknown>;
   csv: string;
   rows: number;
   by_version: Record<string, number>;
-  left_out: { no_outcome: number; outcome_without_call: number; served_two_versions: number; outside_window: number };
+  left_out: LeftOut;
   other_tags: Record<string, number>;
 }
 
@@ -48,14 +58,25 @@ export function buildLogExport(input: LogExportInput): LogExport {
   if (Number.isNaN(startMs) || Number.isNaN(endMs)) throw new PilotError("usage", "The window and the export time must be UTC times like 2026-11-01T00:00:00Z.");
   if (startMs >= endMs) throw new PilotError("usage", "The window is empty: it must start before both its end and the time of the export.");
 
-  const left = { no_outcome: 0, outcome_without_call: 0, served_two_versions: 0, outside_window: 0 };
+  const exportedMs = ms(input.exported_at);
+  const left: LeftOut = { no_outcome: 0, outcome_without_call: 0, served_two_versions: 0, outside_window: 0, other_agent: 0, outcome_before_call: 0 };
   const otherTags: Record<string, number> = {};
   const byVersion: Record<string, number> = {};
   const rows: { id: string; version: string; started: string; segment?: string; unit?: string; model?: string; values: (number | null)[] }[] = [];
   const known = new Set(metrics);
 
-  for (const [id, c] of [...input.log.conversations].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-    if (c.calls.length === 0) { left.outcome_without_call++; continue; }
+  const byId = [...input.log.conversations.values()].sort((a, b) => (a.conversation_id < b.conversation_id ? -1 : a.conversation_id > b.conversation_id ? 1 : 0));
+  for (const c of byId) {
+    const id = c.conversation_id;
+    if (c.agent !== input.agent) { left.other_agent++; continue; }
+    if (c.calls.length === 0) {
+      // An outcome with no recorded call cannot be credited to a prompt, so it is unattributed, and enough of them
+      // refuse the export (below). It has no start time, so the window cannot place it: it counts when its newest
+      // outcome line is inside [window.start, exported_at). Outcomes older or newer than that belong to another export.
+      const newest = c.newest_outcome_at;
+      if (newest !== undefined && newest >= startMs && newest < exportedMs) left.outcome_without_call++;
+      continue;
+    }
     const first = c.calls[0];
     const started = seconds(first.started_at ?? first.at);
     // Judged by its start only: a conversation outside the window is not part of this export and is not a defect.
@@ -65,14 +86,19 @@ export function buildLogExport(input: LogExportInput): LogExport {
     for (const name of c.values.keys()) {
       if (!known.has(name)) throw new PilotError("invalid_telemetry", `The log records an outcome named ${printable(name, 40)}, which is not a metric in the contract. Fix the name in the code that calls outcome(); an outcome under another name would be counted as missing.`);
     }
+    // Outcomes may be recorded by another process, so an earlier outcome is still joined; it is only noted.
+    if (c.oldest_outcome_at !== undefined && c.oldest_outcome_at < ms(first.at)) left.outcome_before_call++;
     if (!input.tags.includes(first.prompt_version)) otherTags[first.prompt_version] = (otherTags[first.prompt_version] ?? 0) + 1;
     byVersion[first.prompt_version] = (byVersion[first.prompt_version] ?? 0) + 1;
     rows.push({ id, version: first.prompt_version, started, segment: first.segment, unit: first.unit_id, model: first.model_id, values: metrics.map((m) => c.values.get(m) ?? null) });
   }
 
-  const attributable = rows.length + left.served_two_versions;
-  if (attributable > 0 && left.served_two_versions / attributable > contract.max_unattributed_rate) {
-    throw new PilotError("telemetry_incomplete", `${left.served_two_versions} of ${attributable} completed conversations were served by more than one prompt version, which is more than the ${contract.max_unattributed_rate} the contract allows. A conversation cannot be credited to one prompt then. Assignment must be sticky per conversation: choose the version once, from the conversation id, and use it for every call of that conversation.`);
+  // Ambiguous or missing attribution can never become a claimed win: a conversation served by two versions and an
+  // outcome with no recorded call are both left out, and together they may not exceed the contract's limit.
+  const unattributed = left.served_two_versions + left.outcome_without_call;
+  const attributable = rows.length + unattributed;
+  if (unattributed > 0 && unattributed / attributable > contract.max_unattributed_rate) {
+    throw new PilotError("telemetry_incomplete", `${unattributed} of ${attributable} conversations could not be credited to one prompt version (${left.served_two_versions} were served by more than one version, ${left.outcome_without_call} have an outcome but no recorded call), which is more than the ${contract.max_unattributed_rate} the contract allows. Assignment must be sticky per conversation: choose the version once, from the conversation id, and use it for every call of that conversation. Every agent call must go through the recorder, so that each outcome has a call.`);
   }
   if (rows.length === 0) throw new PilotError("telemetry_incomplete", "There is no completed conversation in the window yet: no conversation has both a recorded call and a recorded outcome. Export again when outcomes have been recorded.");
 
@@ -99,6 +125,7 @@ export function writeLogExport(input: {
   store: PilotStore; logDir: string;
   scope: { experiment: Sha256 } | { baseline: { start: IsoTime; end: IsoTime } };
   assignment: Assignment; outDir?: string; now: Date;
+  agent?: string; // default: the pilot's agent.name
 }): { path: string; export_id: string; rows: number; by_version: Record<string, number>; notes: string[] } {
   const { store, scope } = input;
   const f = frozen(store);
@@ -120,7 +147,12 @@ export function writeLogExport(input: {
   const exportId = `calllog-${experiment ? shortId((scope as { experiment: Sha256 }).experiment) : "baseline"}-${stamp.replace(/[-:]/g, "")}`;
   const csvName = `${exportId}.csv`;
   const log = readCallLog(input.logDir);
-  const built = buildLogExport({ log, contract: f.config.metric, tags, window, exported_at: stamp, assignment: input.assignment, export_id: exportId, csv_name: csvName });
+  const agent = input.agent ?? f.config.agent.name;
+  const agentCount = Object.keys(log.agents).length;
+  if (agentCount > 0 && !Object.hasOwn(log.agents, agent)) {
+    throw new PilotError("usage", `The log has lines from ${agentCount} agent${agentCount === 1 ? "" : "s"}, and none is named ${printable(agent, 40)}. Pass --agent <name> with the name you gave the recorder (its agent option).`);
+  }
+  const built = buildLogExport({ log, agent, contract: f.config.metric, tags, window, exported_at: stamp, assignment: input.assignment, export_id: exportId, csv_name: csvName });
 
   // The same check `analyze` and `baseline` will make, so a problem is reported now and nothing half-right is written.
   importTelemetry({
@@ -143,6 +175,8 @@ export function writeLogExport(input: {
   if (l.outside_window) notes.push(`${plural(l.outside_window, "conversation", "conversations")} in the log started outside the window and ${l.outside_window === 1 ? "is" : "are"} not in this export.`);
   if (log.malformed) notes.push(`${plural(log.malformed, "line", "lines")} of the log could not be read and ${log.malformed === 1 ? "was" : "were"} skipped.`);
   for (const [kind, n] of Object.entries(log.problems)) notes.push(`The recorder logged ${plural(n, "problem", "problems")} of kind ${kind}: some calls or outcomes may be missing from the log.`);
+  if (l.other_agent) notes.push(`${plural(l.other_agent, "conversation", "conversations")} in the log ${l.other_agent === 1 ? "belongs" : "belong"} to another agent and ${l.other_agent === 1 ? "is" : "are"} not in this export.`);
+  if (l.outcome_before_call) notes.push(`${plural(l.outcome_before_call, "conversation has", "conversations have")} an outcome recorded before its first call. ${l.outcome_before_call === 1 ? "It was" : "They were"} still joined, because another process may record outcomes; check that clocks agree.`);
   const other = Object.values(built.other_tags).reduce((s, n) => s + n, 0);
   if (other) notes.push(`${plural(other, "conversation carries", "conversations carry")} a prompt version that the pilot does not name.`);
   return { path, export_id: exportId, rows: built.rows, by_version: built.by_version, notes };
@@ -159,6 +193,7 @@ export async function exportLog(store: PilotStore, flags: Flags, deps: PilotDeps
   if (experiment !== undefined && baseline) throw new PilotError("usage", "Give --experiment <id> or --baseline, not both.");
   if (experiment === undefined && !baseline) throw new PilotError("usage", "Give --experiment <id> for an experiment export, or --baseline --start <time> --end <time> for a baseline export.");
   const outDir = text(flags, "out");
+  const agent = text(flags, "agent");
   const assignment = text(flags, "assignment");
   let scope: { experiment: Sha256 } | { baseline: { start: IsoTime; end: IsoTime } };
   let how: Assignment;
@@ -178,7 +213,7 @@ export async function exportLog(store: PilotStore, flags: Flags, deps: PilotDeps
     how = "none";
     scope = { baseline: { start, end } };
   }
-  const out = writeLogExport({ store, logDir, scope, assignment: how, ...(outDir ? { outDir } : {}), now: deps.now() });
+  const out = writeLogExport({ store, logDir, scope, assignment: how, ...(outDir ? { outDir } : {}), ...(agent ? { agent } : {}), now: deps.now() });
   deps.say(`Wrote the export: ${out.path}`);
   deps.say(`Conversations per prompt version: ${Object.entries(out.by_version).sort().map(([tag, n]) => `${printable(tag, 40)} ${n}`).join(", ")}.`);
   for (const note of out.notes) deps.say(note);

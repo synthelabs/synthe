@@ -19,20 +19,32 @@ export interface LoggedCall {
 }
 
 export interface LoggedConversation {
+  agent: string;
+  conversation_id: string;
   // In time order (ties: the order they were written).
   calls: LoggedCall[];
   // How many outcome lines the conversation has, and for each metric the value of the newest one.
   outcome_lines: number;
+  // Time (ms) of the newest outcome line, for an outcome that has no call and so no start time.
+  newest_outcome_at?: number;
+  // Time (ms) of the first outcome line.
+  oldest_outcome_at?: number;
   values: Map<string, number | null>;
 }
 
 export interface CallLog {
+  // Keyed by agentKey(agent, conversation_id): the same id under two agents is two conversations.
   conversations: Map<string, LoggedConversation>;
+  // Valid lines per agent. A line with no valid agent is malformed and is in no count here.
+  agents: Record<string, number>;
   files: number;
   lines: number;
   malformed: number;
   problems: Record<string, number>;
 }
+
+// JSON of the pair, so no agent name and id can run together into another pair.
+export const agentKey = (agent: string, conversationId: string): string => JSON.stringify([agent, conversationId]);
 
 const UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const isUtc = (v: unknown): v is string => typeof v === "string" && UTC.test(v) && !Number.isNaN(Date.parse(v));
@@ -48,11 +60,14 @@ export function readCallLog(dir: string): CallLog {
   }
   if (names.length > MAX_LOG_FILES) throw new PilotError("too_large", `${dir} holds ${names.length} log files; the limit is ${MAX_LOG_FILES}. Move the old files away and export again.`);
 
-  const log: CallLog = { conversations: new Map(), files: names.length, lines: 0, malformed: 0, problems: {} };
+  const log: CallLog = { conversations: new Map(), agents: {}, files: names.length, lines: 0, malformed: 0, problems: {} };
+  // A Map while reading: an agent can be named "__proto__", which an object would swallow.
+  const perAgent = new Map<string, number>();
   const newest = new Map<string, Map<string, number>>(); // conversation -> metric -> time of the value kept
-  const conversation = (id: string): LoggedConversation => {
-    let c = log.conversations.get(id);
-    if (!c) { c = { calls: [], outcome_lines: 0, values: new Map() }; log.conversations.set(id, c); }
+  const conversation = (agent: string, id: string): LoggedConversation => {
+    const key = agentKey(agent, id);
+    let c = log.conversations.get(key);
+    if (!c) { c = { agent, conversation_id: id, calls: [], outcome_lines: 0, values: new Map() }; log.conversations.set(key, c); }
     return c;
   };
 
@@ -66,9 +81,11 @@ export function readCallLog(dir: string): CallLog {
       log.lines++;
       let line: unknown;
       try { line = JSON.parse(part); } catch { log.malformed++; continue; }
-      if (!isObject(line) || line.v !== CALL_LOG_VERSION || !isUtc(line.at)) { log.malformed++; continue; }
+      if (!isObject(line) || line.v !== CALL_LOG_VERSION || !isUtc(line.at) || !isId(line.agent)) { log.malformed++; continue; }
+      const agent = line.agent;
       if (line.type === "problem") {
         if (typeof line.kind !== "string" || !(PROBLEM_KINDS as readonly string[]).includes(line.kind)) { log.malformed++; continue; }
+        perAgent.set(agent, (perAgent.get(agent) ?? 0) + 1);
         log.problems[line.kind] = (log.problems[line.kind] ?? 0) + 1;
         continue;
       }
@@ -81,18 +98,23 @@ export function readCallLog(dir: string): CallLog {
         if (line.unit_id !== undefined) call.unit_id = line.unit_id as string;
         if (line.segment !== undefined) call.segment = line.segment as string;
         if (line.model_id !== undefined) call.model_id = line.model_id as string;
-        conversation(line.conversation_id).calls.push(call);
+        perAgent.set(agent, (perAgent.get(agent) ?? 0) + 1);
+        conversation(agent, line.conversation_id).calls.push(call);
         continue;
       }
       if (line.type === "outcome") {
         if (!isObject(line.values)) { log.malformed++; continue; }
         const entries = Object.entries(line.values);
         if (entries.length > MAX_METRICS || entries.some(([k, v]) => !METRIC_NAME.test(k) || !(v === null || (typeof v === "number" && Number.isFinite(v))))) { log.malformed++; continue; }
-        const c = conversation(line.conversation_id);
+        perAgent.set(agent, (perAgent.get(agent) ?? 0) + 1);
+        const c = conversation(agent, line.conversation_id);
         c.outcome_lines++;
-        const seen = newest.get(line.conversation_id) ?? new Map<string, number>();
-        newest.set(line.conversation_id, seen);
+        const key = agentKey(agent, line.conversation_id);
+        const seen = newest.get(key) ?? new Map<string, number>();
+        newest.set(key, seen);
         const at = Date.parse(line.at);
+        c.newest_outcome_at = Math.max(c.newest_outcome_at ?? -Infinity, at);
+        c.oldest_outcome_at = Math.min(c.oldest_outcome_at ?? Infinity, at);
         // The newest line wins a metric; at the same time the line written later wins.
         for (const [k, v] of entries) {
           if ((seen.get(k) ?? -Infinity) <= at) { seen.set(k, at); c.values.set(k, v as number | null); }
@@ -102,6 +124,7 @@ export function readCallLog(dir: string): CallLog {
       log.malformed++;
     }
   }
+  log.agents = Object.fromEntries(perAgent);
   for (const c of log.conversations.values()) c.calls = c.calls.map((call, i) => ({ call, i })).sort((a, b) => Date.parse(a.call.at) - Date.parse(b.call.at) || a.i - b.i).map((x) => x.call);
   return log;
 }

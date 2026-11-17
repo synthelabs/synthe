@@ -23,8 +23,9 @@ const EXPORTED = "2026-11-20T00:00:00Z";
 
 // A log folder written line by line, so a test controls every time and field.
 type Line = Record<string, unknown>;
-const call = (id: string, at: string, version = BASE, extra: Line = {}): Line => ({ v: 1, type: "call", at, conversation_id: id, prompt_version: version, ...extra });
-const outcome = (id: string, at: string, values: Record<string, number | null>): Line => ({ v: 1, type: "outcome", at, conversation_id: id, values });
+const AGENT = "Juniper"; // the agent name in the demo's pilot.json
+const call = (id: string, at: string, version = BASE, extra: Line = {}): Line => ({ v: 1, type: "call", at, agent: AGENT, conversation_id: id, prompt_version: version, ...extra });
+const outcome = (id: string, at: string, values: Record<string, number | null>, extra: Line = {}): Line => ({ v: 1, type: "outcome", at, agent: AGENT, conversation_id: id, values, ...extra });
 function logOf(lines: Line[]) {
   const dir = join(tmp("pilot-export-"), "log");
   mkdirSync(dir);
@@ -32,12 +33,13 @@ function logOf(lines: Line[]) {
   return readCallLog(dir);
 }
 const input = (lines: Line[], over: Partial<LogExportInput> = {}): LogExportInput => ({
-  log: logOf(lines), contract: contract(), tags: [BASE, CAND], window: { start: START, end: END }, exported_at: EXPORTED,
+  log: logOf(lines), agent: AGENT, contract: contract(), tags: [BASE, CAND], window: { start: START, end: END }, exported_at: EXPORTED,
   assignment: "randomized", export_id: "calllog-test", csv_name: "calllog-test.csv", ...over,
 });
 const V = { resolved: 1, escalated: 0, refund_usd: 0 };
 const done = (id: string, at = "2026-11-02T10:00:00Z", version = BASE, extra: Line = {}): Line[] => [call(id, at, version, extra), outcome(id, "2026-11-09T10:00:00Z", V)];
 const csvRows = (csv: string) => parseCsv(csv, "x.csv").map((r) => r.fields);
+const ZERO = { no_outcome: 0, outcome_without_call: 0, served_two_versions: 0, outside_window: 0, other_agent: 0, outcome_before_call: 0 };
 const refused = (fn: () => unknown, code: string, pattern?: RegExp) => assert.throws(fn, (e) => { assert.ok(e instanceof PilotError, String(e)); assert.equal(e.code, code, e.message); if (pattern) assert.match(e.message, pattern); return true; });
 
 test("one row per conversation with a call and an outcome; the others are counted by reason", () => {
@@ -45,9 +47,9 @@ test("one row per conversation with a call and an outcome; the others are counte
     ...done("a"), ...done("b"),
     call("no-outcome", "2026-11-03T10:00:00Z"),
     outcome("no-call", "2026-11-05T10:00:00Z", V),
-  ]));
+  ], { contract: contract({ max_unattributed_rate: 0.4 }) }));
   assert.equal(x.rows, 2);
-  assert.deepEqual(x.left_out, { no_outcome: 1, outcome_without_call: 1, served_two_versions: 0, outside_window: 0 });
+  assert.deepEqual(x.left_out, { ...ZERO, no_outcome: 1, outcome_without_call: 1 });
   assert.equal(x.header.expected_rows, 2);
   assert.deepEqual(csvRows(x.csv).map((r) => r[0]), ["conversation_id", "a", "b"]);
 });
@@ -174,7 +176,7 @@ test("a log recorded from a demo export imports to the same arms and rows as the
   const col = Object.fromEntries(head.map((h, i) => [h, i]));
   const dir = join(tmp("pilot-proof-"), "log");
   let clock = new Date(0);
-  const rec = pilotRecorder({ logDir: dir, now: () => clock });
+  const rec = pilotRecorder({ logDir: dir, agent: "Juniper", rawIds: true, now: () => clock });
   for (const r of rows) {
     const at = new Date(r[col.started_at]);
     clock = new Date(at.getTime() + 5000);
@@ -185,7 +187,7 @@ test("a log recorded from a demo export imports to the same arms and rows as the
   assert.equal(rec.problems(), 0);
   const built = buildLogExport({
     log: readCallLog(dir), contract: contract(), tags: [BASE, CAND], window: { start, end: addDays(start, 14) }, exported_at: exportedAt,
-    assignment: "randomized", export_id: "fernhill-from-log", csv_name: "from-log.csv",
+    assignment: "randomized", export_id: "fernhill-from-log", csv_name: "from-log.csv", agent: "Juniper",
   });
   assert.equal(built.rows, demo.rows);
   assert.equal(built.rows, 2800);
@@ -206,7 +208,7 @@ test("a log recorded from a demo export imports to the same arms and rows as the
 // Synthetic conversations for the days of a window: `perDay` per arm, with values that follow the demo's shares.
 function writeLog(dir: string, tags: string[], start: string, days: number, perDay: number): void {
   let clock = new Date(0);
-  const rec = pilotRecorder({ logDir: dir, idKey: "fernhill-test-key", now: () => clock });
+  const rec = pilotRecorder({ logDir: dir, agent: AGENT, idKey: "fernhill-test-key", now: () => clock });
   for (const [a, tag] of tags.entries()) {
     for (let d = 0; d < days; d++) {
       for (let i = 0; i < perDay; i++) {
@@ -315,11 +317,11 @@ test("problems found by the import are reported before anything is written, and 
 
     // A clean log with some damage: the notes say so, and print no id.
     const clean = join(ctx.root, "clean-log");
-    writeLog(clean, [BASE], DEMO.baseline_window.start, 2, 10);
+    writeLog(clean, [BASE], DEMO.baseline_window.start, 5, 10);
     const file = join(clean, readdirSync(clean).find((n) => n.startsWith("calls-")) as string);
-    writeFileSync(file, `${readFileSync(file, "utf8")}garbage\n${JSON.stringify({ v: 1, type: "problem", at: "2026-10-02T00:00:00Z", kind: "write_failed" })}\n${JSON.stringify(call("conv-orphan-secret", "2026-10-02T01:00:00Z"))}\n${JSON.stringify(outcome("conv-nocall-secret", "2026-10-02T01:00:00Z", V))}\n`);
+    writeFileSync(file, `${readFileSync(file, "utf8")}garbage\n${JSON.stringify({ v: 1, type: "problem", at: "2026-10-02T00:00:00Z", agent: AGENT, kind: "write_failed" })}\n${JSON.stringify(call("conv-orphan-secret", "2026-10-02T01:00:00Z"))}\n${JSON.stringify(outcome("conv-nocall-secret", "2026-10-02T01:00:00Z", V))}\n`);
     const done = writeLogExport({ ...base, logDir: clean });
-    assert.equal(done.rows, 20);
+    assert.equal(done.rows, 50);
     assert.deepEqual(done.notes.map((n) => n.replace(/\d+/g, "N")), [
       "N conversation was left out because no outcome is recorded for it yet.",
       "N conversation has an outcome but no recorded call, so it was left out. Check that every agent call goes through the recorder.",
@@ -327,5 +329,171 @@ test("problems found by the import are reported before anything is written, and 
       "The recorder logged N problem of kind write_failed: some calls or outcomes may be missing from the log.",
     ]);
     assert.doesNotMatch(done.notes.join(" "), /secret/);
+  } finally { await ctx.stop(); }
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// One agent at a time, and ambiguous attribution can never become a claimed win.
+// ---------------------------------------------------------------------------------------------------------------
+
+test("only the chosen agent's conversations are exported; the other agents' are counted, and the same id under two agents is two conversations", () => {
+  const other = (id: string): Line[] => [call(id, "2026-11-02T10:00:00Z", BASE, { agent: "Cedar" }), outcome(id, "2026-11-09T00:00:00Z", V, { agent: "Cedar" })];
+  const lines = [...done("a"), ...done("shared"), ...other("shared"), ...other("c1"), ...other("c2")];
+  const x = buildLogExport(input(lines));
+  assert.deepEqual(csvRows(x.csv).slice(1).map((r) => r[0]), ["a", "shared"]);
+  assert.deepEqual(x.left_out, { ...ZERO, other_agent: 3 });
+  const y = buildLogExport(input(lines, { agent: "Cedar" }));
+  assert.deepEqual(csvRows(y.csv).slice(1).map((r) => r[0]), ["c1", "c2", "shared"]);
+  assert.deepEqual(y.left_out, { ...ZERO, other_agent: 2 });
+});
+
+test("an outcome-only conversation of another agent is not this agent's defect", () => {
+  const x = buildLogExport(input([...done("a"), outcome("theirs", "2026-11-05T10:00:00Z", V, { agent: "Cedar" })]));
+  assert.equal(x.rows, 1);
+  assert.deepEqual(x.left_out, { ...ZERO, other_agent: 1 });
+});
+
+test("a conversation with an outcome but no call is unattributed: 1 of 3 at a limit of 0.05 is refused, with counts only", () => {
+  const lines = [...done("a"), ...done("b"), outcome("secret-id-no-call", "2026-11-05T10:00:00Z", V)];
+  refused(() => buildLogExport(input(lines, { contract: contract({ max_unattributed_rate: 0.05 }) })), "telemetry_incomplete", /1 of 3 .*0\.05/s);
+  try { buildLogExport(input(lines, { contract: contract({ max_unattributed_rate: 0.05 }) })); assert.fail("must refuse"); } catch (e) { assert.doesNotMatch((e as Error).message, /secret-id/); }
+  const ok = buildLogExport(input(lines, { contract: contract({ max_unattributed_rate: 0.4 }) }));
+  assert.equal(ok.rows, 2);
+  assert.deepEqual(ok.left_out, { ...ZERO, outcome_without_call: 1 });
+  assert.ok(!csvRows(ok.csv).some((r) => r[0] === "secret-id-no-call"), "exported without that conversation");
+  // The limit itself is allowed: 1 of 50 is 0.02.
+  const edge = buildLogExport(input([...Array.from({ length: 49 }, (_, i) => done(`e-${i}`)).flat(), outcome("x", "2026-11-05T10:00:00Z", V)]));
+  assert.equal(edge.rows, 49);
+});
+
+test("served-by-two-versions and outcome-without-call add up in one rate", () => {
+  const two = (id: string): Line[] => [call(id, "2026-11-02T10:00:00Z", BASE), call(id, "2026-11-02T10:05:00Z", CAND), outcome(id, "2026-11-09T00:00:00Z", V)];
+  const ok = Array.from({ length: 97 }, (_, i) => done(`ok-${i}`)).flat();
+  // 1 + 1 of 100 is exactly the 2% limit and is allowed; 2 + 1 of 100 is over it.
+  const fine = buildLogExport(input([...ok, ...done("ok-97"), ...two("x1"), outcome("n1", "2026-11-05T10:00:00Z", V)]));
+  assert.deepEqual([fine.rows, fine.left_out.served_two_versions, fine.left_out.outcome_without_call], [98, 1, 1]);
+  refused(() => buildLogExport(input([...ok, ...two("x1"), ...two("x2"), outcome("n1", "2026-11-05T10:00:00Z", V)])), "telemetry_incomplete", /3 of 100/);
+});
+
+test("an outcome-only conversation counts when its newest outcome is in [window start, export time), and not otherwise", () => {
+  const rate = { contract: contract({ max_unattributed_rate: 0.05 }) };
+  const base = [...done("a"), ...done("b")];
+  const counted = (at: string, extra: Partial<LogExportInput> = {}) => { try { return buildLogExport(input([...base, outcome("o", at, V)], { ...rate, ...extra })).left_out.outcome_without_call; } catch (e) { assert.ok(e instanceof PilotError && e.code === "telemetry_incomplete"); return "refused"; } };
+  assert.equal(counted("2026-11-01T00:00:00Z"), "refused", "at the window start it counts");
+  assert.equal(counted("2026-11-19T23:59:59Z"), "refused", "just before the export time it counts, also after the window end");
+  assert.equal(counted("2026-10-31T23:59:59Z"), 0, "before the window it is not this export's defect");
+  assert.equal(counted(EXPORTED), 0, "at the export time it is not counted");
+  // Its newest outcome decides: an old outcome and a new one is inside.
+  const mixed = [...base, outcome("o", "2026-10-01T00:00:00Z", V), outcome("o", "2026-11-05T00:00:00Z", V)];
+  refused(() => buildLogExport(input(mixed, rate)), "telemetry_incomplete", /1 of 3/);
+});
+
+test("an outcome written before the conversation's first call is still joined, and counted as a note", () => {
+  const x = buildLogExport(input([
+    outcome("early", "2026-11-02T09:00:00Z", V), call("early", "2026-11-02T10:00:00Z"),
+    ...done("fine"),
+  ]));
+  assert.equal(x.rows, 2);
+  assert.equal(x.left_out.outcome_before_call, 1);
+  assert.deepEqual(csvRows(x.csv).slice(1).map((r) => [r[0], r[6]]), [["early", "1"], ["fine", "1"]]);
+});
+
+test("a prompt version outside the pilot's tags stays in the rows, so the import refuses the export", () => {
+  const x = buildLogExport(input([...done("a"), ...done("b", "2026-11-02T10:00:00Z", "third-version")]));
+  assert.equal(x.rows, 2);
+  assert.deepEqual(x.other_tags, { "third-version": 1 });
+  refused(() => importTelemetry({ text: JSON.stringify(x.header), readSibling: () => x.csv, purpose: "experiment", scope_id: "0".repeat(64), contract: contract(), tags: [BASE, CAND] }), "telemetry_version_mismatch");
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// The frozen line format: a program in another language can write it. These lines are written by hand.
+// ---------------------------------------------------------------------------------------------------------------
+
+test("lines written by hand, as a non-JavaScript agent would write them, are read and exported", () => {
+  const dir = join(tmp("pilot-format-"), "log");
+  mkdirSync(dir);
+  const hand = [
+    '{"v":1,"type":"call","at":"2026-11-02T10:00:00.000Z","agent":"Juniper","conversation_id":"conv-1","prompt_version":"' + BASE + '","started_at":"2026-11-02T09:59:30Z","unit_id":"user-1","segment":"chat","model_id":"m-1"}',
+    '{"v":1,"type":"outcome","at":"2026-11-03T10:00:00Z","agent":"Juniper","conversation_id":"conv-1","values":{"resolved":1,"escalated":0,"refund_usd":null}}',
+    '{"v":1,"type":"problem","at":"2026-11-02T11:00:00Z","agent":"Juniper","kind":"write_failed"}',
+  ];
+  writeFileSync(join(dir, "calls-2026-11-02.jsonl"), `${hand.join("\n")}\n`);
+  const log = readCallLog(dir);
+  assert.deepEqual([log.lines, log.malformed, log.agents, log.problems], [3, 0, { Juniper: 3 }, { write_failed: 1 }]);
+  const x = buildLogExport({ ...input([]), log, agent: "Juniper" });
+  assert.deepEqual(csvRows(x.csv), [
+    ["conversation_id", "prompt_version", "started_at", "segment", "unit_id", "model_id", "resolved", "escalated", "refund_usd"],
+    ["conv-1", BASE, "2026-11-02T09:59:30Z", "chat", "user-1", "m-1", "1", "0", ""],
+  ]);
+  const imp = importTelemetry({ text: JSON.stringify(x.header), readSibling: () => x.csv, purpose: "experiment", scope_id: "0".repeat(64), contract: contract(), tags: [BASE, CAND], window: { start: START, end: END } });
+  assert.equal(imp.rows?.length, 1);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Through a pilot directory: which agent, and what the notes say.
+// ---------------------------------------------------------------------------------------------------------------
+
+test("the export defaults to the pilot's agent, takes --agent, and refuses an agent the log does not hold when it holds others", async () => {
+  const ctx = await frozenPilot();
+  try {
+    const start = DEMO.baseline_window.start;
+    const logDir = join(ctx.root, "agent-log");
+    writeLog(logDir, [BASE], start, 2, 10); // written by "Juniper"
+    const cedar = pilotRecorder({ logDir, agent: "Cedar", rawIds: true, now: () => new Date(Date.parse(start) + 3_600_000) });
+    for (let i = 0; i < 5; i++) { cedar.record({ promptVersion: BASE, conversationId: `cedar-${i}` }); cedar.outcome(`cedar-${i}`, { resolved: 1 }); }
+    const base = { store: ctx.store, logDir, scope: { baseline: { start, end: addDays(start, 14) } }, assignment: "none" as const, now: new Date("2026-10-17T00:00:00Z") };
+    const mine = writeLogExport({ ...base, outDir: join(ctx.root, "out-1") });
+    assert.equal(mine.rows, 20, "no agent given: the pilot's agent.name (Juniper)");
+    assert.ok(mine.notes.includes("5 conversations in the log belong to another agent and are not in this export."), mine.notes.join(" | "));
+    const theirs = writeLogExport({ ...base, agent: "Cedar", outDir: join(ctx.root, "out-2") });
+    assert.equal(theirs.rows, 5);
+    // An agent the log does not hold, while it holds others: refused with counts, no names.
+    refused(() => writeLogExport({ ...base, agent: "Maple", outDir: join(ctx.root, "out-3") }), "usage", /2 agents.*--agent/s);
+    try { writeLogExport({ ...base, agent: "Maple" }); } catch (e) { assert.doesNotMatch((e as Error).message, /Juniper|Cedar/); }
+    assert.equal(existsSync(join(ctx.root, "out-3")), false);
+    // An empty log (no line of any agent) is not an agent mix-up: the usual "no completed conversation" answer.
+    const empty = join(ctx.root, "empty-log");
+    mkdirSync(empty);
+    refused(() => writeLogExport({ ...base, logDir: empty }), "telemetry_incomplete", /no completed conversation/);
+    // The command takes --agent.
+    const lines: string[] = [];
+    assert.equal(await exportLog(ctx.store, { log: logDir, baseline: true, start, end: addDays(start, 14), agent: "Cedar", out: join(ctx.root, "out-4") }, deps(lines, "2026-10-17T00:00:00Z")), 0);
+    assert.ok(lines.some((l) => /Conversations per prompt version: .* 5\./.test(l)), lines.join(" | "));
+    assert.equal(await exportLog(ctx.store, { log: logDir, baseline: true, start, end: addDays(start, 14), out: join(ctx.root, "out-5") }, deps([], "2026-10-17T00:00:00Z")), 0);
+  } finally { await ctx.stop(); }
+});
+
+test("the notes say how many outcomes were recorded before their call", async () => {
+  const ctx = await frozenPilot();
+  try {
+    const start = DEMO.baseline_window.start;
+    const logDir = join(ctx.root, "agent-log");
+    writeLog(logDir, [BASE], start, 5, 10);
+    let clock = new Date(Date.parse(start) + 3_600_000);
+    const rec = pilotRecorder({ logDir, agent: AGENT, rawIds: true, now: () => clock });
+    rec.outcome("early-1", { resolved: 1 });
+    clock = new Date(Date.parse(start) + 7_200_000);
+    rec.record({ promptVersion: BASE, conversationId: "early-1" });
+    const done = writeLogExport({ store: ctx.store, logDir, scope: { baseline: { start, end: addDays(start, 14) } }, assignment: "none", outDir: join(ctx.root, "out"), now: new Date("2026-10-17T00:00:00Z") });
+    assert.equal(done.rows, 51);
+    assert.ok(done.notes.includes("1 conversation has an outcome recorded before its first call. It was still joined, because another process may record outcomes; check that clocks agree."), done.notes.join(" | "));
+  } finally { await ctx.stop(); }
+});
+
+test("`export` is a pilot command with its options, and the help names it", async () => {
+  const ctx = await frozenPilot();
+  try {
+    const start = DEMO.baseline_window.start;
+    const logDir = join(ctx.root, "agent-log");
+    writeLog(logDir, [BASE], start, 3, 10);
+    const out = join(ctx.root, "via-main");
+    ctx.on("2026-10-17");
+    assert.equal(await ctx.run(["export", "--log", logDir, "--baseline", "--start", start, "--end", addDays(start, 14), "--agent", AGENT, "--out", out]), 0, ctx.lines.slice(-3).join(" | "));
+    assert.equal(readdirSync(out).length, 2);
+    assert.ok(ctx.lines.some((l) => /^Wrote the export: /.test(l)));
+    assert.equal(await ctx.run(["help"]), 0);
+    const help = ctx.lines.join("\n");
+    assert.match(help, /export\s+--log <dir> --experiment <id> --assignment randomized\|observational \[--agent <name>\] \[--out <dir>\]\s+turn the recorder's call log into the outcome export/);
+    assert.match(help, /--log <dir> --baseline --start <UTC time> --end <UTC time>\s+a baseline export from the log/);
   } finally { await ctx.stop(); }
 });

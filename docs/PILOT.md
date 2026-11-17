@@ -170,6 +170,69 @@ Rules that keep the counts honest:
 - The first export made at or after the cutoff gives the final result. A second one is refused unless the caller reopens the experiment on purpose (`reopen`; the CLI flag is `--reopen`), because a final result that can be redone with new numbers until it reads keep is not predeclared. A reopened decision says so, and every repeat of it needs the same flag (a larger aggregate after the cutoff otherwise turns a hold into a keep).
 - A keep or a revert ends the experiment. It takes no more exports after that, and its candidate gets no second experiment: a stopped change cannot come back as a keep.
 
+## Recording calls and outcomes (the wrapper)
+
+A customer that has no warehouse query can record the pilot's data with `synthe/pilot`, a small module that imports only Node built-ins (no network, no message text). It appends one line per call and per outcome to a local log. `pilot export` turns the log into the telemetry export above.
+
+```js
+import { pilotRecorder, pickVersion } from "synthe/pilot";
+
+// agent: the agent.name in pilot.json. idKey: a secret you keep; ids are written as keyed tokens.
+const recorder = pilotRecorder({ logDir: "/var/lib/agent/synthe-calls", agent: "Juniper", idKey: process.env.SYNTHE_ID_KEY });
+// The specification says allocation.candidate 0.2, so the share is 0.2 x 10000 = 2000 basis points.
+const split = { salt: "<experiment id>", baseline: "juniper-v14", candidate: "synthe-0123456789ab", candidateShareBp: 2000 };
+
+async function answer(conversationId, message) {
+  const promptVersion = pickVersion({ key: conversationId, ...split });
+  return recorder.call({ promptVersion, conversationId }, () => runAgent(promptVersion, message));
+}
+
+// Where the outcome becomes known (it may be another process that has the same idKey):
+recorder.outcome(conversationId, { resolved: 1, escalated: 0, refund_usd: 0 });
+```
+
+`recorder.call` writes the line before it runs your function, returns what the function returns and throws what it throws. `recorder.record(ctx)` is the same line without wrapping, for streaming agents. A bad argument or a failed write never throws into the agent: it is counted (`recorder.problems()`, the optional `onProblem` callback) and written as a `problem` line that names a kind only. The recorder throws only at construction, which is your startup: `logDir` and `agent` are required, and so is exactly one of `idKey` and `rawIds: true`. The recorder will not guess: without `idKey` it writes raw conversation and unit ids into the log, so you must say so with `rawIds: true`. `idKey` is strongly recommended. With it, an id becomes `HMAC-SHA256(idKey, "<conversation|unit>:<id>")`, the first 16 bytes written as 32 letters from `a` to `p`. A token has no digit, so the import's card-number and national-id checks can never refuse one, and a call and its outcome join as long as both use the same key.
+
+### The split rule
+
+`pickVersion` uses the reviewed rule `sha256-v1`: the bucket is the first 8 hex digits of `SHA-256("<salt>:<key>")` modulo 10,000, and the arms take consecutive ranges of the 10,000 buckets in proportion to their weights, baseline first. The share is `candidateShareBp`, in basis points: 5000 is half. The specification's `allocation.candidate` is a fraction, so multiply it by 10,000 (0.2 becomes 2000); it must come out as a whole number from 1 to 9999. Other languages can reproduce the split from `docs/assign-vectors.json`, which holds the expected buckets and picks. Use the conversation id as the key so every call of one conversation gets one version. The rule is frozen: a change would move running conversations between arms, so it would get a new rule name.
+
+### The call log (`synthe-pilot-calls/v1`)
+
+A log is a folder of `calls-YYYY-MM-DD.jsonl` files (the UTC date of the line), one JSON object per line, ending in a newline. Another language can write it. Every line has `"v": 1`, `type`, `at` (UTC, ending in `Z`) and `agent` (1 to 200 characters, not blank). Ids and tags are 1 to 200 characters, not blank. A line without a valid `agent` is skipped as malformed.
+
+| `type` | Other fields |
+|---|---|
+| `call` | `conversation_id`, `prompt_version`; optional `started_at` (UTC), `unit_id`, `segment`, `model_id` |
+| `outcome` | `conversation_id`, `values`: an object of metric name (letters, digits, `_`, `.`, `-`, at most 100 characters; at most 50 metrics) to a finite number or `null` |
+| `problem` | `kind`: one of `invalid_call`, `invalid_outcome`, `write_failed` |
+
+Conversations are keyed by the pair (`agent`, `conversation_id`). Never put message text in a line, and never read the log with an assistant: it holds your customers' ids.
+
+### What the export cannot check
+
+`units` and `denominator` in the export header are copied from the pilot's contract, because the log has no way to know them. The check that an outcome means what the contract says (the unit, and which conversations belong in the denominator) is therefore at the `outcome()` call site, in your code. Record an outcome only for a conversation the contract's denominator counts, in the contract's unit.
+
+### `pilot export`
+
+```
+export --log <dir> --experiment <id> --assignment randomized|observational [--agent <name>] [--out <dir>]
+export --log <dir> --baseline --start <UTC time> --end <UTC time> [--agent <name>] [--out <dir>]
+```
+
+It reads the log, writes the export (JSON and CSV, default `<pilot directory>/exports`) after running the same check `analyze` and `baseline` make, and prints the next command. `--assignment` is never guessed: say `randomized` only if traffic was split at random by conversation. The agent is `--agent`, else the pilot's `agent.name`. If the log holds other agents and none is the chosen one, the export is refused and says how many agents the log holds. Only the chosen agent's conversations are used; the others are counted and noted.
+
+### Which conversations are credited
+
+One conversation can be credited to one prompt version only, and what is ambiguous is never counted as a win:
+
+- A conversation needs a call and an outcome. A call with no outcome yet is left out and counted.
+- A conversation whose calls name more than one prompt version is left out and counted as unattributed.
+- A conversation with an outcome but no recorded call is unattributed too. It has no start time, so the window cannot place it: it counts when its newest outcome line is inside `[window start, export time)`. An outcome older or newer than that belongs to another export.
+- If unattributed conversations (two versions, plus outcomes with no call) are more than the contract's `max_unattributed_rate` of those plus the exported rows, the export is refused with counts only (`telemetry_incomplete`).
+- A prompt version that is not the baseline tag or the candidate tag stays in the rows, and the import refuses the export: a third version during an experiment means the split is not what the specification says.
+- An outcome written before its conversation's first call is still joined (another process may record outcomes), and is counted in a note.
+
 ## Conversation pack
 
 A bounded, redacted export the customer approved for replay. One case:

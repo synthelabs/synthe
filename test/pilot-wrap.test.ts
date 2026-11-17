@@ -4,17 +4,20 @@ import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readdirSync,
 import { join } from "node:path";
 import { test } from "node:test";
 import { personalDataKinds } from "../src/pilot/pii.ts";
-import { readCallLog } from "../src/pilot/calllog.ts";
+import { agentKey, readCallLog } from "../src/pilot/calllog.ts";
 import { PilotError } from "../src/pilot/errors.ts";
-import { pickVersion, pilotRecorder, type PilotRecorderOptions } from "../src/pilot/wrap.ts";
+import { ASSIGN_RULE, bucket, pickArm, pickVersion, pilotRecorder, type PilotRecorderOptions } from "../src/pilot/wrap.ts";
 import { tmp } from "./pilot-cli-helpers.ts";
 
 const T0 = new Date("2026-11-01T09:30:00.000Z");
 const logFiles = (dir: string): string[] => readdirSync(dir).filter((n) => n.startsWith("calls-")).sort();
 const lines = (dir: string): Record<string, unknown>[] => logFiles(dir).flatMap((n) => readFileSync(join(dir, n), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)));
+const AGENT = "support-bot";
+// Raw ids unless the test gives an idKey: a recorder with neither is refused (see "a recorder fails closed").
+const ids = (over: { idKey?: string }) => (over.idKey === undefined ? { rawIds: true as const } : {});
 function recorder(over: Partial<PilotRecorderOptions> = {}) {
   const dir = join(tmp("pilot-wrap-"), "log");
-  return { dir, rec: pilotRecorder({ logDir: dir, now: () => T0, ...over }) };
+  return { dir, rec: pilotRecorder({ logDir: dir, agent: AGENT, now: () => T0, ...ids(over), ...over } as PilotRecorderOptions) };
 }
 
 test("call returns what fn returns, whether it is a value or a promise, and runs it once", async () => {
@@ -47,7 +50,7 @@ test("a logging failure never breaks the call: fn runs once, the result is intac
   const blocker = join(root, "not-a-folder");
   writeFileSync(blocker, "x"); // a file where the log folder should be
   const reported: string[] = [];
-  const rec = pilotRecorder({ logDir: join(blocker, "log"), now: () => T0, onProblem: (p) => { reported.push(p.kind); throw new Error("a failing callback"); } });
+  const rec = pilotRecorder({ logDir: join(blocker, "log"), agent: AGENT, rawIds: true, now: () => T0, onProblem: (p) => { reported.push(p.kind); throw new Error("a failing callback"); } });
   let runs = 0;
   assert.equal(await rec.call({ promptVersion: "v1", conversationId: "c1" }, () => { runs++; return "ok"; }), "ok");
   rec.record({ promptVersion: "v1", conversationId: "c2" });
@@ -96,7 +99,7 @@ test("a problem line names a kind only: no id, no value, no error text", () => {
   const { dir, rec } = recorder();
   rec.outcome("secret-conversation-77", { resolved: "secret-value" } as never);
   const text = logFiles(dir).map((n) => readFileSync(join(dir, n), "utf8")).join("");
-  assert.deepEqual(lines(dir).map((l) => Object.keys(l).sort()), [["at", "kind", "type", "v"]]);
+  assert.deepEqual(lines(dir).map((l) => Object.keys(l).sort()), [["agent", "at", "kind", "type", "v"]]);
   assert.doesNotMatch(text, /secret/);
 });
 
@@ -104,7 +107,7 @@ test("only the documented fields are written: extra properties on the context ne
   const { dir, rec } = recorder();
   await rec.call({ promptVersion: "v1", conversationId: "c1", unitId: "u1", segment: "chat", modelId: "m1", startedAt: "2026-11-01T09:00:00Z", message: "my card is 4111", text: "hello" } as never, () => 1);
   const [line] = lines(dir);
-  assert.deepEqual(Object.keys(line), ["v", "type", "at", "conversation_id", "prompt_version", "started_at", "unit_id", "segment", "model_id"]);
+  assert.deepEqual(Object.keys(line), ["v", "type", "at", "agent", "conversation_id", "prompt_version", "started_at", "unit_id", "segment", "model_id"]);
   assert.equal(line.started_at, "2026-11-01T09:00:00.000Z");
   assert.doesNotMatch(readFileSync(join(dir, logFiles(dir)[0]), "utf8"), /4111|hello/);
 });
@@ -117,8 +120,8 @@ test("log format: one JSON line per record in a file named for the UTC date of t
   rec.outcome("c1", { resolved: 1 });
   assert.deepEqual(logFiles(dir), ["calls-2026-11-01.jsonl", "calls-2026-11-02.jsonl"]);
   const [call, outcome] = lines(dir);
-  assert.deepEqual(call, { v: 1, type: "call", at: "2026-11-01T23:59:59.500Z", conversation_id: "c1", prompt_version: "v1" });
-  assert.deepEqual(outcome, { v: 1, type: "outcome", at: "2026-11-02T00:00:00.100Z", conversation_id: "c1", values: { resolved: 1 } });
+  assert.deepEqual(call, { v: 1, type: "call", at: "2026-11-01T23:59:59.500Z", agent: AGENT, conversation_id: "c1", prompt_version: "v1" });
+  assert.deepEqual(outcome, { v: 1, type: "outcome", at: "2026-11-02T00:00:00.100Z", agent: AGENT, conversation_id: "c1", values: { resolved: 1 } });
   assert.equal(statSync(dir).mode & 0o777, 0o700);
   for (const n of logFiles(dir)) assert.equal(statSync(join(dir, n)).mode & 0o777, 0o600);
   assert.equal(readFileSync(join(dir, ".gitignore"), "utf8"), "*\n");
@@ -128,14 +131,14 @@ test("an existing .gitignore is left alone", () => {
   const dir = join(tmp("pilot-wrap-"), "log");
   mkdirSync(dir);
   writeFileSync(join(dir, ".gitignore"), "mine\n");
-  pilotRecorder({ logDir: dir, now: () => T0 }).record({ promptVersion: "v1", conversationId: "c1" });
+  pilotRecorder({ logDir: dir, agent: AGENT, rawIds: true, now: () => T0 }).record({ promptVersion: "v1", conversationId: "c1" });
   assert.equal(readFileSync(join(dir, ".gitignore"), "utf8"), "mine\n");
 });
 
 test("appending keeps earlier lines, also from a second recorder on the same folder", () => {
   const { dir, rec } = recorder();
   rec.record({ promptVersion: "v1", conversationId: "c1" });
-  pilotRecorder({ logDir: dir, now: () => T0 }).record({ promptVersion: "v1", conversationId: "c2" });
+  pilotRecorder({ logDir: dir, agent: AGENT, rawIds: true, now: () => T0 }).record({ promptVersion: "v1", conversationId: "c2" });
   assert.deepEqual(lines(dir).map((l) => l.conversation_id), ["c1", "c2"]);
 });
 
@@ -150,59 +153,86 @@ test("startedAt is written when given and absent when not", () => {
   assert.ok(!("started_at" in c));
 });
 
-test("with idKey, ids are written as a keyed hash, the same in call and outcome, and the raw id is nowhere in the log", async () => {
+// The token rule, written out independently of the code under test: HMAC-SHA256(key, "<kind>:<id>"), the first 16
+// bytes, each nibble as one letter a..p. No digit can appear, so no token can look like a card or national number.
+const expectedToken = (key: string, kind: string, id: string): string =>
+  [...createHmac("sha256", key).update(`${kind}:${id}`).digest().subarray(0, 16)].map((byte) => "abcdefghijklmnop"[byte >> 4] + "abcdefghijklmnop"[byte & 15]).join("");
+
+test("with idKey, ids are written as a keyed token, the same in call and outcome, and the raw id is nowhere in the log", async () => {
   const { dir, rec } = recorder({ idKey: "test-key" });
   await rec.call({ promptVersion: "v1", conversationId: "conv-raw-123", unitId: "unit-raw-456" }, () => 0);
   rec.outcome("conv-raw-123", { resolved: 1 });
   const text = logFiles(dir).map((n) => readFileSync(join(dir, n), "utf8")).join("");
   assert.doesNotMatch(text, /conv-raw-123|unit-raw-456/);
-  const hmac = (s: string) => createHmac("sha256", "test-key").update(s).digest("hex").slice(0, 32);
   const [call, outcome] = lines(dir);
-  assert.equal(call.conversation_id, hmac("conversation:conv-raw-123"));
-  assert.equal(call.unit_id, hmac("unit:unit-raw-456"));
+  assert.equal(call.conversation_id, expectedToken("test-key", "conversation", "conv-raw-123"));
+  assert.equal(call.unit_id, expectedToken("test-key", "unit", "unit-raw-456"));
+  assert.match(call.conversation_id as string, /^[a-p]{32}$/);
   assert.equal(outcome.conversation_id, call.conversation_id, "call and outcome join");
-  assert.notEqual(call.conversation_id, call.unit_id);
-  // A different key gives a different token.
+  assert.notEqual(call.conversation_id, call.unit_id, "the conversation and unit tokens for different ids differ");
+});
+
+test("the same raw id gives a conversation token and a unit token that differ; a different key gives a different token", () => {
+  const { dir, rec } = recorder({ idKey: "test-key" });
+  rec.record({ promptVersion: "v1", conversationId: "same-raw-id", unitId: "same-raw-id" });
+  const [line] = lines(dir);
+  assert.notEqual(line.conversation_id, line.unit_id);
+  assert.equal(line.unit_id, expectedToken("test-key", "unit", "same-raw-id"));
   const other = recorder({ idKey: "other-key" });
-  other.rec.record({ promptVersion: "v1", conversationId: "conv-raw-123" });
-  assert.notEqual(lines(other.dir)[0].conversation_id, call.conversation_id);
+  other.rec.record({ promptVersion: "v1", conversationId: "same-raw-id" });
+  assert.notEqual(lines(other.dir)[0].conversation_id, line.conversation_id);
 });
 
-test("a token that could pass for a card number is made again, the same way each time, so the import accepts every token", () => {
-  const plain = (id: string) => createHmac("sha256", "k").update(`conversation:${id}`).digest("hex").slice(0, 32);
-  const risky: string[] = [];
-  for (let i = 0; risky.length < 3 && i < 100_000; i++) if (/\d{13}/.test(plain(`conv-${i}`))) risky.push(`conv-${i}`);
-  assert.equal(risky.length, 3, "the search finds ids whose plain token has 13 digits in a row");
-  const { dir, rec } = recorder({ idKey: "k" });
-  const rec2 = pilotRecorder({ logDir: dir, idKey: "k", now: () => T0 });
-  for (const id of risky) { rec.record({ promptVersion: "v1", conversationId: id }); rec2.outcome(id, { resolved: 1 }); }
+test("a token has no digit, so the import's personal-data checks can never fire on one (100,000 tokens)", () => {
+  const dir = join(tmp("pilot-wrap-"), "log");
+  const rec = pilotRecorder({ logDir: dir, agent: AGENT, idKey: "k", now: () => T0 });
+  for (let i = 0; i < 50_000; i++) rec.record({ promptVersion: "v1", conversationId: `x-${i}`, unitId: `u-${i}` });
   const all = lines(dir);
-  for (const [i, id] of risky.entries()) {
-    const t = all[2 * i].conversation_id as string;
-    assert.notEqual(t, plain(id));
-    assert.match(t, /^[0-9a-f]{32}$/);
-    assert.deepEqual(personalDataKinds(t), []);
-    assert.equal(all[2 * i + 1].conversation_id, t, "outcome joins to call");
-  }
-  // Every other token is the plain one.
-  rec.record({ promptVersion: "v1", conversationId: "plain-id" });
-  assert.equal(lines(dir).at(-1)?.conversation_id, plain("plain-id"));
-  // And no token among many is flagged by the import's personal-data check.
-  const many = join(tmp("pilot-wrap-"), "log");
-  const r3 = pilotRecorder({ logDir: many, idKey: "k", now: () => T0 });
-  for (let i = 0; i < 10_000; i++) r3.record({ promptVersion: "v1", conversationId: `x-${i}`, unitId: `u-${i}` });
-  assert.ok(lines(many).every((l) => personalDataKinds(l.conversation_id as string).length === 0 && personalDataKinds(l.unit_id as string).length === 0));
+  assert.equal(all.length, 50_000);
+  const tokens = all.flatMap((l) => [l.conversation_id as string, l.unit_id as string]);
+  assert.equal(tokens.length, 100_000);
+  assert.ok(tokens.every((t) => /^[a-p]{32}$/.test(t)), "32 letters from a to p, nothing else");
+  assert.ok(tokens.every((t) => !/\d/.test(t)), "no digit");
+  assert.ok(tokens.every((t) => personalDataKinds(t).length === 0), "personalDataKinds finds nothing");
+  assert.equal(new Set(tokens).size, tokens.length, "no two ids share a token");
 });
 
-test("without idKey, ids are written as given", () => {
+test("without idKey, and with rawIds: true, ids are written as given", () => {
   const { dir, rec } = recorder();
   rec.record({ promptVersion: "v1", conversationId: "c-1", unitId: "u-1" });
   assert.deepEqual([lines(dir)[0].conversation_id, lines(dir)[0].unit_id], ["c-1", "u-1"]);
 });
 
-test("a recorder needs a log folder, and an idKey that is not empty", () => {
-  assert.throws(() => pilotRecorder({ logDir: "" }), TypeError);
-  assert.throws(() => pilotRecorder({ logDir: "x", idKey: "" }), TypeError);
+test("a recorder fails closed: it needs a log folder and an agent, and either an idKey or rawIds: true, never both", () => {
+  const ok = { logDir: "x", agent: AGENT, rawIds: true as const };
+  assert.throws(() => pilotRecorder({ logDir: "", agent: AGENT, rawIds: true }), TypeError);
+  assert.throws(() => pilotRecorder({ logDir: "x", agent: AGENT, idKey: "", rawIds: true } as never), TypeError);
+  assert.throws(() => pilotRecorder({ logDir: "x", agent: AGENT } as never), (e) => e instanceof TypeError && /idKey/.test(e.message) && /rawIds/.test(e.message), "neither idKey nor rawIds");
+  assert.throws(() => pilotRecorder({ logDir: "x", agent: AGENT, idKey: "k", rawIds: true } as never), (e) => e instanceof TypeError && /both/.test(e.message), "both is ambiguous");
+  for (const bad of [false, 1, "true", null]) assert.throws(() => pilotRecorder({ logDir: "x", agent: AGENT, rawIds: bad } as never), TypeError, `rawIds: ${String(bad)}`);
+  assert.throws(() => pilotRecorder({ logDir: "x", agent: AGENT, idKey: "" } as never), TypeError);
+  assert.throws(() => pilotRecorder({ logDir: "x", agent: AGENT, idKey: 5 } as never), TypeError);
+  assert.doesNotThrow(() => pilotRecorder(ok));
+  assert.doesNotThrow(() => pilotRecorder({ logDir: "x", agent: AGENT, idKey: "k" }));
+});
+
+test("the agent name is required: 1 to 200 characters, not blank", () => {
+  for (const bad of [undefined, null, 5, "", "   ", "\t\n", "a".repeat(201)]) {
+    assert.throws(() => pilotRecorder({ logDir: "x", agent: bad as never, rawIds: true }), TypeError, JSON.stringify(bad));
+  }
+  assert.doesNotThrow(() => pilotRecorder({ logDir: "x", agent: "a", rawIds: true }));
+  assert.doesNotThrow(() => pilotRecorder({ logDir: "x", agent: "a".repeat(200), rawIds: true }));
+});
+
+test("every call, outcome and problem line carries the agent, written as given", async () => {
+  const { dir, rec } = recorder({ agent: "Juniper Support v2" });
+  await rec.call({ promptVersion: "v1", conversationId: "c1" }, () => 0);
+  rec.outcome("c1", { resolved: 1 });
+  rec.outcome("c1", { resolved: Number.NaN });
+  rec.record({ promptVersion: "", conversationId: "c1" });
+  const all = lines(dir);
+  assert.deepEqual(all.map((l) => l.type), ["call", "outcome", "problem", "problem"]);
+  assert.ok(all.every((l) => l.agent === "Juniper Support v2"));
 });
 
 test("the reader joins calls and outcomes, ignores a torn last line, and counts damaged lines without printing them", () => {
@@ -219,18 +249,45 @@ test("the reader joins calls and outcomes, ignores a torn last line, and counts 
   assert.equal(log.malformed, 3);
   assert.equal(log.lines, 5 + 3);
   assert.deepEqual(log.problems, { invalid_call: 1 });
-  assert.ok(!log.conversations.has("torn"));
-  const c1 = log.conversations.get("c1");
+  assert.ok(!log.conversations.has(agentKey(AGENT, "torn")));
+  const c1 = log.conversations.get(agentKey(AGENT, "c1"));
   assert.equal(c1?.calls.length, 1);
   assert.equal(c1?.outcome_lines, 2);
   assert.deepEqual([...(c1?.values ?? [])], [["resolved", 1], ["escalated", 1]]);
-  assert.equal(log.conversations.get("orphan")?.calls.length, 0);
+  assert.equal(log.conversations.get(agentKey(AGENT, "orphan"))?.calls.length, 0);
+  assert.deepEqual(log.agents, { [AGENT]: 5 }, "lines per agent: the 3 damaged lines have no valid agent and are not counted");
+});
+
+test("the reader keys conversations by (agent, conversation id) and a line without a valid agent is malformed", () => {
+  const dir = join(tmp("pilot-wrap-"), "log");
+  mkdirSync(dir);
+  const row = (o: object) => `${JSON.stringify({ v: 1, ...o })}\n`;
+  const at = "2026-11-01T10:00:00Z";
+  writeFileSync(join(dir, "calls-2026-11-01.jsonl"), [
+    row({ type: "call", at, agent: "a", conversation_id: "same", prompt_version: "one" }),
+    row({ type: "call", at, agent: "b", conversation_id: "same", prompt_version: "two" }),
+    row({ type: "outcome", at, agent: "b", conversation_id: "same", values: { resolved: 1 } }),
+    row({ type: "call", at, conversation_id: "x", prompt_version: "v" }),
+    row({ type: "call", at, agent: "", conversation_id: "x", prompt_version: "v" }),
+    row({ type: "call", at, agent: "  ", conversation_id: "x", prompt_version: "v" }),
+    row({ type: "call", at, agent: 7, conversation_id: "x", prompt_version: "v" }),
+    row({ type: "call", at, agent: "a".repeat(201), conversation_id: "x", prompt_version: "v" }),
+    row({ type: "outcome", at, conversation_id: "x", values: { resolved: 1 } }),
+    row({ type: "problem", at, kind: "write_failed" }),
+    row({ type: "problem", at, agent: "a", kind: "write_failed" }),
+  ].join(""));
+  const log = readCallLog(dir);
+  assert.equal(log.malformed, 7);
+  assert.deepEqual(log.agents, { a: 2, b: 2 });
+  assert.deepEqual(log.problems, { write_failed: 1 });
+  assert.equal(log.conversations.size, 2, "the same conversation id under two agents is two conversations");
+  assert.deepEqual([...log.conversations.values()].map((c) => [c.agent, c.calls.map((x) => x.prompt_version), c.outcome_lines]).sort(), [["a", ["one"], 0], ["b", ["two"], 1]]);
 });
 
 test("the newest outcome wins a metric; at the same time the later line wins; calls are in time order", () => {
   const dir = join(tmp("pilot-wrap-"), "log");
   mkdirSync(dir);
-  const row = (o: object) => `${JSON.stringify({ v: 1, ...o })}\n`;
+  const row = (o: object) => `${JSON.stringify({ v: 1, agent: AGENT, ...o })}\n`;
   writeFileSync(join(dir, "calls-2026-11-01.jsonl"), [
     row({ type: "call", at: "2026-11-01T10:00:00Z", conversation_id: "c", prompt_version: "late" }),
     row({ type: "call", at: "2026-11-01T09:00:00Z", conversation_id: "c", prompt_version: "early" }),
@@ -239,7 +296,7 @@ test("the newest outcome wins a metric; at the same time the later line wins; ca
     row({ type: "outcome", at: "2026-11-01T13:00:00Z", conversation_id: "c", values: { escalated: 0 } }),
     row({ type: "outcome", at: "2026-11-01T13:00:00Z", conversation_id: "c", values: { escalated: 1 } }),
   ].join(""));
-  const c = readCallLog(dir).conversations.get("c");
+  const c = readCallLog(dir).conversations.get(agentKey(AGENT, "c"));
   assert.deepEqual(c?.calls.map((x) => x.prompt_version), ["early", "late"]);
   assert.deepEqual(Object.fromEntries(c?.values ?? []), { resolved: 1, escalated: 1 });
 });
@@ -270,34 +327,79 @@ test("a log file over the size cap is refused, not read", () => {
   assert.ok(existsSync(big));
 });
 
+// ---------------------------------------------------------------------------------------------------------------
+// The split rule: one rule, the reviewed sha256-v1, shared byte for byte with the shipped clients' vectors.
+// ---------------------------------------------------------------------------------------------------------------
+
+interface Vectors { rule: string; vectors: { unit: string; salt: string; bucket: number }[]; pick: { arms: { id: string; weight: number }[]; unit: string; salt: string; arm: string }[] }
+const VECTORS = JSON.parse(readFileSync(new URL("../docs/assign-vectors.json", import.meta.url), "utf8")) as Vectors;
+
+test("the split rule is sha256-v1 and bucket gives every vector in docs/assign-vectors.json", () => {
+  assert.equal(ASSIGN_RULE, "sha256-v1");
+  assert.equal(VECTORS.rule, ASSIGN_RULE);
+  assert.ok(VECTORS.vectors.length >= 5);
+  for (const v of VECTORS.vectors) assert.equal(bucket(v.unit, v.salt), v.bucket, JSON.stringify(v));
+});
+
+test("pickArm gives every vector in docs/assign-vectors.json", () => {
+  assert.ok(VECTORS.pick.length >= 25);
+  for (const v of VECTORS.pick) assert.equal(pickArm(v.arms, v.unit, v.salt), v.arm, JSON.stringify(v));
+});
+
+test("bucket and pickArm refuse what the shared rule refuses", () => {
+  for (const [unit, salt] of [[5, "s"], ["u", 5], [null, "s"], ["u", undefined], ["\ud800", "s"], ["u", "\udc00x"]]) assert.throws(() => bucket(unit as never, salt as never), Error, JSON.stringify([unit, salt]));
+  const arm = (weight: number, id = "a") => ({ id, weight });
+  for (const arms of [[arm(-1), arm(5, "b")], [arm(1.5)], [arm(Number.NaN)], [arm(0)], [], [arm(0), arm(0, "b")], [arm(1_000_001)], [arm(500_000), arm(500_001, "b")]]) {
+    assert.throws(() => pickArm(arms, "u", "s"), Error, JSON.stringify(arms));
+  }
+  assert.equal(pickArm([arm(0), arm(7, "b")], "u", "s"), "b", "an arm with weight 0 is never picked");
+  assert.equal(pickArm([arm(1_000_000)], "u", "s"), "a");
+});
+
+const SPLIT = { salt: "exp-a", baseline: "b", candidate: "c" };
+
 test("pickVersion is stable for the same input and a different salt reshuffles", () => {
-  const base = { key: "conv-1", salt: "exp-a", baseline: "b", candidate: "c", candidateShare: 0.5 };
+  const base = { key: "conv-1", ...SPLIT, candidateShareBp: 5000 };
   assert.equal(pickVersion(base), pickVersion({ ...base }));
   const keys = Array.from({ length: 200 }, (_, i) => `k${i}`);
   const a = keys.map((key) => pickVersion({ ...base, key }));
   const b = keys.map((key) => pickVersion({ ...base, key, salt: "exp-b" }));
   assert.notDeepEqual(a, b);
-  assert.ok(a.some((v, i) => v !== b[i]));
 });
 
-test("pickVersion gives the candidate its share", () => {
-  for (const [share, tol] of [[0.5, 0.02], [0.1, 0.01]] as const) {
-    let n = 0;
-    for (let i = 0; i < 20_000; i++) if (pickVersion({ key: `conversation-${i}`, salt: "s", baseline: "b", candidate: "c", candidateShare: share }) === "c") n++;
-    assert.ok(Math.abs(n / 20_000 - share) < tol, `share ${share}: ${n / 20_000}`);
+test("pickVersion at 5000 bp is pickArm with weights [5000, 5000], for 1,000 keys", () => {
+  for (let i = 0; i < 1000; i++) {
+    const key = `conversation-${i}`;
+    assert.equal(pickVersion({ key, ...SPLIT, candidateShareBp: 5000 }), pickArm([{ id: "b", weight: 5000 }, { id: "c", weight: 5000 }], key, "exp-a"), key);
+  }
+  for (const bp of [1, 2000, 9999]) {
+    for (let i = 0; i < 200; i++) assert.equal(pickVersion({ key: `k${i}`, ...SPLIT, candidateShareBp: bp }), pickArm([{ id: "b", weight: 10000 - bp }, { id: "c", weight: bp }], `k${i}`, "exp-a"));
   }
 });
 
+test("pickVersion gives the candidate its share, within 1 percentage point over 100,000 keys at 2000 bp", () => {
+  let n = 0;
+  for (let i = 0; i < 100_000; i++) if (pickVersion({ key: `conversation-${i}`, ...SPLIT, candidateShareBp: 2000 }) === "c") n++;
+  assert.ok(Math.abs(n / 100_000 - 0.2) < 0.01, `candidate share ${n / 100_000}`);
+});
+
 test("pickVersion refuses a configuration mistake at the first call", () => {
-  const ok = { key: "k", salt: "s", baseline: "b", candidate: "c", candidateShare: 0.5 };
+  const ok = { key: "k", ...SPLIT, candidateShareBp: 5000 };
   for (const bad of [
-    { candidateShare: 0 }, { candidateShare: 1 }, { candidateShare: -0.1 }, { candidateShare: 1.5 }, { candidateShare: Number.NaN }, { candidateShare: Infinity },
-    { candidateShare: "0.5" }, { key: "" }, { salt: "" }, { candidate: "b" }, { baseline: "" }, { candidate: "" },
+    { candidateShareBp: 0 }, { candidateShareBp: 10000 }, { candidateShareBp: -1 }, { candidateShareBp: 12000 }, { candidateShareBp: 0.5 }, { candidateShareBp: 5000.5 }, { candidateShareBp: Number.NaN },
+    { candidateShareBp: Infinity }, { candidateShareBp: "5000" }, { candidateShareBp: undefined }, { key: "" }, { salt: "" }, { candidate: "b" }, { baseline: "" }, { candidate: "" },
   ]) assert.throws(() => pickVersion({ ...ok, ...bad } as never), TypeError, JSON.stringify(bad));
 });
 
-test("pickVersion maps a share just inside the bounds to a version", () => {
-  const ok = { key: "k", salt: "s", baseline: "b", candidate: "c" };
-  assert.equal(pickVersion({ ...ok, candidateShare: 1 - 1e-12 }), "c");
-  assert.equal(pickVersion({ ...ok, candidateShare: 1e-12 }), "b");
+test("the old float share is gone: passing candidateShare throws a TypeError that names candidateShareBp", () => {
+  assert.throws(() => pickVersion({ key: "k", ...SPLIT, candidateShare: 0.5 } as never), (e) => e instanceof TypeError && /candidateShareBp/.test(e.message));
+  assert.throws(() => pickVersion({ key: "k", ...SPLIT, candidateShare: 0.5, candidateShareBp: 5000 } as never), (e) => e instanceof TypeError && /candidateShareBp/.test(e.message), "the old name is refused even beside the new one");
+});
+
+test("pickVersion maps a share at the bounds to a version", () => {
+  const ok = { ...SPLIT, key: "k" };
+  assert.ok(["b", "c"].includes(pickVersion({ ...ok, candidateShareBp: 1 })));
+  assert.ok(["b", "c"].includes(pickVersion({ ...ok, candidateShareBp: 9999 })));
+  const shares = [1, 9999].map((bp) => Array.from({ length: 20_000 }, (_, i) => pickVersion({ ...ok, key: `k${i}`, candidateShareBp: bp })).filter((v) => v === "c").length);
+  assert.ok(shares[0] < 20 && shares[1] > 19_980, String(shares));
 });

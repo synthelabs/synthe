@@ -30711,8 +30711,26 @@ var package_default = {
   bin: {
     synthe: "dist/cli.js"
   },
+  exports: {
+    ".": "./dist/cli.js",
+    "./pilot": {
+      import: {
+        types: "./dist/wrap.d.ts",
+        default: "./dist/wrap.mjs"
+      },
+      require: {
+        types: "./dist/wrap.d.cts",
+        default: "./dist/wrap.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
   files: [
     "dist/cli.js",
+    "dist/wrap.mjs",
+    "dist/wrap.cjs",
+    "dist/wrap.d.ts",
+    "dist/wrap.d.cts",
     "templates",
     "README.md",
     "LICENSE"
@@ -30721,7 +30739,7 @@ var package_default = {
     node: ">=20"
   },
   scripts: {
-    build: "esbuild src/cli/main.ts --bundle --loader:.md=text --platform=node --format=esm --target=node20 --outfile=dist/cli.js --banner:js='#!/usr/bin/env node' && esbuild src/action.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/action.mjs",
+    build: "esbuild src/cli/main.ts --bundle --loader:.md=text --platform=node --format=esm --target=node20 --outfile=dist/cli.js --banner:js='#!/usr/bin/env node' && esbuild src/action.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/action.mjs && node scripts/build-wrap.mjs",
     test: "node --test test/*.test.ts",
     typecheck: "tsc --noEmit",
     prepublishOnly: "node scripts/check-release-tag.mjs",
