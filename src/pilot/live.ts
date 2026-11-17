@@ -108,6 +108,13 @@ export function liveModel(
     return out;
   };
 
+  // A provider that fails every call must not read as "no check fails": a failed call only makes one turn
+  // inconclusive, so a dead endpoint would leave a run with nothing scored. The run stops instead when the first
+  // call fails (nothing has worked yet) or when this many calls in a row have failed.
+  const MAX_CONSECUTIVE_FAILURES = 3;
+  let succeeded = 0;
+  let failedInARow = 0;
+
   const model: ChatModel = {
     destination: `${approval.provider}:${approval.endpoint}:${approval.model}`,
     async chat(request: ChatRequest): Promise<ChatReply> {
@@ -132,8 +139,14 @@ export function liveModel(
         }
         // A provider error can echo the request back. Only its status and class go on from here.
         const status = e instanceof Anthropic.APIError && typeof e.status === "number" ? `HTTP ${e.status}` : "no response";
-        throw new Error(`The provider request failed (${status}, ${e instanceof Error ? e.name : "error"}).`);
+        const what = `The provider request failed (${status}, ${e instanceof Error ? e.name : "error"}).`;
+        failedInARow++;
+        if (succeeded === 0) throw new PilotError("live_not_approved", `${what} No call has worked, so nothing was scored. Check the endpoint and the network, then run the command again.`);
+        if (failedInARow >= MAX_CONSECUTIVE_FAILURES) throw new PilotError("live_not_approved", `${what} ${failedInARow} calls in a row have failed, so the run was stopped. Run the command again; finished work is kept.`);
+        throw new Error(what);
       }
+      succeeded++;
+      failedInARow = 0;
       const text = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
       const calls = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
       if (calls.length) raw.set(calls[0].id, response.content);

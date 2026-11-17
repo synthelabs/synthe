@@ -164,7 +164,7 @@ test("settings in the shell cannot add headers, turn on logging, or make the SDK
     assert.equal(t.seen[0].headers.get("x-injected"), null);
     assert.equal(t.seen[0].headers.get("x-api-key"), null);
     assert.ok(t.seen[0].url.startsWith(ENDPOINT));
-    assert.match(message, /^The provider request failed \(HTTP 529, \w+\)\.$/, "status and error class only");
+    assert.match(message, /^The provider request failed \(HTTP 529, \w+\)\. No call has worked, so nothing was scored\./, "status and error class only, then the plain consequence");
     assert.ok(!message.includes("CANARY-PROVIDER-ECHO") && !message.includes("Juniper"), "the provider's echo of the request is not passed on");
     assert.deepEqual(printed.filter((l) => l.includes("Juniper") || l.includes("ORD-7Q4Z")), [], "nothing about the request was logged");
   } finally {
@@ -189,7 +189,7 @@ test("a provider that never answers is given up on after the time limit, and the
       model.chat(request()).then(() => "answered", (e: unknown) => (e as Error).message),
       new Promise<string>((resolve) => { timer = setTimeout(() => resolve("still waiting after 3 seconds"), 3000); }),
     ]);
-    assert.match(outcome, /^The provider request failed \(no response, \w+\)\.$/);
+    assert.match(outcome, /^The provider request failed \(no response, \w+\)\. No call has worked/);
     assert.equal(sent, 1, "a timed-out call is not retried");
     assert.ok(CALL_TIMEOUT_MS <= 120_000, "the default limit for one call is two minutes or less");
   } finally {
@@ -264,4 +264,23 @@ test("the endpoint host must be api.anthropic.com unless the operator names anot
     assert.equal((await attempt("https://attacker.example", wrong)).code, "live_not_approved", `--allow-endpoint-host ${JSON.stringify(wrong)}`);
   }
   assert.equal((await attempt("https://attacker.example:8443", "attacker.example:8443")).code, "built", "a port is part of the host");
+});
+
+test("a provider that fails every call stops the run with a plain message; one failure among successes does not (EG-13)", async () => {
+  const fail = { status: 503, body: { type: "error", error: { type: "overloaded_error", message: "CANARY-ECHO" } } };
+  const ok = () => message([{ type: "text", text: "ok" }], "end_turn");
+  const big: ProviderApproval = { ...approval, max_calls: 50 };
+  const build = (t: ReturnType<typeof transport>) => liveModel(big, optIn, { FERNHILL_PILOT_KEY: KEY }, () => {}, t.fetcher);
+  // Nothing has worked: the first failure ends the run, as a PilotError (the command line exits 1).
+  const dead = build(transport([fail, fail, fail]));
+  let err: unknown;
+  try { await dead.chat(request()); } catch (e) { err = e; }
+  assert.ok(err instanceof PilotError && err.code === "live_not_approved", String(err));
+  assert.match((err as Error).message, /nothing was scored/);
+  assert.ok(!(err as Error).message.includes("CANARY-ECHO"));
+  // A failure after successes is only that turn's problem, until three in a row.
+  const flaky = build(transport([ok(), fail, ok(), fail, fail, fail]));
+  const outcome = async () => { try { await flaky.chat(request()); } catch (e) { return e instanceof PilotError ? `stopped:${e.code}` : "plain failure"; } return "answered"; };
+  assert.deepEqual([await outcome(), await outcome(), await outcome(), await outcome(), await outcome(), await outcome()],
+    ["answered", "plain failure", "answered", "plain failure", "plain failure", "stopped:live_not_approved"]);
 });

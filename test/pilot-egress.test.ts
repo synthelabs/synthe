@@ -5,6 +5,7 @@ import { PilotError } from "../src/pilot/errors.ts";
 import { demoPack } from "../src/pilot/demo-data.ts";
 import { renderReview } from "../src/pilot/review.ts";
 import { fixture } from "./pilot-review-helpers.ts";
+import type { Ctx } from "./pilot-cli-helpers.ts";
 import { CANARIES, prBody, reviewScenario, reviewScenarioUntilPropose } from "./pilot-egress-helpers.ts";
 import { BASELINE_PROMPT, CANARY_ORDER, CANARY_SENTENCE, CANARY_TOOL_ARG, makeCase, makePack } from "./pilot-review-helpers.ts";
 
@@ -379,3 +380,26 @@ test("a person's rationale that carries an encoded run is stopped at review, and
     assert.equal(r.ctx.github.requests.length, 0);
   } finally { await r.ctx.stop(); }
 });
+
+test("discover and replay with a provider that fails every call exit 1 with a plain message, never 'No check failed' (EG-13)", async () => {
+  const r = await reviewScenarioUntilPropose({ mutate: (_pack, config) => { (config as unknown as { provider: unknown }).provider = approvedProvider("redacted conversations"); config.replay.model = "claude-sim-1"; }, env: { FERNHILL_PILOT_KEY: "sk-test-not-real" } });
+  try {
+    let calls = 0;
+    const down = (async () => { calls++; return new Response(JSON.stringify({ type: "error", error: { type: "api_error", message: "down" } }), { status: 500, headers: { "content-type": "application/json" } }); }) as typeof fetch;
+    const flags = ["--live", "--confirm-endpoint", "https://api.anthropic.com", "--confirm-data", "redacted conversations"];
+    for (const argv of [["discover", ...flags], ["replay", "--candidate", await firstCandidate(r), ...flags]]) {
+      const before = r.ctx.lines.length;
+      assert.equal(await r.ctx.run(argv, { fetch: down }), 1, argv[0]);
+      const said = r.ctx.lines.slice(before).join("\n");
+      assert.match(said, /The provider request failed/, said);
+      assert.match(said, /nothing was scored/, said);
+      assert.ok(!/No check failed/.test(said), said);
+    }
+    assert.ok(calls >= 1);
+  } finally { await r.ctx.stop(); }
+});
+
+async function firstCandidate(r: { ctx: Ctx; finding: string }): Promise<string> {
+  assert.equal(await r.ctx.run(["propose", "--finding", r.finding, "--proposer", r.ctx.proposer]), 0);
+  return r.ctx.last("candidate.created");
+}
