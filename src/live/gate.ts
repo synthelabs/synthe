@@ -1,7 +1,7 @@
 // The live gate: readings in, one verdict out. It decides whether a changed prompt is promoted, so the order
 // of checks below matters. The first check that matches wins, and a promotion is only ever made at a look.
 
-import { type LiveRule } from "./rule.ts";
+import { resolveRule, type LiveRule } from "./rule.ts";
 import {
   interval,
   meanTest,
@@ -52,15 +52,15 @@ export type Reason =
   | "win"
   | "no_difference"
   | "worse"
-  | "no_min_effect";
+  | "no_min_effect"
+  | "bad_input";
 
-// msprt numbers are logs: Lambda can be Infinity, and JSON writes Infinity as null.
+// msprt numbers are logs: Lambda can be Infinity, and JSON writes Infinity as null. The numbers are the latest
+// reading's own; no earlier reading is carried forward.
 export interface MsprtVerdict {
   d: number;
   v: number;
   ln_lambda: number;
-  ln_max_good: number | null;
-  ln_max_bad: number | null;
   p_av: number;
 }
 
@@ -130,9 +130,12 @@ function noData(base: ArmData, test: ArmData): boolean {
   return !armUsable(base) || !armUsable(test) || isRate(base) !== isRate(test);
 }
 
-// A guard with too little data to judge: an arm that is not usable, arms of different kinds, or an arm under
-// min_units_per_arm. Such a guard is never a breach; it only blocks a promotion (fail closed).
+// A guard with too little data to judge: an arm that is not usable, arms of different kinds, an arm under
+// min_units_per_arm, or a threshold or direction that cannot be read. Such a guard is never a breach; it only
+// blocks a promotion (fail closed).
 function guardMissing(guard: GuardReading, rule: LiveRule): boolean {
+  if (guard.direction !== "higher" && guard.direction !== "lower") return true;
+  if (typeof guard.max_worse !== "number" || !Number.isFinite(guard.max_worse) || guard.max_worse < 0) return true;
   if (noData(guard.base, guard.test)) return true;
   return guard.base.units < rule.min_units_per_arm || guard.test.units < rule.min_units_per_arm;
 }
@@ -146,6 +149,12 @@ function splitBroken(base: ArmData, test: ArmData, input: GateInput): boolean {
     return p === null || !(p >= rule.srm_p);
   }
   return false;
+}
+
+// Step 3 for every earlier reading: a broken split with usable arms stops the experiment for good (plan rule 0.2.4),
+// whatever the latest reading says. A caller stops at the first promote, drop or invalid.
+function earlierSplitBroken(input: GateInput): boolean {
+  return input.readings.slice(0, -1).some(({ arms }) => !noData(arms.base, arms.test) && splitBroken(arms.base, arms.test, input));
 }
 
 // Step 4: not enough days, units or (for rates) events in an arm.
@@ -167,20 +176,19 @@ function maxOf(max: number | null, ln: number): number {
   return max === null ? ln : Math.max(max, ln);
 }
 
-// The mSPRT rule for method "msprt" (research A1, A5). Every usable reading adds its ln Lambda to a running
-// maximum, kept apart for readings in the good direction and in the bad direction. A decision reading is the
-// first reading of each new whole week (week 1 or later), or every reading with whole_weeks off, or any reading
-// from max_days on. A drop is final: the first decision reading with the bad side crossed ends the experiment, and
-// so does the first decision reading at or after max_days, whatever it returned; every later reading returns that
-// drop. A promotion is only made at the latest reading, and only when its own numbers are usable and point in the
-// good direction. A caller stops at the first promote or drop, and retries a failed read without appending a
-// reading: decide on the same ledger is deterministic.
-function decideMsprt(input: GateInput, days: number, tau: number, out: Out): Verdict {
-  const { rule, readings } = input;
+// The mSPRT rule for method "msprt" (research A1, A5). Each reading is judged on its own numbers: its ln Lambda
+// and its direction g. A decision reading is the first reading of each new whole week (week 1 or later), or every
+// reading with whole_weeks off, or any reading from max_days on. An earlier decision reading ends the experiment:
+// a bad crossing (ln Lambda at or above ln(1/alpha) with g < 0) is a drop, worse, and the first decision reading at
+// or after max_days is a drop, no_difference, whatever it returned. Every later reading returns that drop. The
+// latest reading alone can promote, and only when it is a decision reading, its own ln Lambda crosses, and it points
+// in the good direction. Nothing carries forward from earlier readings, so one glitched reading cannot stay in force.
+// A caller stops at the first promote, drop or invalid, and retries a failed read without appending a reading: decide
+// on the same ledger is deterministic.
+function decideMsprt(input: GateInput, rule: LiveRule, days: number, tau: number, out: Out): Verdict {
+  const { readings } = input;
   const threshold = Math.log(1 / rule.alpha); // compared in logs: exp(ln) can overflow
   const last = readings.length - 1;
-  let goodMax: number | null = null;
-  let badMax: number | null = null;
   let priorWeek = -Infinity;
   let ended: { action: Verdict["action"]; reason: Reason } | null = null;
   let latest: { d: number; v: number | null; ln: number | null; g: number; decides: boolean } | null = null;
@@ -194,16 +202,12 @@ function decideMsprt(input: GateInput, days: number, tau: number, out: Out): Ver
     const raw = v === null ? null : msprtLog(d, v, tau);
     const ln = raw !== null && Number.isFinite(raw) ? raw : null;
     const g = input.direction === "higher" ? d : -d;
-    if (ln !== null) {
-      if (g > 0) goodMax = maxOf(goodMax, ln);
-      else if (g < 0) badMax = maxOf(badMax, ln);
-    }
     const decides = !rule.whole_weeks || dayOf >= rule.max_days || (week >= 1 && week > priorWeek);
     priorWeek = Math.max(priorWeek, week);
     if (j === last) {
       latest = { d, v, ln, g, decides };
     } else if (decides && !ended) {
-      if (badMax !== null && badMax >= threshold) ended = { action: "drop", reason: "worse" };
+      if (ln !== null && ln >= threshold && g < 0) ended = { action: "drop", reason: "worse" };
       else if (dayOf >= rule.max_days) ended = { action: "drop", reason: "no_difference" };
     }
   }
@@ -215,18 +219,20 @@ function decideMsprt(input: GateInput, days: number, tau: number, out: Out): Ver
       d: latest.d,
       v: latest.v,
       ln_lambda: latest.ln,
-      ln_max_good: goodMax,
-      ln_max_bad: badMax,
-      p_av: goodMax === null ? 1 : Math.min(1, Math.exp(-goodMax)),
+      p_av: Math.min(1, Math.exp(-latest.ln)),
     };
-    if (h !== null) extra.interval = [latest.d - h, latest.d + h];
+    if (h !== null) {
+      const interval: [number, number] = [latest.d - h, latest.d + h];
+      if (Number.isFinite(interval[0]) && Number.isFinite(interval[1])) extra.interval = interval;
+    }
   }
 
   if (ended) return out(ended.action, ended.reason, extra);
   if (!latest || !latest.decides) return out("continue", "running", extra);
-  if (badMax !== null && badMax >= threshold) return out("drop", "worse", extra);
+  const crossed = latest.ln !== null && latest.ln >= threshold;
+  if (crossed && latest.g < 0) return out("drop", "worse", extra);
   const final = days >= rule.max_days;
-  if (goodMax !== null && goodMax >= threshold && latest.ln !== null && latest.g > 0) {
+  if (crossed && latest.g > 0) {
     // M4 applies here too: a promotion needs usable guard data.
     const missing = rule.guard_missing === "block" ? (input.guards ?? []).find((g) => guardMissing(g, rule)) : undefined;
     if (missing) return out(final ? "drop" : "continue", "guard_no_data", { ...extra, guard: missing.name });
@@ -236,8 +242,8 @@ function decideMsprt(input: GateInput, days: number, tau: number, out: Out): Ver
   return out("continue", "running", extra);
 }
 
-export function decide(input: GateInput): Verdict {
-  const { rule, changed, readings } = input;
+export function decide(raw: GateInput): Verdict {
+  const { changed, readings } = raw;
   const last = readings[readings.length - 1];
   const ledgerOk = ledgerIsSound(readings);
   const days = last && ledgerOk ? daysAt(readings, readings.length - 1) : 0;
@@ -249,8 +255,22 @@ export function decide(input: GateInput): Verdict {
     ...extra,
   });
 
-  // 1. No data: no reading, a broken ledger, or a bad or empty arm.
+  // 0. Bad input: a rule that does not resolve, or a direction that is not "higher" or "lower", is invalid in every
+  // method. The rule is resolved here, so a missing setting takes its safe default and a bad one never runs.
+  let rule: LiveRule;
+  try {
+    rule = resolveRule(raw.rule).rule;
+  } catch {
+    return out("invalid", "bad_input");
+  }
+  if (raw.direction !== "higher" && raw.direction !== "lower") return out("invalid", "bad_input");
+  const input: GateInput = { ...raw, rule };
+
+  // 1. No data: no reading, or a broken ledger.
   if (!last || !ledgerOk) return out("continue", "no_data");
+  if (earlierSplitBroken(input)) return out("invalid", "split");
+
+  // 1b. No data: a bad or empty latest arm.
   const { base, test } = last.arms;
   if (noData(base, test)) return out("continue", "no_data");
 
@@ -277,7 +297,7 @@ export function decide(input: GateInput): Verdict {
   // 4. Too early.
   if (tooEarly(base, test, days, rule)) return out("continue", "too_early");
 
-  if (rule.method === "msprt") return decideMsprt(input, days, tau as number, out);
+  if (rule.method === "msprt") return decideMsprt(input, rule, days, tau as number, out);
 
   // 5-6. Looks. A look is taken once, at the first reading where it is due and where the numbers were usable.
   const final = rule.method === "looks" ? rule.looks : 1;
@@ -290,7 +310,6 @@ export function decide(input: GateInput): Verdict {
     const earlier = readings[j].arms;
     const d = daysAt(readings, j);
     if (noData(earlier.base, earlier.test)) continue;
-    if (splitBroken(earlier.base, earlier.test, input)) continue;
     if (tooEarly(earlier.base, earlier.test, d, rule)) continue;
     taken = Math.max(taken, dueAt(d));
   }

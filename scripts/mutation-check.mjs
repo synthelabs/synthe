@@ -227,11 +227,14 @@ const allMutations = [
   ["live gate: the split check is off", "src/live/gate.ts", "if (rule.srm_p > 0) {", "if (false) {"],
   ["live gate: days before min_days are not too early", "src/live/gate.ts", "days < rule.min_days ||", "false ||"],
   ["live gate: a guard breach never drops", "src/live/gate.ts", "if (worse > guard.max_worse) return", "if (false) return"],
-  ["live gate: a tie promotes", "src/live/gate.ts", "return out(\"drop\", \"no_difference\", extra);", "return out(\"promote\", \"win\", extra);"],
-  ["msprt: the good and bad running maxima are mixed","src/live/gate.ts","if (g > 0) goodMax","if (g !== 0) goodMax"],
+  ["live gate: a tie promotes", "src/live/gate.ts", "if (t && bad && t.p < rule.alpha) return out(\"drop\", \"worse\", extra);\n  return out(\"drop\", \"no_difference\", extra);", "if (t && bad && t.p < rule.alpha) return out(\"drop\", \"worse\", extra);\n  return out(\"promote\", \"win\", extra);"],
+  ["msprt: the good direction is read backwards","src/live/gate.ts","const g = input.direction === \"higher\" ? d : -d;","const g = input.direction === \"higher\" ? -d : d;"],
   ["msprt: every reading decides, whole weeks ignored","src/live/gate.ts","(week >= 1 && week > priorWeek)","true"],
   ["msprt: a missing or bad min_effect is not checked","src/live/gate.ts","if (rule.method === \"msprt\" && !(tau !== undefined && Number.isFinite(tau) && tau > 0)) {","if (false) {"],
   ["msprt: the threshold is not ln(1/alpha)","src/live/gate.ts","const threshold = Math.log(1 / rule.alpha);","const threshold = Math.log(1 / rule.alpha) * 0.4;"],
+  ["live gate: the rule is not validated (a misspelled method runs as fixed)","src/live/gate.ts","rule = resolveRule(raw.rule).rule;","rule = raw.rule;"],
+  ["live gate: a direction other than higher or lower is not checked","src/live/gate.ts","if (raw.direction !== \"higher\" && raw.direction !== \"lower\") return out(\"invalid\", \"bad_input\");",""],
+  ["live gate: an earlier broken split does not stop the experiment","src/live/gate.ts","return input.readings.slice(0, -1).some(","return false && input.readings.slice(0, -1).some("],
 ];
 
 const selectedFiles = process.argv.slice(2);

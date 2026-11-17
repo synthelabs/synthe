@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decide, type ArmData, type GateInput, type Reading, type Verdict } from "../src/live/gate.ts";
+import { decide, type ArmData, type GateInput, type GuardReading, type Reading, type Verdict } from "../src/live/gate.ts";
 import { DEFAULT_RULE, resolveRule, type LiveRule } from "../src/live/rule.ts";
 import { msprtHalfWidth, rateVariance } from "../src/live/stats.ts";
 
@@ -243,15 +243,15 @@ test("msprt: a weak reading at day 7 keeps running", () => {
 test("msprt: lower is better, the rate falls at day 7: promote", () => {
   assert.deepEqual(pick(decide({ ...msAt(7, R(420, 10000), R(300, 10000)), direction: "lower" })), ["promote", "win"]);
 });
-test("msprt: trap, a strong bad reading is kept apart from good ones and never promotes", () => {
+test("msprt: trap, a strong bad reading on a non-deciding day is not a decision and never promotes", () => {
   const v = decide(msInput([
     reading(7, R(300, 10000), R(300, 10000)),
-    reading(10, R(430, 14000), R(300, 14000)), // bad: Lambda 14921.8
-    reading(14, R(600, 20000), R(610, 20000)), // good but weak: Lambda 0.29
+    reading(10, R(430, 14000), R(300, 14000)), // bad: Lambda 14921.8, but day 10 is not a decision reading
+    reading(14, R(600, 20000), R(610, 20000)), // good but weak: Lambda 0.29, so the latest reading decides
   ]));
-  assert.deepEqual(pick(v), ["drop", "worse"]);
+  assert.deepEqual(pick(v), ["continue", "running"]);
   assert.ok(v.msprt);
-  assert.ok(v.msprt.ln_max_bad !== null && v.msprt.ln_max_bad > 9, String(v.msprt.ln_max_bad));
+  assert.ok(Math.abs(Math.exp(v.msprt.ln_lambda) - 0.29) < 0.01, String(Math.exp(v.msprt.ln_lambda)));
 });
 test("msprt: a reading in the same week as an earlier one is not a decision reading", () => {
   assert.deepEqual(pick(decide(msInput([reading(7, R(300, 10000), R(360, 10000)), reading(8, R(300, 10000), R(420, 10000))]))), ["continue", "running"]);
@@ -340,21 +340,21 @@ test("msprt review: a drop at max_days is final; a later strong good reading doe
     reading(29, R(310, 10400), R(460, 10400)), // Lambda 139834, good
   ]))), ["drop", "no_difference"]);
 });
-test("msprt review: a drop for worse is final; a later strong good reading does not promote", () => {
+test("msprt review: a bad reading on a non-deciding day does not end the test; day 21 promotes on its own numbers", () => {
   assert.deepEqual(pick(decide(msInput([
     reading(7, R(300, 10000), R(300, 10000)),
-    reading(10, R(430, 14000), R(300, 14000)), // bad, Lambda 14921
-    reading(14, R(600, 20000), R(610, 20000)),
-    reading(21, R(900, 30000), R(1250, 30000)), // strong good
-  ]))), ["drop", "worse"]);
+    reading(10, R(430, 14000), R(300, 14000)), // bad, Lambda 14921, not a decision reading
+    reading(14, R(600, 20000), R(610, 20000)), // weak, not a crossing
+    reading(21, R(900, 30000), R(1250, 30000)), // strong good, Lambda clears ln(20) on its own
+  ]))), ["promote", "win"]);
 });
-test("msprt review: when both sides have crossed, the bad side wins", () => {
+test("msprt review: a decision uses only that reading, not an earlier crossing on either side", () => {
   assert.deepEqual(pick(decide(msInput([
     reading(7, R(300, 10000), R(300, 10000)),
-    reading(10, R(430, 14000), R(300, 14000)), // bad, Lambda 14921
+    reading(10, R(430, 14000), R(300, 14000)), // bad, Lambda 14921; day 10 is not a decision reading
     reading(12, R(480, 16800), R(600, 16800)), // good, Lambda 158; week 1, not a decision
-    reading(14, R(600, 20000), R(700, 20000)), // good, Lambda 10.98
-  ]))), ["drop", "worse"]);
+    reading(14, R(600, 20000), R(700, 20000)), // good, Lambda 10.98: below ln(20), so it continues
+  ]))), ["continue", "running"]);
 });
 test("msprt review: week 0 never decides, even when min_days is below 7", () => {
   const { rule, changed } = msRule({ min_days: 3 });
@@ -372,7 +372,7 @@ test("msprt review: a reading too early under min_days is not replayed into the 
 test("msprt review: p_av and the interval on the Lambda 21.99 win", () => {
   const v = decide(msAt(7, R(300, 10000), R(379, 10000)));
   assert.ok(v.msprt);
-  assert.ok(Math.abs(v.msprt.p_av - Math.exp(-v.msprt.ln_max_good!)) < 1e-12);
+  assert.ok(Math.abs(v.msprt.p_av - Math.exp(-v.msprt.ln_lambda)) < 1e-12);
   assert.ok(v.msprt.p_av < 0.05, String(v.msprt.p_av));
   assert.ok(v.interval);
   const h = msprtHalfWidth(rateVariance({ units: 10000, events: 300 }, { units: 10000, events: 379 })!, 0.006, 0.05)!;
@@ -388,13 +388,13 @@ test("msprt review: a good crossing before, then a latest reading in the bad dir
   ]))), ["continue", "running"]);
 });
 // Re-review of c0a379b: each test below fails against one named mutant and passes on the current code.
-test("msprt re-review: a split-broken earlier reading is not replayed into the maxima", () => {
-  // Day 7 is strong but its arms are split 10000 vs 13000 (broken). Day 8 is weak. No promotion.
+test("msprt re-review: a split-broken earlier reading stops the experiment, so a later weak reading is invalid", () => {
+  // Day 7 is strong but its arms are split 10000 vs 13000 (broken). The experiment stops there (S4), so day 8 is invalid.
   const { rule, changed } = msRule({ whole_weeks: false });
   assert.deepEqual(pick(decide({ ...msInput([
     reading(7, R(300, 10000), R(900, 13000)),
     reading(8, R(300, 10000), R(360, 10000)),
-  ]), rule, changed })), ["continue", "running"]);
+  ]), rule, changed })), ["invalid", "split"]);
 });
 test("msprt re-review: the threshold is ln(1/alpha), not a fixed ln(20)", () => {
   // Lambda 21.99 clears ln(20) but not ln(100), the threshold at alpha 0.01.
@@ -409,12 +409,11 @@ test("msprt re-review: max_days decides, so no promotion after the end", () => {
     reading(14, R(600, 20000), R(780, 20000)), // strong good, but after the end
   ]), rule, changed })), ["drop", "no_difference"]);
 });
-test("msprt re-review: a worse drop stays a drop on a later non-decision reading", () => {
+test("msprt re-review: a worse decision stays a drop when a later reading in the same week is strong", () => {
   assert.deepEqual(pick(decide(msInput([
-    reading(7, R(300, 10000), R(300, 10000)),
-    reading(10, R(430, 14000), R(300, 14000)), // bad, Lambda 14921
-    reading(14, R(600, 20000), R(610, 20000)), // decision: drop worse
-    reading(15, R(640, 21000), R(650, 21000)), // week 2 again: not a decision reading
+    reading(7, R(300, 10000), R(360, 10000)), // weak, decision, keeps running
+    reading(14, R(700, 20000), R(560, 20000)), // decision, bad, Lambda 460: drop worse
+    reading(15, R(750, 21400), R(1000, 21400)), // week 2 again: not a decision reading, and strong
   ]))), ["drop", "worse"]);
 });
 test("msprt re-review: an earlier decision at max_days is final, even when it could have promoted", () => {
@@ -424,4 +423,122 @@ test("msprt re-review: an earlier decision at max_days is final, even when it co
     reading(28, R(300, 10000), R(420, 10000)),
     reading(29, R(310, 10400), R(460, 10400)),
   ]))), ["drop", "no_difference"]);
+});
+
+// Task 12 (final review B1): mSPRT decides on the latest reading's own ln Lambda. A glitched earlier reading (day 8,
+// Lambda 4045, not a decision reading) must not promote the weak honest day 14 reading.
+test("msprt B1: a glitched earlier reading does not promote a later weak honest reading", () => {
+  assert.deepEqual(pick(decide(msInput([
+    reading(7, R(300, 10000), R(300, 10000)),
+    reading(8, R(340, 11400), R(470, 11400)),
+    reading(14, R(600, 20000), R(610, 20000)),
+  ]))), ["continue", "running"]);
+});
+test("msprt B1: a too-early reading that has a crossing does not use up week 1's decision", () => {
+  // Day 7 has 20 events in each arm, so it is too early and must not count; day 8 is then week 1's first decision.
+  assert.deepEqual(pick(decide(msInput([
+    reading(7, R(20, 1000), R(20, 1000)),
+    reading(8, R(300, 10000), R(420, 10000)),
+  ]))), ["promote", "win"]);
+});
+
+// Task 12 (final review S1): decide validates the rule itself and uses the resolved rule. A stored or hand-written
+// rule with a missing or misspelled setting gets the safe defaults, and a bad value is invalid.
+const without = (keys: (keyof LiveRule)[], base: LiveRule): LiveRule => {
+  const r: Partial<LiveRule> = { ...base };
+  for (const k of keys) delete r[k];
+  return r as LiveRule;
+};
+test("S1: a rule with a misspelled method is invalid, never a silent fixed", () => {
+  const rule = { ...DEFAULT_RULE, method: "MSPRT" } as unknown as LiveRule;
+  assert.deepEqual(pick(decide({ ...at(28, R(300, 10000), R(360, 10000)), rule })), ["invalid", "bad_input"]);
+});
+test("S1: a rule without guard_missing takes the default (block), so the guard with no units blocks", () => {
+  const g = { name: "escalation rate", direction: "lower" as const, max_worse: 0.01, base: { units: 0, events: 0 }, test: { units: 5000, events: 250 } };
+  const rule = without(["guard_missing"], DEFAULT_RULE);
+  assert.deepEqual(pick(decide({ ...at(28, R(300, 10000), R(360, 10000)), rule, guards: [g] })), ["drop", "guard_no_data"]);
+});
+test("S1: a msprt rule without whole_weeks takes the default, so a mid-week strong reading does not decide", () => {
+  const rule = without(["whole_weeks"], MS.rule);
+  assert.deepEqual(pick(decide({ ...msInput([
+    reading(7, R(300, 10000), R(360, 10000)),
+    reading(8, R(300, 10000), R(420, 10000)),
+  ]), rule })), ["continue", "running"]);
+});
+
+// Task 12 (S2): a guard whose max_worse or direction cannot be read is missing, so it blocks a promotion and never drops.
+const escalation = (direction: string, max_worse: number | undefined) => ({
+  name: "escalation rate", direction, max_worse, base: { units: 5000, events: 250 }, test: { units: 5000, events: 750 },
+}) as unknown as GuardReading;
+test("S2: a guard with max_worse NaN blocks a promotion as no guard data", () => {
+  const v = decide({ ...at(28, R(300, 10000), R(360, 10000)), guards: [escalation("lower", Number.NaN)] });
+  assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard_no_data", "escalation rate"]);
+});
+test("S2: a guard with max_worse undefined blocks a promotion as no guard data", () => {
+  const v = decide({ ...at(28, R(300, 10000), R(360, 10000)), guards: [escalation("lower", undefined)] });
+  assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard_no_data", "escalation rate"]);
+});
+test("S2: a guard with direction Lower (capital L) blocks a promotion as no guard data, and never reads as a pass", () => {
+  const v = decide({ ...at(28, R(300, 10000), R(360, 10000)), guards: [escalation("Lower", 0.01)] });
+  assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard_no_data", "escalation rate"]);
+});
+
+// Task 12 (S3): a primary direction that is not "higher" or "lower" is invalid in every method, before any test.
+test("S3: a direction other than higher or lower is invalid, bad_input, in fixed, looks and msprt", () => {
+  for (const bad of [undefined, "Higher", "up"]) {
+    const dir = bad as unknown as "higher";
+    const fixed = decide({ ...at(28, R(300, 10000), R(420, 10000)), direction: dir });
+    const looks = decide({ ...at(28, R(300, 10000), R(420, 10000)), rule: resolveRule({ method: "looks" }).rule, direction: dir });
+    const msprt = decide({ ...msAt(7, R(420, 10000), R(300, 10000)), direction: dir });
+    for (const v of [fixed, looks, msprt]) assert.deepEqual(pick(v), ["invalid", "bad_input"], String(bad));
+  }
+});
+
+// Task 12 (S4): a broken split at any earlier reading with usable arms stops the experiment, in every method.
+test("S4: a broken split at an earlier reading makes a later winning reading invalid, split, in every method", () => {
+  const broken = reading(7, R(300, 10000), { units: 10600, events: 300 });
+  const win = reading(28, R(1200, 40000), R(1440, 40600));
+  for (const method of ["fixed", "looks", "msprt"] as const) {
+    const { rule, changed } = resolveRule({ method });
+    const v = decide({ ...input([broken, win]), rule, changed, min_effect: 0.006 });
+    assert.deepEqual(pick(v), ["invalid", "split"], method);
+  }
+  const v = decide({ ...msInput([reading(7, R(300, 10000), { units: 10600, events: 300 }), reading(14, R(600, 20000), R(760, 20600))]) });
+  assert.deepEqual(pick(v), ["invalid", "split"]);
+});
+
+// Task 12 property: over seeded random mSPRT ledgers, every promotion's interval excludes 0 on the winning side.
+test("msprt property: every promotion has an interval that excludes 0 on the winning side (300 seeded ledgers)", () => {
+  let seed = 20261117;
+  const rnd = () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = seed;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  let promotes = 0;
+  for (let run = 0; run < 300; run++) {
+    const direction = run % 2 === 0 ? "higher" : "lower";
+    const p0 = 0.03;
+    const p1 = rnd() < 0.5 ? p0 - 0.01 + rnd() * 0.02 : p0;
+    const readings: Reading[] = [];
+    let bu = 0, tu = 0, be = 0, te = 0;
+    for (let day = 1; day <= 28; day++) {
+      for (let i = 0; i < 300; i++) {
+        be += rnd() < p0 ? 1 : 0;
+        te += rnd() < p1 ? 1 : 0;
+      }
+      bu += 300;
+      tu += 300;
+      readings.push(reading(day, R(be, bu), R(te, tu)));
+    }
+    const v = decide({ ...msInput(readings), direction });
+    if (v.action !== "promote") continue;
+    promotes++;
+    assert.ok(v.interval, `run ${run}: a promotion has an interval`);
+    if (direction === "higher") assert.ok(v.interval[0] > 0, `run ${run}: ${v.interval}`);
+    else assert.ok(v.interval[1] < 0, `run ${run}: ${v.interval}`);
+  }
+  assert.ok(promotes > 0, "the property has promotions to check");
 });
