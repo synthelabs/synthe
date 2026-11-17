@@ -7,7 +7,7 @@
 // it never reads or writes message text (no function here accepts any), never opens a network connection and never
 // throws into the agent call. It imports only Node built-ins so a security review can read it on its own.
 import { createHash, createHmac } from "node:crypto";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 export const CALL_LOG_VERSION = 1;
@@ -62,18 +62,42 @@ const ZONED = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2}
 // token and a unit token for the same raw id apart. This rule is frozen once published: changing it would split
 // one conversation's calls and outcomes across two tokens.
 const LETTERS = "abcdefghijklmnop";
+// What a token looks like. The import's refusals use it to never repeat one: it reads as a plain lowercase word.
+export const TOKEN_SHAPE = /^[a-p]{32}$/;
+// A key shorter than this is easy to guess, and one known (id, token) pair then reveals it and reverses every other
+// token. A blank key would make every token a public function of the id.
+export const MIN_ID_KEY_LENGTH = 16;
 const token = (key: string, kind: "conversation" | "unit", id: string): string => {
   let out = "";
   for (const byte of createHmac("sha256", key).update(`${kind}:${id}`).digest().subarray(0, 16)) out += LETTERS[byte >> 4] + LETTERS[byte & 15];
   return out;
 };
 
+// One write() per line on a descriptor opened for append, so processes that share a log do not interleave. The open
+// refuses a symbolic link under the log's name (a link planted in a shared folder would send customer ids to its
+// target) and anything that is not a regular file. When another process died in the middle of a write, the file
+// ends without a line break: this line then starts on a new line, and is not glued to the fragment and lost.
+function appendLine(path: string, text: string): boolean {
+  const fd = openSync(path, constants.O_RDWR | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 0o600);
+  try {
+    const { size, mode } = fstatSync(fd);
+    if ((mode & constants.S_IFMT) !== constants.S_IFREG) return false;
+    let lead = "";
+    if (size > 0) {
+      const last = Buffer.alloc(1);
+      if (readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 0x0a) lead = "\n";
+    }
+    writeSync(fd, lead + text);
+    return true;
+  } finally { closeSync(fd); }
+}
+
 export function pilotRecorder(options: PilotRecorderOptions): PilotRecorder {
   if (typeof options?.logDir !== "string" || options.logDir === "") throw new TypeError("pilotRecorder needs a logDir.");
   if (!isId(options.agent)) throw new TypeError("pilotRecorder needs an agent: your agent's name, 1 to 200 characters.");
   // Fail closed at startup (not in the agent call): raw ids in a log must be a decision, never a default.
   const { rawIds } = options as { rawIds?: unknown };
-  if (options.idKey !== undefined && (typeof options.idKey !== "string" || options.idKey === "")) throw new TypeError("idKey must be a non-empty string when given.");
+  if (options.idKey !== undefined && (typeof options.idKey !== "string" || options.idKey.trim().length < MIN_ID_KEY_LENGTH)) throw new TypeError(`idKey must be a secret of at least ${MIN_ID_KEY_LENGTH} characters (for example 32 random hex characters). A short or blank key lets anyone reverse the tokens.`);
   if (rawIds !== undefined && rawIds !== true) throw new TypeError("rawIds must be true when given.");
   if (options.idKey !== undefined && rawIds === true) throw new TypeError("Pass idKey or rawIds: true, not both: it is ambiguous whether ids are hashed.");
   if (options.idKey === undefined && rawIds !== true) throw new TypeError("pilotRecorder needs an idKey (ids are written as a keyed token, recommended) or rawIds: true (ids are written as given).");
@@ -85,14 +109,13 @@ export function pilotRecorder(options: PilotRecorderOptions): PilotRecorder {
     return new Date();
   };
 
-  // True when the line is on disk. One appendFileSync per line, so processes that share a log do not interleave.
+  // True when the line is on disk.
   function append(line: Record<string, unknown>, at: Date): boolean {
     try {
       mkdirSync(logDir, { recursive: true, mode: 0o700 });
       // The log holds customer ids: keep it out of `git add -A`.
       try { writeFileSync(join(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 0o600 }); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
-      appendFileSync(join(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}\n`, { mode: 0o600 });
-      return true;
+      return appendLine(join(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}\n`);
     } catch { return false; }
   }
 

@@ -9,6 +9,7 @@ import { PilotError } from "./errors.ts";
 import { DAY_MS, isSha256, ms, shortId } from "./ids.ts";
 import { unsafeKey } from "./io.ts";
 import { personalDataKinds } from "./pii.ts";
+import { TOKEN_SHAPE } from "./wrap.ts";
 import { canonicalJson } from "../core/evidence.ts";
 import {
   meanSummary, normalQuantile, oneSampleT, sampleSizeMeans, sampleSizeProportions, wilsonInterval, type MeanStats,
@@ -66,8 +67,9 @@ function checkPersonalData(text: string, field: string, where: string): void {
 }
 
 // A field or column name in a refusal. A name the export invented could be data (a CSV with no header line puts
-// its first row there), so only a plain lowercase name is repeated.
-const shown = (name: string): string => (/^[a-z][a-z0-9_]{0,63}$/.test(name) ? `"${name}"` : "with a name that is not a plain lowercase word");
+// its first row there), so only a plain lowercase name is repeated. A recorder token is made of lowercase letters and
+// so reads as a plain word: it is never repeated, because a CSV whose header line was lost carries one in its place.
+const shown = (name: string): string => (/^[a-z][a-z0-9_]{0,63}$/.test(name) && !TOKEN_SHAPE.test(name) ? `"${name}"` : "with a name that is not a plain lowercase word");
 
 // Without a unit id, two conversations can honestly share a start time and every value, so one twin proves
 // nothing. A duplicated export does not look like chance, though: every copied row has an exact twin, far more

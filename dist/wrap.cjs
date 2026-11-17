@@ -25,7 +25,9 @@ __export(wrap_exports, {
   MAX_FIELD: () => MAX_FIELD,
   MAX_METRICS: () => MAX_METRICS,
   METRIC_NAME: () => METRIC_NAME,
+  MIN_ID_KEY_LENGTH: () => MIN_ID_KEY_LENGTH,
   PROBLEM_KINDS: () => PROBLEM_KINDS,
+  TOKEN_SHAPE: () => TOKEN_SHAPE,
   bucket: () => bucket,
   pickArm: () => pickArm,
   pickVersion: () => pickVersion,
@@ -43,16 +45,34 @@ var PROBLEM_KINDS = ["invalid_call", "invalid_outcome", "write_failed"];
 var isId = (v) => typeof v === "string" && v.trim() !== "" && v.length <= MAX_FIELD;
 var ZONED = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
 var LETTERS = "abcdefghijklmnop";
+var TOKEN_SHAPE = /^[a-p]{32}$/;
+var MIN_ID_KEY_LENGTH = 16;
 var token = (key, kind, id) => {
   let out = "";
   for (const byte of (0, import_node_crypto.createHmac)("sha256", key).update(`${kind}:${id}`).digest().subarray(0, 16)) out += LETTERS[byte >> 4] + LETTERS[byte & 15];
   return out;
 };
+function appendLine(path, text) {
+  const fd = (0, import_node_fs.openSync)(path, import_node_fs.constants.O_RDWR | import_node_fs.constants.O_APPEND | import_node_fs.constants.O_CREAT | (import_node_fs.constants.O_NOFOLLOW ?? 0), 384);
+  try {
+    const { size, mode } = (0, import_node_fs.fstatSync)(fd);
+    if ((mode & import_node_fs.constants.S_IFMT) !== import_node_fs.constants.S_IFREG) return false;
+    let lead = "";
+    if (size > 0) {
+      const last = Buffer.alloc(1);
+      if ((0, import_node_fs.readSync)(fd, last, 0, 1, size - 1) === 1 && last[0] !== 10) lead = "\n";
+    }
+    (0, import_node_fs.writeSync)(fd, lead + text);
+    return true;
+  } finally {
+    (0, import_node_fs.closeSync)(fd);
+  }
+}
 function pilotRecorder(options) {
   if (typeof options?.logDir !== "string" || options.logDir === "") throw new TypeError("pilotRecorder needs a logDir.");
   if (!isId(options.agent)) throw new TypeError("pilotRecorder needs an agent: your agent's name, 1 to 200 characters.");
   const { rawIds } = options;
-  if (options.idKey !== void 0 && (typeof options.idKey !== "string" || options.idKey === "")) throw new TypeError("idKey must be a non-empty string when given.");
+  if (options.idKey !== void 0 && (typeof options.idKey !== "string" || options.idKey.trim().length < MIN_ID_KEY_LENGTH)) throw new TypeError(`idKey must be a secret of at least ${MIN_ID_KEY_LENGTH} characters (for example 32 random hex characters). A short or blank key lets anyone reverse the tokens.`);
   if (rawIds !== void 0 && rawIds !== true) throw new TypeError("rawIds must be true when given.");
   if (options.idKey !== void 0 && rawIds === true) throw new TypeError("Pass idKey or rawIds: true, not both: it is ambiguous whether ids are hashed.");
   if (options.idKey === void 0 && rawIds !== true) throw new TypeError("pilotRecorder needs an idKey (ids are written as a keyed token, recommended) or rawIds: true (ids are written as given).");
@@ -74,9 +94,8 @@ function pilotRecorder(options) {
       } catch (e) {
         if (e.code !== "EEXIST") throw e;
       }
-      (0, import_node_fs.appendFileSync)((0, import_node_path.join)(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
-`, { mode: 384 });
-      return true;
+      return appendLine((0, import_node_path.join)(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
+`);
     } catch {
       return false;
     }
@@ -202,7 +221,9 @@ function pickVersion(input) {
   MAX_FIELD,
   MAX_METRICS,
   METRIC_NAME,
+  MIN_ID_KEY_LENGTH,
   PROBLEM_KINDS,
+  TOKEN_SHAPE,
   bucket,
   pickArm,
   pickVersion,

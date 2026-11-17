@@ -434,7 +434,7 @@ test("WATCH.md holds no conversation id or unit id from the exports", async () =
 // the wrapper ships. The candidate does a little better, so a final analysis has something to say.
 function splitLog(dir: string, s: ExperimentSpec, days: number, perDay: number, salt = "watch-test-salt"): void {
   let clock = new Date(0);
-  const rec = pilotRecorder({ logDir: dir, agent: "Juniper", idKey: "watch-test-key", now: () => clock });
+  const rec = pilotRecorder({ logDir: dir, agent: "Juniper", idKey: "watch-test-key-0123456789", now: () => clock });
   for (let d = 0; d < days; d++) {
     for (let i = 0; i < perDay; i++) {
       const at = new Date(ms(s.window.start) + d * DAY_MS + Math.floor((i * DAY_MS) / perDay));

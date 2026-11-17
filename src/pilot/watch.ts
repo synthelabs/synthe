@@ -75,7 +75,7 @@ export function lookGate(input: { spec: ExperimentSpec; looks: Look[]; now: Date
 // ---------------------------------------------------------------------------------------------------------------
 
 // Writes one export now from a log directory. Another module supplies the real one; `watch` only calls it.
-export type LogExporter = (input: { store: PilotStore; experimentId: Sha256; logDir: string; assignment: string; now: Date }) => { path: string };
+export type LogExporter = (input: { store: PilotStore; experimentId: Sha256; logDir: string; assignment: string; now: Date }) => { path: string; notes?: string[] };
 
 // The start of the message the evidence lock and the watch lock refuse with when another command holds them.
 export const BUSY_PREFIX = "Another pilot command";
@@ -102,6 +102,8 @@ export interface WatchView {
   interim_days: number;
   // null: the files were not read in this tick (no look was allowed).
   files: WatchFile[] | null;
+  // What the export left out or kept as it was (call-log source only): counts and field names, never an id.
+  export_notes?: string[];
   refusal: { code: string; message: string } | null;
   verify: string[] | null;
   head: { seq: number; hash: string } | null;
@@ -136,8 +138,9 @@ export function renderWatch(v: WatchView): string {
     L.push("## Next look", "", v.gate ? gateLine(v.gate) : "Not known.", "");
     if (v.looks.length) L.push(`Decision file: reports/decision-${shortId(v.experiment.id)}.md`, "");
   }
+  if (v.export_notes?.length) L.push("## Export notes", "", ...v.export_notes.map((n) => `- ${printable(n, 400)}`), "");
   L.push("## Files", "");
-  if (v.files === null) L.push("The files were not read in this tick: no look was allowed, or the experiment is decided.", "");
+  if (v.files === null) L.push("The files were not read in this tick: no look was allowed, the experiment is decided, or an earlier import was finished instead.", "");
   else {
     for (const state of ["imported", "pending", "superseded", "invalid"] as const) {
       const of = v.files.filter((f) => f.state === state);
@@ -230,6 +233,7 @@ async function tick(store: PilotStore, flags: Flags, deps: PilotDeps, src: Sourc
     const last = view.looks.at(-1);
     deps.say(`Watch tick at ${view.now}: ${view.did[0] ?? "nothing to do."}`);
     deps.say(last ? `Recommendation: ${last.recommendation.toUpperCase()} (${last.final ? "final" : "before the cutoff"}).` : view.experiment ? "No analysis yet." : "No approved experiment is open.");
+    for (const n of view.export_notes ?? []) deps.say(printable(n, 400));
     if (view.gate) deps.say(gateLine(view.gate));
     if (view.refusal) deps.say(`Refused (${view.refusal.code}): ${printable(view.refusal.message, 200)}`);
     if (view.verify) deps.say("Verification failed; the lines are in WATCH.md.");
@@ -272,8 +276,15 @@ async function tick(store: PilotStore, flags: Flags, deps: PilotDeps, src: Sourc
   const nowMs = now.getTime();
   const cutoff = ms(target.spec.analysis_cutoff);
   let scanned: WatchFile[] | null = null;
+  // A tick that stopped after the first post-cutoff export was imported and before its analysis was recorded left an
+  // import that is final and has no result. Any other export made after the cutoff would be refused as a second final
+  // one, so this tick finishes that analysis from what is already imported, and reads no file.
+  const recover = gate.action === "final" && store.find("telemetry.imported").some((e) => e.refs.scope === target!.id && ms(store.get<TelemetryImport>("telemetry", e.refs.telemetry).exported_at) >= cutoff);
   try {
-    if (src.inbox !== undefined) {
+    if (recover) {
+      path = "(already imported)";
+      view.did.push("An export made after the cutoff was already imported by an earlier tick that stopped before its analysis. This tick finishes that analysis and reads no new file.");
+    } else if (src.inbox !== undefined) {
       const { files } = scanInbox(store, src.inbox, target.id, target.spec);
       scanned = files;
       const pending = files.filter((x) => x.state === "pending" && ms(x.exported_at!) <= nowMs);
@@ -285,12 +296,14 @@ async function tick(store: PilotStore, flags: Flags, deps: PilotDeps, src: Sourc
       path = pick ? pick.path : null;
       if (!pick) view.did.push(gate.action === "final" ? `Waiting for an export made at or after ${target.spec.analysis_cutoff}.` : "Waiting for an export newer than the last one and made before the cutoff.");
     } else {
-      path = src.logExport!({ store, experimentId: target.id, logDir: src.logDir!, assignment: src.assignment!, now }).path;
+      const made = src.logExport!({ store, experimentId: target.id, logDir: src.logDir!, assignment: src.assignment!, now });
+      path = made.path;
+      view.export_notes = made.notes ?? [];
     }
     if (path !== null) {
       const lines: string[] = [];
       try {
-        await analyze(store, { experiment: target.id, telemetry: path }, quiet(lines));
+        await analyze(store, { experiment: target.id, ...(recover ? {} : { telemetry: path }) }, quiet(lines));
       } catch (e) {
         if (isBusy(e)) { view.did.push("Another pilot command holds the evidence lock; this tick did nothing."); path = null; } else throw e;
       }

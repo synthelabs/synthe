@@ -33,6 +33,8 @@ export interface PilotRecorder {
     outcome(conversationId: string, values: Record<string, number | null>): void;
     problems(): number;
 }
+export declare const TOKEN_SHAPE: RegExp;
+export declare const MIN_ID_KEY_LENGTH = 16;
 export declare function pilotRecorder(options: PilotRecorderOptions): PilotRecorder;
 export declare const ASSIGN_RULE = "sha256-v1";
 export interface Arm {

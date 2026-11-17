@@ -159,33 +159,33 @@ const expectedToken = (key: string, kind: string, id: string): string =>
   [...createHmac("sha256", key).update(`${kind}:${id}`).digest().subarray(0, 16)].map((byte) => "abcdefghijklmnop"[byte >> 4] + "abcdefghijklmnop"[byte & 15]).join("");
 
 test("with idKey, ids are written as a keyed token, the same in call and outcome, and the raw id is nowhere in the log", async () => {
-  const { dir, rec } = recorder({ idKey: "test-key" });
+  const { dir, rec } = recorder({ idKey: "test-id-key-0123456789" });
   await rec.call({ promptVersion: "v1", conversationId: "conv-raw-123", unitId: "unit-raw-456" }, () => 0);
   rec.outcome("conv-raw-123", { resolved: 1 });
   const text = logFiles(dir).map((n) => readFileSync(join(dir, n), "utf8")).join("");
   assert.doesNotMatch(text, /conv-raw-123|unit-raw-456/);
   const [call, outcome] = lines(dir);
-  assert.equal(call.conversation_id, expectedToken("test-key", "conversation", "conv-raw-123"));
-  assert.equal(call.unit_id, expectedToken("test-key", "unit", "unit-raw-456"));
+  assert.equal(call.conversation_id, expectedToken("test-id-key-0123456789", "conversation", "conv-raw-123"));
+  assert.equal(call.unit_id, expectedToken("test-id-key-0123456789", "unit", "unit-raw-456"));
   assert.match(call.conversation_id as string, /^[a-p]{32}$/);
   assert.equal(outcome.conversation_id, call.conversation_id, "call and outcome join");
   assert.notEqual(call.conversation_id, call.unit_id, "the conversation and unit tokens for different ids differ");
 });
 
 test("the same raw id gives a conversation token and a unit token that differ; a different key gives a different token", () => {
-  const { dir, rec } = recorder({ idKey: "test-key" });
+  const { dir, rec } = recorder({ idKey: "test-id-key-0123456789" });
   rec.record({ promptVersion: "v1", conversationId: "same-raw-id", unitId: "same-raw-id" });
   const [line] = lines(dir);
   assert.notEqual(line.conversation_id, line.unit_id);
-  assert.equal(line.unit_id, expectedToken("test-key", "unit", "same-raw-id"));
-  const other = recorder({ idKey: "other-key" });
+  assert.equal(line.unit_id, expectedToken("test-id-key-0123456789", "unit", "same-raw-id"));
+  const other = recorder({ idKey: "other-id-key-0123456789" });
   other.rec.record({ promptVersion: "v1", conversationId: "same-raw-id" });
   assert.notEqual(lines(other.dir)[0].conversation_id, line.conversation_id);
 });
 
 test("a token has no digit, so the import's personal-data checks can never fire on one (100,000 tokens)", () => {
   const dir = join(tmp("pilot-wrap-"), "log");
-  const rec = pilotRecorder({ logDir: dir, agent: AGENT, idKey: "k", now: () => T0 });
+  const rec = pilotRecorder({ logDir: dir, agent: AGENT, idKey: "wrap-test-id-key-0123456789", now: () => T0 });
   for (let i = 0; i < 50_000; i++) rec.record({ promptVersion: "v1", conversationId: `x-${i}`, unitId: `u-${i}` });
   const all = lines(dir);
   assert.equal(all.length, 50_000);
@@ -208,12 +208,12 @@ test("a recorder fails closed: it needs a log folder and an agent, and either an
   assert.throws(() => pilotRecorder({ logDir: "", agent: AGENT, rawIds: true }), TypeError);
   assert.throws(() => pilotRecorder({ logDir: "x", agent: AGENT, idKey: "", rawIds: true } as never), TypeError);
   assert.throws(() => pilotRecorder({ logDir: "x", agent: AGENT } as never), (e) => e instanceof TypeError && /idKey/.test(e.message) && /rawIds/.test(e.message), "neither idKey nor rawIds");
-  assert.throws(() => pilotRecorder({ logDir: "x", agent: AGENT, idKey: "k", rawIds: true } as never), (e) => e instanceof TypeError && /both/.test(e.message), "both is ambiguous");
+  assert.throws(() => pilotRecorder({ logDir: "x", agent: AGENT, idKey: "wrap-test-id-key-0123456789", rawIds: true } as never), (e) => e instanceof TypeError && /both/.test(e.message), "both is ambiguous");
   for (const bad of [false, 1, "true", null]) assert.throws(() => pilotRecorder({ logDir: "x", agent: AGENT, rawIds: bad } as never), TypeError, `rawIds: ${String(bad)}`);
   assert.throws(() => pilotRecorder({ logDir: "x", agent: AGENT, idKey: "" } as never), TypeError);
   assert.throws(() => pilotRecorder({ logDir: "x", agent: AGENT, idKey: 5 } as never), TypeError);
   assert.doesNotThrow(() => pilotRecorder(ok));
-  assert.doesNotThrow(() => pilotRecorder({ logDir: "x", agent: AGENT, idKey: "k" }));
+  assert.doesNotThrow(() => pilotRecorder({ logDir: "x", agent: AGENT, idKey: "wrap-test-id-key-0123456789" }));
 });
 
 test("the agent name is required: 1 to 200 characters, not blank", () => {

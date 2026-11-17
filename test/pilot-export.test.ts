@@ -39,19 +39,21 @@ const input = (lines: Line[], over: Partial<LogExportInput> = {}): LogExportInpu
 const V = { resolved: 1, escalated: 0, refund_usd: 0 };
 const done = (id: string, at = "2026-11-02T10:00:00Z", version = BASE, extra: Line = {}): Line[] => [call(id, at, version, extra), outcome(id, "2026-11-09T10:00:00Z", V)];
 const csvRows = (csv: string) => parseCsv(csv, "x.csv").map((r) => r.fields);
-const ZERO = { no_outcome: 0, outcome_without_call: 0, served_two_versions: 0, outside_window: 0, other_agent: 0, outcome_before_call: 0 };
+const ZERO = { no_outcome: 0, outcome_without_call: 0, served_two_versions: 0, outside_window: 0, other_agent: 0, outcome_before_call: 0, other_version_after_outcome: 0 };
 const refused = (fn: () => unknown, code: string, pattern?: RegExp) => assert.throws(fn, (e) => { assert.ok(e instanceof PilotError, String(e)); assert.equal(e.code, code, e.message); if (pattern) assert.match(e.message, pattern); return true; });
 
-test("one row per conversation with a call and an outcome; the others are counted by reason", () => {
+test("one row per conversation with a call; a call with no outcome is a row with empty values; the others are counted by reason", () => {
   const x = buildLogExport(input([
     ...done("a"), ...done("b"),
     call("no-outcome", "2026-11-03T10:00:00Z"),
     outcome("no-call", "2026-11-05T10:00:00Z", V),
   ], { contract: contract({ max_unattributed_rate: 0.4 }) }));
-  assert.equal(x.rows, 2);
+  assert.equal(x.rows, 3);
   assert.deepEqual(x.left_out, { ...ZERO, no_outcome: 1, outcome_without_call: 1 });
-  assert.equal(x.header.expected_rows, 2);
-  assert.deepEqual(csvRows(x.csv).map((r) => r[0]), ["conversation_id", "a", "b"]);
+  assert.deepEqual(x.no_outcome_by, { [BASE]: 1 });
+  assert.equal(x.header.expected_rows, 3);
+  assert.deepEqual(csvRows(x.csv).map((r) => r[0]), ["conversation_id", "a", "b", "no-outcome"]);
+  assert.deepEqual(csvRows(x.csv)[3].slice(6), ["", "", ""], "every metric value is empty");
 });
 
 test("started_at is the first call's started_at, else its time; first means earliest; milliseconds are dropped", () => {
@@ -77,13 +79,19 @@ test("the window is [start, end): the start counts, the end does not, and the he
   assert.equal(early.left_out.outside_window, 1);
 });
 
-test("a conversation served by two versions is left out, and too many of them refuse the export", () => {
+test("a conversation served by two versions before its outcome stays in its first version with empty values, and too many of them refuse the export", () => {
   const two = (id: string): Line[] => [call(id, "2026-11-02T10:00:00Z", BASE), call(id, "2026-11-02T10:05:00Z", CAND), outcome(id, "2026-11-09T00:00:00Z", V)];
   const ok = Array.from({ length: 98 }, (_, i) => done(`ok-${i}`)).flat();
   const x = buildLogExport(input([...ok, ...two("x1"), ...two("x2")]));
-  assert.equal(x.rows, 98);
+  assert.equal(x.rows, 100);
   assert.equal(x.left_out.served_two_versions, 2, "2 of 100 is exactly the limit and is allowed");
-  assert.ok(!csvRows(x.csv).some((r) => r[0] === "x1"));
+  assert.deepEqual(x.two_versions_by, { [BASE]: 2 });
+  assert.deepEqual(csvRows(x.csv).find((r) => r[0] === "x1")?.slice(1, 3).concat(csvRows(x.csv).find((r) => r[0] === "x1")?.slice(6) ?? []), [BASE, "2026-11-02T10:00:00Z", "", "", ""], "first version, empty values");
+  // A call under another version after the newest outcome changes nothing.
+  const after = buildLogExport(input([...done("p"), call("p", "2026-11-10T00:00:00Z", CAND)]));
+  assert.equal(after.left_out.other_version_after_outcome, 1);
+  assert.equal(after.left_out.served_two_versions, 0);
+  assert.equal(csvRows(after.csv)[1][6], "1", "its values stand");
   refused(() => buildLogExport(input([...ok.slice(0, 194), ...two("x1"), ...two("x2"), ...two("x3")])), "telemetry_incomplete", /3 of 100 .*0\.02.*sticky/s);
   refused(() => buildLogExport(input([...two("x1")])), "telemetry_incomplete", /sticky/);
 });
@@ -147,9 +155,8 @@ test("a contract that pins a query hash is refused: a wrapper export carries non
   refused(() => buildLogExport(input(done("a"), { contract: contract({ query_hash: "a".repeat(64) }) })), "usage", /query/);
 });
 
-test("no completed conversation in the window is an incomplete export", () => {
-  refused(() => buildLogExport(input([call("a", "2026-11-02T10:00:00Z")])), "telemetry_incomplete", /no completed conversation/);
-  refused(() => buildLogExport(input(done("a", "2026-12-25T10:00:00Z"))), "telemetry_incomplete");
+test("no conversation with a call in the window is an incomplete export", () => {
+  refused(() => buildLogExport(input(done("a", "2026-12-25T10:00:00Z"))), "telemetry_incomplete", /no conversation with a recorded call/);
 });
 
 test("the window must be valid and non-empty", () => {
@@ -321,9 +328,9 @@ test("problems found by the import are reported before anything is written, and 
     const file = join(clean, readdirSync(clean).find((n) => n.startsWith("calls-")) as string);
     writeFileSync(file, `${readFileSync(file, "utf8")}garbage\n${JSON.stringify({ v: 1, type: "problem", at: "2026-10-02T00:00:00Z", agent: AGENT, kind: "write_failed" })}\n${JSON.stringify(call("conv-orphan-secret", "2026-10-02T01:00:00Z"))}\n${JSON.stringify(outcome("conv-nocall-secret", "2026-10-02T01:00:00Z", V))}\n`);
     const done = writeLogExport({ ...base, logDir: clean });
-    assert.equal(done.rows, 50);
+    assert.equal(done.rows, 51, "the orphan call is a row with empty values");
     assert.deepEqual(done.notes.map((n) => n.replace(/\d+/g, "N")), [
-      "N conversation was left out because no outcome is recorded for it yet.",
+      "N conversation has a recorded call and no outcome yet (by first-served version: juniper-vN N). They are in the export with empty values, so the analysis counts them as missing outcomes in that version until a later export fills them in.",
       "N conversation has an outcome but no recorded call, so it was left out. Check that every agent call goes through the recorder.",
       "N line of the log could not be read and was skipped.",
       "The recorder logged N problem of kind write_failed: some calls or outcomes may be missing from the log.",
@@ -371,7 +378,7 @@ test("served-by-two-versions and outcome-without-call add up in one rate", () =>
   const ok = Array.from({ length: 97 }, (_, i) => done(`ok-${i}`)).flat();
   // 1 + 1 of 100 is exactly the 2% limit and is allowed; 2 + 1 of 100 is over it.
   const fine = buildLogExport(input([...ok, ...done("ok-97"), ...two("x1"), outcome("n1", "2026-11-05T10:00:00Z", V)]));
-  assert.deepEqual([fine.rows, fine.left_out.served_two_versions, fine.left_out.outcome_without_call], [98, 1, 1]);
+  assert.deepEqual([fine.rows, fine.left_out.served_two_versions, fine.left_out.outcome_without_call], [99, 1, 1]);
   refused(() => buildLogExport(input([...ok, ...two("x1"), ...two("x2"), outcome("n1", "2026-11-05T10:00:00Z", V)])), "telemetry_incomplete", /3 of 100/);
 });
 
@@ -454,7 +461,7 @@ test("the export defaults to the pilot's agent, takes --agent, and refuses an ag
     // An empty log (no line of any agent) is not an agent mix-up: the usual "no completed conversation" answer.
     const empty = join(ctx.root, "empty-log");
     mkdirSync(empty);
-    refused(() => writeLogExport({ ...base, logDir: empty }), "telemetry_incomplete", /no completed conversation/);
+    refused(() => writeLogExport({ ...base, logDir: empty }), "telemetry_incomplete", /no conversation with a recorded call/);
     // The command takes --agent.
     const lines: string[] = [];
     assert.equal(await exportLog(ctx.store, { log: logDir, baseline: true, start, end: addDays(start, 14), agent: "Cedar", out: join(ctx.root, "out-4") }, deps(lines, "2026-10-17T00:00:00Z")), 0);

@@ -6,6 +6,7 @@ import * as commands from "./commands.ts";
 import type { Flags, PilotDeps } from "./commands.ts";
 import { PilotError } from "./errors.ts";
 import { exportLog, writeLogExport } from "./export.ts";
+import { printable } from "./io.ts";
 import { PilotStore } from "./store.ts";
 import { watch, type LogExporter } from "./watch.ts";
 
@@ -69,7 +70,7 @@ const OPTIONS = {
 // What `watch --log` calls at a due look: the same export `pilot export` writes, into the pilot directory's exports/.
 const realLogExporter = (agent: string | undefined): LogExporter => (i) => {
   const out = writeLogExport({ store: i.store, logDir: i.logDir, scope: { experiment: i.experimentId }, assignment: i.assignment as "randomized" | "observational", now: i.now, ...(agent ? { agent } : {}) });
-  return { path: out.path };
+  return { path: out.path, notes: out.notes };
 };
 
 type Command = (store: PilotStore, flags: Flags, deps: PilotDeps) => Promise<number>;
@@ -102,7 +103,9 @@ export async function main(argv: string[], deps: PilotDeps, prog: string = CHECK
     return await command(new PilotStore(resolve(typeof flags.dir === "string" ? flags.dir : DEFAULT_DIR)), flags, deps);
   } catch (e) {
     if (e instanceof PilotError) {
-      deps.say(`Refused (${e.code}): ${e.message}`);
+      // Some refusals quote a value from the customer's files (a prompt version, a name): flattened, so a control
+      // sequence in it cannot move the cursor or rewrite earlier output.
+      deps.say(`Refused (${e.code}): ${printable(e.message, 2000)}`);
       return 1;
     }
     // An unexpected failure. Its message is not printed by default: an error from a parser, a provider or git

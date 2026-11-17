@@ -26,12 +26,13 @@ export interface LogExportInput {
 }
 
 export interface LeftOut {
-  no_outcome: number;
+  no_outcome: number; // not left out: exported with empty values, so the analysis counts them as missing outcomes
   outcome_without_call: number; // unattributed: counted in the refusal rate
-  served_two_versions: number; // unattributed: counted in the refusal rate
+  served_two_versions: number; // unattributed: counted in the refusal rate; exported with empty values
   outside_window: number;
   other_agent: number; // conversations of other agents in the same log
   outcome_before_call: number; // a note: these rows are in the export
+  other_version_after_outcome: number; // a note: a later call under another version; the row is unchanged
 }
 
 export interface LogExport {
@@ -41,6 +42,9 @@ export interface LogExport {
   by_version: Record<string, number>;
   left_out: LeftOut;
   other_tags: Record<string, number>;
+  // Per first-served version, so a one-sided pattern is visible.
+  no_outcome_by: Record<string, number>;
+  two_versions_by: Record<string, number>;
 }
 
 const seconds = (iso: string): IsoTime => iso.replace(/\.\d+Z$/, "Z");
@@ -59,11 +63,14 @@ export function buildLogExport(input: LogExportInput): LogExport {
   if (startMs >= endMs) throw new PilotError("usage", "The window is empty: it must start before both its end and the time of the export.");
 
   const exportedMs = ms(input.exported_at);
-  const left: LeftOut = { no_outcome: 0, outcome_without_call: 0, served_two_versions: 0, outside_window: 0, other_agent: 0, outcome_before_call: 0 };
+  const left: LeftOut = { no_outcome: 0, outcome_without_call: 0, served_two_versions: 0, outside_window: 0, other_agent: 0, outcome_before_call: 0, other_version_after_outcome: 0 };
+  const noOutcomeBy: Record<string, number> = {};
+  const twoBy: Record<string, number> = {};
   const otherTags: Record<string, number> = {};
   const byVersion: Record<string, number> = {};
   const rows: { id: string; version: string; started: string; segment?: string; unit?: string; model?: string; values: (number | null)[] }[] = [];
   const known = new Set(metrics);
+  const bump = (m: Record<string, number>, k: string) => { m[k] = (m[k] ?? 0) + 1; };
 
   const byId = [...input.log.conversations.values()].sort((a, b) => (a.conversation_id < b.conversation_id ? -1 : a.conversation_id > b.conversation_id ? 1 : 0));
   for (const c of byId) {
@@ -77,30 +84,42 @@ export function buildLogExport(input: LogExportInput): LogExport {
       if (newest !== undefined && newest >= startMs && newest < exportedMs) left.outcome_without_call++;
       continue;
     }
+    for (const name of c.values.keys()) {
+      if (!known.has(name)) throw new PilotError("invalid_telemetry", `The log records an outcome named ${printable(name, 40)}, which is not a metric in the contract. Fix the name in the code that calls outcome(); an outcome under another name would be counted as missing.`);
+    }
     const first = c.calls[0];
     const started = seconds(first.started_at ?? first.at);
     // Judged by its start only: a conversation outside the window is not part of this export and is not a defect.
     if (ms(started) < startMs || ms(started) >= endMs) { left.outside_window++; continue; }
-    if (c.outcome_lines === 0) { left.no_outcome++; continue; }
-    if (c.calls.some((x) => x.prompt_version !== first.prompt_version)) { left.served_two_versions++; continue; }
-    for (const name of c.values.keys()) {
-      if (!known.has(name)) throw new PilotError("invalid_telemetry", `The log records an outcome named ${printable(name, 40)}, which is not a metric in the contract. Fix the name in the code that calls outcome(); an outcome under another name would be counted as missing.`);
-    }
+    // Calls under another version. One made after the newest outcome cannot have influenced it: the row stands.
+    // One made before or with it (or with no outcome at all) contaminates the outcome: the conversation stays in the
+    // arm it was assigned to, with every value empty, so it counts as a missing outcome there and is never dropped.
+    const others = c.calls.filter((x) => x.prompt_version !== first.prompt_version);
+    const newestOutcome = c.newest_outcome_at;
+    const contaminated = others.some((x) => newestOutcome === undefined || Date.parse(x.at) <= newestOutcome);
+    let values = metrics.map((m) => c.values.get(m) ?? null);
+    if (contaminated) { left.served_two_versions++; bump(twoBy, first.prompt_version); values = metrics.map(() => null); }
+    else if (others.length > 0) left.other_version_after_outcome++;
+    // A call with no outcome is a row with empty values too: the analysis checks missing outcomes in each arm and
+    // between the arms, and a failure whose outcome was never recorded must not simply disappear. Inside the outcome
+    // lag it is not yet known; a later export fills it in.
+    if (c.outcome_lines === 0) { left.no_outcome++; bump(noOutcomeBy, first.prompt_version); }
     // Outcomes may be recorded by another process, so an earlier outcome is still joined; it is only noted.
     if (c.oldest_outcome_at !== undefined && c.oldest_outcome_at < ms(first.at)) left.outcome_before_call++;
-    if (!input.tags.includes(first.prompt_version)) otherTags[first.prompt_version] = (otherTags[first.prompt_version] ?? 0) + 1;
-    byVersion[first.prompt_version] = (byVersion[first.prompt_version] ?? 0) + 1;
-    rows.push({ id, version: first.prompt_version, started, segment: first.segment, unit: first.unit_id, model: first.model_id, values: metrics.map((m) => c.values.get(m) ?? null) });
+    if (!input.tags.includes(first.prompt_version)) bump(otherTags, first.prompt_version);
+    bump(byVersion, first.prompt_version);
+    rows.push({ id, version: first.prompt_version, started, segment: first.segment, unit: first.unit_id, model: first.model_id, values });
   }
 
   // Ambiguous or missing attribution can never become a claimed win: a conversation served by two versions and an
   // outcome with no recorded call are both left out, and together they may not exceed the contract's limit.
   const unattributed = left.served_two_versions + left.outcome_without_call;
-  const attributable = rows.length + unattributed;
+  // served_two_versions conversations are rows now, so only outcomes with no call are added to the total.
+  const attributable = rows.length + left.outcome_without_call;
   if (unattributed > 0 && unattributed / attributable > contract.max_unattributed_rate) {
     throw new PilotError("telemetry_incomplete", `${unattributed} of ${attributable} conversations could not be credited to one prompt version (${left.served_two_versions} were served by more than one version, ${left.outcome_without_call} have an outcome but no recorded call), which is more than the ${contract.max_unattributed_rate} the contract allows. Assignment must be sticky per conversation: choose the version once, from the conversation id, and use it for every call of that conversation. Every agent call must go through the recorder, so that each outcome has a call.`);
   }
-  if (rows.length === 0) throw new PilotError("telemetry_incomplete", "There is no completed conversation in the window yet: no conversation has both a recorded call and a recorded outcome. Export again when outcomes have been recorded.");
+  if (rows.length === 0) throw new PilotError("telemetry_incomplete", "There is no conversation with a recorded call in the window yet. Export again once the agent has served conversations.");
 
   const csv = `${[
     ["conversation_id", "prompt_version", "started_at", "segment", "unit_id", "model_id", ...metrics].join(","),
@@ -118,7 +137,7 @@ export function buildLogExport(input: LogExportInput): LogExport {
     expected_rows: rows.length,
     rows_csv: input.csv_name,
   };
-  return { header, csv, rows: rows.length, by_version: byVersion, left_out: left, other_tags: otherTags };
+  return { header, csv, rows: rows.length, by_version: byVersion, left_out: left, other_tags: otherTags, no_outcome_by: noOutcomeBy, two_versions_by: twoBy };
 }
 
 export function writeLogExport(input: {
@@ -169,9 +188,10 @@ export function writeLogExport(input: {
   const notes: string[] = [];
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   const l = built.left_out;
-  if (l.no_outcome) notes.push(`${plural(l.no_outcome, "conversation was", "conversations were")} left out because no outcome is recorded for ${l.no_outcome === 1 ? "it" : "them"} yet.`);
+  if (l.no_outcome) notes.push(`${plural(l.no_outcome, "conversation has", "conversations have")} a recorded call and no outcome yet (by first-served version: ${Object.entries(built.no_outcome_by).sort().map(([t, n]) => `${printable(t, 40)} ${n}`).join(", ")}). They are in the export with empty values, so the analysis counts them as missing outcomes in that version until a later export fills them in.`);
   if (l.outcome_without_call) notes.push(`${plural(l.outcome_without_call, "conversation has", "conversations have")} an outcome but no recorded call, so ${l.outcome_without_call === 1 ? "it was" : "they were"} left out. Check that every agent call goes through the recorder.`);
-  if (l.served_two_versions) notes.push(`${plural(l.served_two_versions, "conversation was", "conversations were")} left out because ${l.served_two_versions === 1 ? "it was" : "they were"} served by more than one prompt version.`);
+  if (l.served_two_versions) notes.push(`${plural(l.served_two_versions, "conversation was", "conversations were")} served by a second prompt version before or with the outcome (by first-served version: ${Object.entries(built.two_versions_by).sort().map(([t, n]) => `${printable(t, 40)} ${n}`).join(", ")}). Their outcome cannot be credited to one prompt, so they are in the export under the first version with empty values and count as missing outcomes there.`);
+  if (l.other_version_after_outcome) notes.push(`${plural(l.other_version_after_outcome, "conversation was", "conversations were")} served by another prompt version only after the outcome was recorded. The row is unchanged.`);
   if (l.outside_window) notes.push(`${plural(l.outside_window, "conversation", "conversations")} in the log started outside the window and ${l.outside_window === 1 ? "is" : "are"} not in this export.`);
   if (log.malformed) notes.push(`${plural(log.malformed, "line", "lines")} of the log could not be read and ${log.malformed === 1 ? "was" : "were"} skipped.`);
   for (const [kind, n] of Object.entries(log.problems)) notes.push(`The recorder logged ${plural(n, "problem", "problems")} of kind ${kind}: some calls or outcomes may be missing from the log.`);
