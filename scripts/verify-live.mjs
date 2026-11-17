@@ -23,6 +23,9 @@ export const TASK_FILES = {
   "9": ["src/live/stats.ts", "test/live-stats.test.ts"],
   "10": ["src/live/rule.ts", "src/live/gate.ts", "scripts/mutation-check.mjs", "test/live-rule.test.ts", "test/live-gate.test.ts"],
   "11": ["scripts/simulate-live-gate.ts", "test/live-simulate.test.ts"],
+  // Final review fixes (same plan, section "Final review fixes").
+  "12": ["src/live/gate.ts", "test/live-gate.test.ts", "scripts/mutation-check.mjs"],
+  "13": ["scripts/simulate-live-gate.ts", "test/live-simulate.test.ts", "scripts/verify-live.mjs", "scripts/verify-live.d.mts", "test/live-verify.test.ts", "docs/assign-vectors.json", "test/live-assign.test.ts"],
 };
 const ALL_FILES = [...new Set(Object.values(TASK_FILES).flat())];
 
