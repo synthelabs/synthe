@@ -18,6 +18,8 @@ export interface SimulateOptions {
   // When true, each day's units split between the arms like a real 50/50 assignment: base gets a normal
   // approximation of Binomial(2n, 0.5), test gets the rest. The split check then has real work to do.
   splitUnits?: boolean;
+  // msprt only: the smallest effect worth detecting, in metric units. Passed to the gate as min_effect.
+  minEffect?: number;
 }
 
 export interface SimulateResult {
@@ -96,6 +98,7 @@ export function simulate(o: SimulateOptions): SimulateResult {
         readings: ledger,
         rule: o.rule,
         changed: [],
+        min_effect: o.minEffect,
       });
       if (verdict.action !== "continue") {
         outcome = verdict.action;
@@ -120,8 +123,11 @@ interface Scenario {
   ok: (value: number) => boolean;
 }
 
+const MSPRT_MIN_EFFECT = 0.006;
+
 function scenarios(): Scenario[] {
   const looks = resolveRule({ method: "looks", looks: 4 }).rule;
+  const msprtRule = resolveRule({ method: "msprt" }).rule;
   return [
     {
       label: "A/A, fixed",
@@ -165,6 +171,28 @@ function scenarios(): Scenario[] {
       measure: "invalid",
       limit: "none, printed for reference",
       ok: () => true,
+    },
+    {
+      label: "A/A, msprt",
+      opts: { runs: 4000, baseRate: 0.03, testRate: 0.03, unitsPerArmPerDay: 500, rule: msprtRule, seed: 6, minEffect: MSPRT_MIN_EFFECT },
+      measure: "promote",
+      limit: "<= 0.05",
+      ok: (p) => p <= 0.05,
+    },
+    {
+      // The fixed method's planted-lift power is the "Planted lift, fixed" line above.
+      label: "Planted lift, msprt (fixed: see the line above)",
+      opts: { runs: 2000, baseRate: 0.03, testRate: 0.036, unitsPerArmPerDay: 497, rule: msprtRule, seed: 7, minEffect: MSPRT_MIN_EFFECT },
+      measure: "promote",
+      limit: "0.43 to 0.55 (Python estimate 0.49, within 0.06)",
+      ok: (p) => Math.abs(p - 0.49) <= 0.06,
+    },
+    {
+      label: "Planted loss, msprt",
+      opts: { runs: 2000, baseRate: 0.036, testRate: 0.03, unitsPerArmPerDay: 497, rule: msprtRule, seed: 8, minEffect: MSPRT_MIN_EFFECT },
+      measure: "promote",
+      limit: "<= 0.001",
+      ok: (p) => p <= 0.001,
     },
   ];
 }
