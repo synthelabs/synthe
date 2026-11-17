@@ -9,6 +9,7 @@ import { PilotError } from "./errors.ts";
 import { DAY_MS, isSha256, ms, shortId } from "./ids.ts";
 import { unsafeKey } from "./io.ts";
 import { personalDataKinds } from "./pii.ts";
+import { TOKEN_SHAPE } from "./wrap.ts";
 import { canonicalJson } from "../core/evidence.ts";
 import {
   meanSummary, normalQuantile, oneSampleT, sampleSizeMeans, sampleSizeProportions, wilsonInterval, type MeanStats,
@@ -38,7 +39,10 @@ const bad = (message: string): never => fail("invalid_telemetry", message);
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isNonEmpty = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
-const isCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
+// A count above 2^53 is not exact in a double, so "successes plus missing is more than n" can be defeated by rounding
+// (1.8e16 + 2 equals 1.8e16). No pilot has a trillion conversations; larger numbers are refused, never analysed.
+export const MAX_COUNT = 1e12;
+const isCount = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 && v <= MAX_COUNT;
 const validTime = (v: unknown): v is string => typeof v === "string" && !Number.isNaN(ms(v));
 
 const TOP_KEYS = [
@@ -63,8 +67,9 @@ function checkPersonalData(text: string, field: string, where: string): void {
 }
 
 // A field or column name in a refusal. A name the export invented could be data (a CSV with no header line puts
-// its first row there), so only a plain lowercase name is repeated.
-const shown = (name: string): string => (/^[a-z][a-z0-9_]{0,63}$/.test(name) ? `"${name}"` : "with a name that is not a plain lowercase word");
+// its first row there), so only a plain lowercase name is repeated. A recorder token is made of lowercase letters and
+// so reads as a plain word: it is never repeated, because a CSV whose header line was lost carries one in its place.
+const shown = (name: string): string => (/^[a-z][a-z0-9_]{0,63}$/.test(name) && !TOKEN_SHAPE.test(name) ? `"${name}"` : "with a name that is not a plain lowercase word");
 
 // Without a unit id, two conversations can honestly share a start time and every value, so one twin proves
 // nothing. A duplicated export does not look like chance, though: every copied row has an exact twin, far more
@@ -257,6 +262,15 @@ function validateAggregate(raw: unknown, where: string, contract: MetricContract
       if (typeof s.sd !== "number" || !Number.isFinite(s.sd) || s.sd < 0) bad(`${where}: metrics.${m.name}.sd must be a finite number of 0 or more.`);
       if (!isCount(s.missing) || s.missing > n) bad(`${where}: metrics.${m.name}.missing must be a whole number from 0 to n.`);
       if (s.nonzero !== undefined && (!isCount(s.nonzero) || s.nonzero > n - (s.missing as number))) bad(`${where}: metrics.${m.name}.nonzero must be a whole number from 0 to the conversations that have a value.`);
+      // nonzero certifies a mean guard (30 non-zero values per arm), so it may not contradict the summary beside it.
+      // With sd 0 every value equals the mean: all are zero (mean 0) or none is. With nonzero 0 every value is zero.
+      if (s.nonzero !== undefined && n - (s.missing as number) > 0) {
+        const have = n - (s.missing as number);
+        const expected = s.sd === 0 ? (s.mean === 0 ? 0 : have) : null;
+        if ((expected !== null && s.nonzero !== expected) || (s.nonzero === 0 && (s.mean !== 0 || s.sd !== 0))) {
+          bad(`${where}: metrics.${m.name}.nonzero contradicts its mean and sd: with sd 0 every value equals the mean, and with nonzero 0 the mean and sd must both be 0.`);
+        }
+      }
       if (m.range) {
         const have = n - (s.missing as number);
         const half = (m.range.max - m.range.min) / 2;
@@ -283,11 +297,22 @@ function validateAggregate(raw: unknown, where: string, contract: MetricContract
   return agg;
 }
 
+// How many different unexpected prompt versions a refusal names. More than this are counted, never listed.
+export const MAX_NAMED_VERSIONS = 3;
+
 export function versionCheck(tags: string[], allowed: string[], noun: string): void {
   const unexpected = tags.filter((t) => !allowed.includes(t));
   if (unexpected.length === 0) return;
   const distinct = [...new Set(unexpected)].sort();
-  fail("telemetry_version_mismatch", `${unexpected.length} ${noun}${unexpected.length === 1 ? "" : "s"} carry a prompt_version that is not expected here (${distinct.slice(0, 3).join(", ")}${distinct.length > 3 ? `, and ${distinct.length - 3} more` : ""}). Expected only: ${allowed.join(", ")}. Export only the tags the pilot names.`);
+  // A wrong tag is named, so the operator sees what was exported. But an export query that picked the wrong column
+  // puts ids here, and ids must not be repeated: a prompt has a few versions, a column of ids has many values. So
+  // more than three different values are only counted, and a value shaped like a recorder token is never shown.
+  const plain = distinct.filter((t) => !TOKEN_SHAPE.test(t));
+  const hidden = distinct.length - plain.length;
+  const named = distinct.length > MAX_NAMED_VERSIONS
+    ? `${distinct.length} different values, not shown: that many values in the prompt_version column are probably ids, not prompt versions`
+    : [plain.join(", "), hidden > 0 ? `${hidden} value${hidden === 1 ? "" : "s"} shaped like a recorder id token, not shown` : ""].filter(Boolean).join(", ");
+  fail("telemetry_version_mismatch", `${unexpected.length} ${noun}${unexpected.length === 1 ? "" : "s"} carry a prompt_version that is not expected here (${named}). Expected only: ${allowed.join(", ")}. Export only the tags the pilot names.`);
 }
 
 // Classifies each row as unattributed (its unit appears under more than one tag), immature (outcome not final by

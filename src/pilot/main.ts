@@ -5,7 +5,10 @@ import { parseArgs } from "node:util";
 import * as commands from "./commands.ts";
 import type { Flags, PilotDeps } from "./commands.ts";
 import { PilotError } from "./errors.ts";
+import { exportLog, writeLogExport } from "./export.ts";
+import { printable } from "./io.ts";
 import { PilotStore } from "./store.ts";
+import { watch, type LogExporter } from "./watch.ts";
 
 export const DEFAULT_DIR = ".synthe-pilot";
 // How the person started the pilot, so help and hints name a command they can type: `npx synthe pilot` from the
@@ -35,6 +38,9 @@ Review and experiment
               --publish --repo <owner/name> --base <branch> --confirm <full candidate id>   open the pull request
   approve     --candidate <full id> --experiment <full id> --approver <name> [--reject]
   analyze     --experiment <id> [--telemetry <export.json>] [--reopen]   keep, hold or revert, from the customer's outcome export
+  watch       --inbox <dir> | --log <dir> --assignment randomized|observational [--experiment <id>] [--interim-days N]   one scheduled tick: analyse only at allowed looks; never publishes
+  export      --log <dir> --experiment <id> --assignment randomized|observational [--agent <name>] [--out <dir>]   turn the recorder's call log into the outcome export
+              --log <dir> --baseline --start <UTC time> --end <UTC time>                                              a baseline export from the log
 
 Close the loop
   promote     --list | --request <request.json>         approved failures become regression cases in a new pack version
@@ -55,16 +61,23 @@ const OPTIONS = {
   dir: { type: "string" }, config: { type: "string" }, "repo-dir": { type: "string" }, rev: { type: "string" },
   telemetry: { type: "string" }, file: { type: "string" }, model: { type: "string" }, proposer: { type: "string" },
   finding: { type: "string" }, author: { type: "string" }, rationale: { type: "string" }, candidate: { type: "string" },
-  start: { type: "string" }, share: { type: "string" }, repo: { type: "string" }, base: { type: "string" }, confirm: { type: "string" },
+  start: { type: "string" }, end: { type: "string" }, log: { type: "string" }, assignment: { type: "string" }, agent: { type: "string" }, share: { type: "string" }, repo: { type: "string" }, base: { type: "string" }, confirm: { type: "string" },
   experiment: { type: "string" }, approver: { type: "string" }, request: { type: "string" }, out: { type: "string" },
   "confirm-endpoint": { type: "string" }, "allow-endpoint-host": { type: "string" }, "confirm-data": { type: "string" }, head: { type: "string" },
-  publish: { type: "boolean" }, "allow-past-start": { type: "boolean" }, reopen: { type: "boolean" }, "accept-flags": { type: "string" }, live: { type: "boolean" }, reject: { type: "boolean" }, list: { type: "boolean" }, help: { type: "boolean" },
+  publish: { type: "boolean" }, baseline: { type: "boolean" }, "allow-past-start": { type: "boolean" }, reopen: { type: "boolean" }, "accept-flags": { type: "string" }, inbox: { type: "string" }, "interim-days": { type: "string" }, live: { type: "boolean" }, reject: { type: "boolean" }, list: { type: "boolean" }, help: { type: "boolean" },
 } as const;
+
+// What `watch --log` calls at a due look: the same export `pilot export` writes, into the pilot directory's exports/.
+const realLogExporter = (agent: string | undefined): LogExporter => (i) => {
+  const out = writeLogExport({ store: i.store, logDir: i.logDir, scope: { experiment: i.experimentId }, assignment: i.assignment as "randomized" | "observational", now: i.now, ...(agent ? { agent } : {}) });
+  return { path: out.path, notes: out.notes };
+};
 
 type Command = (store: PilotStore, flags: Flags, deps: PilotDeps) => Promise<number>;
 const COMMANDS: Record<string, Command> = {
   init: commands.init, baseline: commands.baseline, pack: commands.pack, discover: commands.discover, propose: commands.propose,
   replay: commands.replay, experiment: commands.experiment, review: commands.review, approve: commands.approve, analyze: commands.analyze,
+  export: exportLog, watch: (store, flags, deps) => watch(store, flags, deps, realLogExporter(typeof flags.agent === "string" && flags.agent.trim() !== "" ? flags.agent : undefined)),
   promote: commands.promotePack, report: commands.report, verify: commands.verify, status: commands.status,
 };
 
@@ -90,7 +103,9 @@ export async function main(argv: string[], deps: PilotDeps, prog: string = CHECK
     return await command(new PilotStore(resolve(typeof flags.dir === "string" ? flags.dir : DEFAULT_DIR)), flags, deps);
   } catch (e) {
     if (e instanceof PilotError) {
-      deps.say(`Refused (${e.code}): ${e.message}`);
+      // Some refusals quote a value from the customer's files (a prompt version, a name): flattened, so a control
+      // sequence in it cannot move the cursor or rewrite earlier output.
+      deps.say(`Refused (${e.code}): ${printable(e.message, 2000)}`);
       return 1;
     }
     // An unexpected failure. Its message is not printed by default: an error from a parser, a provider or git

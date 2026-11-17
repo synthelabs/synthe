@@ -14,7 +14,7 @@ npx synthe pilot demo --out /tmp/synthe-pilot-demo
 
 From a clean checkout, the same demo is `npm ci`, then `node src/pilot/cli.ts demo --out /tmp/synthe-pilot-demo`.
 
-It takes a few seconds, sends nothing anywhere, and exits 0 only if every expectation holds. The data is invented (Fernhill Outfitters, support agent Juniper). It shows, in order:
+It takes under half a minute (about 17 seconds on the machine it was written on), sends nothing anywhere, and exits 0 only if every expectation holds. The data is invented (Fernhill Outfitters, support agent Juniper). It shows, in order:
 
 1. A baseline report from an imported telemetry export and a frozen metric contract.
 2. A proposed change **rejected in replay**: a blocking guard fails, and the report names the case and the turn.
@@ -25,6 +25,9 @@ It takes a few seconds, sends nothing anywhere, and exits 0 only if every expect
 7. Refusals: an export dated in the future, an export with an unknown version tag, publishing without the full confirmation or to another repo, an analysis without an approval, a second experiment for the reverted change, and a later export for an experiment that was already reverted.
 8. Privacy checks: strings planted in the pack do not appear in anything printed, reported or sent.
 9. Verification: every record matches its id, every decision recomputes to the same result, and the journal still holds the head that was noted after the revert.
+10. A fourth change, written by a person (the third one's two lines in the other order), run on simulated live traffic. The demo plays the agent with the real recorder (`pilotRecorder`) and `pickVersion`, about 640 conversations a day for the 14-day window, and `watch --log` reads the log: a tick before the start (waiting, nothing imported), two on day 1 (one look only), one on day 2, one after the window ends, one at the cutoff and one after it. The true lift in the primary metric is 0.01, real but smaller than the 0.03 minimum effect, so the final analysis is **hold** (inconclusive), not keep. The log also holds, on purpose, calls with no outcome, conversations served by two versions and outcomes with no call, and the export notes in the tick's output and in `WATCH.md` carry those counts per first-served version. The demo checks that the log, exports, reports and journal hold no raw conversation id and no message text.
+
+The demo ends with the four outcomes, each with its decision file: rejected in replay (`replay-<candidate>-pack-v1.md`), reverted, kept, and held at the final analysis (`decision-<experiment>.md`). The recorder's id key in the demo is a fixed string that protects nothing; a real key comes from your secret store.
 
 Open these afterwards:
 
@@ -153,7 +156,7 @@ Aggregates form, when rows cannot leave the warehouse: replace `rows_csv` with
 ]
 ```
 
-`n` counts mature, attributable conversations. Each aggregate export must be cumulative from the experiment start; only the newest is used. For a mean metric, `nonzero` is the number of conversations with a value other than 0; without it a mean guard cannot pass. With aggregates Synthe cannot check duplicates, unit overlap or a runtime change, so it takes the customer's counts as given.
+`n` counts mature, attributable conversations. Each aggregate export must be cumulative from the experiment start; only the newest is used. For a mean metric, `nonzero` is the number of conversations with a value other than 0; without it a mean guard cannot pass. With aggregates Synthe cannot check duplicates, unit overlap or a runtime change, so it takes the customer's counts as given. Two things are still refused: a count above 1,000,000,000,000 (larger numbers are not exact, so the checks on them could be defeated by rounding), and a `nonzero` that contradicts the `mean` and `sd` beside it (with `sd` 0 every value equals the mean; with `nonzero` 0 the mean and sd must both be 0).
 
 Rules that keep the counts honest:
 
@@ -169,6 +172,69 @@ Rules that keep the counts honest:
 - A refused export leaves no record, so the next correct export still imports.
 - The first export made at or after the cutoff gives the final result. A second one is refused unless the caller reopens the experiment on purpose (`reopen`; the CLI flag is `--reopen`), because a final result that can be redone with new numbers until it reads keep is not predeclared. A reopened decision says so, and every repeat of it needs the same flag (a larger aggregate after the cutoff otherwise turns a hold into a keep).
 - A keep or a revert ends the experiment. It takes no more exports after that, and its candidate gets no second experiment: a stopped change cannot come back as a keep.
+
+## Recording calls and outcomes (the wrapper)
+
+A customer that has no warehouse query can record the pilot's data with `synthe/pilot`, a small module that imports only Node built-ins (no network, no message text). It appends one line per call and per outcome to a local log. `pilot export` turns the log into the telemetry export above.
+
+```js
+import { pilotRecorder, pickVersion } from "synthe/pilot";
+
+// agent: the agent.name in pilot.json. idKey: a secret you keep; ids are written as keyed tokens.
+const recorder = pilotRecorder({ logDir: "/var/lib/agent/synthe-calls", agent: "Juniper", idKey: process.env.SYNTHE_ID_KEY });
+// The specification says allocation.candidate 0.2, so the share is 0.2 x 10000 = 2000 basis points.
+const split = { salt: "<experiment id>", baseline: "juniper-v14", candidate: "synthe-0123456789ab", candidateShareBp: 2000 };
+
+async function answer(conversationId, message) {
+  const promptVersion = pickVersion({ key: conversationId, ...split });
+  return recorder.call({ promptVersion, conversationId }, () => runAgent(promptVersion, message));
+}
+
+// Where the outcome becomes known (it may be another process that has the same idKey):
+recorder.outcome(conversationId, { resolved: 1, escalated: 0, refund_usd: 0 });
+```
+
+`recorder.call` writes the line before it runs your function, returns what the function returns and throws what it throws. `recorder.record(ctx)` is the same line without wrapping, for streaming agents. A bad argument or a failed write never throws into the agent: it is counted (`recorder.problems()`, the optional `onProblem` callback) and written as a `problem` line that names a kind only. The recorder throws only at construction, which is your startup: `logDir` and `agent` are required, and so is exactly one of `idKey` and `rawIds: true`. The recorder will not guess: without `idKey` it writes raw conversation and unit ids into the log, so you must say so with `rawIds: true`. `idKey` is strongly recommended, and must be a secret of at least 16 characters (a short key lets anyone who knows one id and its token recover the key and reverse every other token; the recorder refuses one at startup). With it, an id becomes `HMAC-SHA256(idKey, "<conversation|unit>:<id>")`, the first 16 bytes written as 32 letters from `a` to `p`. A token has no digit, so the import's card-number and national-id checks can never refuse one, and a call and its outcome join as long as both use the same key. The recorder opens the log without following a symbolic link (a link under the log's name is a failed write, counted as a problem), and starts its line on a new line when another process died in the middle of a write.
+
+### The split rule
+
+`pickVersion` uses the reviewed rule `sha256-v1`: the bucket is the first 8 hex digits of `SHA-256("<salt>:<key>")` modulo 10,000, and the arms take consecutive ranges of the 10,000 buckets in proportion to their weights, baseline first. The share is `candidateShareBp`, in basis points: 5000 is half. The specification's `allocation.candidate` is a fraction, so multiply it by 10,000 (0.2 becomes 2000); it must come out as a whole number from 1 to 9999. Other languages can reproduce the split from `docs/assign-vectors.json`, which holds the expected buckets and picks. Use the conversation id as the key so every call of one conversation gets one version. The rule is frozen: a change would move running conversations between arms, so it would get a new rule name.
+
+### The call log (`synthe-pilot-calls/v1`)
+
+A log is a folder of `calls-YYYY-MM-DD.jsonl` files (the UTC date of the line), one JSON object per line, ending in a newline. Another language can write it. Every line has `"v": 1`, `type`, `at` (UTC, ending in `Z`) and `agent` (1 to 200 characters, not blank). Ids and tags are 1 to 200 characters, not blank. A line without a valid `agent` is skipped as malformed.
+
+| `type` | Other fields |
+|---|---|
+| `call` | `conversation_id`, `prompt_version`; optional `started_at` (UTC), `unit_id`, `segment`, `model_id` |
+| `outcome` | `conversation_id`, `values`: an object of metric name (letters, digits, `_`, `.`, `-`, at most 100 characters; at most 50 metrics) to a finite number or `null` |
+| `problem` | `kind`: one of `invalid_call`, `invalid_outcome`, `write_failed` |
+
+Conversations are keyed by the pair (`agent`, `conversation_id`). Never put message text in a line, and never read the log with an assistant: it holds your customers' ids.
+
+### What the export cannot check
+
+`units` and `denominator` in the export header are copied from the pilot's contract, because the log has no way to know them. The check that an outcome means what the contract says (the unit, and which conversations belong in the denominator) is therefore at the `outcome()` call site, in your code. Record an outcome only for a conversation the contract's denominator counts, in the contract's unit.
+
+### `pilot export`
+
+```
+export --log <dir> --experiment <id> --assignment randomized|observational [--agent <name>] [--out <dir>]
+export --log <dir> --baseline --start <UTC time> --end <UTC time> [--agent <name>] [--out <dir>]
+```
+
+It reads the log, writes the export (JSON and CSV, default `<pilot directory>/exports`) after running the same check `analyze` and `baseline` make, and prints the next command. `--assignment` is never guessed: say `randomized` only if traffic was split at random by conversation. The agent is `--agent`, else the pilot's `agent.name`. If the log holds other agents and none is the chosen one, the export is refused and says how many agents the log holds. Only the chosen agent's conversations are used; the others are counted and noted.
+
+### Which conversations are credited
+
+One conversation can be credited to one prompt version only, and what is ambiguous is never counted as a win:
+
+- The attribution rule for a call-log export, in three sentences. (1) A conversation with a recorded call is always a row, in the version of its first call; a call with no outcome is a row with every metric value empty, so the analysis counts it as a missing outcome in the arm it belongs to, and inside the outcome lag as not yet known. (2) Once a different version has served the conversation, only an outcome recorded before that call is used: an outcome recorded at the same time or later may have been influenced by the other prompt. With no value recorded before it (no outcome line, or a line that holds nothing), the conversation is a row in its first version with every value empty, and it is counted as unattributed. This is decided metric by metric: a metric recorded only after that call stays empty even when other metrics were recorded before it, and then counts as a missing outcome. (3) An outcome line recorded after the other version's call never changes the row, whether it repeats the value or changes it, so a retry cannot rewrite what an earlier export said; the export notes both counts.
+- The export's notes give the counts per first-served version for conversations with no outcome and for conversations served by two versions, so a pattern in one arm is visible. `watch --log` prints and records the same notes.
+- A conversation with an outcome but no recorded call is unattributed too. It has no start time, so the window cannot place it: it counts when its newest outcome line is inside `[window start, export time)`. An outcome older or newer than that belongs to another export.
+- If unattributed conversations (two versions, plus outcomes with no call) are more than the contract's `max_unattributed_rate` of those plus the exported rows, the export is refused with counts only (`telemetry_incomplete`).
+- A prompt version that is not the baseline tag or the candidate tag stays in the rows, and the import refuses the export: a third version during an experiment means the split is not what the specification says.
+- An outcome written before its conversation's first call is still joined (another process may record outcomes), and is counted in a note.
 
 ## Conversation pack
 
@@ -239,11 +305,12 @@ Methods: a rate uses the Newcombe hybrid score interval for the difference of tw
 Read these before you rely on a decision:
 
 - Conversations are treated as independent. With `unit_id` in the rows, a pilot whose units average more than 1.2 conversations holds (`clustered_units`). Without `unit_id`, or in the aggregates form, this cannot be checked: if one customer has many conversations, the intervals are too narrow.
-- The experiment is sized to detect `min_effect`. A change whose true effect is exactly `min_effect` is kept only about half the time, because keep also needs the measured gain to reach `min_effect`.
+- The experiment is sized to detect `min_effect`. A change whose true effect is exactly `min_effect` is kept only about half the time, because keep also needs the measured gain to reach `min_effect`; and less often than that when a guard's interval is wide, because every guard must also pass. Measured on the demo contract (independent review, 2026-11-17, 40,000 simulated experiments at 640 conversations a day for 14 days): a true lift of exactly `min_effect` was kept 44% of the time and a lift of twice `min_effect` 78%, because the escalation guard passes only about 83% of the time at that size. With identical arms, keep came out 0.18% of the time and a final revert 2.4% (the 2.5% the rule implies for one side of a 95% interval).
 - Each guard is tested on its own. With several guards, a false revert is more likely than alpha suggests.
 - The early stop is a fixed 99.9% check at every look, not a formal sequential boundary. Many looks raise the chance of a false stop.
 - `final` depends on the export's own `exported_at`. The export is the customer's statement; Synthe cannot audit how the split was run. An export dated in the future is refused: an export dated at or after the analysis cutoff gets no clock tolerance at all, any other export up to five minutes (clock difference between the customer's warehouse and this machine). An honest-looking date cannot be checked.
 - Rows left out of one arm are caught only when the split moves far from the plan (p below 0.001) or the later export no longer contains conversations an earlier one had. A few percent of one arm's failures dropped from the very first export can pass unnoticed.
+- On the wrapper path too, a corrected outcome after an import is refused. When an outcome is recorded again with a different value after an earlier export of the experiment was imported (and the first value was already final), and no other version had served the conversation before that second line, every later export is refused (`telemetry_conflict`), and with `watch --log` the experiment never reaches its final analysis. It has to be run again. Record each outcome once, and only when it is final. A call under another prompt version made after the outcome does not have this effect: the row is unchanged. (Independent review 2026-11-17. A rule for late outcome lines, for example ignoring a line written after the outcome lag, is a counting decision for the founders and is not built.)
 - Missing outcomes are checked two ways: the share in each arm against the limit, and one arm against the other. Outcomes that are missing equally often in both arms, but for the baseline's successes and the candidate's failures, pass both checks and make the candidate look better. Keep `max_missing_rate` low, and ask the customer why outcomes are missing.
 - A second copy of a conversation is recognised only when it is exact (same start time, version, segment and values). A copy with a changed start time or value, or copies in an export with one timestamp per day, cannot be told from more conversations. Send `unit_id`.
 - The outcome lag is the customer's statement of when an outcome is final. If many conversations finish later than it, the last days of the window are missing their slow conversations at the cutoff. The `late rows` count shows this only when there was an earlier export to compare with.
@@ -253,11 +320,66 @@ Read these before you rely on a decision:
 - The standard deviation of a mean metric in the aggregates form is trusted as supplied. Synthe cannot tell whether it was computed per conversation, per day or over a different population, and its meaning is not checked beyond being a finite number of 0 or more (and, for a guard with a range, no larger than the range allows). Two exports with the same sums and different `sd` give different intervals, so a customer who sends a too small `sd` gets a narrow interval and an easier keep. Bucket-level data (the sum and count per hour or day, with the variance taken between buckets) or the sum of squares would fix this, and would narrow the interval for honest data too. It is not built, so prefer rows, and treat an aggregate keep on a mean metric with more caution than a keep on rates.
 - There is no command to purge customer text from the store. Raw messages and conversation ids stay in write-once records, and editing a record makes `verify` fail. To remove customer data, delete the whole pilot directory (it is kept out of git on purpose). A purge that leaves a tombstone and keeps `verify` meaningful is not built yet.
 - A unit that appears in both arms is dropped from the analysis. That is right when `unit_id` is the true assignment key. If the customer randomised by conversation and reused one `unit_id` across both arms, all of those rows are excluded; use the real assignment key as `unit_id`.
+- Two outcome lines with different values for one conversation in the same log are resolved without a count or a note: for each metric the line with the newest recorded time wins. If the clock stepped back between the two, the older line wins. Record each outcome once. (Independent review 2026-11-17, a note; not changed.)
+- The recorder creates the log folder with mode 700 and its files with mode 600. It does not tighten a folder or a file that already exists with a looser mode, and it leaves an existing `.gitignore` in the log folder as it is, so the log may then be readable by other users or staged by `git add -A`. Let the recorder create the folder, and keep it outside any repository. (A note from the same review; not changed.)
+- The recorder reads the fields of the object you pass more than once, and it accepts inherited properties. An object with getters, a Proxy, or a changed `Object.prototype` can put a value into the log that passed no check, including text. Pass plain objects. (A note from the same review; not changed.)
+- `promptVersion` is written to the log as given and is never turned into a token. A refusal for an unexpected prompt version names the values only when there are at most three different ones (each up to 200 characters, control characters removed); more than three are counted and not shown, because a column with many values probably holds ids. So an id passed as `promptVersion` by mistake is in the log, and one to three such ids in an export can still appear in that refusal. Pass the tag from the specification, nothing else. (Independent reviews 2026-11-17. Naming no value at all is the stricter choice; it would also hide a mistyped tag from the operator, so it is left to the founders.)
 - Some error messages print a customer-supplied export or file name as written (length-capped where the code was changed, not everywhere). Do not put customer text in export file names.
 - A review pull request published before the review body gained the release note (2026-11-17) is refused with `conflict` on a publish retry, because the body is rendered again and compared byte for byte. Nothing stored depends on the body text; publish a new review instead.
+- The rows form and the aggregates form disagree about one bad interim export. In the rows form, an export marked `observational` holds the experiment for good, even after an honest final export marked `randomized` (rows from every import are merged, and one observational import marks them all). In the aggregates form only the newest export counts, so the same sequence can keep. The rows behaviour is the safe one; the aggregates behaviour means an earlier statement that traffic was not randomized is forgotten. Not changed here: it is a decision-rule change, and the founders should pick one behaviour for both forms.
+- One interim aggregate export with inflated counts makes every honest later export fail the cumulative check (`telemetry_conflict`), and there is no way to supersede it. The experiment cannot be finished and has to be run again. This is the same gap as corrected outcomes in the rows form.
+- `analyzeExperiment` refuses a specification that is not a randomized two-arm plan with usable numbers (shares that add up to 1, a guard list, alpha, the early stop level, the sample size). It does not re-validate every field of the frozen contract inside the specification; the content id of the stored record is what protects the rest.
+- The call-log export orders a conversation's calls and outcomes by the times the recorder wrote. If two processes record with clocks that disagree, an outcome can look earlier than a call under another version that really came first, and the row is then credited to the first version with only a note. There is no limit on how many conversations may be served by another version after their outcome. A wrong keep from this would need such switching to depend on the arm and on the outcome; it was not simulated. Keep the recording machines' clocks in step, and read the note counts.
+- An aggregate whose `mean` and `sd` were rounded to 0 while `nonzero` is above 0 is refused as contradictory. Send unrounded values.
+- Suspected and not reproduced in the independent reviews of 2026-11-17, so neither fixed nor ruled out: the watch and evidence locks are treated as stale after 10 minutes even when their owner is still alive, so two real processes that see different log contents could both look; `writeAtomic` writes through a temporary file with a predictable name, which a link planted in a shared `--out` folder could redirect; a hard link in the inbox is read like a file; the same raw id under two agents with the same `idKey` gives the same token, which links the two logs. Keep the pilot directory, the log folder and `--out` writable only by the operator.
 - The full pilot mutation check (`node scripts/pilot-mutation-check.mjs`, about 160 mutations) takes over an hour and is not part of CI. It killed 157 of 157 before the egress branch merged. After that merge, a full run killed 158 of 162 before it was stopped for time; new tests were written for the four survivors and shown to kill them and the related mutations, but the whole script was not run again to the end. Run it once when time allows and record the result in the ledger.
 
 Each decision file leads with the recommendation and the team's own number, lists every number with its source record and method, and gives the exact rollback target (the baseline tag and prompt id).
+
+## Watching an experiment
+
+`watch` is one tick of a schedule you run on your own machine (cron or launchd). It is not Synthe operating the live experiment: your team still runs the traffic split with its own controls, and `watch` only decides, from the clock and the journal, whether a look at the results is allowed now, and records it.
+
+```
+npx synthe pilot watch --inbox <dir> [--experiment <id>] [--interim-days N]
+npx synthe pilot watch --log <dir> --assignment randomized|observational [--experiment <id>] [--interim-days N] [--agent <name>]
+```
+
+Give exactly one source. `--inbox` is a folder of outcome exports (`*.json` with their CSV beside them) that your own job drops there. `--log` is the recorder's `logDir`; at a due look `watch` writes one export from it into the pilot directory's `exports/` (never into the inbox or the repository) and analyses that.
+
+**What one tick does.** It finds the one approved experiment that is open (or the one named by `--experiment`) and checks whether a look is allowed. If not, it writes `reports/WATCH.md` saying why and when the next look may run, imports nothing, and exits 0. If a look is allowed, it picks one export, runs the unchanged `analyze` on it (so the import, the checks and the decision are exactly the ones `analyze` makes), reruns `verify`, writes `reports/WATCH.md` and the usual reports, and exits. There is no second decision engine and no state file besides the journal.
+
+**The look cap.** Before the cutoff an analysis can only hold, or revert through a critical guard's early stop, and that stop is checked at 99.9% at every analysis. So looks are limited: one per UTC day (or one per `--interim-days` whole UTC days), and at most ceil((cutoff - window start) / interim days) interim looks. The cap counts journal entries, so a clock that steps back cannot buy more. Each interim look adds at most 0.1% chance of a false early stop per critical guard, so the worst case is looks x 0.1% per critical guard. For the demo contract (14-day window, 2-day lag, cutoff 16 days after the start, one look a day) that is 16 looks, so a false early stop has a chance of at most 1.6% per critical guard. `WATCH.md` prints the number for the experiment it describes.
+
+**Which export.** Before the cutoff an interim look takes the newest export that is newer than the last imported one and was made before the cutoff. The final look takes the earliest export made at or after the cutoff, never a later or better one, and the final analysis is never redone. A keep or a revert ends the experiment: later ticks import nothing and the recommendation in `WATCH.md` does not change. The same content is never imported twice, whatever its file name.
+
+**Exit codes.** 0: a normal tick, including a tick that waited, or found another watch running (it then does nothing). 1: a refusal (for example no usable telemetry at a due look, a usage error), an invalid file in the inbox, or a failed `verify`. A file that is not valid is listed in `WATCH.md` with its code, and does not stop a valid file in the same inbox from being analysed; it keeps the exit code at 1 until you remove it.
+
+**Schedule it** on the machine that holds the pilot directory, with the output kept inside it. Cron (`MAILTO=""` keeps cron from mailing the output):
+
+```
+MAILTO=""
+17 6 * * *  cd /srv/pilot && npx --yes github:synthelabs/synthe#v1.10.0 pilot watch --dir .synthe-pilot --inbox /srv/pilot/inbox >> .synthe-pilot/watch.log 2>&1
+```
+
+launchd (`~/Library/LaunchAgents/com.example.synthe-watch.plist`, then `launchctl load` it):
+
+```
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.example.synthe-watch</string>
+  <key>WorkingDirectory</key><string>/srv/pilot</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/local/bin/npx</string><string>synthe</string><string>pilot</string><string>watch</string>
+    <string>--dir</string><string>/srv/pilot/.synthe-pilot</string><string>--inbox</string><string>/srv/pilot/inbox</string>
+  </array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>17</integer></dict>
+  <key>StandardOutPath</key><string>/srv/pilot/.synthe-pilot/watch.log</string>
+  <key>StandardErrorPath</key><string>/srv/pilot/.synthe-pilot/watch.log</string>
+</dict></plist>
+```
+
+**What it never does.** `watch` never publishes a review or opens a pull request, never changes traffic, never uses the network, and never reads the GitHub token or a provider key: the commands it runs get an empty environment. Neither `WATCH.md` nor its output contains a conversation id, a unit id or a value from the log. Publishing a review still needs a person (`review --publish ... --confirm <full candidate id>`).
 
 ## Publishing
 

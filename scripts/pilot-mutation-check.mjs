@@ -27,6 +27,10 @@ const LIVE = "src/pilot/live.ts";
 const MODEL = "src/pilot/model.ts";
 const COMMANDS = "src/pilot/commands.ts";
 const CONFIG = "src/pilot/config.ts";
+const WRAP = "src/pilot/wrap.ts";
+const CALLLOG = "src/pilot/calllog.ts";
+const EXPORT = "src/pilot/export.ts";
+const WATCH = "src/pilot/watch.ts";
 
 const TESTS = readdirSync("test").filter((f) => /^pilot-.*\.test\.ts$/.test(f)).map((f) => `test/${f}`);
 
@@ -34,8 +38,8 @@ const TESTS = readdirSync("test").filter((f) => /^pilot-.*\.test\.ts$/.test(f)).
 // usually enough; only a mutation they do not catch is run against every pilot test. So a mutation counts as
 // killed if any pilot test fails, exactly as before, but most are settled in a second or two.
 const NEAR = {
-  [EXPERIMENT]: ["test/pilot-experiment.test.ts"],
-  [TELEMETRY]: ["test/pilot-telemetry.test.ts", "test/pilot-experiment.test.ts"],
+  [EXPERIMENT]: ["test/pilot-experiment.test.ts", "test/pilot-engine-spec-validation.test.ts"],
+  [TELEMETRY]: ["test/pilot-telemetry.test.ts", "test/pilot-experiment.test.ts", "test/pilot-engine-input-checks.test.ts", "test/pilot-engine-nonzero-contradiction.test.ts", "test/pilot-telemetry-version-token.test.ts", "test/pilot-watch-token-refusal.test.ts"],
   [REPLAY]: ["test/pilot-replay.test.ts"],
   [DISCOVER]: ["test/pilot-discover.test.ts"],
   [PACK]: ["test/pilot-pack.test.ts"],
@@ -49,6 +53,10 @@ const NEAR = {
   [LIVE]: ["test/pilot-live.test.ts"],
   [MODEL]: ["test/pilot-model.test.ts"],
   [CONFIG]: ["test/pilot-config.test.ts"],
+  [WRAP]: ["test/pilot-wrap.test.ts", "test/pilot-wrap-privacy.test.ts", "test/pilot-attr-log-lines.test.ts", "test/pilot-telemetry-version-token.test.ts"],
+  [CALLLOG]: ["test/pilot-export.test.ts", "test/pilot-attr-log-lines.test.ts", "test/pilot-attr-missing-outcomes.test.ts", "test/pilot-attr-retry-after-interim.test.ts", "test/pilot-attr-same-value-retry.test.ts"],
+  [EXPORT]: ["test/pilot-export.test.ts", "test/pilot-attr-missing-outcomes.test.ts", "test/pilot-attr-retry-after-interim.test.ts", "test/pilot-attr-same-value-retry.test.ts", "test/pilot-attr-watch-notes.test.ts", "test/pilot-attr-log-lines.test.ts"],
+  [WATCH]: ["test/pilot-watch.test.ts", "test/pilot-attr-watch-killed-final.test.ts", "test/pilot-attr-watch-notes.test.ts", "test/pilot-watch-token-refusal.test.ts"],
 };
 
 const allMutations = [
@@ -90,7 +98,8 @@ const allMutations = [
   ["telemetry: the same conversations under new ids are counted twice", TELEMETRY, "      if (gone > 0) {\n", "      if (false) {\n"],
   ["telemetry: a smaller newer aggregate replaces a larger one", TELEMETRY, 'if (shrunk) fail("telemetry_conflict"', 'if (false) fail("telemetry_conflict"'],
   ["telemetry: exports made with different queries are merged", TELEMETRY, 'if (new Set(all.map((i) => i.value.query_hash ?? "none")).size > 1) {', "if (false) {"],
-  ["telemetry: a made-up column name is echoed", TELEMETRY, "const shown = (name: string): string => (/^[a-z][a-z0-9_]{0,63}$/.test(name) ?", "const shown = (name: string): string => (true ?"],
+  ["telemetry: a made-up column name is echoed", TELEMETRY, "const shown = (name: string): string => (/^[a-z][a-z0-9_]{0,63}$/.test(name) && !TOKEN_SHAPE.test(name) ?", "const shown = (name: string): string => (true ?"],
+  ["telemetry: a column name shaped like an id token is echoed", TELEMETRY, "/^[a-z][a-z0-9_]{0,63}$/.test(name) && !TOKEN_SHAPE.test(name) ?", "/^[a-z][a-z0-9_]{0,63}$/.test(name) ?"],
 
   // Replay gate, coverage and held-out hygiene.
   ["replay: a new blocking guard failure does not block", REPLAY, "  for (const f of newBlocking) {\n    reasons.push(", "  for (const f of newBlocking) {\n    if (false) reasons.push("],
@@ -232,6 +241,46 @@ const allMutations = [
   ["init: an existing .gitignore is left without a bare *", COMMANDS, 'if (!lines.includes("*")) appendFileSync(', "if (false) appendFileSync("],
   ["init: tracked files in the directory go unmentioned", COMMANDS, "if (tracked) say(", "if (false) say("],
   ["live: a call may wait for the SDK's ten minutes", LIVE, "maxRetries: 0, timeout: timeoutMs, logLevel", "maxRetries: 0, logLevel"],
+  // Pilot wrapper, call-log export and watch (added 2026-11-17): attribution, privacy and look-gate rules.
+  ["watch: a decided experiment may be looked at again", WATCH, "  if (decided) return { action: \"done\"", "  if (false) return { action: \"done\""],
+  ["watch: a recorded final analysis may be redone", WATCH, "  if (looks.some((l) => l.final)) return { action: \"done\"", "  if (false) return { action: \"done\""],
+  ["watch: the final look waits behind a used-up interim cap (gate order)", WATCH, "  if (now >= cutoff) return { action: \"final\", used, allowed };\n", "  if (now >= cutoff && used < allowed) return { action: \"final\", used, allowed };\n"],
+  ["watch: a look is allowed before the window starts", WATCH, "  if (now < start) return { action: \"wait\"", "  if (false) return { action: \"wait\""],
+  ["watch: the interim cap is ignored", WATCH, "  if (used >= allowed) return { action: \"wait\"", "  if (false) return { action: \"wait\""],
+  ["watch: the interim cap allows one look too many", WATCH, "  if (used >= allowed) return { action: \"wait\"", "  if (used > allowed) return { action: \"wait\""],
+  ["watch: --interim-days is ignored between looks", WATCH, "if (sameDay || days < interimDays) {", "if (sameDay || days < 1) {"],
+  ["watch: the final look takes the latest export, not the earliest", WATCH, "pending.filter((x) => ms(x.exported_at!) >= cutoff).sort((a, b) => ms(a.exported_at!) - ms(b.exported_at!) ||", "pending.filter((x) => ms(x.exported_at!) >= cutoff).sort((a, b) => ms(b.exported_at!) - ms(a.exported_at!) ||"],
+  ["watch: a post-cutoff import with no decision is exported again, not finished", WATCH, "const recover = gate.action === \"final\" && store.find(", "const recover = false && store.find("],
+  ["watch: --log is accepted without --assignment", WATCH, "if (logDir !== undefined && !assignment) throw new PilotError(\"usage\"", "if (false) throw new PilotError(\"usage\""],
+  ["export: an experiment export without --assignment is written", EXPORT, "if (input.assignment !== \"randomized\" && input.assignment !== \"observational\") throw new PilotError(\"usage\", \"An experiment export needs", "if (false) throw new PilotError(\"usage\", \"An experiment export needs"],
+  ["export: the pilot export command guesses --assignment", EXPORT, "if (assignment !== \"randomized\" && assignment !== \"observational\") {\n      throw new PilotError(\"usage\", \"--assignment is required", "if (false) {\n      throw new PilotError(\"usage\", \"--assignment is required"],
+  ["export: a call with no outcome is dropped instead of a row with empty values", EXPORT, "if (c.outcome_lines === 0) { left.no_outcome++; bump(noOutcomeBy, first.prompt_version); }", "if (c.outcome_lines === 0) { left.no_outcome++; bump(noOutcomeBy, first.prompt_version); continue; }"],
+  ["export: after another version served it, the newest outcome is used whatever its time", EXPORT, "const before = valuesBefore(c, Math.min(...others.map((x) => Date.parse(x.at))));", "const before = valuesBefore(c, Infinity);"],
+  ["export: after another version served it, the row keeps the values recorded at or after that call", EXPORT, "values = metrics.map((m) => before.values.get(m) ?? null);", "values = metrics.map((m) => c.values.get(m) ?? null);"],
+  ["export: a conversation served by two versions is not counted per first version", EXPORT, "bump(twoBy, first.prompt_version);", ""],
+  ["export: the unattributed-rate limit is not enforced", EXPORT, "if (unattributed > 0 && unattributed / attributable > contract.max_unattributed_rate) {", "if (false) {"],
+  ["export: an outcome with no call is not counted as unattributed", EXPORT, "if (newest !== undefined && newest >= startMs && newest < exportedMs) left.outcome_without_call++;", ""],
+  ["export: an outcome with no call counts outside the window", EXPORT, "if (newest !== undefined && newest >= startMs && newest < exportedMs) left.outcome_without_call++;", "if (newest !== undefined) left.outcome_without_call++;"],
+  ["calllog: an outcome recorded at the same time as the other version's call is used", CALLLOG, "if (!(o.at < before)) continue;", "if (!(o.at <= before)) continue;"],
+  ["calllog: a later outcome line is not counted as later", CALLLOG, "return { values, lines, later: c.outcomes.length - lines };", "return { values, lines, later: 0 };"],
+  ["wrap: the call is recorded after fn runs", WRAP, "      record(ctx);\n      return await fn();", "      const out = await fn();\n      record(ctx);\n      return out;"],
+  ["wrap: a failed write throws into the agent", WRAP, "    } catch { return false; }\n  }\n\n  function problem", "    } catch (e) { throw e; }\n  }\n\n  function problem"],
+  ["wrap: raw ids are written without idKey or rawIds", WRAP, "if (options.idKey === undefined && rawIds !== true) throw new TypeError(", "if (false) throw new TypeError("],
+  ["wrap: a 1-character idKey is accepted", WRAP, "export const MIN_ID_KEY_LENGTH = 16;", "export const MIN_ID_KEY_LENGTH = 1;"],
+  ["wrap: a token may hold digits", WRAP, "const LETTERS = \"abcdefghijklmnop\";", "const LETTERS = \"0123456789abcdef\";"],
+  ["wrap: the log is opened through a symbolic link", WRAP, "constants.O_CREAT | (constants.O_NOFOLLOW ?? 0)", "constants.O_CREAT"],
+  ["wrap: a line after a torn write is glued to the fragment", WRAP, "last[0] !== 0x0a) lead = \"\\n\";", "last[0] !== 0x0a) lead = \"\";"],
+  ["wrap: pickVersion swaps the arms' shares", WRAP, "[{ id: baseline, weight: 10000 - candidateShareBp }, { id: candidate, weight: candidateShareBp }]", "[{ id: baseline, weight: candidateShareBp }, { id: candidate, weight: 10000 - candidateShareBp }]"],
+  ["telemetry: a fractional count is accepted", TELEMETRY, "typeof v === \"number\" && Number.isSafeInteger(v) && v >= 0", "typeof v === \"number\" && v >= 0"],
+  ["telemetry: the count ceiling is ignored", TELEMETRY, "v >= 0 && v <= MAX_COUNT;", "v >= 0;"],
+  ["telemetry: many unexpected prompt versions are listed, so a column of ids is printed", TELEMETRY, "const named = distinct.length > MAX_NAMED_VERSIONS\n", "const named = false\n"],
+  ["export: an outcome line that holds nothing credits a two-version conversation", EXPORT, "const recorded = values.some((v) => v !== null);", "const recorded = before.lines > 0;"],
+  ["telemetry: a nonzero count that contradicts its mean and sd is accepted", TELEMETRY, "if ((expected !== null && s.nonzero !== expected) || (s.nonzero === 0 && (s.mean !== 0 || s.sd !== 0))) {", "if (false) {"],
+  ["telemetry: a zero nonzero count beside a nonzero mean is accepted", TELEMETRY, "|| (s.nonzero === 0 && (s.mean !== 0 || s.sd !== 0))) {", ") {"],
+  ["telemetry: sd 0 is not checked against nonzero", TELEMETRY, "(expected !== null && s.nonzero !== expected) ||", "false ||"],
+  ["experiment: a specification that is not randomized is analysed", EXPERIMENT, "if (spec.assignment !== \"randomized\") wrong(", "if (false) wrong("],
+  ["experiment: an allocation that does not add up to 1 is analysed", EXPERIMENT, "|| a.candidate <= 0 || Math.abs(a.baseline + a.candidate - 1) > 1e-9) wrong(", "|| a.candidate <= 0) wrong("],
+  ["experiment: an allocation with a zero share is analysed", EXPERIMENT, "a.baseline <= 0 || a.candidate <= 0 ||", "a.baseline < 0 || a.candidate < 0 ||"],
 ];
 
 const selectedFiles = process.argv.slice(2);

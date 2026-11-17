@@ -5,15 +5,16 @@ import { pilotGithubRepo } from "./github.ts";
 import { main } from "./main.ts";
 import { activePack, GITHUB_TOKEN_ENV, type Flags, type PilotDeps } from "./commands.ts";
 import {
-  agentScript, BASELINE_PROMPT, baselineExport, CANARIES, DEMO, demoConfig, demoPack, experimentBAfterStop, experimentBInterim, experimentBMistagged, experimentCFinal,
-  experimentCInterim, experimentFailureCases, HUMAN_CANDIDATE_PROMPT, proposerScript,
+  agentScript, BASELINE_PROMPT, baselineExport, CANARIES, DEMO, DEMO_ID_KEY, demoConfig, demoPack, demoTraffic, experimentBAfterStop, experimentBInterim, experimentBMistagged, experimentCFinal,
+  experimentCInterim, experimentFailureCases, HUMAN_CANDIDATE_PROMPT, HUMAN_CANDIDATE_REORDERED_PROMPT, proposerScript, TRAFFIC,
 } from "./demo-data.ts";
 import { proposerContext } from "./discover.ts";
 import { PilotError } from "./errors.ts";
 import { FakeGitHub } from "./fake-github.ts";
 import { candidateTag, shortId } from "./ids.ts";
 import { PilotStore, type JournalEntry } from "./store.ts";
-import type { ExperimentAnalysis, FailureFinding, Pack, PromotionRequest, ReplayReport } from "./types.ts";
+import type { ExperimentAnalysis, ExperimentSpec, FailureFinding, Pack, PromotionRequest, ReplayReport } from "./types.ts";
+import { pilotRecorder } from "./wrap.ts";
 
 // The synthetic pilot: every step of the loop, run through the same `main` the commands use, on invented data,
 // with a scripted agent and a loopback stand-in for GitHub. It needs no credentials and sends nothing anywhere.
@@ -35,6 +36,7 @@ function filesUnder(dir: string): string[] {
 }
 
 export async function demo(flags: Flags, deps: PilotDeps, prog = "node src/pilot/cli.ts"): Promise<number> {
+  const startedAt = Date.now();
   const outFlag = flags.out;
   if (typeof outFlag !== "string" || !outFlag.trim()) throw new PilotError("usage", "--out is required: a new, empty directory for the demo's inputs, pilot records and reports.");
   const out = resolve(outFlag);
@@ -74,6 +76,7 @@ export async function demo(flags: Flags, deps: PilotDeps, prog = "node src/pilot
   const store = new PilotStore(dir);
   // The demo's calendar. Each export is imported on or after the day it says it was made, as a real one would be.
   const on = (day: string) => { clock = Date.parse(`${day}T09:00:00Z`); };
+  const atTime = (iso: string) => { clock = Date.parse(iso); };
   let step = 0;
   const run = async (title: string, argv: string[]): Promise<number> => {
     say("");
@@ -205,6 +208,84 @@ export async function demo(flags: Flags, deps: PilotDeps, prog = "node src/pilot
     outcomes.push(`Candidate ${shortId(candC)} (written by a person): passed replay on pack v2, pull request #${github.pulls[1]?.number}, experiment ${shortId(expC)} at the cutoff: KEEP (${keepC.primary.name} ${keepC.primary.baseline.estimate?.toFixed(4)} to ${keepC.primary.candidate.estimate?.toFixed(4)}).`);
     outcomes.push(`Pack ${shortId(packV1.id)} (v1) promoted to ${shortId(packV2.id)} (v2): 3 approved regression cases; v1 unchanged; held-out cases still held out.`);
 
+    // ---- 6. A fourth candidate, run on live traffic written by the real recorder, watched to its cutoff ----
+    on("2026-11-13");
+    expect("a second person-written candidate is accepted", await run("Take a candidate a person wrote (candidate 3's two lines in the other order)", ["propose", "--finding", finding2, "--file", put("candidate-by-a-person-2.md", HUMAN_CANDIDATE_REORDERED_PROMPT), "--author", DEMO.quality_lead, "--rationale", "The same two lines as the third candidate with the policy line first, to see whether the order changes anything for a customer."]) === 0);
+    const candD = lastOf("candidate.created").key;
+    expect("candidate 4 is a different candidate from candidate 3", candD !== candC);
+    await run("Replay the fourth candidate on the new pack", ["replay", "--candidate", candD, "--model", model]);
+    expect("candidate 4 passes the replay gate on the new pack", store.get<ReplayReport>("replay", lastOf("replay.paired").key).gate.eligible === true);
+    // Experiment 2 is settled at its cutoff (2026-11-12), so experiment 3 starts after it: 2026-11-29.
+    expect("experiment specification written (starts 2026-11-29, after experiment 2 is settled)", await run("Write the experiment specification", ["experiment", "--candidate", candD, "--start", DEMO.experiment_d_start]) === 0);
+    const expD = lastOf("experiment.specified").key;
+    expect("local review bundle written, nothing published", await run("Write the review bundle (local by default)", ["review", "--candidate", candD]) === 0);
+    const requestsAfterReview = github.requests.length;
+    expect("approval recorded against the exact candidate and experiment", await run("Record the approval", ["approve", "--candidate", candD, "--experiment", expD, "--approver", DEMO.metric_owner]) === 0);
+    const tagD = candidateTag(candD);
+    const specD = store.get<ExperimentSpec>("experiment", expD);
+
+    // The agent, simulated: the real recorder, the real pickVersion and an injected clock. The id key below is a
+    // fixed demo string; a real key comes from the team's secret store (at least 16 characters).
+    const logDir = join(out, "agent-log");
+    let recorderClock = 0;
+    const traffic = demoTraffic({
+      recorder: pilotRecorder({ logDir, agent: "Juniper", idKey: DEMO_ID_KEY, now: () => new Date(recorderClock) }),
+      setClock: (t) => { recorderClock = t; },
+      start: specD.window.start, days: 14, baseline: specD.arms.baseline.tag, candidate: tagD, salt: expD, candidateShareBp: Math.round(specD.allocation.candidate * 10000), model: DEMO.model,
+    });
+    const looksD = () => store.find("analysis.decided").filter((e) => e.refs.experiment === expD);
+    const importsD = () => store.find("telemetry.imported").filter((e) => e.refs.scope === expD).length;
+    const watchMd = () => readFileSync(join(dir, "reports", "WATCH.md"), "utf8");
+    const tick = async (title: string, iso: string): Promise<{ code: number; out: string; md: string }> => {
+      traffic.upTo(Date.parse(iso)); // the log holds everything that happened before this moment
+      atTime(iso);
+      const mark = transcript.length;
+      const code = await run(title, ["watch", "--log", logDir, "--assignment", "randomized"]);
+      return { code, out: transcript.slice(mark).join("\n"), md: watchMd() };
+    };
+    const lastLook = () => store.get<ExperimentAnalysis>("analysis", looksD().at(-1)?.refs.analysis ?? "");
+
+    expect("watch --log without --assignment is refused, even while no look is due", await run("Try a watch tick without saying how traffic was assigned", ["watch", "--log", logDir]) === 1 && looksD().length === 0);
+    const t0 = await tick("Watch tick before the experiment starts (2026-11-27)", "2026-11-27T09:00:00Z");
+    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join(dir, "exports")).length === 0);
+    const t1 = await tick("Watch tick at the end of day 1 (2026-11-29)", "2026-11-29T23:30:00Z");
+    expect("day 1: one interim look, HOLD", t1.code === 0 && looksD().length === 1 && lastLook().recommendation === "hold" && lastLook().final === false && importsD() === 1);
+    const t1b = await tick("Watch tick again on day 1, twenty minutes later", "2026-11-29T23:50:00Z");
+    expect("day 1 again: no second look the same UTC day, nothing imported", t1b.code === 0 && looksD().length === 1 && importsD() === 1 && t1b.out.includes("already made today"));
+    const t2 = await tick("Watch tick at the end of day 2 (2026-11-30)", "2026-11-30T23:30:00Z");
+    expect("day 2: a second interim look, HOLD", t2.code === 0 && looksD().length === 2 && lastLook().recommendation === "hold" && lastLook().final === false);
+    const t3 = await tick("Watch tick after the window ended (2026-12-14), before the cutoff", "2026-12-14T09:00:00Z");
+    expect("after the window, before the cutoff: an interim look, still HOLD and not final", t3.code === 0 && looksD().length === 3 && lastLook().recommendation === "hold" && lastLook().final === false);
+    const t4 = await tick("Watch tick at the cutoff (2026-12-15)", "2026-12-15T09:00:00Z");
+    const finalD = lastLook();
+    expect("the cutoff: the final analysis is HOLD (inconclusive), final", t4.code === 0 && looksD().length === 4 && finalD.recommendation === "hold" && finalD.final === true && t4.md.startsWith("# HOLD"));
+    expect("the lift is real but smaller than the minimum effect, so it is not a keep", (finalD.primary.candidate.estimate ?? 0) - (finalD.primary.baseline.estimate ?? 0) < specD.primary.min_effect);
+    const importsAtFinal = importsD();
+    const exportsAtFinal = filesUnder(join(dir, "exports")).length;
+    const t5 = await tick("Watch tick after the final analysis (2026-12-16)", "2026-12-16T09:00:00Z");
+    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
+
+    const pl = traffic.planted;
+    const byVersion = (m: Record<string, number>) => Object.entries(m).sort().map(([t, n]) => `${t} ${n}`).join(", ");
+    const count = (m: Record<string, number>) => Object.values(m).reduce((a, b) => a + b, 0);
+    const noteNoOutcome = `${count(pl.no_outcome)} conversations have a recorded call and no outcome yet (by first-served version: ${byVersion(pl.no_outcome)})`;
+    const noteTwo = `${count(pl.two_versions)} conversations were served by a second prompt version before or with the outcome (by first-served version: ${byVersion(pl.two_versions)})`;
+    const noteAfter = `${pl.other_version_after_outcome} conversation was served by another prompt version only after the outcome was recorded. The row is unchanged.`;
+    const noteRepeat = `${pl.outcome_after_other_version} of them has an outcome recorded again after that call. It is not used`;
+    const noteOrphan = `${pl.outcome_without_call} conversations have an outcome but no recorded call`;
+    const notesOk = (text: string) => [noteNoOutcome, noteTwo, noteAfter, noteRepeat, noteOrphan].every((n) => text.includes(n));
+    expect(`the cutoff export notes carry the planted counts (${count(pl.no_outcome)} no outcome, ${count(pl.two_versions)} two versions, ${pl.other_version_after_outcome} after the outcome, ${pl.outcome_after_other_version} of them with the outcome recorded again, ${pl.outcome_without_call} outcome without a call), in the tick's output and in WATCH.md`, count(pl.no_outcome) === TRAFFIC.no_outcome.length && count(pl.two_versions) === TRAFFIC.call_before_outcome.length && pl.other_version_after_outcome === TRAFFIC.call_after_outcome.length && pl.outcome_after_other_version === TRAFFIC.repeat_after_other_call.length && pl.outcome_without_call === TRAFFIC.outcome_without_call.length && notesOk(t4.out) && notesOk(t4.md));
+    expect("every conversation with a recorded call is a row, including the ones with no outcome or two versions", finalD.coverage.rows === 14 * TRAFFIC.per_day);
+    expect("no new GitHub request was made after the review", github.requests.length === requestsAfterReview);
+    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync(p, "utf8")).join("\n");
+    const rawId = /fernhill-(conv|unit|orphan)-/;
+    const pilotText = [...filesUnder(join(dir, "reports")), ...filesUnder(join(dir, "exports")), join(dir, "journal.jsonl")].map((p) => readFileSync(p, "utf8")).join("\n");
+    const canariesList = Object.values(CANARIES);
+    expect(`the ${filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).length} log files hold no raw conversation or unit id and no message text`, logText.length > 0 && !rawId.test(logText) && !traffic.rawIds.filter((_, i) => i % 997 === 0).some((id) => logText.includes(id)) && !canariesList.some((c) => logText.toLowerCase().includes(c.toLowerCase())));
+    expect("the exports, reports and journal hold no raw conversation or unit id either", !rawId.test(pilotText));
+    // The final `verify` steps below recompute this experiment's decisions too.
+    outcomes.push(`Candidate ${shortId(candD)} (written by a person, the same two lines in the other order): passed replay on pack v2, experiment ${shortId(expD)} watched from 2026-11-27 to its cutoff, final analysis HOLD (inconclusive): ${finalD.primary.name} ${finalD.primary.baseline.estimate?.toFixed(4)} to ${finalD.primary.candidate.estimate?.toFixed(4)}, the measured difference is below the ${specD.primary.min_effect} minimum effect (the simulated true lift is 0.01, real but smaller than that) (${finalD.flags.length ? finalD.flags.join(", ") : "no data flags"}). The log's ${count(pl.no_outcome)} calls with no outcome, ${count(pl.two_versions)} two-version conversations and ${pl.outcome_without_call} outcomes with no call are counted in the export notes.`);
+
     // ---- Evidence, and what left the machine ----
     expect("evidence summary written", await run("Rebuild the evidence summary", ["report"]) === 0);
     expect("every record matches its id and every decision recomputes to the same result", await run("Verify the records and recompute the decisions", ["verify"]) === 0);
@@ -224,15 +305,24 @@ export async function demo(flags: Flags, deps: PilotDeps, prog = "node src/pilot
     say("");
     say("Outcomes:");
     for (const line of outcomes) say(`- ${line}`);
+    const decisionFiles = [`replay-${shortId(candA)}-pack-v1.md`, `decision-${shortId(expB)}.md`, `decision-${shortId(expC)}.md`, `decision-${shortId(expD)}.md`];
+    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync(join(dir, "reports", f))));
+    say("");
+    say("The four outcomes, and the file that holds each decision:");
+    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
+    say(`- Reverted: candidate ${shortId(candB)}   ${join(dir, "reports", `decision-${shortId(expB)}.md`)}`);
+    say(`- Kept: candidate ${shortId(candC)}   ${join(dir, "reports", `decision-${shortId(expC)}.md`)}`);
+    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join(dir, "reports", `decision-${shortId(expD)}.md`)}`);
     say("");
     say("Evidence to open:");
     say(`- ${join(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
     say(`- ${join(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
     say(`- ${join(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
     say(`- ${join(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
+    say(`- ${join(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
     say(`- ${join(dir, "journal.jsonl")}   every step, in order`);
     say("");
-    say(failures.length === 0 ? `Synthetic pilot passed: ${step} steps, every expectation held.` : `Synthetic pilot FAILED: ${failures.length} expectation(s) did not hold:`);
+    say(failures.length === 0 ? `Synthetic pilot passed: ${step} steps, every expectation held (${((Date.now() - startedAt) / 1000).toFixed(1)} s).` : `Synthetic pilot FAILED: ${failures.length} expectation(s) did not hold:`);
     for (const f of failures) say(`- ${f}`);
     return failures.length === 0 ? 0 : 1;
   } finally {
