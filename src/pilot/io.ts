@@ -1,4 +1,4 @@
-import { existsSync, linkSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { PilotError } from "./errors.ts";
 
@@ -20,11 +20,24 @@ export function readBounded(path: string, maxBytes = MAX_INPUT_BYTES): string {
   return readFileSync(path, "utf8");
 }
 
-// A path under `root`, refusing anything that climbs out of it (a file name taken from an input file).
+// A path under `root`, refusing anything that climbs out of it (a file name taken from an input file), and any
+// file that is a symbolic link or whose real location is outside `root`: a name in an export that points at a
+// link to some other file would otherwise read that file. Nothing of the target is read to decide this, so a
+// refusal cannot repeat what the target holds.
 export function inside(root: string, name: string): string {
   const full = resolve(root, name);
   const rel = relative(resolve(root), full);
   if (isAbsolute(name) || rel === "" || rel.startsWith("..") || isAbsolute(rel)) throw new PilotError("usage", `${name} must be a file inside ${root}.`);
+  let link = false;
+  try { link = lstatSync(full).isSymbolicLink(); } catch { return full; } // absent: the reader reports it
+  if (link) throw new PilotError("usage", `${name} is a symbolic link. Put the file itself inside ${root}.`);
+  try {
+    const real = relative(realpathSync(root), realpathSync(full));
+    if (real === "" || real.startsWith("..") || isAbsolute(real)) throw new PilotError("usage", `${name} must be a file inside ${root}.`);
+  } catch (e) {
+    if (e instanceof PilotError) throw e;
+    throw new PilotError("not_found", `${name} cannot be read from ${root}.`);
+  }
   return full;
 }
 
