@@ -524,6 +524,31 @@ test("S4: a broken split at an earlier reading makes a later winning reading inv
   assert.deepEqual(pick(v), ["invalid", "split"]);
 });
 
+// Task 14 review (M8): every guard's setting is checked, not only the first one.
+test("review14 M8: a bad guard setting after a good guard is still invalid, bad_input", () => {
+  const good = { name: "ok", direction: "lower" as const, max_worse: 0.01, base: { units: 5000, events: 250 }, test: { units: 5000, events: 240 } };
+  const v = decide({ ...at(28, R(300, 10000), R(360, 10000)), guards: [good, escalation("Lower", 0.01)] });
+  assert.deepEqual(pick(v), ["invalid", "bad_input"]);
+});
+
+// Task 14 review (X15b): the earlier-split check uses the resolved rule, so a rule without srm_p gets the default.
+test("review14 X15b: a rule without srm_p still catches a broken split at an earlier reading", () => {
+  const rule = without(["srm_p"], DEFAULT_RULE);
+  const broken = reading(7, R(300, 10000), { units: 10600, events: 300 });
+  const win = reading(28, R(1200, 40000), R(1440, 40600));
+  assert.deepEqual(pick(decide({ ...input([broken, win]), rule })), ["invalid", "split"]);
+});
+
+// Task 14 review: guards that is not an array, or holds an item that is not an object, is bad input and never throws.
+test("review14 guards shape: guards that is not an array, or holds a non-object, is invalid, bad_input, with and without readings", () => {
+  const shapes: unknown[] = [{}, [null], "x", [[]], [5]];
+  for (const guards of shapes) {
+    const cast = guards as unknown as GuardReading[];
+    assert.deepEqual(pick(decide({ ...at(28, R(300, 10000), R(360, 10000)), guards: cast })), ["invalid", "bad_input"], JSON.stringify(guards));
+    assert.deepEqual(pick(decide({ ...input([]), guards: cast })), ["invalid", "bad_input"], JSON.stringify(guards));
+  }
+});
+
 // Task 14: a rule that is not a plain object is bad input. undefined, null and {} still mean all defaults.
 test("rule shape: a rule that is a number, a string, true or an array is invalid, bad_input", () => {
   for (const bad of [5, "msprt", true, []]) {

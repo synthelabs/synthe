@@ -281,7 +281,11 @@ export function decide(raw: GateInput): Verdict {
     return out("invalid", "bad_input");
   }
   if (raw.direction !== "higher" && raw.direction !== "lower") return out("invalid", "bad_input");
-  if ((raw.guards ?? []).some(guardSettingBad)) return out("invalid", "bad_input");
+  // guards, when given, is an array of guard objects. Anything else is bad input, never a throw.
+  const guards = raw.guards ?? [];
+  if (!Array.isArray(guards) || guards.some((g) => !isPlainObject(g) || guardSettingBad(g))) {
+    return out("invalid", "bad_input");
+  }
   const input: GateInput = { ...raw, rule };
 
   // 1. No data: no reading, or a broken ledger.
