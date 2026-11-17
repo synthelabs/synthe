@@ -1,4 +1,4 @@
-import { existsSync, linkSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, constants, existsSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { PilotError } from "./errors.ts";
 
@@ -87,8 +87,19 @@ export function unsafeKey(value: unknown): string | null {
 export function writeAtomic(path: string, content: string): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
+  // The temporary file must be new: O_EXCL refuses a file or a link already under its name, so a link planted in a
+  // shared output folder is never written through (an export holds customer ids). What this command did not
+  // create it does not remove either.
+  let fd: number;
   try {
-    writeFileSync(tmp, content, { mode: 0o600 });
+    fd = openSync(tmp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "EEXIST" || code === "ELOOP") throw new PilotError("conflict", "A temporary file that this command did not create is in the way in the output folder (its name ends in .tmp). Nothing was written. Remove it, make sure only the operator can write to that folder, and run the command again.");
+    throw e;
+  }
+  try {
+    try { writeFileSync(fd, content); } finally { closeSync(fd); }
     renameSync(tmp, path);
   } finally {
     if (existsSync(tmp)) unlinkSync(tmp);

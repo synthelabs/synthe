@@ -49,7 +49,7 @@ const NEAR = {
   [APPROVAL]: ["test/pilot-approval.test.ts"],
   [PROMOTE]: ["test/pilot-promote.test.ts"],
   [STORE]: ["test/pilot-store.test.ts"],
-  [IO]: ["test/pilot-store.test.ts"],
+  [IO]: ["test/pilot-store.test.ts", "test/pilot-io-atomic.test.ts"],
   [LIVE]: ["test/pilot-live.test.ts"],
   [MODEL]: ["test/pilot-model.test.ts"],
   [CONFIG]: ["test/pilot-config.test.ts"],
@@ -200,6 +200,7 @@ const allMutations = [
   ["main: an unexpected error prints its message", "src/pilot/main.ts", 'if (deps.env.SYNTHE_PILOT_DEBUG === "1")', "if (true)"],
   ["io: a file name can leave its directory", IO, 'if (isAbsolute(name) || rel === "" || rel.startsWith("..") || isAbsolute(rel)) throw', "if (false) throw"],
   ["io: an input of any size is read", IO, "if (size > maxBytes) throw", "if (false) throw"],
+  ["io: the temporary file may already exist, so a planted link is written through", IO, "constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);\n  } catch (e) {\n    const code", "constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC, 0o600);\n  } catch (e) {\n    const code"],
   ["verify: a decision that does not follow from its evidence passes", COMMANDS, "if (!same(stored, again)) throw new Error(`the stored recommendation", "if (false) throw new Error(`the stored recommendation"],
 
   // Model providers.
