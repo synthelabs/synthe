@@ -234,7 +234,8 @@ const allMutations = [
   ["msprt: the threshold is not ln(1/alpha)","src/live/gate.ts","const threshold = Math.log(1 / rule.alpha);","const threshold = Math.log(1 / rule.alpha) * 0.4;"],
   ["live gate: the rule is not validated (a misspelled method runs as fixed)","src/live/gate.ts","rule = resolveRule(raw.rule).rule;","rule = raw.rule;"],
   ["live gate: a direction other than higher or lower is not checked","src/live/gate.ts","if (raw.direction !== \"higher\" && raw.direction !== \"lower\") return out(\"invalid\", \"bad_input\");",""],
-  ["live gate: an earlier broken split does not stop the experiment","src/live/gate.ts","return input.readings.slice(0, -1).some(","return false && input.readings.slice(0, -1).some("],
+  ["live gate: an earlier broken split does not stop the experiment","src/live/gate.ts","return input.readings\n    .slice(0, -1)","return false && input.readings\n    .slice(0, -1)"],
+  ["live gate: a guard setting that cannot be read is not checked","src/live/gate.ts","  if ((raw.guards ?? []).some(guardSettingBad)) return out(\"invalid\", \"bad_input\");\n",""],
 ];
 
 const selectedFiles = process.argv.slice(2);

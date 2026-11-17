@@ -369,11 +369,11 @@ test("msprt review: a reading too early under min_days is not replayed into the 
   // Day 5 is too early (min_days 7) and has Lambda 2427; the day 7 reading alone is not good enough.
   assert.deepEqual(pick(decide(msInput([reading(5, R(300, 10000), R(420, 10000)), reading(7, R(600, 20000), R(640, 20000))]))), ["continue", "running"]);
 });
-test("msprt review: p_av and the interval on the Lambda 21.99 win", () => {
+test("msprt review: p_latest and the interval on the Lambda 21.99 win", () => {
   const v = decide(msAt(7, R(300, 10000), R(379, 10000)));
   assert.ok(v.msprt);
-  assert.ok(Math.abs(v.msprt.p_av - Math.exp(-v.msprt.ln_lambda)) < 1e-12);
-  assert.ok(v.msprt.p_av < 0.05, String(v.msprt.p_av));
+  assert.ok(Math.abs(v.msprt.p_latest - Math.exp(-v.msprt.ln_lambda)) < 1e-12);
+  assert.ok(v.msprt.p_latest < 0.05, String(v.msprt.p_latest));
   assert.ok(v.interval);
   const h = msprtHalfWidth(rateVariance({ units: 10000, events: 300 }, { units: 10000, events: 379 })!, 0.006, 0.05)!;
   assert.ok(Math.abs(v.interval[0] - (v.msprt.d - h)) < 1e-12);
@@ -466,21 +466,38 @@ test("S1: a msprt rule without whole_weeks takes the default, so a mid-week stro
   ]), rule })), ["continue", "running"]);
 });
 
-// Task 12 (S2): a guard whose max_worse or direction cannot be read is missing, so it blocks a promotion and never drops.
+// Task 14 (SF1, corrects Task 12 S2): a guard whose direction or max_worse cannot be read is a bad setting, not
+// missing data. It is invalid in every method and under either guard_missing, so a real breach is never waved through.
 const escalation = (direction: string, max_worse: number | undefined) => ({
   name: "escalation rate", direction, max_worse, base: { units: 5000, events: 250 }, test: { units: 5000, events: 750 },
 }) as unknown as GuardReading;
-test("S2: a guard with max_worse NaN blocks a promotion as no guard data", () => {
-  const v = decide({ ...at(28, R(300, 10000), R(360, 10000)), guards: [escalation("lower", Number.NaN)] });
-  assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard_no_data", "escalation rate"]);
+for (const guard_missing of ["block", "ignore"] as const) {
+  const rule = resolveRule({ guard_missing }).rule;
+  const cases: [string, GuardReading][] = [
+    ["max_worse NaN", escalation("lower", Number.NaN)],
+    ["max_worse -0.01", escalation("lower", -0.01)],
+    ["max_worse undefined", escalation("lower", undefined)],
+    ["direction Lower (capital L)", escalation("Lower", 0.01)],
+  ];
+  for (const [label, guard] of cases) {
+    test(`SF1: a guard with ${label} is invalid, bad_input (guard_missing ${guard_missing})`, () => {
+      const v = decide({ ...at(28, R(300, 10000), R(360, 10000)), rule, guards: [guard] });
+      assert.deepEqual(pick(v), ["invalid", "bad_input"]);
+    });
+  }
+}
+test("SF1: the reviewer's msprt case: a guard named Higher on a falling metric is invalid under block and ignore", () => {
+  const guard = { name: "csat", direction: "Higher", max_worse: 0.01, base: { units: 1500, events: 1500 }, test: { units: 10000, events: 500 } } as unknown as GuardReading;
+  for (const guard_missing of ["block", "ignore"] as const) {
+    const rule = resolveRule({ method: "msprt", guard_missing }).rule;
+    const v = decide({ ...msAt(7, R(300, 10000), R(420, 10000)), rule, guards: [guard] });
+    assert.deepEqual(pick(v), ["invalid", "bad_input"], guard_missing);
+  }
 });
-test("S2: a guard with max_worse undefined blocks a promotion as no guard data", () => {
-  const v = decide({ ...at(28, R(300, 10000), R(360, 10000)), guards: [escalation("lower", undefined)] });
-  assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard_no_data", "escalation rate"]);
-});
-test("S2: a guard with direction Lower (capital L) blocks a promotion as no guard data, and never reads as a pass", () => {
-  const v = decide({ ...at(28, R(300, 10000), R(360, 10000)), guards: [escalation("Lower", 0.01)] });
-  assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard_no_data", "escalation rate"]);
+test("SF1: a readable guard with a real breach still drops at once under guard_missing ignore", () => {
+  const breach = { name: "escalation rate", direction: "lower" as const, max_worse: 0.01, base: { units: 5000, events: 250 }, test: { units: 5000, events: 400 } };
+  const v = decide({ ...at(28, R(300, 10000), R(360, 10000)), rule: resolveRule({ guard_missing: "ignore" }).rule, guards: [breach] });
+  assert.deepEqual([v.action, v.reason, v.guard], ["drop", "guard", "escalation rate"]);
 });
 
 // Task 12 (S3): a primary direction that is not "higher" or "lower" is invalid in every method, before any test.
@@ -504,6 +521,51 @@ test("S4: a broken split at an earlier reading makes a later winning reading inv
     assert.deepEqual(pick(v), ["invalid", "split"], method);
   }
   const v = decide({ ...msInput([reading(7, R(300, 10000), { units: 10600, events: 300 }), reading(14, R(600, 20000), R(760, 20600))]) });
+  assert.deepEqual(pick(v), ["invalid", "split"]);
+});
+
+// Task 14: a rule that is not a plain object is bad input. undefined, null and {} still mean all defaults.
+test("rule shape: a rule that is a number, a string, true or an array is invalid, bad_input", () => {
+  for (const bad of [5, "msprt", true, []]) {
+    const v = decide({ ...at(28, R(300, 10000), R(360, 10000)), rule: bad as unknown as LiveRule });
+    assert.deepEqual(pick(v), ["invalid", "bad_input"], JSON.stringify(bad));
+  }
+});
+test("rule shape: undefined, null and {} mean all defaults, so the day-28 win promotes", () => {
+  for (const r of [undefined, null, {}]) {
+    const v = decide({ ...at(28, R(300, 10000), R(360, 10000)), rule: r as unknown as LiveRule });
+    assert.deepEqual(pick(v), ["promote", "win"], String(r));
+  }
+});
+
+// Task 14 (SF2, X7): an earlier reading with an empty arm is no data, so it is not a broken split.
+test("SF2: an earlier reading with an empty arm is not a broken split, so the later win promotes", () => {
+  const empty = reading(7, { units: 0, events: 0 }, R(300, 10000));
+  const win = reading(28, R(300, 10000), R(360, 10000));
+  assert.deepEqual(pick(decide(input([empty, win]))), ["promote", "win"]);
+});
+
+// Task 14 (SF2, X8): a broken split is final however many readings back it was, not only the previous one.
+test("SF2: a broken split two readings back is still final, so a later win is invalid, split", () => {
+  const broken = reading(7, R(300, 10000), { units: 10600, events: 300 });
+  const sound = reading(14, R(600, 20000), R(720, 20000));
+  const win = reading(28, R(1200, 40000), R(1440, 40000));
+  assert.deepEqual(pick(decide(input([broken, sound, win]))), ["invalid", "split"]);
+});
+
+// Task 14 (SF2, X11): when a bound of the interval is not finite, the interval is left out, not kept as Infinity.
+test("SF2: a msprt interval with a bound that is not finite is left out, and the verdict survives JSON", () => {
+  const v = decide({ ...msAt(7, R(300, 10000), R(420, 10000)), min_effect: 1e-200 });
+  assert.equal("interval" in v, false);
+  const round = JSON.parse(JSON.stringify(v)) as Verdict;
+  assert.equal("interval" in round, false);
+  assert.equal(round.action, v.action);
+});
+
+// Task 14 (SF2, X15): the split check uses the resolved rule, so a rule object without srm_p gets the default.
+test("SF2: a rule object without srm_p still catches a broken split (the default 0.0001 applies)", () => {
+  const rule = without(["srm_p"], DEFAULT_RULE);
+  const v = decide({ ...at(28, R(300, 10000), { units: 10600, events: 360 }), rule });
   assert.deepEqual(pick(v), ["invalid", "split"]);
 });
 

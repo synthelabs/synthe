@@ -1,5 +1,6 @@
 // The live gate: readings in, one verdict out. It decides whether a changed prompt is promoted, so the order
-// of checks below matters. The first check that matches wins, and a promotion is only ever made at a look.
+// of checks below matters. The first check that matches wins. A promotion is only made at a look (fixed, looks)
+// or at a decision reading (msprt).
 
 import { resolveRule, type LiveRule } from "./rule.ts";
 import {
@@ -55,13 +56,14 @@ export type Reason =
   | "no_min_effect"
   | "bad_input";
 
-// msprt numbers are logs: Lambda can be Infinity, and JSON writes Infinity as null. The numbers are the latest
-// reading's own; no earlier reading is carried forward.
+// The msprt numbers are the latest reading's own; no earlier reading is carried forward. ln_lambda is a log, because
+// Lambda can be Infinity and JSON writes Infinity as null. p_latest is exp(-ln_lambda) of that one reading. It is not
+// A1's always-valid p-value (the running maximum of Lambda), so it can rise between readings.
 export interface MsprtVerdict {
   d: number;
   v: number;
   ln_lambda: number;
-  p_av: number;
+  p_latest: number;
 }
 
 export interface Verdict {
@@ -130,31 +132,46 @@ function noData(base: ArmData, test: ArmData): boolean {
   return !armUsable(base) || !armUsable(test) || isRate(base) !== isRate(test);
 }
 
-// A guard with too little data to judge: an arm that is not usable, arms of different kinds, an arm under
-// min_units_per_arm, or a threshold or direction that cannot be read. Such a guard is never a breach; it only
-// blocks a promotion (fail closed).
+// A guard with too little data to judge: an arm that is not usable, arms of different kinds, or an arm under
+// min_units_per_arm. Such a guard is never a breach; it only blocks a promotion (fail closed). A guard whose
+// setting cannot be read is bad input, not missing data; decide's step 0 rejects it.
 function guardMissing(guard: GuardReading, rule: LiveRule): boolean {
-  if (guard.direction !== "higher" && guard.direction !== "lower") return true;
-  if (typeof guard.max_worse !== "number" || !Number.isFinite(guard.max_worse) || guard.max_worse < 0) return true;
   if (noData(guard.base, guard.test)) return true;
   return guard.base.units < rule.min_units_per_arm || guard.test.units < rule.min_units_per_arm;
 }
 
+// A guard setting that cannot be read: a direction other than higher or lower, or a max_worse that is not a finite
+// number of 0 or more. Bad input in every method, whatever guard_missing says.
+function guardSettingBad(guard: GuardReading): boolean {
+  if (guard.direction !== "higher" && guard.direction !== "lower") return true;
+  return typeof guard.max_worse !== "number" || !Number.isFinite(guard.max_worse) || guard.max_worse < 0;
+}
+
+// A plain object (or nothing): an array, a number or a string is not a rule.
+function isPlainObject(v: unknown): boolean {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
 // Step 3: the arms must have the share they were set to. A null result means bad weights, so it fails closed.
-// A NaN p fails too, which is why this is written as "not at least srm_p".
-function splitBroken(base: ArmData, test: ArmData, input: GateInput): boolean {
-  const rule = input.rule;
+// A NaN p fails too, which is why this is written as "not at least srm_p". The rule is passed in, so every check
+// reads the same resolved rule.
+function splitBroken(base: ArmData, test: ArmData, weights: GateInput["weights"], rule: LiveRule): boolean {
   if (rule.srm_p > 0) {
-    const p = srmP([base.units, test.units], [input.weights.base, input.weights.test]);
+    const p = srmP([base.units, test.units], [weights.base, weights.test]);
     return p === null || !(p >= rule.srm_p);
   }
   return false;
 }
 
 // Step 3 for every earlier reading: a broken split with usable arms stops the experiment for good (plan rule 0.2.4),
-// whatever the latest reading says. A caller stops at the first promote, drop or invalid.
-function earlierSplitBroken(input: GateInput): boolean {
-  return input.readings.slice(0, -1).some(({ arms }) => !noData(arms.base, arms.test) && splitBroken(arms.base, arms.test, input));
+// whatever the latest reading says. A reading with no usable arms is no data, not a split. A caller stops at the
+// first promote, drop or invalid.
+function earlierSplitBroken(input: GateInput, rule: LiveRule): boolean {
+  return input.readings
+    .slice(0, -1)
+    .some(({ arms }) => !noData(arms.base, arms.test) && splitBroken(arms.base, arms.test, input.weights, rule));
 }
 
 // Step 4: not enough days, units or (for rates) events in an arm.
@@ -172,15 +189,12 @@ function varianceOf(base: ArmData, test: ArmData): number | null {
   return null;
 }
 
-function maxOf(max: number | null, ln: number): number {
-  return max === null ? ln : Math.max(max, ln);
-}
-
 // The mSPRT rule for method "msprt" (research A1, A5). Each reading is judged on its own numbers: its ln Lambda
 // and its direction g. A decision reading is the first reading of each new whole week (week 1 or later), or every
 // reading with whole_weeks off, or any reading from max_days on. An earlier decision reading ends the experiment:
 // a bad crossing (ln Lambda at or above ln(1/alpha) with g < 0) is a drop, worse, and the first decision reading at
-// or after max_days is a drop, no_difference, whatever it returned. Every later reading returns that drop. The
+// or after max_days is a drop, no_difference, whatever it returned. Every later usable reading returns that drop; an
+// unusable latest reading is answered by decide's earlier checks first (no data, split, too early). The
 // latest reading alone can promote, and only when it is a decision reading, its own ln Lambda crosses, and it points
 // in the good direction. Nothing carries forward from earlier readings, so one glitched reading cannot stay in force.
 // A caller stops at the first promote, drop or invalid, and retries a failed read without appending a reading: decide
@@ -195,7 +209,8 @@ function decideMsprt(input: GateInput, rule: LiveRule, days: number, tau: number
   for (let j = 0; j <= last; j++) {
     const { base, test } = readings[j].arms;
     const dayOf = daysAt(readings, j);
-    if (noData(base, test) || splitBroken(base, test, input) || tooEarly(base, test, dayOf, rule)) continue;
+    // An unusable reading is skipped. If it is the latest one, decide answers first (no data, split, too early).
+    if (noData(base, test) || splitBroken(base, test, input.weights, rule) || tooEarly(base, test, dayOf, rule)) continue;
     const week = Math.floor(dayOf / 7);
     const v = varianceOf(base, test);
     const d = pointOf(test) - pointOf(base);
@@ -219,7 +234,7 @@ function decideMsprt(input: GateInput, rule: LiveRule, days: number, tau: number
       d: latest.d,
       v: latest.v,
       ln_lambda: latest.ln,
-      p_av: Math.min(1, Math.exp(-latest.ln)),
+      p_latest: Math.min(1, Math.exp(-latest.ln)),
     };
     if (h !== null) {
       const interval: [number, number] = [latest.d - h, latest.d + h];
@@ -255,8 +270,10 @@ export function decide(raw: GateInput): Verdict {
     ...extra,
   });
 
-  // 0. Bad input: a rule that does not resolve, or a direction that is not "higher" or "lower", is invalid in every
-  // method. The rule is resolved here, so a missing setting takes its safe default and a bad one never runs.
+  // 0. Bad input: a rule that is not an object or does not resolve, a direction that is not "higher" or "lower", or a
+  // guard setting that cannot be read, is invalid in every method. The rule is resolved here, so a missing setting
+  // takes its safe default and a bad one never runs. undefined and null mean the defaults too.
+  if (raw.rule !== undefined && raw.rule !== null && !isPlainObject(raw.rule)) return out("invalid", "bad_input");
   let rule: LiveRule;
   try {
     rule = resolveRule(raw.rule).rule;
@@ -264,11 +281,12 @@ export function decide(raw: GateInput): Verdict {
     return out("invalid", "bad_input");
   }
   if (raw.direction !== "higher" && raw.direction !== "lower") return out("invalid", "bad_input");
+  if ((raw.guards ?? []).some(guardSettingBad)) return out("invalid", "bad_input");
   const input: GateInput = { ...raw, rule };
 
   // 1. No data: no reading, or a broken ledger.
   if (!last || !ledgerOk) return out("continue", "no_data");
-  if (earlierSplitBroken(input)) return out("invalid", "split");
+  if (earlierSplitBroken(input, rule)) return out("invalid", "split");
 
   // 1b. No data: a bad or empty latest arm.
   const { base, test } = last.arms;
@@ -285,7 +303,7 @@ export function decide(raw: GateInput): Verdict {
   }
 
   // 3. Split.
-  if (splitBroken(base, test, input)) return out("invalid", "split");
+  if (splitBroken(base, test, input.weights, rule)) return out("invalid", "split");
 
   // msprt needs a usable effect to detect. Checked before step 4, so the team learns it at once. Never a silent
   // switch to another method.
