@@ -1,0 +1,357 @@
+// What may leave the operator's environment. Lane: evidence and review workflow.
+import { PilotError } from "./errors.ts";
+import { personalDataKinds } from "./pii.ts";
+import type { Pack } from "./types.ts";
+
+// Opaque index of the case-specific content of one or more packs, for finding it in outgoing text.
+export interface SensitiveIndex {
+  readonly phrases: ReadonlySet<string>;
+  // The names among the phrases (single words written with a capital). A name can be cut into parts with spaces,
+  // hyphens or markup, so these are also looked for across adjacent words.
+  readonly names: ReadonlySet<string>;
+  // Matches the identifiers the reports print by design, as whole identifiers; null when the packs have none.
+  readonly identifiers: RegExp | null;
+  // The same content before anything is allowed: only what the conversations themselves hold.
+  readonly conversation: { readonly phrases: ReadonlySet<string>; readonly names: ReadonlySet<string> };
+  // Identifiers of telemetry rows (conversation and unit ids), as the whole sequence of words they normalise to.
+  // An id is made of shared parts ("juniper-v14-00"), so only the whole id counts.
+  readonly sequences: ReadonlySet<string>;
+  readonly maxSequence: number;
+}
+
+const RUN = 3; // words in a run copied from a conversation
+const WORD_MIN = 5; // letters in a lowercase word worth indexing on its own when it is rare
+const TOKEN_MIN = 3; // characters in an identifier-like word (one that has a digit)
+const NAME_MIN = 2; // letters in a word the conversations only ever show with a capital
+const JOIN_MIN = 4; // letters in a name worth looking for across adjacent words
+const JOIN_WORDS = 16; // adjacent words joined at most ("T h a d d e u s" is eight)
+const JOIN_CHARS = 40;
+const SEQUENCE_MIN = 6; // characters in a telemetry id worth looking for
+
+// Cyrillic and Greek letters that look like Latin ones, and Latin small capitals. Folded on both sides, so a name
+// cannot pass by swapping a letter for its look-alike.
+const LOOKALIKES = new Map<string, string>(
+  ("АA ВB ЕE КK МM НH ОO РP СC ТT УY ХX ЅS ІI ЈJ аa еe оo рp сc уy хx ѕs іi јj ԁd ԛq ԝw һh "
+    + "ΑA ΒB ΕE ΖZ ΗH ΙI ΚK ΜM ΝN ΟO ΡP ΤT ΥY ΧX οo νv ιi κk ρp "
+    + "ᴀA ʙB ᴄC ᴅD ᴇE ꜰF ɢG ʜH ɪI ᴊJ ᴋK ʟL ᴍM ɴN ᴏO ᴘP ʀR ꜱS ᴛT ᴜU ᴠV ᴡW ʏY ᴢZ "
+    // Dotless and other Latin look-alikes, Armenian and Cherokee letters that pass for Latin ones.
+    + "ıi İI ɑa ɡg ɩi ǀl ӏl ℮e ꞓc ɵo "
+    + "օo սu ցg հh ոn ռn ԑe ԍg ѕs "
+    + "ᎪA ᏴB ᏟC ᎠD ᎬE ᏀG ᎻH ᎫJ ᏦK ᏞL ᎷM ᏚS ᎢT ᏙV ᏔW ᏃZ").split(" ").map((p) => [p[0], p[1]] as [string, string]),
+);
+
+// The same normal form on both sides, so a quote cannot slip through by changing case, spacing, line breaks,
+// punctuation, accents, dash variants, look-alike letters, or by hiding zero-width characters inside words.
+// Compatibility forms are folded (NFKD), marks and format characters are removed, and everything that is not a
+// letter or digit splits words.
+const normal = (text: string): string =>
+  text.normalize("NFKD").replace(/[\p{M}\p{Cf}]/gu, "").replace(/[^\x00-\x7f]/g, (ch) => LOOKALIKES.get(ch) ?? ch);
+
+// A word with its case kept, and whether it starts a sentence: a capital there says nothing, anywhere else it marks
+// a name. A full stop after a short capitalised word is an abbreviation ("Mr. Okonkwo"), not a sentence end.
+interface Token { word: string; lower: string; starts: boolean }
+function tokens(text: string): Token[] {
+  const t = normal(text);
+  const out: Token[] = [];
+  let end = 0;
+  for (const m of t.matchAll(/[\p{L}\p{N}]+/gu)) {
+    const prev = out.at(-1);
+    const between = t.slice(end, m.index);
+    const abbreviation = prev !== undefined && prev.word.length <= 3 && prev.word !== prev.lower && /^\.\s*$/.test(between);
+    out.push({ word: m[0], lower: m[0].toLowerCase(), starts: prev === undefined || (/[.!?]/.test(between) && !abbreviation) });
+    end = m.index + m[0].length;
+  }
+  return out;
+}
+
+export function words(text: string): string[] {
+  return tokens(text).map((t) => t.lower);
+}
+
+// A bracketed all-capital token such as [EMAIL_1] is the redaction's placeholder, not conversation content.
+const PLACEHOLDER = /[[<{]{1,2}[A-Z][A-Z0-9_]{1,40}[\]>}]{1,2}/g;
+
+const runsOf = (w: string[]): string[] => {
+  const out: string[] = [];
+  for (let i = 0; i + RUN <= w.length; i++) out.push(w.slice(i, i + RUN).join(" "));
+  return out;
+};
+
+// A word written in two alphabets at once is how a look-alike letter is hidden. No ordinary text has one.
+const MIXED = /(?=[\p{L}\p{M}]*\p{Script=Latin})(?=[\p{L}\p{M}]*[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Armenian}\p{Script=Cherokee}\p{Script=Coptic}])[\p{L}\p{M}]+/u;
+
+function stringsIn(value: unknown, out: string[]): void {
+  if (typeof value === "string") out.push(value);
+  else if (Array.isArray(value)) for (const v of value) stringsIn(v, out);
+  else if (value !== null && typeof value === "object") for (const [k, v] of Object.entries(value)) { out.push(k); stringsIn(v, out); }
+}
+
+// The text as a page would show it: character references decoded, tags and link targets taken out, percent
+// escapes read. Markup can cut a name into pieces that only come together when the text is rendered
+// ("Th&#97;ddeus", "Thad<b></b>deus"), so outgoing text is checked in this form as well as the form it has.
+const codePoint = (n: number): string => (Number.isInteger(n) && n > 0 && n <= 0x10ffff && !(n >= 0xd800 && n <= 0xdfff) ? String.fromCodePoint(n) : " ");
+export function rendered(text: string): string {
+  return text
+    .replace(/&#(\d{1,7});/g, (_, d: string) => codePoint(Number(d)))
+    .replace(/&#[xX]([0-9a-fA-F]{1,6});/g, (_, h: string) => codePoint(parseInt(h, 16)))
+    .replace(/&([A-Za-z])(?:acute|grave|circ|uml|tilde|ring|cedil|caron|slash|macr|breve|ogon|dot|strok);/g, "$1")
+    .replace(/&(?:amp|lt|gt|quot|apos|nbsp|ensp|emsp|thinsp);/g, " ")
+    // Any other named reference. Many are invisible (a soft hyphen, a zero-width joiner), so the parts close up.
+    .replace(/&[A-Za-z][A-Za-z0-9]{1,31};/g, "")
+    .replace(/<[^<>\n]{0,300}>/g, "")
+    .replace(/\]\([^)\n]{0,2000}\)/g, "")
+    .replace(/%([2-7][0-9a-fA-F])/g, (_, h: string) => String.fromCharCode(parseInt(h, 16)));
+}
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+// Longest identifier and catalog sentence the reports print as they are. A longer one is not shown and is not
+// allowed to leave as an identifier.
+export const MAX_SENTENCE_CHARS = 200;
+export const MAX_ID_CHARS = 80;
+
+// Case ids, check ids, catalog sentences and tool names are printed by the reports by design. They may leave as
+// whole identifiers only: a name inside a case id does not make that name an allowed word anywhere else. An
+// identifier that carries conversation content (a quote, a name, an order token) is not an identifier: it gets no
+// exemption, so the text check sees it like any other text. `clean` is that test, made against the
+// conversations only.
+function identifierPattern(packs: Pack[], clean: (text: string) => boolean): RegExp | null {
+  const ids = new Set<string>();
+  const add = (text: string, cap: number) => { if (text.length <= cap && clean(text)) ids.add(text); };
+  for (const pack of packs) {
+    for (const [id, sentence] of Object.entries(pack.check_catalog)) { add(id, MAX_ID_CHARS); add(sentence, MAX_SENTENCE_CHARS); }
+    for (const tool of pack.tools) add(tool.name, MAX_ID_CHARS);
+    for (const c of pack.cases) add(c.id, MAX_ID_CHARS);
+  }
+  const list = [...ids].filter((s) => s.trim() !== "").sort((a, b) => b.length - a.length || (a < b ? -1 : 1));
+  if (list.length === 0) return null;
+  return new RegExp(`(?<![\\p{L}\\p{N}_-])(?:${list.map(escapeRegExp).join("|")})(?![\\p{L}\\p{N}_-])`, "gu");
+}
+
+const withoutIdentifiers = (text: string, identifiers: RegExp | null): string => (identifiers === null ? text : text.replace(identifiers, " "));
+
+// What must not leave is what belongs to particular conversations. Three kinds of item are indexed:
+//   - a run of three words that appears in only a few cases (a quote). Wording that many conversations share is
+//     the agent's and the tools' own boilerplate ("this order can be returned", "eligible: yes");
+//   - a word that appears in only a few cases, when it is long enough to mean something on its own;
+//   - a word the conversations write with a capital inside a sentence and never in lowercase (a name, a place), or
+//     one that has a digit (an order token, a postcode), however many cases it appears in: a returning customer is
+//     in many.
+//
+// `allow` is text that may leave: the baseline prompt (already in the customer's repo) and the review's own
+// generated wording. Identifiers the reports print are taken out of it first, so they allow nothing else.
+export function sensitiveIndex(packs: Pack[], allow: string[] = [], telemetryIds: string[] = []): SensitiveIndex {
+  const byCase = new Map<string, Set<string>>();
+  const always = new Set<string>();
+  const capital = new Set<string>();
+  const lower = new Set<string>();
+  for (const pack of packs) {
+    for (const c of pack.cases) {
+      // The same case in two pack versions is one case, not two.
+      const items = byCase.get(c.id) ?? new Set<string>();
+      byCase.set(c.id, items);
+      // Message text is prose, where the first word of a sentence has a capital whatever it is. The other fields
+      // are values (a tool input, a label), where a capital at the start means as much as anywhere else.
+      const prose: string[] = [];
+      const values: string[] = [];
+      for (const m of c.messages) {
+        if (m.role === "tool") prose.push(m.result);
+        else {
+          prose.push(m.text);
+          if (m.role === "assistant") for (const call of m.tool_calls ?? []) stringsIn(call.input, values);
+        }
+      }
+      if (c.intent !== undefined) values.push(c.intent);
+      values.push(c.provenance.ref);
+      values.push(...Object.keys(c.observed ?? {}));
+      for (const [texts, isProse] of [[prose, true], [values, false]] as const) {
+        for (const t of texts) {
+          const toks = tokens(t.replace(PLACEHOLDER, " "));
+          for (const run of runsOf(toks.map((x) => x.lower))) items.add(run);
+          for (const tok of toks) {
+            if (/\p{N}/u.test(tok.lower)) { if (tok.lower.length >= TOKEN_MIN) always.add(tok.lower); continue; }
+            if (tok.lower.length >= WORD_MIN) items.add(tok.lower);
+            if (tok.word === tok.lower) lower.add(tok.lower);
+            else if ((!isProse || !tok.starts) && tok.lower.length >= NAME_MIN) capital.add(tok.lower);
+          }
+        }
+      }
+    }
+  }
+  const cases = new Map<string, number>();
+  for (const items of byCase.values()) for (const item of items) cases.set(item, (cases.get(item) ?? 0) + 1);
+  // "A few cases": two, or 2% of the pack when that is more.
+  const few = Math.max(2, Math.ceil(byCase.size * 0.02));
+  const all = new Set<string>();
+  for (const [item, count] of cases) if (count <= few) all.add(item);
+  for (const word of always) all.add(word);
+  // A word that some conversation also writes in lowercase is an ordinary word, not a name.
+  const allNames = new Set<string>();
+  for (const word of capital) if (!lower.has(word)) { all.add(word); allNames.add(word); }
+
+  // Identifiers that carry conversation content are no identifiers (see identifierPattern).
+  const identifiers = identifierPattern(packs, (text) => !carriesConversation(text, all, allNames));
+  const allowed = new Set<string>();
+  for (const t of allow) {
+    const w = words(withoutIdentifiers(t, identifiers));
+    for (const word of w) allowed.add(word);
+    for (const run of runsOf(w)) allowed.add(run);
+  }
+  const phrases = new Set([...all].filter((x) => !allowed.has(x)));
+  const names = new Set([...allNames].filter((x) => !allowed.has(x)));
+  const sequences = new Set<string>();
+  let maxSequence = 0;
+  for (const id of telemetryIds) {
+    const w = words(id);
+    if (w.join("").length < SEQUENCE_MIN) continue;
+    sequences.add(w.join(" "));
+    maxSequence = Math.max(maxSequence, w.length);
+  }
+  return { phrases, names, identifiers, conversation: { phrases: all, names: allNames }, sequences, maxSequence };
+}
+
+// The ids of the telemetry rows an export holds (conversation and unit ids): pass them to sensitiveIndex so the
+// reports and the pull request cannot carry one.
+export function telemetryIdentifiers(rows: ReadonlyArray<{ conversation_id: string; unit_id?: string }>): string[] {
+  const ids = new Set<string>();
+  for (const r of rows) { ids.add(r.conversation_id); if (r.unit_id !== undefined) ids.add(r.unit_id); }
+  return [...ids];
+}
+
+// Whether a short text (a catalog sentence, an id, a setting) carries content of particular conversations: a
+// copied run of words, a name, or a token with a digit. A single rare lowercase word is not counted here: a
+// sentence about "refunds" is not a leak because one customer wrote the word once. The full text check
+// (egressProblems) is the stricter one.
+function carriesConversation(text: string, phrases: ReadonlySet<string>, names: ReadonlySet<string>, byName = true): boolean {
+  for (const form of new Set([text, rendered(text)])) {
+    const w = words(form);
+    for (const run of runsOf(w)) if (phrases.has(run)) return true;
+    for (const word of w) if (((byName && names.has(word)) || /\p{N}/u.test(word)) && phrases.has(word)) return true;
+    if (!byName) continue;
+    for (let i = 0; i < w.length; i++) {
+      if (/\p{N}/u.test(w[i])) continue;
+      let joined = w[i];
+      for (let j = i + 1; j < w.length && j < i + JOIN_WORDS && !/\p{N}/u.test(w[j]); j++) {
+        joined += w[j];
+        if (joined.length > JOIN_CHARS) break;
+        if (joined.length >= JOIN_MIN && names.has(joined)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Case-specific content of the conversations alone: nothing is allowed, no identifier is exempt. A review
+// checks each customer-origin or config-origin string it prints against this. `byName` is false for settings
+// whose words are the operator's own vocabulary (a unit, a denominator): a brand or a currency that customers
+// write with a capital is not a leak there, but a copied quote or an order token still is.
+export function carriesConversationContent(text: string, index: SensitiveIndex, byName = true): boolean {
+  return carriesConversation(text, index.conversation.phrases, index.conversation.names, byName);
+}
+
+// Text that may hide content in an encoding: base64 and hex runs that decode to readable text, and the text with
+// every letter rotated by 13 places. Each is tested against the index like the text itself.
+const printable = (b: Buffer): boolean => {
+  if (b.length < 4) return false;
+  let ok = 0;
+  for (const byte of b) if ((byte >= 0x20 && byte < 0x7f) || byte === 0x0a || byte === 0x09) ok++;
+  return ok / b.length >= 0.95;
+};
+const rot13 = (text: string): string => text.replace(/[a-z]/gi, (c) => String.fromCharCode((c <= "Z" ? 65 : 97) + ((c.charCodeAt(0) - (c <= "Z" ? 65 : 97) + 13) % 26)));
+export function decodedForms(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/[A-Za-z0-9+/_-]{8,}={0,2}/g)) {
+    const bytes = Buffer.from(m[0], "base64");
+    if (printable(bytes)) out.push(bytes.toString("utf8"));
+  }
+  for (const m of text.matchAll(/(?<![0-9a-fA-F])(?:[0-9a-fA-F]{2}){4,}(?![0-9a-fA-F])/g)) {
+    const bytes = Buffer.from(m[0], "hex");
+    if (printable(bytes)) out.push(bytes.toString("utf8"));
+  }
+  return out;
+}
+
+const listed = (lines: number[]): string => (lines.length === 0 ? "" : `; line${lines.length === 1 ? "" : "s"} ${lines.slice(0, 8).join(", ")}${lines.length > 8 ? " and more" : ""}`);
+
+// Why this text must not be published or logged: conversation text from a pack, a secret, or personal data.
+// Each problem is a plain sentence that names the kind of match and where it is, and never repeats the matched
+// text.
+export function egressProblems(text: string, index: SensitiveIndex | null): string[] {
+  const problems = personalDataKinds(text).map((kind) => `contains what looks like ${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}`);
+  if (MIXED.test(rendered(text).normalize("NFKD").replace(/\p{Cf}/gu, ""))) problems.push("contains a word that mixes alphabets, which is how a look-alike letter hides a name");
+  if (index !== null) {
+    const rest = withoutIdentifiers(text, index.identifiers);
+    const hits = (part: string): { copied: Set<string>; single: Set<string>; encoded: number } => {
+      const single = new Set<string>();
+      const copied = new Set<string>();
+      const scan = (form: string, strict: boolean) => {
+        const w = words(form);
+        for (const run of runsOf(w)) if (index.phrases.has(run)) copied.add(run);
+        // Rotated text turns short words into other short words by chance, so single words count from six letters.
+        for (const word of w) if (index.phrases.has(word) && (strict || word.length >= 6)) single.add(word);
+        // A name cut into adjacent pieces: "Thad-deus", "T h a d d e u s", "Thad**deus**".
+        for (let i = 0; i < w.length; i++) {
+          if (/\p{N}/u.test(w[i])) continue;
+          let joined = w[i];
+          for (let j = i + 1; j < w.length && j < i + JOIN_WORDS && !/\p{N}/u.test(w[j]); j++) {
+            joined += w[j];
+            if (joined.length > JOIN_CHARS) break;
+            if (strict && joined.length >= JOIN_MIN && index.names.has(joined)) single.add(joined);
+          }
+        }
+        // A telemetry id, as a whole.
+        for (let i = 0; i < w.length && index.maxSequence > 0; i++) {
+          for (let n = 1; n <= index.maxSequence && i + n <= w.length; n++) if (index.sequences.has(w.slice(i, i + n).join(" "))) single.add(w.slice(i, i + n).join(" "));
+        }
+      };
+      const forms = new Set([part, rendered(part)]);
+      for (const form of forms) scan(form, true);
+      const before = copied.size + single.size;
+      for (const form of forms) {
+        for (const decoded of decodedForms(form)) scan(decoded, true);
+        scan(rot13(form), false);
+      }
+      return { copied, single, encoded: copied.size + single.size - before };
+    };
+    const all = hits(rest);
+    if (all.copied.size > 0 || all.single.size > 0) {
+      const copiedOn: number[] = [];
+      const singleOn: number[] = [];
+      rest.split("\n").forEach((line, i) => {
+        const h = hits(line);
+        if (h.copied.size > 0) copiedOn.push(i + 1);
+        if (h.single.size > 0) singleOn.push(i + 1);
+      });
+      if (all.copied.size > 0) problems.push(`contains wording copied from pack conversations (${all.copied.size} matches${listed(copiedOn)})`);
+      if (all.single.size > 0) problems.push(`contains a name, identifier or word that belongs to particular pack conversations (${all.single.size} matches${listed(singleOn)})`);
+      if (all.encoded > 0) problems.push(`contains encoded or scrambled text (base64, hex or rot13) that decodes to content from pack conversations (${all.encoded} matches)`);
+    }
+  }
+  return problems;
+}
+
+// Throws PilotError egress_blocked naming `what` when egressProblems finds anything.
+export function assertEgressSafe(text: string, index: SensitiveIndex | null, what: string): void {
+  const problems = egressProblems(text, index);
+  if (problems.length === 0) return;
+  throw new PilotError("egress_blocked", `Nothing was sent: the ${what} ${problems.join("; ")}. Remove that content and try again.`);
+}
+
+// Model-authored text that reaches a pull request (a rationale) must be plain words: it is the one channel a
+// prompt-injected model has to carry conversation content out, and an encoding or a link or an image would
+// carry it past any check on the words. Returns why the text is refused, or null.
+export const MAX_MODEL_TEXT_CHARS = 300;
+export function modelTextProblem(text: string, cap: number = MAX_MODEL_TEXT_CHARS): string | null {
+  if (text.trim() === "") return "it is empty";
+  if (text.length > cap) return `it is longer than ${cap} characters`;
+  // Latin letters, digits, spaces and the punctuation of a sentence. No line break, markup, link or quote of code.
+  if (!/^[\p{Script=Latin}\p{N} .,;:!?'"()\/%&+_-]+$/u.test(text)) return "it has characters other than plain words and sentence punctuation";
+  if (MIXED.test(text.normalize("NFKD"))) return "it has a word that mixes alphabets";
+  for (const token of text.split(/[ .,;:!?'"()\/%&+_-]+/)) {
+    if (token.length >= 20) return "it has a very long unbroken word, which may be an encoded run";
+    if (token.length >= 8 && /\p{L}/u.test(token) && /\p{N}/u.test(token)) return "it has a word that mixes letters and digits, which may be an encoded run";
+    if (token.length >= 8 && /[a-z][A-Z]/.test(token)) return "it has a word with capitals inside it, which may be an encoded run";
+    if (token.length >= 8 && !/[aeiouyAEIOUY]/.test(token)) return "it has a word with no vowels, which may be an encoded run";
+  }
+  return null;
+}
