@@ -29005,7 +29005,7 @@ var init_approval = __esm({
 });
 
 // src/pilot/io.ts
-import { closeSync as closeSync3, constants as constants3, existsSync as existsSync13, linkSync as linkSync2, lstatSync as lstatSync5, mkdirSync as mkdirSync7, openSync as openSync3, readFileSync as readFileSync15, realpathSync as realpathSync3, renameSync as renameSync3, statSync as statSync4, unlinkSync as unlinkSync4, writeFileSync as writeFileSync8 } from "node:fs";
+import { existsSync as existsSync13, linkSync as linkSync2, lstatSync as lstatSync5, mkdirSync as mkdirSync7, readFileSync as readFileSync15, realpathSync as realpathSync3, renameSync as renameSync3, statSync as statSync4, unlinkSync as unlinkSync4, writeFileSync as writeFileSync8 } from "node:fs";
 import { dirname as dirname5, isAbsolute as isAbsolute3, relative as relative2, resolve as resolve2 } from "node:path";
 function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
   let size;
@@ -29081,20 +29081,8 @@ function unsafeKey(value) {
 function writeAtomic(path4, content) {
   mkdirSync7(dirname5(path4), { recursive: true });
   const tmp = `${path4}.${process.pid}.tmp`;
-  let fd;
   try {
-    fd = openSync3(tmp, constants3.O_WRONLY | constants3.O_CREAT | constants3.O_EXCL | (constants3.O_NOFOLLOW ?? 0), 384);
-  } catch (e) {
-    const code = e.code;
-    if (code === "EEXIST" || code === "ELOOP") throw new PilotError("conflict", "A temporary file that this command did not create is in the way in the output folder (its name ends in .tmp). Nothing was written. Remove it, make sure only the operator can write to that folder, and run the command again.");
-    throw e;
-  }
-  try {
-    try {
-      writeFileSync8(fd, content);
-    } finally {
-      closeSync3(fd);
-    }
+    writeFileSync8(tmp, content, { mode: 384 });
     renameSync3(tmp, path4);
   } finally {
     if (existsSync13(tmp)) unlinkSync4(tmp);
@@ -30409,13 +30397,13 @@ var init_stats = __esm({
 
 // src/pilot/wrap.ts
 import { createHash as createHash2, createHmac } from "node:crypto";
-import { closeSync as closeSync4, constants as constants4, fstatSync as fstatSync2, mkdirSync as mkdirSync8, openSync as openSync4, readSync, writeFileSync as writeFileSync9, writeSync } from "node:fs";
+import { closeSync as closeSync3, constants as constants3, fstatSync as fstatSync2, mkdirSync as mkdirSync8, openSync as openSync3, readSync, writeFileSync as writeFileSync9, writeSync } from "node:fs";
 import { join as join19 } from "node:path";
 function appendLine(path4, text4) {
-  const fd = openSync4(path4, constants4.O_RDWR | constants4.O_APPEND | constants4.O_CREAT | (constants4.O_NOFOLLOW ?? 0), 384);
+  const fd = openSync3(path4, constants3.O_RDWR | constants3.O_APPEND | constants3.O_CREAT | (constants3.O_NOFOLLOW ?? 0), 384);
   try {
     const { size, mode } = fstatSync2(fd);
-    if ((mode & constants4.S_IFMT) !== constants4.S_IFREG) return false;
+    if ((mode & constants3.S_IFMT) !== constants3.S_IFREG) return false;
     let lead = "";
     if (size > 0) {
       const last = Buffer.alloc(1);
@@ -30424,7 +30412,7 @@ function appendLine(path4, text4) {
     writeSync(fd, lead + text4);
     return true;
   } finally {
-    closeSync4(fd);
+    closeSync3(fd);
   }
 }
 function pilotRecorder(options) {
@@ -33316,7 +33304,7 @@ var init_review = __esm({
 });
 
 // src/pilot/store.ts
-import { appendFileSync as appendFileSync2, closeSync as closeSync5, existsSync as existsSync14, mkdirSync as mkdirSync9, openSync as openSync5, readdirSync as readdirSync3, readFileSync as readFileSync16, statSync as statSync5, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
+import { appendFileSync as appendFileSync2, closeSync as closeSync4, existsSync as existsSync14, mkdirSync as mkdirSync9, openSync as openSync4, readdirSync as readdirSync3, readFileSync as readFileSync16, statSync as statSync5, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
 import { join as join20 } from "node:path";
 var OBJECT_KINDS, entryHash, MAX_OBJECT_BYTES, LOCK_STALE_MS, HELD, PilotStore;
 var init_store = __esm({
@@ -33553,11 +33541,11 @@ var init_store = __esm({
         };
         for (let attempt = 0; ; attempt++) {
           try {
-            const fd = openSync5(lock, "wx", 384);
+            const fd = openSync4(lock, "wx", 384);
             try {
               writeSync2(fd, String(process.pid));
             } finally {
-              closeSync5(fd);
+              closeSync4(fd);
             }
             HELD.add(lock);
             break;
