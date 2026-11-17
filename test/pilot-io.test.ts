@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { inside } from "../src/pilot/io.ts";
+import { inside, printable } from "../src/pilot/io.ts";
 import { baselineExport } from "../src/pilot/demo-data.ts";
 import { PilotError } from "../src/pilot/errors.ts";
 import { frozenPilot, json, tmp } from "./pilot-cli-helpers.ts";
@@ -49,4 +49,12 @@ test("an export whose rows_csv is a link to a file elsewhere is refused, and the
     writeFileSync(join(ctx.inputs, "plain.csv"), x.csv);
     assert.equal(await ctx.run(["baseline", "--telemetry", ok]), 0, ctx.lines.slice(-1)[0]);
   } finally { await ctx.stop(); }
+});
+
+test("printable(): control characters and line breaks are removed and long text is cut with a mark (EG-10)", () => {
+  assert.equal(printable("plain name"), "plain name");
+  assert.equal(printable("a\u001b[2J\u001b[1;31mred\r\nFAKE LINE\u0007\u202e"), "a [2J [1;31mred FAKE LINE");
+  const long = printable("x".repeat(500), 40);
+  assert.equal(long, `${"x".repeat(40)}... (cut at 40 characters)`);
+  assert.ok(!/[\u0000-\u001f]/.test(printable("a\u0000b\tc\nd")));
 });

@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { isLoopback } from "./config.ts";
 import { PilotError } from "./errors.ts";
+import { printable } from "./io.ts";
 import { bounded } from "./model.ts";
 import type { ChatMessage, ChatModel, ChatReply, ChatRequest, ProviderApproval } from "./types.ts";
 
@@ -54,8 +55,8 @@ export function liveModel(
   const key = env[approval.key_env]?.trim();
   if (!key) return refuse(`The key must be in ${approval.key_env}, the one variable the approval names. No other variable is read.`);
 
-  say(`Sending "${approval.data_class}" to ${approval.provider} at ${approval.endpoint} (model ${approval.model}).`);
-  say(`Approved by ${approval.approved_by} on ${approval.approved_at}. Limits for this command: ${approval.max_calls} calls, ${approval.max_input_chars} characters.`);
+  say(`Sending "${printable(approval.data_class)}" to ${approval.provider} at ${printable(approval.endpoint, 120)} (model ${printable(approval.model, 60)}).`);
+  say(`Approved by ${printable(approval.approved_by, 60)} on ${printable(approval.approved_at, 30)}. Limits for this command: ${approval.max_calls} calls, ${approval.max_input_chars} characters.`);
 
   // Nothing in the shell may shape the request. baseURL and apiKey are passed explicitly and authToken is nulled
   // (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN). The SDK also reads ANTHROPIC_CUSTOM_HEADERS when a client is

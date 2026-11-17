@@ -403,3 +403,13 @@ async function firstCandidate(r: { ctx: Ctx; finding: string }): Promise<string>
   assert.equal(await r.ctx.run(["propose", "--finding", r.finding, "--proposer", r.ctx.proposer]), 0);
   return r.ctx.last("candidate.created");
 }
+
+test("the signer's name stays out of the pull request body (EG-12)", async () => {
+  const r = await reviewScenario({ mutate: (_pack, config) => { config.metric.signed_off.by = "Tomas Lindqvist"; } });
+  try {
+    assert.deepEqual([r.review, r.publish], [0, 0], r.lines.join("\n"));
+    const body = prBody(r.ctx) ?? "";
+    assert.ok(!body.includes("Tomas") && !body.includes("Lindqvist"));
+    assert.match(body, /signed off at /);
+  } finally { await r.ctx.stop(); }
+});

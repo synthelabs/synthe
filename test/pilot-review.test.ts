@@ -105,7 +105,8 @@ test("rendered review has the diff, every full id, the sentence, the approve com
   // Changed on purpose (EG-03): ids and sentences from the pack are shown as inline code, so they cannot render as markdown.
   assert.ok(md.includes(`case \`c2\`, turn 1, check \`no_early_refund\`: \`${f.pack.value.check_catalog.no_early_refund}\``));
   assert.ok(md.includes(f.experiment.value.methods.keep) && md.includes(f.experiment.value.methods.early_stop));
-  assert.ok(md.includes("Signed off by `Dana Whitlock` at 2026-10-01T00:00:00Z"));
+  // Changed on purpose (EG-12): staff names stay out of the review, which is a pull request body.
+  assert.ok(md.includes("Metric contract signed off at 2026-10-01T00:00:00Z.") && !md.includes("Dana Whitlock"));
   assert.ok(md.includes(`tag \`${f.experiment.value.rollback.tag}\``));
   assert.ok(md.includes(shortId(f.bundle.value.candidate_id)));
   // No pack conversation text, in any form.

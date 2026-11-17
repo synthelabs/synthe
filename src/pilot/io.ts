@@ -94,3 +94,11 @@ export function writeAtomic(path: string, content: string): void {
     if (existsSync(tmp)) unlinkSync(tmp);
   }
 }
+
+// A customer-supplied string (a name, a unit, a data class) as it may be printed: control characters, line breaks and
+// escape sequences are taken out, so it cannot move the cursor, rewrite earlier output or fake a line, and it is cut
+// to `max` characters with a mark that says so.
+export function printable(text: string, max = 80): string {
+  const flat = text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, " ").replace(/ {2,}/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max)}... (cut at ${max} characters)` : flat;
+}

@@ -284,3 +284,14 @@ test("a provider that fails every call stops the run with a plain message; one f
   assert.deepEqual([await outcome(), await outcome(), await outcome(), await outcome(), await outcome(), await outcome()],
     ["answered", "plain failure", "answered", "plain failure", "plain failure", "stopped:live_not_approved"]);
 });
+
+test("customer-supplied approval strings are printed without control characters and cut to length (EG-10)", () => {
+  const nasty: ProviderApproval = { ...approval, data_class: `redacted \u001b[2J\u001b[31mFAKE\nline ${"x".repeat(300)}`, approved_by: "Rhea\r\nApproved by someone else \u001b[0m", model: "approved-model" };
+  const said: string[] = [];
+  liveModel(nasty, { live: true, endpoint: ENDPOINT, data_class: nasty.data_class }, { FERNHILL_PILOT_KEY: KEY }, (l) => said.push(l), transport([]).fetcher);
+  const text = said.join("\n");
+  assert.ok(!/[\u0000-\u0009\u000b-\u001f\u007f]/.test(text), "no control character or escape sequence");
+  assert.equal(said.length, 2, "no line break in a value made another line");
+  assert.ok(text.length < 500, `long values are cut: ${text.length}`);
+  assert.match(text, /\(cut at 80 characters\)/);
+});

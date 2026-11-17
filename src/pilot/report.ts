@@ -1,4 +1,5 @@
 import { shortId } from "./ids.ts";
+import { printable } from "./io.ts";
 import type { Frozen } from "./commands.ts";
 import type { PilotStore } from "./store.ts";
 import type {
@@ -21,11 +22,11 @@ export function renderPilotReport(store: PilotStore, f: Frozen): string {
 
   out.push("## 1. Contract (frozen before any change)", "");
   out.push(`- Contract: \`config:${f.config_id}\``);
-  out.push(`- Agent: ${f.config.agent.name}; prompt file \`${f.config.agent.prompt_path}\`; baseline prompt \`prompt:${f.baseline_prompt_id}\` at commit \`${f.commit}\`; telemetry tag \`${f.config.agent.baseline_tag}\`.`);
-  out.push(`- Primary metric: \`${m.primary.name}\` (${m.primary.kind}; ${m.primary.unit}), ${m.primary.direction.replaceAll("_", " ")}; minimum effect ${m.primary.min_effect}.`);
-  for (const g of m.guards) out.push(`- Guard: \`${g.name}\` (${g.kind}; ${g.unit}), ${g.direction.replaceAll("_", " ")}; tolerated harm ${g.max_harm}${g.critical ? "; critical" : ""}${g.early_stop ? `; early stop from ${g.early_stop.min_per_arm} per arm` : ""}.`);
+  out.push(`- Agent: ${printable(f.config.agent.name, 60)}; prompt file \`${f.config.agent.prompt_path}\`; baseline prompt \`prompt:${f.baseline_prompt_id}\` at commit \`${f.commit}\`; telemetry tag \`${f.config.agent.baseline_tag}\`.`);
+  out.push(`- Primary metric: \`${m.primary.name}\` (${m.primary.kind}; ${printable(m.primary.unit, 120)}), ${m.primary.direction.replaceAll("_", " ")}; minimum effect ${m.primary.min_effect}.`);
+  for (const g of m.guards) out.push(`- Guard: \`${g.name}\` (${g.kind}; ${printable(g.unit, 120)}), ${g.direction.replaceAll("_", " ")}; tolerated harm ${g.max_harm}${g.critical ? "; critical" : ""}${g.early_stop ? `; early stop from ${g.early_stop.min_per_arm} per arm` : ""}.`);
   out.push(`- Denominator: ${m.denominator}. Window ${m.analysis_window_days} days; outcome lag ${m.outcome_lag_days} days; at least ${m.min_samples_per_arm} per arm; alpha ${m.alpha}; power ${m.power}.`);
-  out.push(`- Signed off by ${m.signed_off.by} on ${m.signed_off.at}.`, "");
+  out.push(`- Signed off by ${printable(m.signed_off.by, 60)} on ${m.signed_off.at}.`, "");
 
   out.push("## 2. Baseline (from imported telemetry)", "");
   const baselineEntry = journal.filter((e) => e.step === "baseline.reported").at(-1);
@@ -44,11 +45,11 @@ export function renderPilotReport(store: PilotStore, f: Frozen): string {
   for (const e of journal.filter((x) => x.step === "pack.frozen" || x.step === "pack.promoted")) {
     const p = store.get<Pack>("pack", e.refs.pack);
     const held = p.cases.filter((c) => c.split === "heldout").length;
-    out.push(`- \`pack:${e.refs.pack}\` version ${p.pack_version}${p.parent_pack_id ? `, promoted from \`pack:${shortId(p.parent_pack_id)}\`` : ""}: ${p.cases.length} cases (${p.cases.length - held} discovery, ${held} held out), ${p.cases.filter((c) => c.regression).length} regression cases. Redaction approved by ${p.source.redaction.approved_by} on ${p.source.redaction.approved_at}. Method: counted from the pack record.`);
+    out.push(`- \`pack:${e.refs.pack}\` version ${p.pack_version}${p.parent_pack_id ? `, promoted from \`pack:${shortId(p.parent_pack_id)}\`` : ""}: ${p.cases.length} cases (${p.cases.length - held} discovery, ${held} held out), ${p.cases.filter((c) => c.regression).length} regression cases. Redaction approved by ${printable(p.source.redaction.approved_by, 60)} on ${p.source.redaction.approved_at}. Method: counted from the pack record.`);
   }
   for (const e of journal.filter((x) => x.step === "pack.promoted")) {
     const r = store.get<PromotionRecord>("promotion", e.refs.promotion);
-    out.push(`- Promotion \`promotion:${e.refs.promotion}\`: ${r.approver} approved ${r.promoted.length} regression case(s) on ${r.at}: ${r.promoted.map((x) => `${x.case_id} (${x.split}, ${x.kind})`).join(", ")}.`);
+    out.push(`- Promotion \`promotion:${e.refs.promotion}\`: ${printable(r.approver, 60)} approved ${r.promoted.length} regression case(s) on ${r.at}: ${r.promoted.map((x) => `${x.case_id} (${x.split}, ${x.kind})`).join(", ")}.`);
   }
   out.push("");
 
@@ -83,7 +84,7 @@ export function renderPilotReport(store: PilotStore, f: Frozen): string {
       }
       for (const a of journal.filter((y) => y.step === "approval.recorded" && y.refs.experiment === x.key)) {
         const ap = store.get<Approval>("approval", a.key);
-        out.push(`- Approval \`approval:${a.key}\`: ${ap.approver} ${ap.decision} this candidate and experiment on ${ap.at}.`);
+        out.push(`- Approval \`approval:${a.key}\`: ${printable(ap.approver, 60)} ${ap.decision} this candidate and experiment on ${ap.at}.`);
       }
       for (const d of journal.filter((y) => y.step === "analysis.decided" && y.refs.experiment === x.key)) {
         const an = store.get<ExperimentAnalysis>("analysis", d.key);
