@@ -38,7 +38,10 @@ const bad = (message: string): never => fail("invalid_telemetry", message);
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isNonEmpty = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
-const isCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
+// A count above 2^53 is not exact in a double, so "successes plus missing is more than n" can be defeated by rounding
+// (1.8e16 + 2 equals 1.8e16). No pilot has a trillion conversations; larger numbers are refused, never analysed.
+export const MAX_COUNT = 1e12;
+const isCount = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 && v <= MAX_COUNT;
 const validTime = (v: unknown): v is string => typeof v === "string" && !Number.isNaN(ms(v));
 
 const TOP_KEYS = [
@@ -257,6 +260,15 @@ function validateAggregate(raw: unknown, where: string, contract: MetricContract
       if (typeof s.sd !== "number" || !Number.isFinite(s.sd) || s.sd < 0) bad(`${where}: metrics.${m.name}.sd must be a finite number of 0 or more.`);
       if (!isCount(s.missing) || s.missing > n) bad(`${where}: metrics.${m.name}.missing must be a whole number from 0 to n.`);
       if (s.nonzero !== undefined && (!isCount(s.nonzero) || s.nonzero > n - (s.missing as number))) bad(`${where}: metrics.${m.name}.nonzero must be a whole number from 0 to the conversations that have a value.`);
+      // nonzero certifies a mean guard (30 non-zero values per arm), so it may not contradict the summary beside it.
+      // With sd 0 every value equals the mean: all are zero (mean 0) or none is. With nonzero 0 every value is zero.
+      if (s.nonzero !== undefined && n - (s.missing as number) > 0) {
+        const have = n - (s.missing as number);
+        const expected = s.sd === 0 ? (s.mean === 0 ? 0 : have) : null;
+        if ((expected !== null && s.nonzero !== expected) || (s.nonzero === 0 && (s.mean !== 0 || s.sd !== 0))) {
+          bad(`${where}: metrics.${m.name}.nonzero contradicts its mean and sd: with sd 0 every value equals the mean, and with nonzero 0 the mean and sd must both be 0.`);
+        }
+      }
       if (m.range) {
         const have = n - (s.missing as number);
         const half = (m.range.max - m.range.min) / 2;

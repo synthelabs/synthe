@@ -30624,6 +30624,13 @@ function validateAggregate(raw, where, contract) {
       if (typeof s.sd !== "number" || !Number.isFinite(s.sd) || s.sd < 0) bad4(`${where}: metrics.${m.name}.sd must be a finite number of 0 or more.`);
       if (!isCount(s.missing) || s.missing > n) bad4(`${where}: metrics.${m.name}.missing must be a whole number from 0 to n.`);
       if (s.nonzero !== void 0 && (!isCount(s.nonzero) || s.nonzero > n - s.missing)) bad4(`${where}: metrics.${m.name}.nonzero must be a whole number from 0 to the conversations that have a value.`);
+      if (s.nonzero !== void 0 && n - s.missing > 0) {
+        const have = n - s.missing;
+        const expected = s.sd === 0 ? s.mean === 0 ? 0 : have : null;
+        if (expected !== null && s.nonzero !== expected || s.nonzero === 0 && (s.mean !== 0 || s.sd !== 0)) {
+          bad4(`${where}: metrics.${m.name}.nonzero contradicts its mean and sd: with sd 0 every value equals the mean, and with nonzero 0 the mean and sd must both be 0.`);
+        }
+      }
       if (m.range) {
         const have = n - s.missing;
         const half = (m.range.max - m.range.min) / 2;
@@ -31138,7 +31145,7 @@ function renderBaseline(report2, contract, baselineId) {
   return `${lines2.join("\n")}
 `;
 }
-var fail, bad4, isObject3, isNonEmpty2, isCount, validTime, TOP_KEYS, ROW_FIELDS, ID_FIELDS, MAX_ID, NO_SEGMENT, MINIMISE, contractMetrics, shown, NEIGHBOURS, byString, sameExceptValues, telemetrySource, fmt, pct3, BASELINE_FLAG_TEXT, ciText;
+var fail, bad4, isObject3, isNonEmpty2, MAX_COUNT, isCount, validTime, TOP_KEYS, ROW_FIELDS, ID_FIELDS, MAX_ID, NO_SEGMENT, MINIMISE, contractMetrics, shown, NEIGHBOURS, byString, sameExceptValues, telemetrySource, fmt, pct3, BASELINE_FLAG_TEXT, ciText;
 var init_telemetry = __esm({
   "src/pilot/telemetry.ts"() {
     "use strict";
@@ -31155,7 +31162,8 @@ var init_telemetry = __esm({
     bad4 = (message) => fail("invalid_telemetry", message);
     isObject3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
     isNonEmpty2 = (v) => typeof v === "string" && v.trim() !== "";
-    isCount = (v) => typeof v === "number" && Number.isInteger(v) && v >= 0;
+    MAX_COUNT = 1e12;
+    isCount = (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 && v <= MAX_COUNT;
     validTime = (v) => typeof v === "string" && !Number.isNaN(ms(v));
     TOP_KEYS = [
       "format",
@@ -31359,8 +31367,24 @@ function cohortTest(base, cand) {
   const r = chiSquareIndependence([kept.map((c) => c[0]), kept.map((c) => c[1])]);
   return r === null ? null : r.p;
 }
+function checkSpecification(spec) {
+  const num2 = (v) => typeof v === "number" && Number.isFinite(v);
+  const wrong = (what) => fail2("conflict", `The experiment specification is not usable: ${what}. It was not written by the experiment command; write the specification again.`);
+  if (typeof spec !== "object" || spec === null) wrong("it is not a record");
+  if (spec.assignment !== "randomized") wrong("assignment must be randomized");
+  if (spec.randomization_unit !== "conversation") wrong("the randomization unit must be conversation");
+  const a = spec.allocation;
+  if (!a || !num2(a.baseline) || !num2(a.candidate) || a.baseline <= 0 || a.candidate <= 0 || Math.abs(a.baseline + a.candidate - 1) > 1e-9) wrong("the allocation must be two shares above 0 that add up to 1");
+  if (!Array.isArray(spec.guards)) wrong("guards must be a list");
+  if (!num2(spec.alpha) || spec.alpha <= 0 || spec.alpha > 0.2) wrong("alpha must be above 0 and at most 0.2");
+  if (!num2(spec.integrity_alpha) || spec.integrity_alpha <= 0 || spec.integrity_alpha >= 1) wrong("integrity_alpha must be between 0 and 1");
+  if (!num2(spec.early_stop_level) || spec.early_stop_level <= 0.5 || spec.early_stop_level >= 1) wrong("early_stop_level must be between 0.5 and 1");
+  if (!num2(spec.required_per_arm) || spec.required_per_arm <= 0) wrong("required_per_arm must be a number above 0");
+  if (typeof spec.primary !== "object" || spec.primary === null || !num2(spec.primary.min_effect) || spec.primary.min_effect <= 0) wrong("the primary metric needs a min_effect above 0");
+}
 function analyzeExperiment(input) {
   const { spec } = input;
+  checkSpecification(spec);
   const baseTag = spec.arms.baseline.tag;
   const candTag = spec.arms.candidate.tag;
   for (const imp of input.imports) {

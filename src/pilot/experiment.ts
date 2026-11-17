@@ -283,8 +283,29 @@ export function cohortTest(base: Record<string, number>, cand: Record<string, nu
 // after the cutoff is refused unless the caller passes reopen: true, because a result that can be redone with new numbers
 // until it says keep is not a predeclared result. A reopened analysis says so (reopened: true), and every later call
 // with the same imports must pass reopen: true again (verify and a repeat of the analysis do).
+// A specification is written only by buildExperimentSpec from a validated contract and is loaded by content id, so
+// a malformed one should not exist. This is the last line of defence for a direct caller and for `verify`: a
+// specification that is not a randomized two-arm plan with usable numbers is refused, because several checks would
+// otherwise switch off without a sign (a NaN share turns the sample ratio check into "no result").
+function checkSpecification(spec: ExperimentSpec): void {
+  const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+  const wrong = (what: string): never => fail("conflict", `The experiment specification is not usable: ${what}. It was not written by the experiment command; write the specification again.`);
+  if (typeof spec !== "object" || spec === null) wrong("it is not a record");
+  if (spec.assignment !== "randomized") wrong("assignment must be randomized");
+  if (spec.randomization_unit !== "conversation") wrong("the randomization unit must be conversation");
+  const a = spec.allocation as { baseline?: unknown; candidate?: unknown } | undefined;
+  if (!a || !num(a.baseline) || !num(a.candidate) || a.baseline <= 0 || a.candidate <= 0 || Math.abs(a.baseline + a.candidate - 1) > 1e-9) wrong("the allocation must be two shares above 0 that add up to 1");
+  if (!Array.isArray(spec.guards)) wrong("guards must be a list");
+  if (!num(spec.alpha) || spec.alpha <= 0 || spec.alpha > 0.2) wrong("alpha must be above 0 and at most 0.2");
+  if (!num(spec.integrity_alpha) || spec.integrity_alpha <= 0 || spec.integrity_alpha >= 1) wrong("integrity_alpha must be between 0 and 1");
+  if (!num(spec.early_stop_level) || spec.early_stop_level <= 0.5 || spec.early_stop_level >= 1) wrong("early_stop_level must be between 0.5 and 1");
+  if (!num(spec.required_per_arm) || spec.required_per_arm <= 0) wrong("required_per_arm must be a number above 0");
+  if (typeof spec.primary !== "object" || spec.primary === null || !num(spec.primary.min_effect) || spec.primary.min_effect <= 0) wrong("the primary metric needs a min_effect above 0");
+}
+
 export function analyzeExperiment(input: { spec: ExperimentSpec; experiment_id: Sha256; imports: Stored<TelemetryImport>[]; approval_id: Sha256; approved_at?: IsoTime; reopen?: boolean }): ExperimentAnalysis {
   const { spec } = input;
+  checkSpecification(spec);
   const baseTag = spec.arms.baseline.tag;
   const candTag = spec.arms.candidate.tag;
   for (const imp of input.imports) {
