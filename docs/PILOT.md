@@ -14,7 +14,7 @@ npx synthe pilot demo --out /tmp/synthe-pilot-demo
 
 From a clean checkout, the same demo is `npm ci`, then `node src/pilot/cli.ts demo --out /tmp/synthe-pilot-demo`.
 
-It takes a few seconds, sends nothing anywhere, and exits 0 only if every expectation holds. The data is invented (Fernhill Outfitters, support agent Juniper). It shows, in order:
+It takes under half a minute (about 17 seconds on the machine it was written on), sends nothing anywhere, and exits 0 only if every expectation holds. The data is invented (Fernhill Outfitters, support agent Juniper). It shows, in order:
 
 1. A baseline report from an imported telemetry export and a frozen metric contract.
 2. A proposed change **rejected in replay**: a blocking guard fails, and the report names the case and the turn.
@@ -25,6 +25,9 @@ It takes a few seconds, sends nothing anywhere, and exits 0 only if every expect
 7. Refusals: an export dated in the future, an export with an unknown version tag, publishing without the full confirmation or to another repo, an analysis without an approval, a second experiment for the reverted change, and a later export for an experiment that was already reverted.
 8. Privacy checks: strings planted in the pack do not appear in anything printed, reported or sent.
 9. Verification: every record matches its id, every decision recomputes to the same result, and the journal still holds the head that was noted after the revert.
+10. A fourth change, written by a person (the third one's two lines in the other order), run on simulated live traffic. The demo plays the agent with the real recorder (`pilotRecorder`) and `pickVersion`, about 640 conversations a day for the 14-day window, and `watch --log` reads the log: a tick before the start (waiting, nothing imported), two on day 1 (one look only), one on day 2, one after the window ends, one at the cutoff and one after it. The true lift in the primary metric is 0.01, real but smaller than the 0.03 minimum effect, so the final analysis is **hold** (inconclusive), not keep. The log also holds, on purpose, calls with no outcome, conversations served by two versions and outcomes with no call, and the export notes in the tick's output and in `WATCH.md` carry those counts per first-served version. The demo checks that the log, exports, reports and journal hold no raw conversation id and no message text.
+
+The demo ends with the four outcomes, each with its decision file: rejected in replay (`replay-<candidate>-pack-v1.md`), reverted, kept, and held at the final analysis (`decision-<experiment>.md`). The recorder's id key in the demo is a fixed string that protects nothing; a real key comes from your secret store.
 
 Open these afterwards:
 

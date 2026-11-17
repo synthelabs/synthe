@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { addDays, DAY_MS, ms } from "./ids.ts";
 import type { ModelScript, ProposerScript } from "./model.ts";
+import { pickVersion, type PilotRecorder } from "./wrap.ts";
 import { TELEMETRY_FORMAT, type CaseCheck, type Pack, type PackCase, type PackMessage, type PromotionRequest, type Split } from "./types.ts";
 
 // Everything the synthetic pilot runs on. All of it is invented: Fernhill Outfitters, its support agent Juniper,
@@ -22,7 +24,13 @@ export const DEMO = {
   baseline_window: { start: "2026-10-01T00:00:00Z", days: 14 },
   experiment_b_start: "2026-10-19T00:00:00Z",
   experiment_c_start: "2026-10-27T00:00:00Z",
+  // Fourth experiment. Experiment 2 is settled at its cutoff, 2026-11-12, so this one starts after that.
+  experiment_d_start: "2026-11-29T00:00:00Z",
 } as const;
+
+// A fixed string for the demo only: it is not a secret and protects nothing. A real recorder takes its key from the
+// team's secret store (at least 16 characters), never from source code.
+export const DEMO_ID_KEY = "demo-only-id-key-not-a-secret";
 
 // Synthetic sensitive strings. They stand for the things a redacted pack still holds because correctness depends
 // on them (order tokens, the customer's own words). The privacy checks look for them in everything that leaves.
@@ -50,6 +58,10 @@ const LINE_NO_HANDOFF = "- If an order is past its return-by date, explain the 3
 
 // The candidate a person writes after the first experiment is reverted.
 export const HUMAN_CANDIDATE_PROMPT = `${BASELINE_PROMPT}${LINE_DATE}\n${LINE_NO_HANDOFF}\n`;
+
+// The fourth candidate: the third one's two lines in the other order. The scripted agent keys on the phrases, not
+// their order, so it behaves the same, and no new words appear.
+export const HUMAN_CANDIDATE_REORDERED_PROMPT = `${BASELINE_PROMPT}${LINE_NO_HANDOFF}\n${LINE_DATE}\n`;
 
 export function demoConfig(): Record<string, unknown> {
   return {
@@ -448,3 +460,98 @@ export const experimentCFinal = (candidateTag: string) => telemetryExport({
   export_id: "fernhill-exp2-final", start: DEMO.experiment_c_start, days: 14, exported_at: addDays(DEMO.experiment_c_start, 16),
   assignment: "randomized", lag_days: 2, csv_name: "experiment-2-final.csv", arms: C_ARMS(candidateTag),
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// Live traffic for the fourth experiment, written through the real recorder (src/pilot/wrap.ts).
+// ---------------------------------------------------------------------------------------------------------------
+
+// True rates behind the simulated conversations. The candidate's primary lift (0.01) is real but smaller than the
+// contract's min_effect (0.03), so the honest answer at the final analysis is HOLD (inconclusive), not keep.
+export const TRAFFIC = {
+  per_day: 640,
+  seed: "fernhill-demo-d-2026-11",
+  baseline: { resolved: 0.62, escalated: 0.12, refunded: 0.15, refund_usd: 28 },
+  candidate: { resolved: 0.63, escalated: 0.12, refunded: 0.15, refund_usd: 28.4 },
+  // Which conversations (by position in the window) are made to go wrong on purpose.
+  call_before_outcome: [100, 900, 2300], // a call under the other version comes BEFORE the outcome
+  call_after_outcome: [1500], // the other-version call comes AFTER the outcome: the row is unchanged
+  repeat_after_other_call: [1500], // of those, the outcome is recorded once more after that call: the later line is not used
+  no_outcome: [200, 1100, 3000, 5200], // calls that never get an outcome
+  outcome_without_call: [{ day: 1, at: 7 * 3_600_000 }, { day: 2, at: 11 * 3_600_000 }], // outcomes whose call was never recorded
+} as const;
+
+export interface PlantedCounts {
+  no_outcome: Record<string, number>; // by first-served version
+  two_versions: Record<string, number>; // by first-served version
+  other_version_after_outcome: number;
+  outcome_after_other_version: number; // of those, outcome recorded again after the call
+  outcome_without_call: number;
+}
+
+// The same uniform number in [0, 1) for the same conversation and purpose, in whatever order they are asked for.
+const draw = (id: string, purpose: string): number => createHash("sha256").update(`${TRAFFIC.seed}:${purpose}:${id}`).digest().readUIntBE(0, 6) / 2 ** 48;
+
+// Simulates the agent for one experiment window: about `per_day` conversations a day, each assigned by the real
+// `pickVersion` and recorded by the real recorder under an injected clock. `upTo(t)` writes everything that has
+// happened before time t (a conversation's outcome lands 20 minutes after it starts) and nothing after, so the log
+// grows as the demo's calendar moves. Conversation ids are raw here; the recorder hashes them with the id key.
+export function demoTraffic(input: { recorder: PilotRecorder; setClock: (ms: number) => void; start: string; days: number; baseline: string; candidate: string; salt: string; candidateShareBp: number; model: string }) {
+  const startMs = ms(input.start);
+  const total = input.days * TRAFFIC.per_day;
+  const planted: PlantedCounts = { no_outcome: {}, two_versions: {}, other_version_after_outcome: 0, outcome_after_other_version: 0, outcome_without_call: 0 };
+  const rawIds: string[] = [];
+  const events: { at: number; seq: number; run: () => void }[] = [];
+  let seq = 0;
+  let next = 0; // the next conversation to start
+  const bump = (m: Record<string, number>, k: string) => { m[k] = (m[k] ?? 0) + 1; };
+  const at = (t: number, run: () => void) => events.push({ at: t, seq: seq++, run });
+  const other = (v: string) => (v === input.baseline ? input.candidate : input.baseline);
+
+  function begin(n: number): void {
+    const d = Math.floor(n / TRAFFIC.per_day);
+    const i = n % TRAFFIC.per_day;
+    const t = startMs + d * DAY_MS + Math.floor((i * DAY_MS) / TRAFFIC.per_day);
+    const id = `fernhill-conv-${String(d).padStart(2, "0")}-${String(i).padStart(4, "0")}`;
+    rawIds.push(id, `fernhill-unit-${id}`);
+    const version = pickVersion({ key: id, salt: input.salt, baseline: input.baseline, candidate: input.candidate, candidateShareBp: input.candidateShareBp });
+    const rates = version === input.baseline ? TRAFFIC.baseline : TRAFFIC.candidate;
+    const ctx = (v: string) => ({ promptVersion: v, conversationId: id, unitId: `fernhill-unit-${id}`, segment: i % 3 === 0 ? "email" : "chat", modelId: input.model, startedAt: new Date(t) });
+    const values = { resolved: draw(id, "resolved") < rates.resolved ? 1 : 0, escalated: draw(id, "escalated") < rates.escalated ? 1 : 0, refund_usd: draw(id, "refund") < rates.refunded ? rates.refund_usd : 0 };
+    at(t, () => input.recorder.record(ctx(version)));
+    if ((TRAFFIC.no_outcome as readonly number[]).includes(n)) { bump(planted.no_outcome, version); return; }
+    if ((TRAFFIC.call_before_outcome as readonly number[]).includes(n)) {
+      bump(planted.two_versions, version);
+      at(t + 300_000, () => input.recorder.record(ctx(other(version)))); // another service picks the other prompt mid-conversation
+    }
+    at(t + 1_200_000, () => input.recorder.outcome(id, values));
+    if ((TRAFFIC.call_after_outcome as readonly number[]).includes(n)) {
+      planted.other_version_after_outcome++;
+      at(t + 3_600_000, () => input.recorder.record(ctx(other(version))));
+      // The same conversation reports again after that call, with other numbers: the export does not use them.
+      if ((TRAFFIC.repeat_after_other_call as readonly number[]).includes(n)) planted.outcome_after_other_version++;
+      if ((TRAFFIC.repeat_after_other_call as readonly number[]).includes(n)) at(t + 4_800_000, () => input.recorder.outcome(id, { resolved: 1 - values.resolved, escalated: 1 - values.escalated, refund_usd: 0 }));
+    }
+  }
+
+  return {
+    planted, rawIds,
+    upTo(untilMs: number): void {
+      while (next < total && startMs + Math.floor(next / TRAFFIC.per_day) * DAY_MS + Math.floor(((next % TRAFFIC.per_day) * DAY_MS) / TRAFFIC.per_day) < untilMs) begin(next++);
+      // Outcomes with no call: written by another service that never went through the recorder.
+      for (const [k, o] of TRAFFIC.outcome_without_call.entries()) {
+        const t = startMs + o.day * DAY_MS + o.at;
+        if (t < untilMs && !rawIds.includes(`fernhill-orphan-${k}`)) {
+          rawIds.push(`fernhill-orphan-${k}`);
+          planted.outcome_without_call++;
+          at(t, () => input.recorder.outcome(`fernhill-orphan-${k}`, { resolved: 1, escalated: 0, refund_usd: 0 }));
+        }
+      }
+      events.sort((a, b) => a.at - b.at || a.seq - b.seq);
+      while (events.length && events[0].at < untilMs) {
+        const e = events.shift()!;
+        input.setClock(e.at);
+        e.run();
+      }
+    },
+  };
+}
