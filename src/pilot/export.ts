@@ -101,9 +101,12 @@ export function buildLogExport(input: LogExportInput): LogExport {
     let values = metrics.map((m) => c.values.get(m) ?? null);
     if (others.length > 0) {
       const before = valuesBefore(c, Math.min(...others.map((x) => Date.parse(x.at))));
-      if (before.lines === 0) { left.served_two_versions++; bump(twoBy, first.prompt_version); values = metrics.map(() => null); }
-      else { left.other_version_after_outcome++; values = metrics.map((m) => before.values.get(m) ?? null); }
-      if (before.lines > 0 && before.later > 0) left.outcome_after_other_version++;
+      values = metrics.map((m) => before.values.get(m) ?? null);
+      // "Recorded before" means a value was recorded: an outcome line that holds nothing ({} or only nulls) credits
+      // nothing to the first version, so the conversation is unattributed like one with no line at all.
+      const recorded = values.some((v) => v !== null);
+      if (!recorded) { left.served_two_versions++; bump(twoBy, first.prompt_version); }
+      else { left.other_version_after_outcome++; if (before.later > 0) left.outcome_after_other_version++; }
     }
     // A call with no outcome is a row with empty values too: the analysis checks missing outcomes in each arm and
     // between the arms, and a failure whose outcome was never recorded must not simply disappear. Inside the outcome

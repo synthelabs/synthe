@@ -297,15 +297,21 @@ function validateAggregate(raw: unknown, where: string, contract: MetricContract
   return agg;
 }
 
+// How many different unexpected prompt versions a refusal names. More than this are counted, never listed.
+export const MAX_NAMED_VERSIONS = 3;
+
 export function versionCheck(tags: string[], allowed: string[], noun: string): void {
   const unexpected = tags.filter((t) => !allowed.includes(t));
   if (unexpected.length === 0) return;
   const distinct = [...new Set(unexpected)].sort();
-  // A value shaped like a recorder token is an id (an export query that picked the wrong column), so it is counted
-  // and never repeated.
+  // A wrong tag is named, so the operator sees what was exported. But an export query that picked the wrong column
+  // puts ids here, and ids must not be repeated: a prompt has a few versions, a column of ids has many values. So
+  // more than three different values are only counted, and a value shaped like a recorder token is never shown.
   const plain = distinct.filter((t) => !TOKEN_SHAPE.test(t));
   const hidden = distinct.length - plain.length;
-  const named = [plain.slice(0, 3).join(", "), plain.length > 3 ? `and ${plain.length - 3} more` : "", hidden > 0 ? `${hidden} value${hidden === 1 ? "" : "s"} shaped like a recorder id token, not shown` : ""].filter(Boolean).join(", ");
+  const named = distinct.length > MAX_NAMED_VERSIONS
+    ? `${distinct.length} different values, not shown: that many values in the prompt_version column are probably ids, not prompt versions`
+    : [plain.join(", "), hidden > 0 ? `${hidden} value${hidden === 1 ? "" : "s"} shaped like a recorder id token, not shown` : ""].filter(Boolean).join(", ");
   fail("telemetry_version_mismatch", `${unexpected.length} ${noun}${unexpected.length === 1 ? "" : "s"} carry a prompt_version that is not expected here (${named}). Expected only: ${allowed.join(", ")}. Export only the tags the pilot names.`);
 }
 

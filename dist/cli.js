@@ -30848,7 +30848,7 @@ function versionCheck(tags, allowed, noun) {
   const distinct = [...new Set(unexpected)].sort();
   const plain = distinct.filter((t) => !TOKEN_SHAPE.test(t));
   const hidden = distinct.length - plain.length;
-  const named = [plain.slice(0, 3).join(", "), plain.length > 3 ? `and ${plain.length - 3} more` : "", hidden > 0 ? `${hidden} value${hidden === 1 ? "" : "s"} shaped like a recorder id token, not shown` : ""].filter(Boolean).join(", ");
+  const named = distinct.length > MAX_NAMED_VERSIONS ? `${distinct.length} different values, not shown: that many values in the prompt_version column are probably ids, not prompt versions` : [plain.join(", "), hidden > 0 ? `${hidden} value${hidden === 1 ? "" : "s"} shaped like a recorder id token, not shown` : ""].filter(Boolean).join(", ");
   fail("telemetry_version_mismatch", `${unexpected.length} ${noun}${unexpected.length === 1 ? "" : "s"} carry a prompt_version that is not expected here (${named}). Expected only: ${allowed.join(", ")}. Export only the tags the pilot names.`);
 }
 function classifyRows(rows, lagDays, asOf, rowAsOf) {
@@ -31335,7 +31335,7 @@ function renderBaseline(report2, contract, baselineId) {
   return `${lines2.join("\n")}
 `;
 }
-var fail, bad4, isObject3, isNonEmpty2, MAX_COUNT, isCount, validTime, TOP_KEYS, ROW_FIELDS, ID_FIELDS, MAX_ID, NO_SEGMENT, MINIMISE, contractMetrics, shown, NEIGHBOURS, byString, sameExceptValues, telemetrySource, fmt, pct3, BASELINE_FLAG_TEXT, ciText;
+var fail, bad4, isObject3, isNonEmpty2, MAX_COUNT, isCount, validTime, TOP_KEYS, ROW_FIELDS, ID_FIELDS, MAX_ID, NO_SEGMENT, MINIMISE, contractMetrics, shown, NEIGHBOURS, MAX_NAMED_VERSIONS, byString, sameExceptValues, telemetrySource, fmt, pct3, BASELINE_FLAG_TEXT, ciText;
 var init_telemetry = __esm({
   "src/pilot/telemetry.ts"() {
     "use strict";
@@ -31379,6 +31379,7 @@ var init_telemetry = __esm({
     contractMetrics = (contract) => [contract.primary, ...contract.guards].map((m) => ({ name: m.name, kind: m.kind, unit: m.unit, ..."range" in m && m.range ? { range: m.range } : {} }));
     shown = (name) => /^[a-z][a-z0-9_]{0,63}$/.test(name) && !TOKEN_SHAPE.test(name) ? `"${name}"` : "with a name that is not a plain lowercase word";
     NEIGHBOURS = 50;
+    MAX_NAMED_VERSIONS = 3;
     byString = (a, b) => a < b ? -1 : a > b ? 1 : 0;
     sameExceptValues = (a, b) => canonicalJson({ ...a, values: null }) === canonicalJson({ ...b, values: null });
     telemetrySource = (imports) => `telemetry:${imports.map((i) => shortId(i.id)).join(",")}`;
@@ -34613,15 +34614,15 @@ function buildLogExport(input) {
     let values = metrics.map((m) => c.values.get(m) ?? null);
     if (others.length > 0) {
       const before = valuesBefore(c, Math.min(...others.map((x) => Date.parse(x.at))));
-      if (before.lines === 0) {
+      values = metrics.map((m) => before.values.get(m) ?? null);
+      const recorded2 = values.some((v) => v !== null);
+      if (!recorded2) {
         left2.served_two_versions++;
         bump(twoBy, first.prompt_version);
-        values = metrics.map(() => null);
       } else {
         left2.other_version_after_outcome++;
-        values = metrics.map((m) => before.values.get(m) ?? null);
+        if (before.later > 0) left2.outcome_after_other_version++;
       }
-      if (before.lines > 0 && before.later > 0) left2.outcome_after_other_version++;
     }
     if (c.outcome_lines === 0) {
       left2.no_outcome++;
