@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { GITHUB_TOKEN_ENV, type PilotDeps } from "../src/pilot/commands.ts";
@@ -11,6 +11,7 @@ import { candidateTag, DAY_MS, ms } from "../src/pilot/ids.ts";
 import type { JournalEntry } from "../src/pilot/store.ts";
 import type { ExperimentSpec, TelemetryImport } from "../src/pilot/types.ts";
 import { BUSY_PREFIX, FALSE_STOP_PER_LOOK, interimLooksAllowed, lookGate, renderWatch, watch, type Look, type LogExporter } from "../src/pilot/watch.ts";
+import { pickVersion, pilotRecorder } from "../src/pilot/wrap.ts";
 import { replayedPilot, tmp, json } from "./pilot-cli-helpers.ts";
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -422,5 +423,224 @@ test("WATCH.md holds no conversation id or unit id from the exports", async () =
     for (const id of [`c-${DEMO.baseline_tag}-00-0000`, `c-${tag}-00-0000`, `u-${DEMO.baseline_tag}-00-0000`, "c-juniper-v14-00-0000"]) assert.ok(!text.includes(id), id);
     assert.ok(!text.includes("\u001b"));
     assert.match(text, /Journal\n\nHead: entry \d+, [0-9a-f]{64}\. Note it outside this directory/);
+  } finally { await ctx.stop(); }
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Through the real command table, with a call log written by the real recorder.
+// ---------------------------------------------------------------------------------------------------------------
+
+// A log of `days` days from the window start, `perDay` conversations a day, split by the customer-side function
+// the wrapper ships. The candidate does a little better, so a final analysis has something to say.
+function splitLog(dir: string, s: ExperimentSpec, days: number, perDay: number, salt = "watch-test-salt"): void {
+  let clock = new Date(0);
+  const rec = pilotRecorder({ logDir: dir, agent: "Juniper", idKey: "watch-test-key", now: () => clock });
+  for (let d = 0; d < days; d++) {
+    for (let i = 0; i < perDay; i++) {
+      const at = new Date(ms(s.window.start) + d * DAY_MS + Math.floor((i * DAY_MS) / perDay));
+      const id = `conv-${d}-${i}`;
+      const version = pickVersion({ key: id, salt, baseline: s.arms.baseline.tag, candidate: s.arms.candidate.tag, candidateShareBp: Math.round(s.allocation.candidate * 10000) });
+      clock = at;
+      rec.record({ promptVersion: version, conversationId: id, unitId: `unit-${d}-${i}`, segment: i % 3 === 0 ? "email" : "chat", startedAt: at });
+      clock = new Date(at.getTime() + 600_000);
+      const better = version === s.arms.candidate.tag ? 1 : 0;
+      rec.outcome(id, { resolved: (i * 7 + d) % 100 < 60 + better * 4 ? 1 : 0, escalated: (i + d) % 8 === 0 ? 1 : 0, refund_usd: i % 7 === 0 ? 28 : 0 });
+    }
+  }
+  assert.equal(rec.problems(), 0);
+}
+const exportFiles = (dir: string) => (existsSync(join(dir, "exports")) ? readdirSync(join(dir, "exports")).sort() : []);
+
+test("watch --log through main: an interim look on day 2, the final at the cutoff, the export in exports/, and verify passes", async () => {
+  const { ctx, approve, spec: s } = await approved(DEMO.experiment_c_start);
+  try {
+    await approve();
+    const logDir = join(tmp("watch-recorder-"), "log");
+    splitLog(logDir, s, 14, 120);
+    const argv = ["watch", "--log", logDir, "--assignment", "randomized"];
+    ctx.lines.length = 0;
+    assert.equal(await ctx.run(argv, { now: () => new Date(day(s.window.start, 2)) }), 0, ctx.lines.slice(-5).join("|"));
+    assert.equal(analyses(ctx.store).length, 1);
+    assert.equal(analyses(ctx.store)[0].refs.final, "false");
+    assert.equal(analyses(ctx.store)[0].refs.recommendation, "hold");
+    const first = exportFiles(ctx.dir);
+    assert.equal(first.length, 2, first.join(","));
+    assert.ok(first.every((f) => f.startsWith("calllog-")));
+    assert.equal(await ctx.run(argv, { now: () => new Date(day(s.window.start, 2)) }), 0);
+    assert.equal(analyses(ctx.store).length, 1, "the same day: no second look");
+    assert.equal(await ctx.run(argv, { now: () => new Date(s.analysis_cutoff) }), 0, ctx.lines.slice(-5).join("|"));
+    const all = analyses(ctx.store);
+    assert.equal(all.length, 2);
+    assert.equal(all[1].refs.final, "true");
+    assert.equal(await ctx.run(["verify"]), 0, ctx.lines.slice(-4).join("|"));
+    assert.equal(exportFiles(ctx.dir).length, 4);
+    assert.match(watchText(ctx.dir), /final result stands/);
+  } finally { await ctx.stop(); }
+});
+
+test("watch --log takes --agent, and a wrong agent is a refusal", async () => {
+  const { ctx, approve, spec: s } = await approved(DEMO.experiment_c_start);
+  try {
+    await approve();
+    const logDir = join(tmp("watch-recorder-"), "log");
+    splitLog(logDir, s, 4, 60);
+    const now = { now: () => new Date(day(s.window.start, 3)) };
+    assert.equal(await ctx.run(["watch", "--log", logDir, "--assignment", "randomized", "--agent", "Nobody"], now), 1);
+    assert.match(watchText(ctx.dir), /Refused \(usage\): .*Nobody/);
+    assert.equal(analyses(ctx.store).length, 0);
+    assert.equal(await ctx.run(["watch", "--log", logDir, "--assignment", "randomized", "--agent", "Juniper"], now), 0, ctx.lines.slice(-4).join("|"));
+    assert.equal(analyses(ctx.store).length, 1);
+  } finally { await ctx.stop(); }
+});
+
+test("duplicate imports: the same file left in the inbox is never imported twice, and an identical copy under another name is not either", async () => {
+  const { ctx, approve, tag } = await approved(DEMO.experiment_c_start);
+  try {
+    await approve();
+    const inbox = join(tmp("watch-inbox-"), "in");
+    const x = exportAt(tag, DEMO.experiment_c_start, 3, day(DEMO.experiment_c_start, 3), "d3");
+    drop(inbox, "d3.json", x);
+    const clock = { t: day(DEMO.experiment_c_start, 4) };
+    assert.equal(await watch(ctx.store, { inbox }, depsAt(ctx, clock)), 0);
+    assert.equal(analyses(ctx.store).length, 1);
+    // The next day: the file is still there. Nothing new is imported.
+    clock.t = day(DEMO.experiment_c_start, 5);
+    assert.equal(await watch(ctx.store, { inbox }, depsAt(ctx, clock)), 0);
+    // An identical copy, another name: same content, so the same record.
+    copyFileSync(join(inbox, "d3.json"), join(inbox, "copy-of-d3.json"));
+    clock.t = day(DEMO.experiment_c_start, 6);
+    assert.equal(await watch(ctx.store, { inbox }, depsAt(ctx, clock)), 0, ctx.lines.slice(-4).join("|"));
+    clock.t = day(DEMO.experiment_c_start, 7);
+    assert.equal(await watch(ctx.store, { inbox }, depsAt(ctx, clock)), 0);
+    const imports = experimentImports(ctx.store);
+    assert.equal(imports.length, 1);
+    assert.equal(new Set(imports.map((e) => e.key)).size, 1);
+    assert.equal(analyses(ctx.store).length, 1);
+    assert.match(watchText(ctx.dir), /imported: 2/);
+  } finally { await ctx.stop(); }
+});
+
+test("restart and overlap: two watch commands started together give one analysis; the other does nothing", async () => {
+  const { ctx, approve, tag } = await approved(DEMO.experiment_c_start);
+  try {
+    await approve();
+    const inbox = join(tmp("watch-inbox-"), "in");
+    drop(inbox, "d3.json", exportAt(tag, DEMO.experiment_c_start, 3, day(DEMO.experiment_c_start, 3), "d3"));
+    const at = { now: () => new Date(day(DEMO.experiment_c_start, 4)) };
+    ctx.lines.length = 0;
+    const codes = await Promise.all([ctx.run(["watch", "--inbox", inbox], at), ctx.run(["watch", "--inbox", inbox], at)]);
+    assert.deepEqual(codes, [0, 0], ctx.lines.join("|"));
+    assert.equal(analyses(ctx.store).length, 1);
+    assert.equal(experimentImports(ctx.store).length, 1);
+    assert.ok(ctx.lines.some((l) => /Another watch is running|No look was allowed|already made today/i.test(l)), ctx.lines.join("|"));
+  } finally { await ctx.stop(); }
+});
+
+test("missing telemetry: an empty or missing log folder at a due look is a refusal with no stack trace; the next tick with a good log succeeds", async () => {
+  const { ctx, approve, spec: s } = await approved(DEMO.experiment_c_start);
+  try {
+    await approve();
+    const empty = tmp("watch-empty-");
+    const now = { now: () => new Date(day(s.window.start, 3)) };
+    for (const log of [empty, join(empty, "does-not-exist")]) {
+      ctx.lines.length = 0;
+      assert.equal(await ctx.run(["watch", "--log", log, "--assignment", "randomized"], now), 1, log);
+      assert.equal(analyses(ctx.store).length, 0);
+      const said = ctx.lines.join("\n");
+      assert.doesNotMatch(said, /\n\s+at |Error:|unexpected/);
+      assert.match(watchText(ctx.dir), /Refused \([a-z_]+\)/);
+    }
+    const good = join(tmp("watch-recorder-"), "log");
+    splitLog(good, s, 4, 60);
+    assert.equal(await ctx.run(["watch", "--log", good, "--assignment", "randomized"], now), 0, ctx.lines.slice(-4).join("|"));
+    assert.equal(analyses(ctx.store).length, 1);
+  } finally { await ctx.stop(); }
+});
+
+test("malformed telemetry: a file that is not JSON is invalid and fails the tick, and a valid file beside it is still analysed", async () => {
+  const { ctx, approve, tag } = await approved(DEMO.experiment_c_start);
+  try {
+    await approve();
+    const inbox = join(tmp("watch-inbox-"), "in");
+    mkdirSync(inbox, { recursive: true });
+    writeFileSync(join(inbox, "garbage.json"), "{ this is not json");
+    writeFileSync(join(inbox, "empty.json"), "");
+    drop(inbox, "good.json", exportAt(tag, DEMO.experiment_c_start, 3, day(DEMO.experiment_c_start, 3), "good"));
+    ctx.lines.length = 0;
+    assert.equal(await watch(ctx.store, { inbox }, depsAt(ctx, { t: day(DEMO.experiment_c_start, 4) })), 1);
+    assert.equal(analyses(ctx.store).length, 1, "the valid file was analysed");
+    const text = watchText(ctx.dir);
+    assert.match(text, /invalid: 2/);
+    assert.match(text, /garbage\.json: [a-z_]+: /);
+    assert.doesNotMatch(ctx.lines.join("\n"), /\n\s+at /);
+  } finally { await ctx.stop(); }
+});
+
+test("stable final decision: ten more ticks with new and better exports never change the recommendation", async () => {
+  const { ctx, approve, tag, spec: s } = await approved(DEMO.experiment_c_start);
+  try {
+    await approve();
+    const inbox = join(tmp("watch-inbox-"), "in");
+    drop(inbox, "final.json", exportAt(tag, DEMO.experiment_c_start, 14, s.analysis_cutoff, "final"));
+    const clock = { t: day(s.analysis_cutoff, 1) };
+    assert.equal(await watch(ctx.store, { inbox }, depsAt(ctx, clock)), 0, ctx.lines.slice(-4).join("|"));
+    const decided = analyses(ctx.store);
+    assert.equal(decided.length, 1);
+    const recommendation = decided[0].refs.recommendation;
+    const head = decided[0].hash;
+    for (let i = 1; i <= 10; i++) {
+      const better = telemetryExport({ export_id: `later-${i}`, start: DEMO.experiment_c_start, days: 14, exported_at: day(s.analysis_cutoff, 1 + i), assignment: "randomized", lag_days: 2, csv_name: `later-${i}.csv`, arms: armsC(tag).map((a, k) => (k === 1 ? { ...a, resolved: 0.65 + i * 0.01 } : a)) });
+      drop(inbox, `later-${i}.json`, better);
+      clock.t = day(s.analysis_cutoff, 1 + i);
+      assert.equal(await watch(ctx.store, { inbox }, depsAt(ctx, clock)), 0, `tick ${i}`);
+      assert.equal(analyses(ctx.store).length, 1, `tick ${i}`);
+      assert.equal(analyses(ctx.store)[0].hash, head);
+      assert.equal(analyses(ctx.store).at(-1)!.refs.recommendation, recommendation);
+      assert.ok(watchText(ctx.dir).startsWith(`# ${recommendation.toUpperCase()}`), `tick ${i}`);
+    }
+    assert.equal(experimentImports(ctx.store).length, 1);
+  } finally { await ctx.stop(); }
+});
+
+test("through main: a full watched experiment makes no request to GitHub and never calls deps.fetch, with both secrets in the environment", async () => {
+  const { ctx, approve, tag, spec: s } = await approved(DEMO.experiment_c_start);
+  try {
+    assert.equal(await ctx.run(["review", "--candidate", ctx.eligible, "--publish", "--repo", DEMO.slug, "--base", DEMO.base, "--confirm", ctx.eligible]), 0);
+    await approve();
+    const seen = ctx.github.requests.length;
+    const inbox = join(tmp("watch-inbox-"), "in");
+    const secrets = { [GITHUB_TOKEN_ENV]: "gh-secret-for-test", ANTHROPIC_API_KEY: "provider-secret-for-test" };
+    const fetchTrap = (() => { throw new Error("watch called fetch"); }) as typeof fetch;
+    ctx.lines.length = 0;
+    const run = (t: string) => ctx.run(["watch", "--inbox", inbox], { env: secrets, fetch: fetchTrap, now: () => new Date(t) });
+    drop(inbox, "d6.json", exportAt(tag, DEMO.experiment_c_start, 6, day(DEMO.experiment_c_start, 6), "d6"));
+    assert.equal(await run(day(DEMO.experiment_c_start, 7)), 0, ctx.lines.slice(-4).join("|"));
+    drop(inbox, "final.json", exportAt(tag, DEMO.experiment_c_start, 14, s.analysis_cutoff, "final"));
+    assert.equal(await run(day(s.analysis_cutoff, 1)), 0, ctx.lines.slice(-4).join("|"));
+    assert.equal(analyses(ctx.store).length, 2);
+    assert.equal(ctx.github.requests.length, seen, "no request reached the fake GitHub server");
+    assert.ok(!ctx.lines.join("\n").includes("secret-for-test"));
+    assert.ok(!watchText(ctx.dir).includes("secret-for-test"));
+  } finally { await ctx.stop(); }
+});
+
+test("WATCH.md and stdout hold no conversation id, unit id, recorder token or raw id from the log", async () => {
+  const { ctx, approve, spec: s } = await approved(DEMO.experiment_c_start);
+  try {
+    await approve();
+    const logDir = join(tmp("watch-recorder-"), "log");
+    splitLog(logDir, s, 6, 60);
+    ctx.lines.length = 0;
+    assert.equal(await ctx.run(["watch", "--log", logDir, "--assignment", "randomized"], { now: () => new Date(day(s.window.start, 5)) }), 0, ctx.lines.slice(-4).join("|"));
+    const csv = exportFiles(ctx.dir).find((f) => f.endsWith(".csv"))!;
+    const [head, ...rows] = readFileSync(join(ctx.dir, "exports", csv), "utf8").trimEnd().split("\n");
+    const cols = head.split(",");
+    const tokens = rows.flatMap((r) => { const c = r.split(","); return [c[cols.indexOf("conversation_id")], c[cols.indexOf("unit_id")]]; });
+    assert.ok(tokens.length > 100 && tokens.every((t) => /^[a-p]{32}$/.test(t)));
+    const outputs = [ctx.lines.join("\n"), watchText(ctx.dir)];
+    for (const text of outputs) {
+      assert.doesNotMatch(text, /conv-\d|unit-\d|watch-test-key/);
+      for (const t of tokens.slice(0, 200)) assert.ok(!text.includes(t), "a token from the export is printed");
+    }
   } finally { await ctx.stop(); }
 });

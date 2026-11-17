@@ -322,6 +322,51 @@ Read these before you rely on a decision:
 
 Each decision file leads with the recommendation and the team's own number, lists every number with its source record and method, and gives the exact rollback target (the baseline tag and prompt id).
 
+## Watching an experiment
+
+`watch` is one tick of a schedule you run on your own machine (cron or launchd). It is not Synthe operating the live experiment: your team still runs the traffic split with its own controls, and `watch` only decides, from the clock and the journal, whether a look at the results is allowed now, and records it.
+
+```
+npx synthe pilot watch --inbox <dir> [--experiment <id>] [--interim-days N]
+npx synthe pilot watch --log <dir> --assignment randomized|observational [--experiment <id>] [--interim-days N] [--agent <name>]
+```
+
+Give exactly one source. `--inbox` is a folder of outcome exports (`*.json` with their CSV beside them) that your own job drops there. `--log` is the recorder's `logDir`; at a due look `watch` writes one export from it into the pilot directory's `exports/` (never into the inbox or the repository) and analyses that.
+
+**What one tick does.** It finds the one approved experiment that is open (or the one named by `--experiment`) and checks whether a look is allowed. If not, it writes `reports/WATCH.md` saying why and when the next look may run, imports nothing, and exits 0. If a look is allowed, it picks one export, runs the unchanged `analyze` on it (so the import, the checks and the decision are exactly the ones `analyze` makes), reruns `verify`, writes `reports/WATCH.md` and the usual reports, and exits. There is no second decision engine and no state file besides the journal.
+
+**The look cap.** Before the cutoff an analysis can only hold, or revert through a critical guard's early stop, and that stop is checked at 99.9% at every analysis. So looks are limited: one per UTC day (or one per `--interim-days` whole UTC days), and at most ceil((cutoff - window start) / interim days) interim looks. The cap counts journal entries, so a clock that steps back cannot buy more. Each interim look adds at most 0.1% chance of a false early stop per critical guard, so the worst case is looks x 0.1% per critical guard. For the demo contract (14-day window, 2-day lag, cutoff 16 days after the start, one look a day) that is 16 looks, so a false early stop has a chance of at most 1.6% per critical guard. `WATCH.md` prints the number for the experiment it describes.
+
+**Which export.** Before the cutoff an interim look takes the newest export that is newer than the last imported one and was made before the cutoff. The final look takes the earliest export made at or after the cutoff, never a later or better one, and the final analysis is never redone. A keep or a revert ends the experiment: later ticks import nothing and the recommendation in `WATCH.md` does not change. The same content is never imported twice, whatever its file name.
+
+**Exit codes.** 0: a normal tick, including a tick that waited, or found another watch running (it then does nothing). 1: a refusal (for example no usable telemetry at a due look, a usage error), an invalid file in the inbox, or a failed `verify`. A file that is not valid is listed in `WATCH.md` with its code, and does not stop a valid file in the same inbox from being analysed; it keeps the exit code at 1 until you remove it.
+
+**Schedule it** on the machine that holds the pilot directory, with the output kept inside it. Cron (`MAILTO=""` keeps cron from mailing the output):
+
+```
+MAILTO=""
+17 6 * * *  cd /srv/pilot && npx --yes github:synthelabs/synthe#v1.10.0 pilot watch --dir .synthe-pilot --inbox /srv/pilot/inbox >> .synthe-pilot/watch.log 2>&1
+```
+
+launchd (`~/Library/LaunchAgents/com.example.synthe-watch.plist`, then `launchctl load` it):
+
+```
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.example.synthe-watch</string>
+  <key>WorkingDirectory</key><string>/srv/pilot</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/local/bin/npx</string><string>synthe</string><string>pilot</string><string>watch</string>
+    <string>--dir</string><string>/srv/pilot/.synthe-pilot</string><string>--inbox</string><string>/srv/pilot/inbox</string>
+  </array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>17</integer></dict>
+  <key>StandardOutPath</key><string>/srv/pilot/.synthe-pilot/watch.log</string>
+  <key>StandardErrorPath</key><string>/srv/pilot/.synthe-pilot/watch.log</string>
+</dict></plist>
+```
+
+**What it never does.** `watch` never publishes a review or opens a pull request, never changes traffic, never uses the network, and never reads the GitHub token or a provider key: the commands it runs get an empty environment. Neither `WATCH.md` nor its output contains a conversation id, a unit id or a value from the log. Publishing a review still needs a person (`review --publish ... --confirm <full candidate id>`).
+
 ## Publishing
 
 The default is a local bundle. A pull request is opened only when all of these hold:

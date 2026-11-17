@@ -10288,10 +10288,10 @@ async function setupSkills(ctx) {
   for (const skill of session.agent.skills) {
     try {
       const version = await client.beta.skills.versions.retrieve(skill.version, { skill_id: skill.skill_id });
-      let dirname8 = path.basename(version.name.trim());
-      if (dirname8 === "" || dirname8 === "." || dirname8 === "..")
-        dirname8 = skill.skill_id;
-      const dest = path.resolve(skillsRoot, dirname8);
+      let dirname9 = path.basename(version.name.trim());
+      if (dirname9 === "" || dirname9 === "." || dirname9 === "..")
+        dirname9 = skill.skill_id;
+      const dest = path.resolve(skillsRoot, dirname9);
       if (dest !== skillsRoot && !dest.startsWith(skillsRoot + path.sep)) {
         log.warn("skill name escapes the skills dir; skipping", {
           component: "agent-tool-context",
@@ -28963,9 +28963,9 @@ var init_ids = __esm({
     candidateTag = (candidateId) => `synthe-${shortId(candidateId)}`;
     reviewBranch = (candidateId) => `synthe-pilot/${shortId(candidateId)}`;
     isSha256 = (value) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
-    ms = (iso2) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(iso2) ? Date.parse(iso2) : NaN;
+    ms = (iso3) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(iso3) ? Date.parse(iso3) : NaN;
     DAY_MS = 864e5;
-    addDays = (iso2, days) => new Date(ms(iso2) + days * DAY_MS).toISOString().replace(".000Z", "Z");
+    addDays = (iso3, days) => new Date(ms(iso3) + days * DAY_MS).toISOString().replace(".000Z", "Z");
   }
 });
 
@@ -31782,7 +31782,7 @@ function parseModelScript(source) {
   return v;
 }
 function fill(value, values) {
-  if (typeof value === "string") return value.replace(/\{([a-z_]+)\}/g, (whole, name) => values[name] ?? whole);
+  if (typeof value === "string") return value.replace(/\{([a-z_]+)\}/g, (whole2, name) => values[name] ?? whole2);
   if (Array.isArray(value)) return value.map((v) => fill(v, values));
   if (isObject4(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v, values)]));
   return value;
@@ -33706,6 +33706,10 @@ async function replay(store, flags, deps) {
   if (report2.gate.eligible) deps.say(`Next: \`experiment --candidate ${shortId(candidate.id)} --start <UTC time>\`, then \`review --candidate ${shortId(candidate.id)}\`.`);
   return 0;
 }
+function openExperiments(store) {
+  const approved = approvals(store);
+  return store.find("experiment.specified").filter((e) => approved.filter((a) => a.value.experiment_id === e.key).at(-1)?.value.decision === "approved" && settledBy(store, e.key) === void 0).map((e) => store.stored("experiment", e.key));
+}
 function assertMayRun(store, candidateId, experimentId) {
   const approved = approvals(store);
   for (const e of store.find("experiment.specified")) {
@@ -34527,10 +34531,290 @@ var init_export = __esm({
     init_ids();
     init_io();
     init_types2();
-    seconds = (iso2) => iso2.replace(/\.\d+Z$/, "Z");
+    seconds = (iso3) => iso3.replace(/\.\d+Z$/, "Z");
     nowSeconds = (d) => seconds(d.toISOString());
     field = (s) => s === void 0 ? "" : /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
     text3 = (flags, name) => typeof flags[name] === "string" && flags[name].trim() !== "" ? flags[name] : void 0;
+  }
+});
+
+// src/pilot/watch.ts
+import { readdirSync as readdirSync5 } from "node:fs";
+import { dirname as dirname7, join as join23 } from "node:path";
+function whole(interimDays) {
+  if (!Number.isInteger(interimDays) || interimDays < 1) throw new PilotError("usage", "--interim-days must be a whole number of 1 or more.");
+  return interimDays;
+}
+function interimLooksAllowed(spec, interimDays) {
+  return Math.ceil((ms(spec.analysis_cutoff) - ms(spec.window.start)) / (whole(interimDays) * DAY_MS));
+}
+function lookGate(input) {
+  const { spec, looks } = input;
+  const interimDays = whole(input.interimDays ?? 1);
+  const decided = looks.find((l) => l.recommendation === "keep" || l.recommendation === "revert");
+  if (decided) return { action: "done", why: `The experiment already ended with ${decided.recommendation}.` };
+  if (looks.some((l) => l.final)) return { action: "done", why: "The final analysis is recorded. It stands and is never redone." };
+  const now = input.now.getTime();
+  const cutoff = ms(spec.analysis_cutoff);
+  const start2 = ms(spec.window.start);
+  const used = looks.filter((l) => !l.final).length;
+  const allowed = interimLooksAllowed(spec, interimDays);
+  if (now >= cutoff) return { action: "final", used, allowed };
+  if (now < start2) return { action: "wait", why: "The experiment window has not started.", next: spec.window.start };
+  if (used >= allowed) return { action: "wait", why: `All ${allowed} interim looks are used.`, next: spec.analysis_cutoff };
+  if (looks.length > 0) {
+    const newest = Math.max(...looks.map((l) => ms(l.at)));
+    const today = dayStart(now);
+    const sameDay = looks.some((l) => dayStart(ms(l.at)) === today);
+    const days = (today - dayStart(newest)) / DAY_MS;
+    if (sameDay || days < interimDays) {
+      const next = Math.min(dayStart(newest) + interimDays * DAY_MS, cutoff);
+      return { action: "wait", why: sameDay ? "A look was already made today (UTC)." : `Fewer than ${interimDays} whole UTC days have passed since the last look.`, next: iso2(next) };
+    }
+  }
+  return { action: "interim", used, allowed };
+}
+function renderWatch(v) {
+  const last = v.looks.at(-1);
+  const label = last ? last.recommendation.toUpperCase() : "WAITING";
+  const who = v.experiment ? `pilot ${printable2(v.pilot_id, 60)}, experiment ${shortId(v.experiment.id)}` : `pilot ${printable2(v.pilot_id, 60)}`;
+  const L = [`# ${label} (${who})`, ""];
+  if (last) L.push(last.final || last.recommendation !== "hold" ? `Latest analysis: ${last.recommendation}${last.final ? ", final" : ", before the cutoff"}.` : "Latest analysis: hold, before the cutoff. The experiment is still running.", "");
+  else L.push(v.experiment ? "No analysis yet." : "No approved experiment is open. Watch waits for an approval: record one with `approve` after the review, and it starts to look.", "");
+  L.push("## This tick", "", `Run at ${v.now}.`, ...v.did.map((d) => `- ${d}`), "");
+  if (v.refusal) L.push(`Refused (${v.refusal.code}): ${printable2(v.refusal.message, 400)}`, "");
+  if (v.experiment) {
+    const spec = v.experiment.spec;
+    L.push("## Experiment", "", `- Window: ${spec.window.start} to ${spec.window.end}.`, `- Analysis cutoff: ${spec.analysis_cutoff}. Only an export made at or after it gives the final result.`, "");
+    L.push("## Looks", "");
+    if (v.looks.length === 0) L.push("None yet.", "");
+    else {
+      L.push("| Time | Kind | Recommendation | Analysis |", "| --- | --- | --- | --- |", ...v.looks.map((l) => `| ${l.at} | ${l.final ? "final" : "interim"} | ${l.recommendation} | ${shortId(l.analysis)} |`), "");
+    }
+    const allowed = interimLooksAllowed(spec, v.interim_days);
+    const used = v.looks.filter((l) => !l.final).length;
+    const critical = spec.guards.some((g) => g.critical && g.early_stop);
+    const chance = Math.min(100, Number((allowed * FALSE_STOP_PER_LOOK * 100).toFixed(2)));
+    L.push(`Interim looks: ${used} used of ${allowed} allowed. ${critical ? `Each interim look checks critical guards at ${Number((EARLY_STOP_LEVEL * 100).toFixed(2))}%, so the chance of a false early stop is at most ${allowed} x ${Number((FALSE_STOP_PER_LOOK * 100).toFixed(2))}% = ${chance}% per critical guard.` : "This experiment has no critical guard with an early stop, so interim looks cannot end it."}`, "");
+    L.push("## Next look", "", v.gate ? gateLine(v.gate) : "Not known.", "");
+    if (v.looks.length) L.push(`Decision file: reports/decision-${shortId(v.experiment.id)}.md`, "");
+  }
+  L.push("## Files", "");
+  if (v.files === null) L.push("The files were not read in this tick: no look was allowed, or the experiment is decided.", "");
+  else {
+    for (const state of ["imported", "pending", "superseded", "invalid"]) {
+      const of = v.files.filter((f) => f.state === state);
+      L.push(`${state}: ${of.length}`);
+      for (const f of of.slice(0, SHOWN_FILES)) L.push(`- ${printable2(f.name, 80)}${f.exported_at ? ` (exported ${f.exported_at})` : ""}${state === "invalid" ? `: ${f.code}: ${printable2(f.message ?? "", 300)}` : ""}`);
+      if (of.length > SHOWN_FILES) L.push(`- ... and ${of.length - SHOWN_FILES} more`);
+    }
+    L.push("");
+  }
+  if (v.verify) L.push("## Verify failed", "", ...v.verify.map((l) => `- ${printable2(l, 400)}`), "");
+  if (v.head) L.push("## Journal", "", `Head: entry ${v.head.seq}, ${v.head.hash}. Note it outside this directory: \`verify --head ${v.head.hash}\` then shows that nothing up to it was removed or rewritten.`, "");
+  L.push("Nothing was published. This command never opens a pull request and never changes traffic. Publishing a review needs a person: `review --publish \u2026 --confirm <full candidate id>`.", "");
+  return L.join("\n");
+}
+function gateLine(g) {
+  switch (g.action) {
+    case "done":
+      return `No more looks. ${g.why}`;
+    case "wait":
+      return `${g.why}${g.next ? ` The next look may run from ${g.next}.` : ""}`;
+    case "interim":
+      return `An interim look may run now (${g.used} of ${g.allowed} used). It needs an export newer than the last one and made before the cutoff.`;
+    case "final":
+      return "The final look may run now. It needs an export made at or after the cutoff.";
+  }
+}
+function scanInbox(store, inbox, experimentId, spec) {
+  let names2;
+  try {
+    names2 = readdirSync5(inbox, { withFileTypes: true }).filter((d) => d.isFile() && d.name.endsWith(".json")).map((d) => d.name).sort();
+  } catch {
+    throw new PilotError("not_found", `${printable2(inbox, 120)} is not a directory that can be read.`);
+  }
+  if (names2.length > MAX_INBOX_FILES) throw new PilotError("usage", `${names2.length} .json files are in the inbox; the limit is ${MAX_INBOX_FILES}. Move the ones that are done out of it.`);
+  const f = frozen(store);
+  const imports = store.find("telemetry.imported").filter((e) => e.refs.scope === experimentId);
+  const importedKeys = new Set(imports.map((e) => e.key));
+  const newest = Math.max(-Infinity, ...imports.map((e) => ms(store.get("telemetry", e.refs.telemetry).exported_at)));
+  const files = names2.map((name) => {
+    const path4 = join23(inbox, name);
+    try {
+      const imported = importTelemetry({
+        text: readBounded(path4),
+        readSibling: (n) => readBounded(inside(dirname7(path4), n)),
+        purpose: "experiment",
+        scope_id: experimentId,
+        contract: f.config.metric,
+        tags: [spec.arms.baseline.tag, spec.arms.candidate.tag],
+        window: spec.window
+      });
+      const state = importedKeys.has(contentId(imported)) ? "imported" : ms(imported.exported_at) <= newest ? "superseded" : "pending";
+      return { name, path: path4, state, exported_at: imported.exported_at };
+    } catch (e) {
+      if (!(e instanceof PilotError)) throw e;
+      return { name, path: path4, state: "invalid", code: e.code, message: e.message };
+    }
+  });
+  return { files, importedKeys };
+}
+async function watch(store, flags, deps, logExport) {
+  const inbox = flagText(flags, "inbox");
+  const logDir = flagText(flags, "log");
+  const assignment = flagText(flags, "assignment");
+  if (inbox === void 0 === (logDir === void 0) || flags.inbox === true || flags.log === true) throw new PilotError("usage", "Give exactly one source: --inbox <dir> or --log <dir> (with --assignment).");
+  if (logDir !== void 0 && !assignment) throw new PilotError("usage", "--log needs --assignment: how conversations were assigned to the two prompts.");
+  if (inbox !== void 0 && assignment !== void 0) throw new PilotError("usage", "--assignment goes with --log only.");
+  if (logDir !== void 0 && !logExport) throw new PilotError("usage", "--log is not available in this build");
+  const rawDays = flagText(flags, "interim-days");
+  if (flags["interim-days"] === true || rawDays !== void 0 && !/^\d+$/.test(rawDays)) throw new PilotError("usage", "--interim-days must be a whole number of 1 or more.");
+  const interimDays = whole(rawDays === void 0 ? 1 : Number(rawDays));
+  let started = false;
+  try {
+    return await store.exclusive(WATCH_LOCK, WATCH_LOCK_STALE_MS, () => {
+      started = true;
+      return tick(store, flags, deps, { inbox, logDir, assignment, interimDays, logExport });
+    });
+  } catch (e) {
+    if (!started && isBusy(e)) {
+      deps.say("Another watch is running; this tick did nothing.");
+      return 0;
+    }
+    throw e;
+  }
+}
+async function tick(store, flags, deps, src) {
+  const f = frozen(store);
+  const now = deps.now();
+  const quiet = (sink) => ({ say: (l) => {
+    sink.push(l);
+  }, env: {}, now: deps.now, fault: deps.fault });
+  const view = { pilot_id: f.config.pilot_id, experiment: null, now: iso2(now.getTime()), did: [], gate: null, looks: [], interim_days: src.interimDays, files: null, refusal: null, verify: null, head: null };
+  const finish = async (code2) => {
+    view.head = store.journal().at(-1) ? { seq: store.journal().at(-1).seq, hash: store.journal().at(-1).hash } : null;
+    const path5 = store.report("WATCH.md", renderWatch(view));
+    await report(store, {}, quiet([]));
+    const last = view.looks.at(-1);
+    deps.say(`Watch tick at ${view.now}: ${view.did[0] ?? "nothing to do."}`);
+    deps.say(last ? `Recommendation: ${last.recommendation.toUpperCase()} (${last.final ? "final" : "before the cutoff"}).` : view.experiment ? "No analysis yet." : "No approved experiment is open.");
+    if (view.gate) deps.say(gateLine(view.gate));
+    if (view.refusal) deps.say(`Refused (${view.refusal.code}): ${printable2(view.refusal.message, 200)}`);
+    if (view.verify) deps.say("Verification failed; the lines are in WATCH.md.");
+    deps.say(`Report: ${path5}`);
+    return code2;
+  };
+  const open = openExperiments(store);
+  const given = flagText(flags, "experiment");
+  let target = null;
+  if (given !== void 0) {
+    const id = store.resolve("experiment", given);
+    const settled = store.find("analysis.decided").some((e) => e.refs.experiment === id && (e.refs.recommendation === "keep" || e.refs.recommendation === "revert"));
+    if (settled || open.some((o) => o.id === id)) target = { id, spec: store.get("experiment", id) };
+  } else if (open.length > 1) throw new PilotError("usage", "More than one experiment is open; name one with --experiment.");
+  else if (open[0]) target = { id: open[0].id, spec: open[0].value };
+  else {
+    const ended2 = store.find("analysis.decided").filter((e) => e.refs.recommendation === "keep" || e.refs.recommendation === "revert").at(-1);
+    if (ended2) target = { id: ended2.refs.experiment, spec: store.get("experiment", ended2.refs.experiment) };
+  }
+  if (!target) {
+    view.did.push(given !== void 0 ? `Experiment ${printable2(given, 20)} has no approval. Nothing was imported or analysed; watch waits for an approval.` : "No approved experiment is open. Nothing was imported or analysed; watch waits for an approval.");
+    return finish(0);
+  }
+  view.experiment = target;
+  view.looks = looksOf(store, target.id);
+  const gate = lookGate({ spec: target.spec, looks: view.looks, now, interimDays: src.interimDays });
+  let code = 0;
+  let analyzed = false;
+  if (gate.action === "done" || gate.action === "wait") {
+    view.did.push(`No look was allowed: ${gate.why} Nothing was imported or analysed.`);
+    view.gate = gate;
+    return finish(0);
+  }
+  const before = view.looks.length;
+  let path4 = null;
+  const nowMs = now.getTime();
+  const cutoff = ms(target.spec.analysis_cutoff);
+  let scanned = null;
+  try {
+    if (src.inbox !== void 0) {
+      const { files } = scanInbox(store, src.inbox, target.id, target.spec);
+      scanned = files;
+      const pending = files.filter((x) => x.state === "pending" && ms(x.exported_at) <= nowMs);
+      const pick2 = gate.action === "final" ? pending.filter((x) => ms(x.exported_at) >= cutoff).sort((a, b) => ms(a.exported_at) - ms(b.exported_at) || (a.name < b.name ? -1 : 1))[0] : pending.filter((x) => ms(x.exported_at) < cutoff).sort((a, b) => ms(b.exported_at) - ms(a.exported_at) || (a.name < b.name ? -1 : 1))[0];
+      path4 = pick2 ? pick2.path : null;
+      if (!pick2) view.did.push(gate.action === "final" ? `Waiting for an export made at or after ${target.spec.analysis_cutoff}.` : "Waiting for an export newer than the last one and made before the cutoff.");
+    } else {
+      path4 = src.logExport({ store, experimentId: target.id, logDir: src.logDir, assignment: src.assignment, now }).path;
+    }
+    if (path4 !== null) {
+      const lines2 = [];
+      try {
+        await analyze(store, { experiment: target.id, telemetry: path4 }, quiet(lines2));
+      } catch (e) {
+        if (isBusy(e)) {
+          view.did.push("Another pilot command holds the evidence lock; this tick did nothing.");
+          path4 = null;
+        } else throw e;
+      }
+    }
+  } catch (e) {
+    if (!(e instanceof PilotError)) throw e;
+    view.refusal = { code: e.code, message: e.message };
+    code = 1;
+  }
+  view.looks = looksOf(store, target.id);
+  analyzed = view.looks.length > before;
+  if (analyzed) {
+    const l = view.looks.at(-1);
+    view.did.unshift(`Ran the ${l.final ? "final" : "interim"} analysis: ${l.recommendation.toUpperCase()}.${l.final ? " The final result stands; watch never redoes it." : ""}`);
+  } else if (path4 !== null && !view.refusal) view.did.push("The analysis added no new look.");
+  if (view.refusal && !analyzed) view.did.unshift("A file or export was refused; no analysis was recorded.");
+  if (scanned) {
+    const imported = new Set(store.find("telemetry.imported").filter((e) => e.refs.scope === target.id).map((e) => e.key));
+    const newest = Math.max(-Infinity, ...[...imported].map((k) => ms(store.get("telemetry", k).exported_at)));
+    const decided = view.looks.some((l) => l.final || l.recommendation !== "hold");
+    view.files = scanned.map((x) => {
+      const { path: file, ...rest } = x;
+      if (rest.state === "invalid") return rest;
+      if (file === path4 && analyzed) return { ...rest, state: "imported" };
+      if (rest.state === "pending" && (ms(rest.exported_at) <= newest || decided)) return { ...rest, state: "superseded" };
+      return rest;
+    });
+    if (view.files.some((x) => x.state === "invalid")) code = 1;
+  }
+  view.gate = lookGate({ spec: target.spec, looks: view.looks, now, interimDays: src.interimDays });
+  if (analyzed) {
+    const lines2 = [];
+    if (await verify2(store, {}, quiet(lines2)) !== 0) {
+      view.verify = lines2;
+      code = 1;
+    }
+  }
+  return finish(code);
+}
+var FALSE_STOP_PER_LOOK, iso2, dayStart, BUSY_PREFIX, isBusy, WATCH_LOCK, WATCH_LOCK_STALE_MS, MAX_INBOX_FILES, SHOWN_FILES, flagText, looksOf;
+var init_watch = __esm({
+  "src/pilot/watch.ts"() {
+    "use strict";
+    init_commands();
+    init_errors3();
+    init_experiment();
+    init_ids();
+    init_io();
+    init_telemetry();
+    FALSE_STOP_PER_LOOK = 1 - EARLY_STOP_LEVEL;
+    iso2 = (t) => new Date(t).toISOString().replace(/\.\d{3}Z$/, "Z");
+    dayStart = (t) => Math.floor(t / DAY_MS) * DAY_MS;
+    BUSY_PREFIX = "Another pilot command";
+    isBusy = (e) => e instanceof PilotError && e.code === "conflict" && e.message.startsWith(BUSY_PREFIX);
+    WATCH_LOCK = "watch";
+    WATCH_LOCK_STALE_MS = 10 * 6e4;
+    MAX_INBOX_FILES = 500;
+    SHOWN_FILES = 20;
+    flagText = (flags, name) => typeof flags[name] === "string" ? flags[name] : void 0;
+    looksOf = (store, experiment2) => store.find("analysis.decided").filter((e) => e.refs.experiment === experiment2).map((e) => ({ at: e.at, final: e.refs.final === "true", recommendation: e.refs.recommendation, analysis: e.refs.analysis }));
   }
 });
 
@@ -35092,16 +35376,16 @@ __export(demo_exports, {
   demo: () => demo
 });
 import { execFileSync as execFileSync5 } from "node:child_process";
-import { existsSync as existsSync16, mkdirSync as mkdirSync9, readdirSync as readdirSync5, readFileSync as readFileSync18, statSync as statSync6, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname7, join as join23, resolve as resolve3 } from "node:path";
+import { existsSync as existsSync16, mkdirSync as mkdirSync9, readdirSync as readdirSync6, readFileSync as readFileSync18, statSync as statSync6, writeFileSync as writeFileSync9 } from "node:fs";
+import { dirname as dirname8, join as join24, resolve as resolve3 } from "node:path";
 function git(args, cwd) {
   const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_"))), ...GIT_ENV };
   return execFileSync5("git", args, { cwd, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
 }
 function filesUnder(dir) {
   if (!existsSync16(dir)) return [];
-  return readdirSync5(dir).flatMap((name) => {
-    const path4 = join23(dir, name);
+  return readdirSync6(dir).flatMap((name) => {
+    const path4 = join24(dir, name);
     return statSync6(path4).isDirectory() ? filesUnder(path4) : [path4];
   });
 }
@@ -35109,20 +35393,20 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
   const outFlag = flags.out;
   if (typeof outFlag !== "string" || !outFlag.trim()) throw new PilotError("usage", "--out is required: a new, empty directory for the demo's inputs, pilot records and reports.");
   const out = resolve3(outFlag);
-  if (existsSync16(out) && readdirSync5(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
-  const inputs = join23(out, "inputs");
-  const repoDir = join23(out, "customer-repo");
-  const dir = join23(out, "pilot");
+  if (existsSync16(out) && readdirSync6(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
+  const inputs = join24(out, "inputs");
+  const repoDir = join24(out, "customer-repo");
+  const dir = join24(out, "pilot");
   mkdirSync9(inputs, { recursive: true });
-  mkdirSync9(join23(repoDir, dirname7(DEMO.prompt_path)), { recursive: true });
+  mkdirSync9(join24(repoDir, dirname8(DEMO.prompt_path)), { recursive: true });
   const put = (name, content) => {
-    const path4 = join23(inputs, name);
+    const path4 = join24(inputs, name);
     writeFileSync9(path4, content);
     return path4;
   };
   const json = (value) => `${JSON.stringify(value, null, 2)}
 `;
-  writeFileSync9(join23(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
+  writeFileSync9(join24(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
   git(["init", "-q", "-b", DEMO.base], repoDir);
   git(["add", DEMO.prompt_path], repoDir);
   git(["commit", "-q", "-m", "Juniper prompt v14"], repoDir);
@@ -35180,7 +35464,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Synthe enterprise pilot: synthetic run for Fernhill Outfitters' support agent Juniper (all data invented).");
     say(`Inputs: ${inputs}   Pilot records and reports: ${dir}`);
     expect("init succeeds", await run2("Freeze the contract and the baseline prompt", ["init", "--config", put("pilot.json", json(demoConfig())), "--repo-dir", repoDir]) === 0);
-    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync16(join23(dir, "reports", "baseline.md")));
+    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync16(join24(dir, "reports", "baseline.md")));
     expect("pack frozen", await run2("Freeze the redacted conversation pack", ["pack", "--file", put("pack.v1.json", json(demoPack()))]) === 0);
     const packV1 = activePack(store);
     expect("discover succeeds", await run2("Find recurring failures on the discovery cases", ["discover", "--model", model]) === 0);
@@ -35282,8 +35566,8 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const canaries = Object.values(CANARIES);
     const leaks = (text4) => canaries.some((c) => text4.toLowerCase().includes(c.toLowerCase()));
     expect(`nothing sent to GitHub holds pack conversation text (${github.requests.length} requests checked)`, !github.requests.some((r) => leaks(r.body) || leaks(r.path)));
-    expect("no report holds pack conversation text", !filesUnder(join23(dir, "reports")).some((p) => leaks(readFileSync18(p, "utf8"))));
-    expect("the journal holds no pack conversation text", !leaks(readFileSync18(join23(dir, "journal.jsonl"), "utf8")));
+    expect("no report holds pack conversation text", !filesUnder(join24(dir, "reports")).some((p) => leaks(readFileSync18(p, "utf8"))));
+    expect("the journal holds no pack conversation text", !leaks(readFileSync18(join24(dir, "journal.jsonl"), "utf8")));
     expect("nothing printed by the commands holds pack conversation text", !leaks(transcript2.join("\n")));
     expect("the GitHub token went only to the loopback server and was never printed", github.requests.every((r) => r.authorization === "Bearer demo-token-for-the-loopback-server") && !transcript2.join("\n").includes("demo-token-for-the-loopback-server"));
     expect("no provider credential was read: the commands saw only the GitHub token variable", Object.keys(inner.env).length === 1);
@@ -35292,11 +35576,11 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     for (const line of outcomes) say(`- ${line}`);
     say("");
     say("Evidence to open:");
-    say(`- ${join23(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
-    say(`- ${join23(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
-    say(`- ${join23(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
-    say(`- ${join23(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
-    say(`- ${join23(dir, "journal.jsonl")}   every step, in order`);
+    say(`- ${join24(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
+    say(`- ${join24(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
+    say(`- ${join24(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
+    say(`- ${join24(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
+    say(`- ${join24(dir, "journal.jsonl")}   every step, in order`);
     say("");
     say(failures.length === 0 ? `Synthetic pilot passed: ${step} steps, every expectation held.` : `Synthetic pilot FAILED: ${failures.length} expectation(s) did not hold:`);
     for (const f of failures) say(`- ${f}`);
@@ -35374,7 +35658,7 @@ async function main(argv, deps, prog = CHECKOUT_PROG) {
     return 1;
   }
 }
-var DEFAULT_DIR, CHECKOUT_PROG, GUIDE_URL, helpText, HELP, OPTIONS, COMMANDS, defaultDeps;
+var DEFAULT_DIR, CHECKOUT_PROG, GUIDE_URL, helpText, HELP, OPTIONS, realLogExporter, COMMANDS, defaultDeps;
 var init_main = __esm({
   "src/pilot/main.ts"() {
     "use strict";
@@ -35382,6 +35666,7 @@ var init_main = __esm({
     init_errors3();
     init_export();
     init_store();
+    init_watch();
     DEFAULT_DIR = ".synthe-pilot";
     CHECKOUT_PROG = "node src/pilot/cli.ts";
     GUIDE_URL = "https://github.com/synthelabs/synthe/blob/main/docs/PILOT.md";
@@ -35407,6 +35692,7 @@ Review and experiment
               --publish --repo <owner/name> --base <branch> --confirm <full candidate id>   open the pull request
   approve     --candidate <full id> --experiment <full id> --approver <name> [--reject]
   analyze     --experiment <id> [--telemetry <export.json>] [--reopen]   keep, hold or revert, from the customer's outcome export
+  watch       --inbox <dir> | --log <dir> --assignment randomized|observational [--experiment <id>] [--interim-days N]   one scheduled tick: analyse only at allowed looks; never publishes
   export      --log <dir> --experiment <id> --assignment randomized|observational [--agent <name>] [--out <dir>]   turn the recorder's call log into the outcome export
               --log <dir> --baseline --start <UTC time> --end <UTC time>                                              a baseline export from the log
 
@@ -35458,10 +35744,16 @@ Guide: docs/PILOT.md (${GUIDE_URL})`;
       "allow-past-start": { type: "boolean" },
       reopen: { type: "boolean" },
       "accept-flags": { type: "string" },
+      inbox: { type: "string" },
+      "interim-days": { type: "string" },
       live: { type: "boolean" },
       reject: { type: "boolean" },
       list: { type: "boolean" },
       help: { type: "boolean" }
+    };
+    realLogExporter = (agent) => (i) => {
+      const out = writeLogExport({ store: i.store, logDir: i.logDir, scope: { experiment: i.experimentId }, assignment: i.assignment, now: i.now, ...agent ? { agent } : {} });
+      return { path: out.path };
     };
     COMMANDS = {
       init: init2,
@@ -35475,6 +35767,7 @@ Guide: docs/PILOT.md (${GUIDE_URL})`;
       approve,
       analyze,
       export: exportLog,
+      watch: (store, flags, deps) => watch(store, flags, deps, realLogExporter(typeof flags.agent === "string" && flags.agent.trim() !== "" ? flags.agent : void 0)),
       promote: promotePack,
       report,
       verify: verify2,
@@ -38093,7 +38386,7 @@ async function setKey(io2, env = process.env, terminal = Boolean(process.stdin.i
 }
 
 // src/cli/guide.ts
-var guide = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\nMost teams set this up at the Synthe workshop, an hour or two into the hackathon, with their agent only partly built. That is fine: Synthe improves the prompt as it is now, and the team keeps building while it runs.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand. One exception: after a run stops because nothing was clearly better, if the person wants it to keep going, you may add test cases to `.synthe/scenarios.jsonl` with them (see step 8).\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n- Setup is two commands: draft (step 5) and confirm (step 7). Synthe is not installed until confirm succeeds. The draft writes only a local file: no workflow, no secrets, no commit. Finish confirm before you do any other work in this repo.\n- If the person asks for something else before confirm (for example "implement it" or a change to their code), tell them: "Synthe is not installed yet. One more command finishes it." Finish confirm first, then do what they asked.\n- Do not edit the prompt file between draft and confirm. Confirm refuses a prompt that changed, and nothing is installed.\n\n## 0. Which mode\n\nFirst find out whether the app sends a system prompt to an AI model: a `.md` or `.txt` prompt file, or a prompt string passed to a model call. Look before you ask.\n\n- **No AI prompt, or the person wants a code change measured by a number** (tests passing, bundle size, build time, or a command of theirs): use **improve mode**. Go to section 9 and skip sections 1 to 8. Synthe itself proposes and measures the code changes, so it needs the person\'s event code and team code, or their own Anthropic key (section 9, step 1). Without either, section 9 has a fallback where you make the change.\n- **The app has a prompt and the person wants that prompt improved:** continue with section 1.\n- **The person asks for the enterprise pilot, or wants a prompt change judged by a production metric from their own telemetry:** go to section 10. Do not start it on your own: it needs a signed-off metric and data the team exports.\n\n## 1. Prerequisites\n\n1. Use `git remote -v` and `git status` to check that the repo is on GitHub and pushed. Commit and push the agent\'s prompt file too. Setup checks that it matches the copy on GitHub\'s default branch before drafting.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n4. Be on the default branch (usually `main`) and run `git pull`, so teammates\' latest pushes are in. Setup refuses to run on another branch.\n5. Check that this person can set up Synthe in this repo:\n\n```\ngh repo view --json viewerPermission --jq .viewerPermission\n```\n\nIt must print `ADMIN`. Setup saves repo secrets, which only admins can do. If it prints anything else, stop: the repo\'s owner must run setup, or make this person an admin (Settings, then Collaborators). Setup also stops by itself in that case, before it spends anything.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the Synthe table. Enrolled teams need both codes for workflow tracking, even if they use their own Anthropic key. A setup outside the event can use its own Anthropic key alone.\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code, that the app sends to an AI model.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n3. If you find no prompt because the app doesn\'t call an AI model yet (for example its logic is written as rules), stop here. Tell the person: "Synthe improves the prompt your app sends to an AI model. Your app doesn\'t call one yet, so there is nothing for Synthe to improve. Once your app uses an AI prompt, run setup again." Do not write a new prompt only so that Synthe has one to improve: the app would never use the changes. Connecting the app to an AI model is separate work; offer to help with it if the person asks.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nTo use an own key during Crimson, add `SYNTHE_ANTHROPIC_KEY=<key>` alongside both event codes, here and in step 7. Outside Crimson, use the own key alone.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, the sharing notice, and the Crimson workflow notice for enrolled teams. Show the notices as information. They need no answer. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. Separate research-sharing settings control the prompt, test cases, and other research data.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person. If they chose auto mode, say first: "Auto mode is set. One last step before Synthe starts: approve the checks it will score replies with. This is not a merge approval; after this, improvements merge by themselves."\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n- If step 1 said some checks can\'t both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can\'t raise that score.\n\nFollow the `NEXT:` line with the tagged command in step 7. Do not start other work until step 7 succeeds.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --confirm --keep-checks\n```\n\nSetup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\nConfirm succeeded only if it printed `Added to <branch>` or opened an "Add Synthe" pull request. If it printed anything else, show the person the message, follow it, and do not go to step 8. If it opened a pull request (usually because a teammate pushed to the default branch during setup), Synthe starts only after that pull request is merged. Ask the person to merge it now.\n\n## 8. After setup\n\nDo this step only after confirm succeeded. Tell the person:\n\n- Rounds start by themselves. They do not need to do anything. A run is up to 12 rounds and takes up to about 30 minutes. It stops sooner, often within 5 to 10 minutes, when 3 rounds in a row find nothing clearly better than the current prompt. Either way it stops by itself.\n- In auto mode, Synthe commits its improvements to the prompt file on the default branch. Everyone on the team should run `git pull` before they edit the prompt or push, so their work and Synthe\'s don\'t collide. Synthe always starts each round from the latest prompt on the default branch, so the team can keep changing it.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Tell the person: \'Ask me "what did Synthe do?" at any time and I will show you what changed.\'\n- If the run stopped because nothing was clearly better and the person wants it to keep going: with them, write 3 to 5 new test cases their agent still gets wrong, show them, add each as one line to `.synthe/scenarios.jsonl` in the format the report shows (most with `"split": "train"`, about one in four `"holdout"`), commit and push, then run `npx synthe restart`. Change nothing else in `.synthe/`.\n- When the person asks what Synthe did or what changed, run `npx synthe changes` and show its output word for word before adding any commentary of your own.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe changes\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `changes` shows what Synthe changed in the latest rounds and how the prompt\'s score moved.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n\n## 9. Improve mode (no AI prompt needed)\n\n`npx synthe improve` is a loop. Synthe itself proposes one code change per round, through the event proxy or the person\'s own key. It measures each change in a throwaway checkout, next to the current code, the same way. It keeps a change only when it beats the best so far by more than the run-to-run noise, still wins when measured a second time, and the regression check still passes. With a tests-passing metric, a change that breaks a test that passed before is never kept, even when more tests pass overall. Each kept change builds on the one before. At the end it opens ONE pull request titled like `Synthe: valid signups 3 \u2192 12`, with a table of every round. The person\'s working tree is never touched.\n\nIt usually takes 5 to 20 minutes, depending on how long the metric and the check take, and stops sooner when nothing wins. A round usually costs a few cents of model time (more on a big repo, because Synthe sends up to about 60,000 characters of code). The default limits are 6 rounds and $1.50 of model cost, whichever comes first.\n\n### Rules\n\n- Never guess the goal, the metric, the check or the mode. Ask the person.\n- In the loop you do not write the code change. Synthe does. Do not edit code, tests, the metric command, `package.json`, lockfiles, `.github/` or `.synthe/` in this repo while it runs, and do not commit or switch branches. Synthe refuses its own changes to tests, the metric, its data, dependencies, config and CI.\n- Never use `ANTHROPIC_API_KEY`. It is usually the app\'s own key, and Synthe ignores it here.\n- Never write an event code, team code or key to a file, and never commit one.\n- Do not interrupt a running `improve`: no Ctrl-C, no timeout shorter than 30 minutes, no second Synthe command in the same repo. If it was interrupted anyway, see step 5.\n- Show the person Synthe\'s output as written: every number, and the reason when a change is not kept. Do not summarize it instead.\n- If a command fails or stops, show the person the exact message and do what it says. Do not retry more than once without asking.\n\n### Steps\n\n1. **Credit.** Ask for the Crimson Hacks event code from the QR card and the team code from the Synthe table, or the person\'s own Anthropic key. Put them at the front of the command, because each command may run in a fresh shell (see section 2 for the same rules). Own key: `SYNTHE_ANTHROPIC_KEY=<key>` alone; tell the person it will show in this chat. If the person has neither codes nor a key, skip to "Without a credential" below.\n2. **Commit and sync first.** `git status` must be clean: Synthe measures committed code. The current branch must be pushed and equal to its copy on GitHub; if not, push or `git pull`. Synthe opens its pull request against the branch you are on, or the default branch.\n3. **See what this repo can measure:**\n\n   ```\n   npx synthe@latest improve --list\n   ```\n\n   Show the person the list as written. Then ask, in ONE message, these four things:\n   - What should get better? One sentence.\n   - Which metric from the list? Offer the first one in the list first: it is listed first because it fits the repo best. If they pick `custom`, also ask for the command that prints one number, what the number counts, and whether higher or lower is better.\n   - Which regression check must keep passing? The list shows each metric\'s default; `none` is allowed.\n   - Auto (the winning changes merge into the branch by themselves) or review (a pull request waits for them)? If they are unsure, say review.\n\n   Do not run anything until they answer all four. Tell them: it usually takes 5 to 20 minutes and stops sooner when nothing wins, a round usually costs a few cents, and the default limit is $1.50.\n4. **Run it**, with their answers and the credit at the front:\n\n   ```\n   SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest improve --agent --goal "<sentence>" --metric <id> --guard "<check command>" --mode auto|review\n   ```\n\n   - `<id>` is one of `test-pass`, `pytest`, `bundle-size`, `build-time`, `custom`.\n   - For `--metric custom`, add `--command "<cmd>" --label "<what it counts>" --direction higher|lower`, and `--unit "<unit>"` if they gave one.\n   - `--guard "<check command>"` is their check. Use `--guard none` for no check. Leave `--guard` out only to accept the metric\'s default shown in the list.\n   - Add `--protect <path>` (repeat it) for any other file the changes must not touch. Add `--rounds N` (1 to 20) or `--budget <dollars>` only if the person asks for a different limit. Add `--lessons claude` or `--lessons agents` only if they want the lessons also written into `CLAUDE.md` or `AGENTS.md`; by default lessons go only to `.synthe/improve-lessons.md` and the pull request.\n   - **Give the command a timeout of at least 30 minutes, and let it finish.** Many shell tools cap a command at about 10 minutes. If yours does, run the command in the background and wait for it to end, reading its output as it comes. Do not stop it.\n   - While it runs, show the person each `Round` line as it appears, as written. You may leave out the `Measuring ...` and `Running the regression check ...` lines.\n   - The output ends with a `NEXT:` line written for you. Do what it says; do not paste it to the person as if it were Synthe\'s result.\n   - If it stops before the first round, it printed what to fix (a dirty tree, an unpushed branch, a missing credential, a regression check that fails today). Show it, fix that, and run the same command again.\n5. **If it was interrupted** (Ctrl-C, a lost connection, a closed terminal), run the exact same command again. It starts over from the current code: nothing is pushed until the end of a run, so an interrupted run leaves nothing behind.\n6. **Show the result as written**: the `Result:` line, the `Model cost` line and the `Pull request:` link. Then explain in plain words what happened: how many rounds ran, which changes were kept and why they helped, which were not kept and why, what it cost.\n   - Review mode: tell the person to open the pull request, read the table of rounds, and merge it to keep the changes.\n   - Auto mode: it prints `Merged into <branch>. Run git pull.` Tell the person to run `git pull`.\n   - If it says `No change beat the current code`, nothing was pushed and no pull request exists. Show what was tried as written. Offer to run the same command again (the next run reads the lessons from this one) or to try `--handoff` below.\n7. When the person asks what Synthe did, show the pull request\'s Result and Rounds sections word for word.\n\nTo undo: close the pull request before merging. After merging, `git revert` the merge or the commits, or ask the team to revert the pull request on GitHub.\n\n### Without a credential: you make the change\n\nUse this when the person has no event code, team code or key. Nothing is sent to a model. You make ONE small change to product code, and Synthe proves with numbers whether it improved the metric. Do steps 2 and 3 above first, then:\n\n1. Measure the current code with their answers (`--handoff` takes the same options as step 4, except `--rounds`, `--budget` and `--lessons`):\n\n   ```\n   npx synthe@latest improve --handoff --agent --goal "<sentence>" --metric <id> --guard "<check command>" --mode auto|review\n   ```\n\n   It prints the baseline and a task card. If it stops instead, show the person the message and do what it says.\n2. **Follow the `NEXT:` line.** Show the person the baseline and the task card. Create the branch the card names, make ONE small change to product code only, and commit it with a message that says what changed and why. Never edit tests, the metric command or its input files, `package.json`, lockfiles, `.github/`, `.synthe/` or config files; `submit` refuses those changes. If the improvement needs one, stop and tell the person why. Never loosen a test or the metric to make a number move.\n3. Submit the change:\n\n   ```\n   npx synthe@latest submit --agent\n   ```\n\n   A win prints `Pull request: <url>`, and in auto mode `Merged into <branch>. Run git pull.` Show the person the result and the link as written.\n4. If it prints `Not merged:` and a reason (within noise, worse, the regression check failed, or it broke a test that passed before), show it as written. If the person wants another try, make a different small change on the same branch, commit, and run `npx synthe@latest submit --agent` again (at most 3 attempts in all, unless they ask for more).\n\n## 10. Enterprise pilot (a production metric)\n\n`npx synthe pilot` is a separate, review-first loop for one support agent and one business metric. It replays recorded conversations offline as a gate, writes the plan for an experiment the team runs with its own rollout controls, and then says keep, hold or revert from the outcome export the team produces. People decide; Synthe proposes and measures. The full guide is `docs/PILOT.md` in the Synthe repo: https://github.com/synthelabs/synthe/blob/main/docs/PILOT.md\n\n```\nnpx synthe pilot help\nnpx synthe pilot demo --out <new empty folder>\n```\n\n- `help` lists every pilot command. If your Synthe version answers `pilot` with the general help, it is too old to have the pilot (1.10.0 and older): use `node src/pilot/cli.ts <command>` from a Synthe checkout instead.\n- `demo` runs the whole loop on invented data in a few seconds, with no credentials and no network. Use it to show the person what the pilot produces before they give it any data.\n- A wrapper exists for recording calls and outcomes: `import { pilotRecorder } from "synthe/pilot"` (see "Recording calls and outcomes" in `docs/PILOT.md`), and `npx synthe pilot export` turns its log into the export. Help the person wire it into their code; give it an `agent` and an `idKey` or, only if they say so, `rawIds: true`.\n- Never read, `cat`, search or open the call log the wrapper writes (its `logDir`): it holds the team\'s customer ids, and reading it sends them to your model provider.\n\n### Rules\n\n- The pilot directory (`--dir`, default `.synthe-pilot`) holds the team\'s conversations and telemetry. Never open, read, `cat` or search its packs, telemetry exports or call logs: reading them sends customer conversations to your own model provider, which the team did not approve. Never commit it, never copy it into the repo, an issue, a pull request or a chat, and never paste its contents into your own replies. `init` writes a `.gitignore` inside it; leave that file alone.\n- Never write or change `pilot.json`, a telemetry export, a conversation pack or a promotion request yourself. The team produces them and a named person signs off the metric. If one is refused, show the person the exact message.\n- Never run `approve`, `analyze`, `promote --request` or `propose --file --author` for the person: each records a person\'s decision. Run them only when the person typed that exact command or told you to run it.\n- Never pass `--publish`, `--confirm`, `--reopen`, `--allow-past-start`, `--accept-flags`, `--live` or `--allow-endpoint-host` unless the person typed that exact command or told you to run it. Each one records a person\'s decision, sends data out, or opens a pull request.\n- `--live` sends conversations to a model provider and costs money. It runs only when `pilot.json` records the team\'s approval. Ask first, every time.\n- Do not edit files under the pilot directory. Records are write-once; `npx synthe pilot verify` fails after an edit.\n- When a command prints `Refused (...)`, show the message as written and do what it says. Do not retry with different flags to get past it.\n\n### What you may run without asking\n\n`npx synthe pilot status`, `report` and `verify` only read the pilot directory and rebuild local reports. Show the person the recommendation line and the report path, not the data.\n';
+var guide = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\nMost teams set this up at the Synthe workshop, an hour or two into the hackathon, with their agent only partly built. That is fine: Synthe improves the prompt as it is now, and the team keeps building while it runs.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand. One exception: after a run stops because nothing was clearly better, if the person wants it to keep going, you may add test cases to `.synthe/scenarios.jsonl` with them (see step 8).\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n- Setup is two commands: draft (step 5) and confirm (step 7). Synthe is not installed until confirm succeeds. The draft writes only a local file: no workflow, no secrets, no commit. Finish confirm before you do any other work in this repo.\n- If the person asks for something else before confirm (for example "implement it" or a change to their code), tell them: "Synthe is not installed yet. One more command finishes it." Finish confirm first, then do what they asked.\n- Do not edit the prompt file between draft and confirm. Confirm refuses a prompt that changed, and nothing is installed.\n\n## 0. Which mode\n\nFirst find out whether the app sends a system prompt to an AI model: a `.md` or `.txt` prompt file, or a prompt string passed to a model call. Look before you ask.\n\n- **No AI prompt, or the person wants a code change measured by a number** (tests passing, bundle size, build time, or a command of theirs): use **improve mode**. Go to section 9 and skip sections 1 to 8. Synthe itself proposes and measures the code changes, so it needs the person\'s event code and team code, or their own Anthropic key (section 9, step 1). Without either, section 9 has a fallback where you make the change.\n- **The app has a prompt and the person wants that prompt improved:** continue with section 1.\n- **The person asks for the enterprise pilot, or wants a prompt change judged by a production metric from their own telemetry:** go to section 10. Do not start it on your own: it needs a signed-off metric and data the team exports.\n\n## 1. Prerequisites\n\n1. Use `git remote -v` and `git status` to check that the repo is on GitHub and pushed. Commit and push the agent\'s prompt file too. Setup checks that it matches the copy on GitHub\'s default branch before drafting.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n4. Be on the default branch (usually `main`) and run `git pull`, so teammates\' latest pushes are in. Setup refuses to run on another branch.\n5. Check that this person can set up Synthe in this repo:\n\n```\ngh repo view --json viewerPermission --jq .viewerPermission\n```\n\nIt must print `ADMIN`. Setup saves repo secrets, which only admins can do. If it prints anything else, stop: the repo\'s owner must run setup, or make this person an admin (Settings, then Collaborators). Setup also stops by itself in that case, before it spends anything.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the Synthe table. Enrolled teams need both codes for workflow tracking, even if they use their own Anthropic key. A setup outside the event can use its own Anthropic key alone.\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code, that the app sends to an AI model.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n3. If you find no prompt because the app doesn\'t call an AI model yet (for example its logic is written as rules), stop here. Tell the person: "Synthe improves the prompt your app sends to an AI model. Your app doesn\'t call one yet, so there is nothing for Synthe to improve. Once your app uses an AI prompt, run setup again." Do not write a new prompt only so that Synthe has one to improve: the app would never use the changes. Connecting the app to an AI model is separate work; offer to help with it if the person asks.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nTo use an own key during Crimson, add `SYNTHE_ANTHROPIC_KEY=<key>` alongside both event codes, here and in step 7. Outside Crimson, use the own key alone.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, the sharing notice, and the Crimson workflow notice for enrolled teams. Show the notices as information. They need no answer. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. Separate research-sharing settings control the prompt, test cases, and other research data.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person. If they chose auto mode, say first: "Auto mode is set. One last step before Synthe starts: approve the checks it will score replies with. This is not a merge approval; after this, improvements merge by themselves."\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n- If step 1 said some checks can\'t both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can\'t raise that score.\n\nFollow the `NEXT:` line with the tagged command in step 7. Do not start other work until step 7 succeeds.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --confirm --keep-checks\n```\n\nSetup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\nConfirm succeeded only if it printed `Added to <branch>` or opened an "Add Synthe" pull request. If it printed anything else, show the person the message, follow it, and do not go to step 8. If it opened a pull request (usually because a teammate pushed to the default branch during setup), Synthe starts only after that pull request is merged. Ask the person to merge it now.\n\n## 8. After setup\n\nDo this step only after confirm succeeded. Tell the person:\n\n- Rounds start by themselves. They do not need to do anything. A run is up to 12 rounds and takes up to about 30 minutes. It stops sooner, often within 5 to 10 minutes, when 3 rounds in a row find nothing clearly better than the current prompt. Either way it stops by itself.\n- In auto mode, Synthe commits its improvements to the prompt file on the default branch. Everyone on the team should run `git pull` before they edit the prompt or push, so their work and Synthe\'s don\'t collide. Synthe always starts each round from the latest prompt on the default branch, so the team can keep changing it.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Tell the person: \'Ask me "what did Synthe do?" at any time and I will show you what changed.\'\n- If the run stopped because nothing was clearly better and the person wants it to keep going: with them, write 3 to 5 new test cases their agent still gets wrong, show them, add each as one line to `.synthe/scenarios.jsonl` in the format the report shows (most with `"split": "train"`, about one in four `"holdout"`), commit and push, then run `npx synthe restart`. Change nothing else in `.synthe/`.\n- When the person asks what Synthe did or what changed, run `npx synthe changes` and show its output word for word before adding any commentary of your own.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe changes\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `changes` shows what Synthe changed in the latest rounds and how the prompt\'s score moved.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n\n## 9. Improve mode (no AI prompt needed)\n\n`npx synthe improve` is a loop. Synthe itself proposes one code change per round, through the event proxy or the person\'s own key. It measures each change in a throwaway checkout, next to the current code, the same way. It keeps a change only when it beats the best so far by more than the run-to-run noise, still wins when measured a second time, and the regression check still passes. With a tests-passing metric, a change that breaks a test that passed before is never kept, even when more tests pass overall. Each kept change builds on the one before. At the end it opens ONE pull request titled like `Synthe: valid signups 3 \u2192 12`, with a table of every round. The person\'s working tree is never touched.\n\nIt usually takes 5 to 20 minutes, depending on how long the metric and the check take, and stops sooner when nothing wins. A round usually costs a few cents of model time (more on a big repo, because Synthe sends up to about 60,000 characters of code). The default limits are 6 rounds and $1.50 of model cost, whichever comes first.\n\n### Rules\n\n- Never guess the goal, the metric, the check or the mode. Ask the person.\n- In the loop you do not write the code change. Synthe does. Do not edit code, tests, the metric command, `package.json`, lockfiles, `.github/` or `.synthe/` in this repo while it runs, and do not commit or switch branches. Synthe refuses its own changes to tests, the metric, its data, dependencies, config and CI.\n- Never use `ANTHROPIC_API_KEY`. It is usually the app\'s own key, and Synthe ignores it here.\n- Never write an event code, team code or key to a file, and never commit one.\n- Do not interrupt a running `improve`: no Ctrl-C, no timeout shorter than 30 minutes, no second Synthe command in the same repo. If it was interrupted anyway, see step 5.\n- Show the person Synthe\'s output as written: every number, and the reason when a change is not kept. Do not summarize it instead.\n- If a command fails or stops, show the person the exact message and do what it says. Do not retry more than once without asking.\n\n### Steps\n\n1. **Credit.** Ask for the Crimson Hacks event code from the QR card and the team code from the Synthe table, or the person\'s own Anthropic key. Put them at the front of the command, because each command may run in a fresh shell (see section 2 for the same rules). Own key: `SYNTHE_ANTHROPIC_KEY=<key>` alone; tell the person it will show in this chat. If the person has neither codes nor a key, skip to "Without a credential" below.\n2. **Commit and sync first.** `git status` must be clean: Synthe measures committed code. The current branch must be pushed and equal to its copy on GitHub; if not, push or `git pull`. Synthe opens its pull request against the branch you are on, or the default branch.\n3. **See what this repo can measure:**\n\n   ```\n   npx synthe@latest improve --list\n   ```\n\n   Show the person the list as written. Then ask, in ONE message, these four things:\n   - What should get better? One sentence.\n   - Which metric from the list? Offer the first one in the list first: it is listed first because it fits the repo best. If they pick `custom`, also ask for the command that prints one number, what the number counts, and whether higher or lower is better.\n   - Which regression check must keep passing? The list shows each metric\'s default; `none` is allowed.\n   - Auto (the winning changes merge into the branch by themselves) or review (a pull request waits for them)? If they are unsure, say review.\n\n   Do not run anything until they answer all four. Tell them: it usually takes 5 to 20 minutes and stops sooner when nothing wins, a round usually costs a few cents, and the default limit is $1.50.\n4. **Run it**, with their answers and the credit at the front:\n\n   ```\n   SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest improve --agent --goal "<sentence>" --metric <id> --guard "<check command>" --mode auto|review\n   ```\n\n   - `<id>` is one of `test-pass`, `pytest`, `bundle-size`, `build-time`, `custom`.\n   - For `--metric custom`, add `--command "<cmd>" --label "<what it counts>" --direction higher|lower`, and `--unit "<unit>"` if they gave one.\n   - `--guard "<check command>"` is their check. Use `--guard none` for no check. Leave `--guard` out only to accept the metric\'s default shown in the list.\n   - Add `--protect <path>` (repeat it) for any other file the changes must not touch. Add `--rounds N` (1 to 20) or `--budget <dollars>` only if the person asks for a different limit. Add `--lessons claude` or `--lessons agents` only if they want the lessons also written into `CLAUDE.md` or `AGENTS.md`; by default lessons go only to `.synthe/improve-lessons.md` and the pull request.\n   - **Give the command a timeout of at least 30 minutes, and let it finish.** Many shell tools cap a command at about 10 minutes. If yours does, run the command in the background and wait for it to end, reading its output as it comes. Do not stop it.\n   - While it runs, show the person each `Round` line as it appears, as written. You may leave out the `Measuring ...` and `Running the regression check ...` lines.\n   - The output ends with a `NEXT:` line written for you. Do what it says; do not paste it to the person as if it were Synthe\'s result.\n   - If it stops before the first round, it printed what to fix (a dirty tree, an unpushed branch, a missing credential, a regression check that fails today). Show it, fix that, and run the same command again.\n5. **If it was interrupted** (Ctrl-C, a lost connection, a closed terminal), run the exact same command again. It starts over from the current code: nothing is pushed until the end of a run, so an interrupted run leaves nothing behind.\n6. **Show the result as written**: the `Result:` line, the `Model cost` line and the `Pull request:` link. Then explain in plain words what happened: how many rounds ran, which changes were kept and why they helped, which were not kept and why, what it cost.\n   - Review mode: tell the person to open the pull request, read the table of rounds, and merge it to keep the changes.\n   - Auto mode: it prints `Merged into <branch>. Run git pull.` Tell the person to run `git pull`.\n   - If it says `No change beat the current code`, nothing was pushed and no pull request exists. Show what was tried as written. Offer to run the same command again (the next run reads the lessons from this one) or to try `--handoff` below.\n7. When the person asks what Synthe did, show the pull request\'s Result and Rounds sections word for word.\n\nTo undo: close the pull request before merging. After merging, `git revert` the merge or the commits, or ask the team to revert the pull request on GitHub.\n\n### Without a credential: you make the change\n\nUse this when the person has no event code, team code or key. Nothing is sent to a model. You make ONE small change to product code, and Synthe proves with numbers whether it improved the metric. Do steps 2 and 3 above first, then:\n\n1. Measure the current code with their answers (`--handoff` takes the same options as step 4, except `--rounds`, `--budget` and `--lessons`):\n\n   ```\n   npx synthe@latest improve --handoff --agent --goal "<sentence>" --metric <id> --guard "<check command>" --mode auto|review\n   ```\n\n   It prints the baseline and a task card. If it stops instead, show the person the message and do what it says.\n2. **Follow the `NEXT:` line.** Show the person the baseline and the task card. Create the branch the card names, make ONE small change to product code only, and commit it with a message that says what changed and why. Never edit tests, the metric command or its input files, `package.json`, lockfiles, `.github/`, `.synthe/` or config files; `submit` refuses those changes. If the improvement needs one, stop and tell the person why. Never loosen a test or the metric to make a number move.\n3. Submit the change:\n\n   ```\n   npx synthe@latest submit --agent\n   ```\n\n   A win prints `Pull request: <url>`, and in auto mode `Merged into <branch>. Run git pull.` Show the person the result and the link as written.\n4. If it prints `Not merged:` and a reason (within noise, worse, the regression check failed, or it broke a test that passed before), show it as written. If the person wants another try, make a different small change on the same branch, commit, and run `npx synthe@latest submit --agent` again (at most 3 attempts in all, unless they ask for more).\n\n## 10. Enterprise pilot (a production metric)\n\n`npx synthe pilot` is a separate, review-first loop for one support agent and one business metric. It replays recorded conversations offline as a gate, writes the plan for an experiment the team runs with its own rollout controls, and then says keep, hold or revert from the outcome export the team produces. People decide; Synthe proposes and measures. The full guide is `docs/PILOT.md` in the Synthe repo: https://github.com/synthelabs/synthe/blob/main/docs/PILOT.md\n\n```\nnpx synthe pilot help\nnpx synthe pilot demo --out <new empty folder>\n```\n\n- `help` lists every pilot command. If your Synthe version answers `pilot` with the general help, it is too old to have the pilot (1.10.0 and older): use `node src/pilot/cli.ts <command>` from a Synthe checkout instead.\n- `demo` runs the whole loop on invented data in a few seconds, with no credentials and no network. Use it to show the person what the pilot produces before they give it any data.\n- A wrapper exists for recording calls and outcomes: `import { pilotRecorder } from "synthe/pilot"` (see "Recording calls and outcomes" in `docs/PILOT.md`), and `npx synthe pilot export` turns its log into the export. Help the person wire it into their code; give it an `agent` and an `idKey` or, only if they say so, `rawIds: true`.\n- `npx synthe pilot watch` is one scheduled tick the operator runs themselves (cron or launchd): it analyses only at allowed looks, never publishes and never uses the network. Help set up the schedule (see "Watching an experiment" in `docs/PILOT.md`); do not run it on a live pilot directory unasked.\n- Never read, `cat`, search or open the call log the wrapper writes (its `logDir`): it holds the team\'s customer ids, and reading it sends them to your model provider.\n\n### Rules\n\n- The pilot directory (`--dir`, default `.synthe-pilot`) holds the team\'s conversations and telemetry. Never open, read, `cat` or search its packs, telemetry exports or call logs: reading them sends customer conversations to your own model provider, which the team did not approve. Never commit it, never copy it into the repo, an issue, a pull request or a chat, and never paste its contents into your own replies. `init` writes a `.gitignore` inside it; leave that file alone.\n- Never write or change `pilot.json`, a telemetry export, a conversation pack or a promotion request yourself. The team produces them and a named person signs off the metric. If one is refused, show the person the exact message.\n- Never run `approve`, `analyze`, `promote --request` or `propose --file --author` for the person: each records a person\'s decision. Run them only when the person typed that exact command or told you to run it.\n- Never pass `--publish`, `--confirm`, `--reopen`, `--allow-past-start`, `--accept-flags`, `--live` or `--allow-endpoint-host` unless the person typed that exact command or told you to run it. Each one records a person\'s decision, sends data out, or opens a pull request.\n- `--live` sends conversations to a model provider and costs money. It runs only when `pilot.json` records the team\'s approval. Ask first, every time.\n- Do not edit files under the pilot directory. Records are write-once; `npx synthe pilot verify` fails after an edit.\n- When a command prints `Refused (...)`, show the message as written and do what it says. Do not retry with different flags to get past it.\n\n### What you may run without asking\n\n`npx synthe pilot status`, `report` and `verify` only read the pilot directory and rebuild local reports. Show the person the recommendation line and the report path, not the data.\n';
 
 // src/cli/verify.ts
 init_evidence();
