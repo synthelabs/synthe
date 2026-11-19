@@ -106,7 +106,9 @@ function rowsCsv(tag: string, days: DayCounts[], startedDays: number, start: num
   for (let d = 0; d < startedDays; d++) {
     const day = days[d];
     for (let i = 0; i < day.n; i++) {
-      const at = start + d * DAY_MS + Math.floor((i * DAY_MS) / day.n);
+      // 1 ms after midnight at the earliest: a conversation that starts exactly at 00:00 is mature at the 00:00 tick
+      // lag_days later (the rows rule is started + lag <= exported_at), which the aggregates form does not count.
+      const at = start + d * DAY_MS + 1 + Math.floor((i * (DAY_MS - 1)) / day.n);
       const id = `${tag}-${d}-${i}`;
       if (at + lagMs > asOf) { lines.push(`c-${id},${tag},${new Date(at).toISOString()},u-${id},,,`); continue; }
       const j = (i * 7919 + d * 131) % day.n;
