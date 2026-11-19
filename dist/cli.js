@@ -37783,6 +37783,7 @@ var package_default = {
     version: "node scripts/version-pins.mjs && npm run build && git add README.md docs/AGENT-SETUP.md kit/HACKATHON.md src/cli/guide.ts dist",
     mutation: "node scripts/mutation-check.mjs",
     simulate: "node scripts/simulate-gate.ts",
+    "simulate:pilot": "node scripts/simulate-pilot.ts",
     "mutation:operators": "stryker run mutation/stryker.config.mjs",
     "mutation:compare": "node mutation/compare.mjs"
   },
