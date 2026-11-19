@@ -82,9 +82,35 @@ test("the confirmed measurement, not the lucky first one, becomes the best, so i
 });
 
 test("a confirmation that gives no number does not keep the change", async () => {
-  // The second measurement prints "12x", which is not a number.
-  const { result } = await run([0, 0, "x"] as unknown as number[], [RAISE], 1);
+  // Measurements: baseline, round 1, the current best again, round 1 again (prints "12x", which is not a number).
+  const { result } = await run([0, 0, 0, "x"] as unknown as number[], [RAISE], 1);
   assert.equal(result.rounds[0].kept, false);
   assert.match(result.rounds[0].why, /^did not hold when measured again: the metric gave no number \(The metric command printed no number\)$/);
+  assert.equal(result.best.median, 10);
+});
+
+test("a stored baseline that measured low by luck cannot carry a change with no effect", async () => {
+  // Measurements: baseline (unlucky -5, so 5), round 1 (a change with no effect: 10), the current best again (10),
+  // round 1 again (10). Against the stored 5 the change wins twice; against the fresh 10 it is not better.
+  const { result, said, baseline } = await run([-5, 0, 0, 0], [TIDY], 1);
+  assert.equal(baseline, 5);
+  assert.equal(result.rounds[0].kept, false, result.rounds[0].why);
+  assert.match(result.rounds[0].why, /^did not hold when measured again: not better/);
+  assert.ok(said.includes("Measuring the current best again, so the confirmation compares fresh runs with fresh runs..."), said.join("\n"));
+  assert.equal(result.best.median, 5, "nothing was kept, so the best is unchanged");
+});
+
+test("a real gain is still kept when the current best is measured again", async () => {
+  // Measurements: baseline (5 by luck), round 1 raises to 12 (12), the current best again (10), round 1 again (12).
+  const { result } = await run([-5, 0, 0, 0], [RAISE], 1);
+  assert.equal(result.rounds[0].kept, true, result.rounds[0].why);
+  assert.equal(result.best.median, 12);
+});
+
+test("a confirmation whose fresh baseline gives no number does not keep the change", async () => {
+  // Measurements: baseline, round 1 (12), the current best again (prints "10x"), round 1 again is not reached.
+  const { result } = await run([0, 0, "x"] as unknown as number[], [RAISE], 1);
+  assert.equal(result.rounds[0].kept, false);
+  assert.match(result.rounds[0].why, /^did not hold when measured again: the current code gave no number \(The metric command printed no number\)$/);
   assert.equal(result.best.median, 10);
 });
