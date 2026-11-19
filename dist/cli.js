@@ -40020,22 +40020,31 @@ Proposed by Synthe (npx synthe improve), round ${n}. Kept only if it measures be
       if (!m.measurement) record.why = `the metric gave no number: ${(m.reason ?? "no output").replace(/\.$/, "")}`;
       else if (firstWhy !== null) record.why = firstWhy;
       else {
-        io2.say(`Measuring round ${n}'s change again to confirm it...`);
-        const again = await measureAt(io2.exec, top, proposed.commit, config, io2.say);
+        io2.say("Measuring the current best again, so the confirmation compares fresh runs with fresh runs...");
+        const current = await measureAt(io2.exec, top, best.commit, { ...config, guard: { command: null } }, io2.say);
         try {
-          o.hooks?.measured?.({ ...again, round: n, commit: proposed.commit });
+          o.hooks?.measured?.({ ...current, round: n, commit: best.commit });
         } catch {
         }
-        const confirmed = again.measurement && notKeptWhy(config, best, again.measurement, again.guardPassed);
-        if (!again.measurement) record.why = `did not hold when measured again: the metric gave no number (${(again.reason ?? "no output").replace(/\.$/, "")})`;
-        else if (confirmed) {
-          record.why = `did not hold when measured again: ${confirmed}`;
-          record.value = again.measurement.median;
-        } else {
-          record.kept = true;
-          record.why = "kept";
-          record.value = again.measurement.median;
-          best = again.measurement;
+        if (!current.measurement) record.why = `did not hold when measured again: the current code gave no number (${(current.reason ?? "no output").replace(/\.$/, "")})`;
+        else {
+          io2.say(`Measuring round ${n}'s change again to confirm it...`);
+          const again = await measureAt(io2.exec, top, proposed.commit, config, io2.say);
+          try {
+            o.hooks?.measured?.({ ...again, round: n, commit: proposed.commit });
+          } catch {
+          }
+          const confirmed = again.measurement && notKeptWhy(config, current.measurement, again.measurement, again.guardPassed);
+          if (!again.measurement) record.why = `did not hold when measured again: the metric gave no number (${(again.reason ?? "no output").replace(/\.$/, "")})`;
+          else if (confirmed) {
+            record.why = `did not hold when measured again: ${confirmed}`;
+            record.value = again.measurement.median;
+          } else {
+            record.kept = true;
+            record.why = "kept";
+            record.value = again.measurement.median;
+            best = again.measurement;
+          }
         }
       }
       finish(record);

@@ -189,13 +189,23 @@ export async function runLoop(io: LoopIo, o: LoopOptions): Promise<LoopResult> {
         // A change that wins once may have measured high by luck: picking the winner picks the lucky runs. Measure it
         // again and judge it on the fresh runs. Only a change that still wins is kept, and the fresh runs become the
         // best, so a lucky median can neither flatter the pull request nor block the next round's real gain.
-        io.say(`Measuring round ${n}'s change again to confirm it...`);
-        const again = await measureAt(io.exec, top, proposed.commit, config, io.say);
-        try { o.hooks?.measured?.({ ...again, round: n, commit: proposed.commit }); } catch { /* never stops the run */ }
-        const confirmed = again.measurement && notKeptWhy(config, best, again.measurement, again.guardPassed);
-        if (!again.measurement) record.why = `did not hold when measured again: the metric gave no number (${(again.reason ?? "no output").replace(/\.$/, "")})`;
-        else if (confirmed) { record.why = `did not hold when measured again: ${confirmed}`; record.value = again.measurement.median; }
-        else { record.kept = true; record.why = "kept"; record.value = again.measurement.median; best = again.measurement; }
+        // The current best is measured again too, and the confirmation compares fresh runs with fresh runs: a stored
+        // best that measured low by luck would otherwise let a change with no effect win twice against the same low
+        // number (seen in the keep-rule bench, notes research/reports/2026-11-19-keep-rule-bench.md). Its regression
+        // check passed when it became the best, so only the metric runs again.
+        io.say("Measuring the current best again, so the confirmation compares fresh runs with fresh runs...");
+        const current = await measureAt(io.exec, top, best.commit, { ...config, guard: { command: null } }, io.say);
+        try { o.hooks?.measured?.({ ...current, round: n, commit: best.commit }); } catch { /* never stops the run */ }
+        if (!current.measurement) record.why = `did not hold when measured again: the current code gave no number (${(current.reason ?? "no output").replace(/\.$/, "")})`;
+        else {
+          io.say(`Measuring round ${n}'s change again to confirm it...`);
+          const again = await measureAt(io.exec, top, proposed.commit, config, io.say);
+          try { o.hooks?.measured?.({ ...again, round: n, commit: proposed.commit }); } catch { /* never stops the run */ }
+          const confirmed = again.measurement && notKeptWhy(config, current.measurement, again.measurement, again.guardPassed);
+          if (!again.measurement) record.why = `did not hold when measured again: the metric gave no number (${(again.reason ?? "no output").replace(/\.$/, "")})`;
+          else if (confirmed) { record.why = `did not hold when measured again: ${confirmed}`; record.value = again.measurement.median; }
+          else { record.kept = true; record.why = "kept"; record.value = again.measurement.median; best = again.measurement; }
+        }
       }
       finish(record);
     } catch (e) {
