@@ -12,6 +12,8 @@ import { runLocalTry } from "./try-round.ts";
 import { localCredential } from "./local-credential.ts";
 import { init, type Io } from "./init.ts";
 import { calibrate } from "./calibrate.ts";
+import { calibrateJudge } from "./calibrate-judge.ts";
+import { sameModelNote } from "../core/model-notes.ts";
 import { migrate } from "./migrate.ts";
 import { restartState } from "./restart.ts";
 import { stoppedLine } from "./stopped.ts";
@@ -112,6 +114,8 @@ async function status() {
   // The summary is written for the report issue; in a terminal, "this page" is the issue, which is linked below.
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
   console.log(goal.merge_rule.mode === "propose" ? "Mode: review." : "Mode: automatic merging.");
+  const sameModel = sameModelNote(goal.models);
+  if (sameModel) console.log(sameModel);
   if (s.issue) console.log(`Full report: https://github.com/${slug}/issues/${s.issue}`);
 }
 
@@ -230,6 +234,10 @@ function localRun(command: string) {
 async function calibrateChecks() {
   const local = localRun("calibrate");
   if (!local) return;
+  if (process.argv.includes("--judge")) {
+    await calibrateJudge({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model);
+    return;
+  }
   const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result) return;
   // Rewordings the team made during the questions are saved, so the next round measures what they mean.
@@ -285,6 +293,7 @@ Then:
   npx synthe try      run one round on your computer, changing nothing (event code or own key)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
   npx synthe calibrate     check that your checks are marked steadily and the way you mean them (event code or own key)
+  npx synthe calibrate --judge   check that the judge picks between two replies the way you do, and whether it favours longer ones (event code or own key)
   npx synthe migrate --to <model>   compare your prompt on another model, changing nothing (needs ANTHROPIC_API_KEY; add --dry-run to spend nothing)
 
 Enterprise pilot (one support agent, one production metric, changes a person reviews):

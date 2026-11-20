@@ -5,9 +5,12 @@ import { sumCosts } from "../core/cost.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
 import { clip, type Candidate } from "./write.ts";
 import { composeCandidate, type ComposeResult } from "./compose.ts";
+import { NO_LENGTH_PREFERENCE } from "./length.ts";
 
 const CONCURRENCY = 6;
 export const AGENT_MAX_TOKENS = 2000; // the agent's reply limit; every prompt gets the same one
+// Bump when the duel prompt changes, so held-back scores measured with the old wording are measured again.
+export const JUDGE_PROMPT_VERSION = 2;
 const REPLY_KEPT = 800; // characters of each reply kept so the next writer can study what won and lost
 
 // Head-to-head scoring. Each scenario gets one reply from the current prompt; every other prompt's reply is put
@@ -61,7 +64,7 @@ const CHECK_SCHEMA = {
 };
 // What the agent is for and the business's own rules, so a judge can tell an allowed answer from a promise the
 // policy doesn't allow, and judges replies for the real app.
-const policyText = (goal: Goal) => [
+export const policyText = (goal: Goal) => [
   goal.brief?.trim() ? `\nWhat the agent is for: ${goal.brief.trim().slice(0, 2000)}` : "",
   goal.policy?.trim() ? `\nBusiness policy (what the agent may and may not offer):\n${goal.policy.trim().slice(0, 4000)}` : "",
 ].join("");
@@ -132,7 +135,7 @@ ${a}
 ${b}
 </reply_b>
 
-Which reply better meets the goal for this situation? Answer "A" or "B", or "tie" only if they are equally good. Then say for each reply whether it keeps every guardrail.`,
+Which reply better meets the goal for this situation? ${NO_LENGTH_PREFERENCE} Answer "A" or "B", or "tie" only if they are equally good. Then say for each reply whether it keeps every guardrail.`,
     });
     costs.push(judged.costUsd);
     const v = judged.value;
@@ -160,7 +163,10 @@ Which reply better meets the goal for this situation? Answer "A" or "B", or "tie
         const swapped = await duel(s, (set.indexOf(s) % 2 === 0) === flip, current, mine);
         if (judged.row.score !== swapped.row.score) judged.row.score = null;
       }
-      return measureGuards(s, await decideByChecks(s, judged, current, mine), current, mine);
+      const result = await measureGuards(s, await decideByChecks(s, judged, current, mine), current, mine);
+      // The full lengths, before the clip that the kept reply text gets.
+      Object.assign(result.row, { chars: mine.length, currentChars: current.length });
+      return result;
     });
   };
 
@@ -286,9 +292,9 @@ export interface AttackCache { key: string; failed: string[] | null }
 // the held-back cases, the checks and the models that reply and mark. One reading per prompt version: re-marking an
 // unchanged prompt only adds noise (one of ten cases marked differently moves it about four points) and cost.
 export interface ScoreCache { key: string; pct: number | null }
-export function scoreKey(goal: Goal, baseline: string, holdout: Scenario[]): string {
+export function scoreKey(goal: Goal, baseline: string, holdout: Scenario[], judgePromptVersion = JUDGE_PROMPT_VERSION): string {
   return sha256([sha256(baseline), sha256(JSON.stringify(holdout.map((s) => [s.id, s.input, s.expected]))),
-    sha256(JSON.stringify((goal.checks ?? []).filter((c) => c.trim()))), goal.models.runner, goal.models.judge].join("\n"));
+    sha256(JSON.stringify((goal.checks ?? []).filter((c) => c.trim()))), goal.models.runner, goal.models.judge, `judge-prompt-${judgePromptVersion}`].join("\n"));
 }
 
 // prior is the prompt the last merge replaced, when that merge is still live: it challenges the current prompt so a
@@ -417,7 +423,7 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
     });
   }
   // Held-back replies are never kept, so nothing about those scenarios can reach a writer.
-  for (const c of scores.candidates) if (c.holdout) c.holdout = c.holdout.map((r) => ({ ...r, reply: undefined }));
+  for (const c of scores.candidates) if (c.holdout) c.holdout = c.holdout.map((r) => ({ ...r, reply: undefined, chars: undefined, currentChars: undefined }));
   if (cutOffCount() > 0) scores.cutOff = cutOffCount();
   return { scores, costUsd: sumCosts(costs), calls: costs.length, checks, attackCache: freshAttackCache, scoreCache: freshScoreCache, ...(compose ? { compose } : {}) };
 }

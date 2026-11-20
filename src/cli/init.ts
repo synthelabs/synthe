@@ -8,6 +8,7 @@ import { askJson, eventModels, modelProblem, normalizeTeamCode, ProxyError, prox
 import { askPerson, type AgentOptions } from "./agent.ts";
 import { reviewChecksAtSetup } from "./calibrate.ts";
 import { FULL_SHARE_UNTIL, SHARE_NOTICE_VERSION } from "../core/share.ts";
+import { sameModelNote } from "../core/model-notes.ts";
 import { CRIMSON_NOTICE, DIAGNOSTICS_FILE, previousDiagnostics, renderCrimsonDiagnostics, renderCrimsonPreflight } from "./workflows.ts";
 import packageJson from "../../package.json" with { type: "json" };
 
@@ -671,6 +672,8 @@ async function finishSetup(io: Io, root: string, slug: string, branch: string, g
   mkdirSync(join(root, ".synthe"), { recursive: true });
   mkdirSync(join(root, ".github/workflows"), { recursive: true });
   writeFileSync(join(root, GOAL_FILE), `${JSON.stringify(goal, null, 2)}\n`);
+  const sameModel = sameModelNote(goal.models);
+  if (sameModel) io.say(sameModel);
   writeFileSync(join(root, SCENARIOS_FILE), `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`);
   if (attacks) writeFileSync(join(root, ATTACKS_FILE), `${attacks.map((a) => JSON.stringify(a)).join("\n")}\n`);
   io.say(`Adding the hourly workflow file, ${WORKFLOW_FILE}, so Synthe runs on its own.`);

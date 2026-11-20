@@ -19,6 +19,8 @@ export interface RoundRecord {
   checks?: { before: number; after: number };
   // The same for the team's guards, when they set counter_checks.
   guards?: { before: number; after: number };
+  // Median reply length in characters on the training cases, the current prompt's replies and the merged change's. Display only; see loop/length.ts.
+  replyLength?: { before: number; after: number };
   // The current prompt's score for the round: the share of the team's checks its replies passed on the
   // held-back test cases, as a percentage to one decimal. Null when the round never marked held-back
   // replies (no checks set, or nothing reached the held-back cases), so an unmeasured round is never
