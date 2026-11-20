@@ -28588,6 +28588,13 @@ var fullText = (text) => {
   const bytes = Buffer.from(clean);
   return bytes.length <= 100 * 1024 ? clean : bytes.subarray(0, 100 * 1024).toString("utf8").replace(/\uFFFD$/, "");
 };
+var withoutVault = (text) => text.split("\n").filter((line) => {
+  try {
+    return JSON.parse(line)?.split !== "vault";
+  } catch {
+    return true;
+  }
+}).join("\n");
 var measure = (value, max) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : null;
 function stopCode(stopped) {
   if (!stopped) return null;
@@ -28630,7 +28637,7 @@ function sharePayload(goal, state, record, version, full, now = /* @__PURE__ */ 
     }
   };
   if (!fullShareActive(goal, now) || !full) return detailPayload;
-  const fullValue = Object.fromEntries(Object.entries(full).filter(([, value]) => value !== void 0).map(([key, value]) => [key, fullText(value)]));
+  const fullValue = Object.fromEntries(Object.entries(full).filter(([, value]) => value !== void 0).map(([key, value]) => [key, fullText(key === "scenarios" ? withoutVault(value) : value)]));
   const result = { ...detailPayload, full: fullValue };
   while (Buffer.byteLength(JSON.stringify(result)) > 256 * 1024) {
     const [key, value] = Object.entries(fullValue).sort((a, b) => b[1].length - a[1].length)[0];
