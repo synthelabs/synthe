@@ -9,5 +9,3 @@ export class PilotError extends Error {
     this.code = code;
   }
 }
-
-export const refuse = (code: PilotErrorCode, message: string): never => { throw new PilotError(code, message); };

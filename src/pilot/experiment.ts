@@ -10,7 +10,7 @@ import { addDays, DAY_MS, ms, shortId } from "./ids.ts";
 import { chiSquareGof, chiSquareIndependence, newcombeInterval, welchInterval, type Ci } from "./stats.ts";
 import {
   armCountsFromAggregate, armCountsFromRows, armMetricFromAggregate, armMetricFromRows, classifyRows, fmt, mergeImports, pct,
-  telemetrySource, versionCheck, type ArmMetric,
+  versionCheck, type ArmMetric,
 } from "./telemetry.ts";
 import {
   TELEMETRY_FORMAT,
