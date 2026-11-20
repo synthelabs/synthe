@@ -476,7 +476,7 @@ test("event codes are checked cheaply before storing, use the proxy for all setu
       return question.startsWith("Paste your team code") ? " CRIM-ABCD-EFGH-JKMN-PQRS " : "crimson-code";
     };
     assert.equal(await init(io, dir, undefined, "", environment ? { SYNTHE_EVENT_CODE: "crimson-code", SYNTHE_TEAM_CODE: TEAM } : {}), true);
-    if (!environment) assert.deepEqual(asked, ["Paste your Crimson Hacks event code (on the QR card), or your own Anthropic key: ", "Paste your team code (on the card from the Synthe table, starts with crim-): "]);
+    if (!environment) assert.deepEqual(asked, ["Paste your Crimson Hacks event code (on the QR card), your own Anthropic key, or a key for another provider: ", "Paste your team code (on the card from the Synthe table, starts with crim-): "]);
     assert.equal(calls[0].model, "claude-haiku-5-5");
     assert.equal(calls[0].maxTokens, 5);
     assert.ok(calls.slice(1).some((call) => call.schema));

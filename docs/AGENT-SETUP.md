@@ -57,6 +57,8 @@ SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelab
 
 Agent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app's key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.
 
+If the agent runs on another provider's model through an OpenAI-compatible API (OpenAI, Gemini, Groq, OpenRouter, a local Ollama), the person can use that provider instead, so the prompt is tested on the model their users get. Put the key in front as `SYNTHE_API_KEY=<key>` (never `OPENAI_API_KEY`), and add `--base-url <its OpenAI-compatible URL> --model <the model the agent uses> --price <input>/<output>` to the step 5 command, where the price is US dollars per million input and output tokens from the provider's pricing page. Ask the person for the model and the price; never guess them. Event credit only covers Claude models.
+
 ## 3. Find the system prompt
 
 1. Search the code for the agent's system prompt. It is a `.md` or `.txt` file, or a string in code, that the app sends to an AI model.

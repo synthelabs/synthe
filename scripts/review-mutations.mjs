@@ -21,7 +21,7 @@ const mutations = [
   ["key saves despite failed validation", "src/cli/key.ts", 'io.say(`${modelProblem(error) ?? (error as Error).message} Nothing changed.`);\n    return false;', 'io.say(`${modelProblem(error) ?? (error as Error).message} Nothing changed.`);'],
   ["survivor: key accepts non-sk-ant input", "src/cli/key.ts", 'if (!/^sk-ant-\\S+$/.test(key))', 'if (false)'],
   ["survivor: report drops credit next step", "src/loop/report.ts", 'if (state.stopped === "credit") steps.push("To use your own Anthropic key, run `npx synthe key`, then `npx synthe restart`.");', 'if (state.stopped === "credit") {}'],
-  ["survivor: step 2 skips credential-type match", "src/cli/init.ts", 'if (draft.event !== !credential.startsWith("sk-ant-")) askPerson("--confirm (use the same credential type as step 1)");', ''],
+  ["survivor: step 2 skips credential-type match", "src/cli/init.ts", 'if (draft.event !== (!drafted && !credential.startsWith("sk-ant-"))) askPerson("--confirm (use the same credential type as step 1)");', ''],
   ["confirmation leaves the draft behind", "src/cli/init.ts", 'if (finished) rmSync(join(root, DRAFT_FILE), { force: true });', ''],
   ["agent setup can repeat", "src/cli/init.ts", 'if (installed.every(Boolean))', 'if (false)'],
   ["proxy authentication is blamed on the key", "src/model/client.ts", 'if (refused.error?.error?.type === "synthe_proxy_auth") throw new ProxyError(401, PROXY_AUTH_MESSAGE);', ''],

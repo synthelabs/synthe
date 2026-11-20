@@ -1,5 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { ATTACKS_FILE, GOAL_FILE, parseAttacks, parseGoal, parseScenarios, type Attack } from "./core/goal.ts";
+import { ATTACKS_FILE, GOAL_FILE, parseAttacks, parseGoal, parseScenarios, type Attack, type Provider } from "./core/goal.ts";
 import { readPrompt } from "./core/prompt.ts";
 import { sumCosts } from "./core/cost.ts";
 import { calibrationReadings, resumeIfScenariosChanged, stopReason } from "./core/state.ts";
@@ -36,6 +36,16 @@ async function stillWaiting(repo: Repo, branch: string): Promise<boolean> {
   }
 }
 
+// The model key. api-key (SYNTHE_API_KEY) serves whichever provider synthe.json names. anthropic-api-key
+// (SYNTHE_ANTHROPIC_KEY) is the older name, still passed by every workflow installed before api-key existed, so it
+// keeps working for Anthropic. It is never sent to another provider: it is an Anthropic key.
+// undefined provider: before synthe.json is read, only to tell whether any own key is set.
+function actionKey(provider: Provider | undefined): string | undefined {
+  const generic = (input("api-key") || process.env.SYNTHE_API_KEY)?.trim();
+  if (provider?.kind === "openai-compatible") return generic || undefined;
+  return generic || (input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() || undefined;
+}
+
 async function main() {
   const step = input("step");
   if (step === "receipt-start" || step === "receipt-finish") {
@@ -44,7 +54,7 @@ async function main() {
     return;
   }
   if (step === "cancel") return captureCancel();
-  if (step !== "decide" && !(input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() && (input("event-code") || process.env.SYNTHE_EVENT_CODE)?.trim()) requireOidc();
+  if (step !== "decide" && !actionKey(undefined)?.trim() && (input("event-code") || process.env.SYNTHE_EVENT_CODE)?.trim()) requireOidc();
   const repo = githubRepo(process.env.GITHUB_REPOSITORY!, input("github-token"), process.env.GITHUB_API_URL);
 
   if (step === "decide") {
@@ -140,10 +150,10 @@ async function main() {
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, state.prompt);
   if (prompt === null) throw new Error(`could not find the prompt in ${goal.prompt.path}`);
   const scenarios = parseScenarios(readFileSync(goal.scenarios, "utf8"));
-  const key = input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY;
+  const key = actionKey(goal.provider);
   const eventCode = input("event-code") || process.env.SYNTHE_EVENT_CODE;
-  if (!key && eventCode) eventModels(goal.models);
-  const model = configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE);
+  if (!key && eventCode && goal.provider?.kind !== "openai-compatible") eventModels(goal.models);
+  const model = configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE, goal.provider);
 
   if (step === "write") {
     const written = await observeRoundStep("write", { prompt }, () => runWrite(goal, state, prompt, scenarios, model));

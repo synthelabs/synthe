@@ -8,13 +8,13 @@ npx synthe init
 
 Using Claude Code, Cursor or Codex? Tell it: Set up Synthe in this repo. Run `npx synthe@latest guide` and follow it.
 
-Setup reads your README and the code around your prompt, asks what your agent should get better at (and, optionally, a few real messages users send it), proposes checks that measure a good reply for you to confirm, shows you a few of your agent's real replies so you can fix any check that doesn't mean what you mean, asks whether to merge changes automatically or have you review them, and asks for your event code or own Anthropic key. When the run finishes, open the **Synthe: prompt report** issue in your repo. It says what changed, why, and how to undo it.
+Setup reads your README and the code around your prompt, asks what your agent should get better at (and, optionally, a few real messages users send it), proposes checks that measure a good reply for you to confirm, shows you a few of your agent's real replies so you can fix any check that doesn't mean what you mean, asks whether to merge changes automatically or have you review them, and asks for your event code or your own model key (Anthropic or any OpenAI-compatible provider; see [Other model providers](#other-model-providers)). When the run finishes, open the **Synthe: prompt report** issue in your repo. It says what changed, why, and how to undo it.
 
 ## Improve mode (no AI prompt needed)
 
 No prompt in your app yet? `npx synthe improve` raises a number you choose: tests passing, bundle size, build time, or your own command that prints one number. Synthe proposes a code change each round, measures it in a throwaway checkout next to the current code, and keeps it only if it wins by more than the run-to-run noise, still wins when measured a second time, and your regression check (default `npm test`) still passes. Each kept change builds on the one before. At the end it opens ONE pull request, titled like `Synthe: valid signups 3 → 12`, with a table of every round.
 
-It needs an event code and team code, or your own Anthropic key, in the environment: `SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe improve`, or `SYNTHE_ANTHROPIC_KEY=<key> npx synthe improve`. `ANTHROPIC_API_KEY` is never used. Run it inside your repo, with the code committed and pushed and `gh` signed in. It asks what should get better, which number measures it, which check must keep passing, and whether to merge wins automatically (Enter means a pull request waits for you).
+It needs an event code and team code, or your own model key (Anthropic or any OpenAI-compatible provider), in the environment: `SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe improve`, or `SYNTHE_API_KEY=<key> npx synthe improve` (`SYNTHE_ANTHROPIC_KEY` also works for an Anthropic key). `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are never used. When `synthe.json` names another provider, improve sends every call to its `models.writer` and needs that model's price in `provider.prices`. Run it inside your repo, with the code committed and pushed and `gh` signed in. It asks what should get better, which number measures it, which check must keep passing, and whether to merge wins automatically (Enter means a pull request waits for you).
 
 Example, ending with the pull request:
 
@@ -61,8 +61,38 @@ Crimson Hacks requires a tracking receipt before an enrolled workflow starts and
 
 - A GitHub repo you can admin, with your agent's system prompt in it, either in its own file or as a string in your code.
 - The [GitHub CLI](https://cli.github.com), signed in (`gh auth login`), and Node 20 or later.
-- A Crimson Hacks event code from the QR card, or your own Anthropic key. Event credit goes through Synthe's capped proxy; no Anthropic key is needed at the event.
+- A Crimson Hacks event code from the QR card, or your own model key (Anthropic or any OpenAI-compatible provider). Event credit goes through Synthe's capped proxy and covers Claude models only; no key is needed at the event.
 - **Your main branch gets Synthe's changes if you choose automatic merging.** If main deploys your app, each change goes live. Choose review mode at setup if that's not what you want. Repos that require reviews get review mode automatically.
+
+## Other model providers
+
+Synthe works with your own model key: Anthropic, or any provider with an OpenAI-compatible chat completions API (OpenAI, Gemini's OpenAI endpoint, Groq, OpenRouter, Together, or a local Ollama or vLLM server). Use the provider your agent ships on: Synthe plays your agent on the "runner" model, so your prompt is tested on the model your users actually get.
+
+Set up with `npx synthe init --base-url https://api.openai.com/v1` (your provider's OpenAI-compatible address), or paste another provider's key when setup asks and then type its base URL. Setup reads the code around your prompt; if it names a model, such as `model: "gpt-4.1-mini"`, Synthe proposes it as the runner and asks you to confirm. The writer, judge and checker use the same model unless you pick others. Synthe then asks what each model costs, per million input and output tokens: it stops at your budget and never merges a round whose cost it doesn't know, and it can't look up other providers' current prices. Your key is saved as the repo secret `SYNTHE_API_KEY`.
+
+The result in `synthe.json`:
+
+```json
+{
+  "models": { "writer": "gpt-4.1", "runner": "gpt-4.1-mini", "judge": "gpt-4.1", "checker": "gpt-4.1" },
+  "provider": {
+    "kind": "openai-compatible",
+    "base_url": "https://api.openai.com/v1",
+    "prices": {
+      "gpt-4.1": { "input": 2, "output": 8 },
+      "gpt-4.1-mini": { "input": 0.4, "output": 1.6 }
+    }
+  }
+}
+```
+
+- No `provider` means Anthropic, exactly as before. Existing goal files need no change.
+- `base_url` must be `https://`, or `http://` only for a server on your machine (`localhost`, `127.0.0.1`, `[::1]`). Your key is sent to that URL and nowhere else: Synthe never reads `OPENAI_BASE_URL`, `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for it.
+- `prices` are US dollars per million tokens, from your provider's pricing page. Without a price, Synthe uses the cost the provider reports in its reply (`usage.cost`, as OpenRouter sends) when there is one; otherwise the cost is unknown, which stops budgets, merges and `improve`.
+- A local server that needs no key still needs something in `SYNTHE_API_KEY`; any word will do.
+- If the provider refuses JSON schemas, Synthe asks for JSON in the message instead.
+- Event credit only covers Claude models. Repos set up before `SYNTHE_API_KEY` existed run `npx synthe upgrade` once so the workflow passes it; workflows that pass only `SYNTHE_ANTHROPIC_KEY` keep working with Anthropic.
+- Agent setup takes `--base-url URL --model NAME --price INPUT/OUTPUT` (for example `--price 0.40/1.60`) and reads the key only from `SYNTHE_API_KEY`.
 
 ## What it adds to your repo
 
@@ -70,7 +100,7 @@ Setup commits `synthe.json` (the goal, your rules and settings), `.synthe/scenar
 
 Agent setup requires explicit `SYNTHE_ANTHROPIC_KEY` or `SYNTHE_EVENT_CODE` in both draft and confirmation; it never falls back to `ANTHROPIC_API_KEY`. Local event requests reuse a non-secret install ID at `$XDG_CONFIG_HOME/synthe/install-id`, or `~/.config/synthe/install-id` when no absolute config directory is set. The directory is private (0700), and the ID file is owner-only (0600), created atomically across CLI processes. It is not stored in your repo. This ID keeps the setup allowance stable on this installation, not across people, machines, deleted config directories or resets; it is not a server-side abuse boundary.
 
-Set `SYNTHE_EVENT_CODE` in your environment to skip the code question. Local `try` and `calibrate` also accept it. To switch to your own key, run `npx synthe key` in your terminal, or explicitly supply `SYNTHE_ANTHROPIC_KEY` for noninteractive use. Using `ANTHROPIC_API_KEY` with `key` requires deliberately pressing Enter in your terminal. Rounds then use your key. If credit stopped the run, run `npx synthe restart` afterward.
+Set `SYNTHE_EVENT_CODE` in your environment to skip the code question. Local `try` and `calibrate` also accept it. To switch to your own key, run `npx synthe key` in your terminal, or explicitly supply `SYNTHE_API_KEY` (or `SYNTHE_ANTHROPIC_KEY`) for noninteractive use. Using `ANTHROPIC_API_KEY` with `key` requires deliberately pressing Enter in your terminal. Rounds then use your key. If credit stopped the run, run `npx synthe restart` afterward.
 
 For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.10.0 init`. For an existing event repo, run `npx --yes github:synthelabs/synthe#v1.10.0 upgrade --event`, commit both workflow files, and push them to the default branch. Add both event and team secrets in GitHub Actions settings if needed.
 
@@ -118,13 +148,15 @@ The test cases are simulated single messages, not real users or full conversatio
 | `npx synthe improve` | Improve mode: Synthe proposes code changes, measures each, keeps only wins and opens one pull request (`--list` shows what this repo can measure) |
 | `npx synthe improve --handoff` | Improve mode without a credential: measure, then make the change with your own coding agent |
 | `npx synthe submit` | After `--handoff`: measure your committed change; open the pull request, or merge it in auto mode |
-| `npx synthe key` | Save your own Anthropic key and stop using event credit |
+| `npx synthe init --base-url URL` | Set up with another provider's models through its OpenAI-compatible API (see [Other model providers](#other-model-providers)) |
+| `npx synthe key` | Save your own model key (Anthropic, or the provider in `synthe.json`) and stop using event credit |
 | `npx synthe upgrade` | Update only the workflow for chained rounds; commit and push the changed workflow |
 | `npx synthe upgrade --event` | Install Crimson tracking in an existing event repo; commit both workflows and push to the default branch |
 | `npx synthe status` | Show where it is |
 | `npx synthe stop` | Stop it. Nothing more runs or changes |
 | `npx synthe restart` | Start it again, after `stop` or once you've fixed what stopped it |
 | `npx synthe try` | Run one round on your machine, changing nothing (event code or own key in the environment) |
+| `npx synthe migrate --to MODEL` | Compare your prompt on another model, changing nothing (`SYNTHE_API_KEY`, or `SYNTHE_ANTHROPIC_KEY` for Anthropic; `--dry-run` spends nothing) |
 | `npx synthe try --noise` | Compare your prompt with itself to see how much the judge varies |
 | `npx synthe calibrate` | Check that your checks are marked the same way each time and the way you mean them, and reword any that aren't (event code or own key in the environment) |
 | `npx synthe vault` | At the end of a run, compare your prompt with the one the run started from on your vault cases (event code or own key in the environment; says the number of model calls and asks before spending) |
@@ -158,4 +190,4 @@ Default-on guards still need a live fixture reviewed by a person: block at least
 
 ## Removing it
 
-Run `npx synthe stop`, then delete `synthe.json`, `.synthe/`, and both Synthe workflow files under `.github/workflows/`. Remove the `SYNTHE_EVENT_CODE`, `SYNTHE_TEAM_CODE`, and `SYNTHE_ANTHROPIC_KEY` secrets if present.
+Run `npx synthe stop`, then delete `synthe.json`, `.synthe/`, and both Synthe workflow files under `.github/workflows/`. Remove the `SYNTHE_EVENT_CODE`, `SYNTHE_TEAM_CODE`, `SYNTHE_API_KEY` and `SYNTHE_ANTHROPIC_KEY` secrets if present.

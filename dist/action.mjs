@@ -28053,6 +28053,31 @@ import { appendFileSync, existsSync, mkdirSync as mkdirSync2, readFileSync as re
 var STATE_BRANCH = "synthe/state";
 var GOAL_FILE = "synthe.json";
 var MAX_CHECKS = 5;
+var LOOPBACK_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
+var isLoopback = (url) => LOOPBACK_HOSTS.has(url.hostname);
+function baseUrlProblem(value) {
+  if (typeof value !== "string" || !value.trim()) return "provider.base_url is required for an openai-compatible provider, for example https://api.openai.com/v1";
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return `provider.base_url "${value.slice(0, 80)}" isn't a URL. Use the provider's OpenAI-compatible address, for example https://api.openai.com/v1`;
+  }
+  if (url.username || url.password) return "provider.base_url must not contain a user name or password. Synthe sends the key in a header, never in the URL.";
+  if (url.search || url.hash) return "provider.base_url must not have a query string or # part. Synthe sends the key in a header, never in the URL.";
+  if (url.protocol === "https:") return null;
+  if (url.protocol === "http:" && isLoopback(url)) return null;
+  if (url.protocol === "http:") return "provider.base_url must use https. Plain http is allowed only for a server on this machine (localhost, 127.0.0.1 or [::1]), because the key travels with every request.";
+  return "provider.base_url must start with https://";
+}
+function apiName(provider) {
+  if (provider?.kind !== "openai-compatible") return "Anthropic's API";
+  try {
+    return `the model API at ${new URL(provider.base_url).host}`;
+  } catch {
+    return "your model provider's API";
+  }
+}
 var DEFAULTS = {
   models: { writer: "claude-sonnet-5-5", runner: "claude-haiku-5-5", judge: "claude-haiku-5-5", checker: "claude-sonnet-5-5" },
   merge_rule: { mode: "auto", min_improvement: 2, max_p: 0.05, holdout_max_p: 0.1, noise_margin: 3, max_rounds: 12, stall_rounds: 3, guard_margin: 3 },
@@ -28104,6 +28129,28 @@ function parseGoal(text) {
   if (g.merge_rule?.allow_shorter !== void 0 && typeof g.merge_rule.allow_shorter !== "boolean") bad("merge_rule.allow_shorter must be true or false");
   if (g.compose !== void 0 && typeof g.compose !== "boolean") bad("compose must be true or false");
   if (g.population !== void 0 && typeof g.population !== "boolean") bad("population must be true or false");
+  if (g.provider !== void 0) {
+    const p = g.provider;
+    if (!p || typeof p !== "object" || Array.isArray(p)) bad('provider must be an object, for example { "kind": "openai-compatible", "base_url": "https://api.openai.com/v1" }');
+    if (p.kind !== "anthropic" && p.kind !== "openai-compatible") bad("provider.kind must be anthropic or openai-compatible");
+    if (p.kind === "openai-compatible") {
+      const why = baseUrlProblem(p.base_url);
+      if (why) bad(why);
+    }
+    if (p.kind === "anthropic" && p.base_url !== void 0) bad("provider.base_url is only for an openai-compatible provider; an Anthropic key is only ever sent to Anthropic");
+    if (p.kind === "anthropic" && p.prices !== void 0) bad("provider.prices is only for an openai-compatible provider; Synthe already knows Anthropic's prices");
+    if (p.prices !== void 0) {
+      if (!p.prices || typeof p.prices !== "object" || Array.isArray(p.prices)) bad('provider.prices must map each model to { "input": USD, "output": USD } per million tokens');
+      for (const [model, price] of Object.entries(p.prices)) {
+        const ok = (n) => typeof n === "number" && Number.isFinite(n) && n >= 0;
+        if (!price || !ok(price.input) || !ok(price.output)) bad(`provider.prices.${model} needs "input" and "output": USD per million tokens, 0 or more`);
+      }
+    }
+    if (p.kind === "openai-compatible") {
+      const missing2 = ["writer", "runner", "judge", "checker"].filter((role) => typeof g.models?.[role] !== "string" || !g.models[role].trim());
+      if (missing2.length) bad(`an openai-compatible provider needs every model named in "models": ${missing2.join(", ")} ${missing2.length === 1 ? "is" : "are"} missing. Synthe's defaults are Claude models.`);
+    }
+  }
   return {
     ...g,
     guardrails: g.guardrails ?? [],
@@ -28223,6 +28270,10 @@ function sumCosts(costs) {
     total += c;
   }
   return total;
+}
+function pricedCost(price, input2, output) {
+  if (!price || typeof input2 !== "number" || typeof output !== "number" || !Number.isFinite(input2) || !Number.isFinite(output)) return null;
+  return (input2 * price.input + output * price.output) / 1e6;
 }
 
 // src/core/state.ts
@@ -28741,6 +28792,152 @@ async function shareRound(payload, env, fetcher = fetch) {
   }
 }
 
+// src/model/openai-compatible.ts
+var ProviderError = class extends Error {
+  status;
+  // null when the server couldn't be reached
+  host;
+  model;
+  loopback;
+  quota;
+  // out of credit or over a spending limit: waiting won't help
+  constructor(message, a) {
+    super(message);
+    this.status = a.status;
+    this.host = a.host;
+    this.model = a.model;
+    this.loopback = a.loopback;
+    this.quota = a.quota ?? false;
+  }
+};
+var MAX_RETRIES = 4;
+var TIMEOUT_MS = 10 * 6e4;
+var MAX_WAIT_MS = 6e4;
+var QUOTA = /insufficient_quota|exceeded your current quota|credit balance|out of credits?|spend(ing)? limit|billing/i;
+function retryAfterMs(headers, now = Date.now()) {
+  const ms = Number(headers.get("retry-after-ms"));
+  if (headers.get("retry-after-ms") && Number.isFinite(ms) && ms >= 0) return Math.min(ms, MAX_WAIT_MS);
+  const raw = headers.get("retry-after");
+  if (!raw) return null;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1e3, MAX_WAIT_MS);
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? Math.min(Math.max(0, at - now), MAX_WAIT_MS) : null;
+}
+var backoffMs = (attempt) => Math.min(500 * 2 ** attempt, 8e3) * (0.75 + Math.random() * 0.25);
+var JSON_ONLY = (schema) => `
+
+Reply with only a JSON object that matches this JSON schema, with no other text before or after it:
+${JSON.stringify(schema)}`;
+var unfence = (text) => text.match(/^\s*```(?:json)?\s*\n?([\s\S]*?)\n?\s*```\s*$/i)?.[1] ?? text;
+function textOf(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((p) => p && typeof p === "object" && typeof p.text === "string" ? p.text : "").join("");
+  return null;
+}
+function openAiCompatibleModel(o) {
+  const base = o.baseUrl.trim().replace(/\/+$/, "");
+  const url = new URL(`${base}/chat/completions`);
+  const host = url.host;
+  const loopback = isLoopback(url);
+  const sleep2 = o.sleep ?? ((ms) => new Promise((resolve2) => setTimeout(resolve2, ms)));
+  const hide = (text) => o.apiKey ? text.split(o.apiKey).join("[your key]") : text;
+  const noSchema = /* @__PURE__ */ new Set();
+  const completionTokens = /* @__PURE__ */ new Set();
+  async function post(model, body) {
+    for (let attempt = 0; ; attempt++) {
+      let response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}` },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+          redirect: "error"
+          // a redirect would carry the key to wherever it points
+        });
+      } catch (error) {
+        if (attempt < MAX_RETRIES) {
+          await sleep2(backoffMs(attempt));
+          continue;
+        }
+        throw new ProviderError(`Couldn't reach ${host}: ${hide(error instanceof Error ? error.message : String(error))}`, { status: null, host, model, loopback });
+      }
+      const text = hide(await response.text());
+      let json = null;
+      try {
+        json = JSON.parse(text);
+      } catch {
+      }
+      const quota = QUOTA.test(text);
+      const retryable = response.status === 429 && !quota || response.status === 408 || response.status >= 500;
+      if (retryable && attempt < MAX_RETRIES) {
+        await sleep2(retryAfterMs(response.headers) ?? backoffMs(attempt));
+        continue;
+      }
+      return { status: response.status, json, text };
+    }
+  }
+  const said = (r) => {
+    const m = r.json?.error?.message ?? r.json?.message ?? r.json?.error;
+    return (typeof m === "string" ? m : r.text).trim().slice(0, 300);
+  };
+  return {
+    async ask({ model, system, user, maxTokens, schema, allowCutOff }) {
+      let jsonInPrompt = Boolean(schema) && noSchema.has(model);
+      let tokensField = completionTokens.has(model) ? "max_completion_tokens" : "max_tokens";
+      let retriedTokens = false, retriedSchema = false;
+      for (; ; ) {
+        const body = {
+          model,
+          messages: [...system === void 0 ? [] : [{ role: "system", content: system }], { role: "user", content: schema && jsonInPrompt ? `${user}${JSON_ONLY(schema)}` : user }],
+          [tokensField]: maxTokens,
+          ...schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}
+        };
+        const r = await post(model, body);
+        if (r.status === 400) {
+          const why = said(r);
+          if (!retriedTokens && tokensField === "max_tokens" && /max_completion_tokens/.test(why)) {
+            retriedTokens = true;
+            tokensField = "max_completion_tokens";
+            completionTokens.add(model);
+            continue;
+          }
+          if (schema && !jsonInPrompt && !retriedSchema) {
+            retriedSchema = true;
+            jsonInPrompt = true;
+            noSchema.add(model);
+            continue;
+          }
+        }
+        if (r.status < 200 || r.status >= 300) {
+          throw new ProviderError(`${host} answered ${r.status}: ${said(r)}`, { status: r.status, host, model, loopback, quota: QUOTA.test(r.text) });
+        }
+        const choice = r.json?.choices?.[0];
+        const content = textOf(choice?.message?.content);
+        const refused = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim().length > 0;
+        const reason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
+        const raw = refused ? null : content;
+        const text = raw !== null && jsonInPrompt ? unfence(raw) : raw;
+        const finished = reason === "stop" && text !== null && text.length > 0;
+        const cutOff = allowCutOff === true && reason === "length" && text !== null && text.length > 0;
+        const usage = r.json?.usage;
+        const input2 = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
+        const output = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
+        const price = o.prices?.[model];
+        const costUsd2 = price ? pricedCost(price, input2, output) : typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
+        return {
+          text: finished || cutOff ? text : null,
+          costUsd: costUsd2,
+          ...cutOff ? { truncated: true } : {},
+          ...input2 !== null && output !== null ? { usage: { input: input2, output } } : {},
+          stopReason: refused ? "refusal" : reason
+        };
+      }
+    }
+  };
+}
+
 // src/model/client.ts
 var PROXY_URL = "https://synthe-crimson.vercel.app/api/claude";
 var normalizeTeamCode = (code) => code.trim().toLowerCase().replace(/\s+/g, "");
@@ -28807,7 +29004,11 @@ function proxyModel(eventCode, action = false, teamCode) {
     }
   } };
 }
-function configuredModel(key, eventCode, action = false, teamCode) {
+function configuredModel(key, eventCode, action = false, teamCode, provider) {
+  if (provider?.kind === "openai-compatible") {
+    if (key?.trim()) return providerModel(provider, key.trim());
+    throw new Error(`synthe.json sends model calls to ${providerHost(provider)}, and no key for it is set. On this computer, set SYNTHE_API_KEY. For the GitHub workflow, run \`npx synthe key\` to save it as the SYNTHE_API_KEY secret, and \`npx synthe upgrade\` if your workflow file doesn't pass api-key yet. Event credit only covers Anthropic's models.`);
+  }
   if (key?.trim()) return anthropicModel(key.trim());
   if (eventCode?.trim()) return proxyModel(eventCode.trim(), action, teamCode?.trim() || void 0);
   throw new Error("No Anthropic key or event code is set. Set SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY.");
@@ -28823,6 +29024,18 @@ function ownKeyBaseUrl(env = process.env) {
   } catch {
   }
   return ANTHROPIC_API_URL;
+}
+function providerModel(provider, apiKey) {
+  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices });
+  return anthropicModel(apiKey);
+}
+function providerHost(provider) {
+  if (provider?.kind !== "openai-compatible") return "Anthropic";
+  try {
+    return new URL(provider.base_url).host;
+  } catch {
+    return provider.base_url;
+  }
 }
 function anthropicModel(apiKey) {
   const client = new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(), maxRetries: 4 });
@@ -28878,6 +29091,7 @@ async function pool(items, limit2, fn) {
 function modelProblem(e) {
   if (e instanceof CreditError) return e.message;
   if (e instanceof ProxyError) return e.message;
+  if (e instanceof ProviderError) return providerProblem(e);
   const err = e;
   const status = typeof err?.status === "number" ? err.status : null;
   const text = typeof err?.message === "string" ? err.message : "";
@@ -28888,6 +29102,17 @@ function modelProblem(e) {
   if (status === 429 || status === 529 || status !== null && status >= 500) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
   if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
   return null;
+}
+function providerProblem(e) {
+  const host = e.host;
+  if (e.status === null) return e.loopback ? `Couldn't reach the model server at ${host}. Start it (for example \`ollama serve\`), or fix provider.base_url in synthe.json, and try again.` : `Couldn't reach ${host}. Check your internet connection and provider.base_url in synthe.json, then try again.`;
+  if (e.quota) return `Your key for ${host} has no credit left or has reached its spending limit. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
+  if (e.status === 401) return `Your key for ${host} was rejected. Run \`npx synthe key\` to replace it.`;
+  if (e.status === 402) return `Your key for ${host} has no credit left. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
+  if (e.status === 403) return `Your key for ${host} isn't allowed to use ${e.model}. Check "models" in synthe.json, or run \`npx synthe key\` to replace the key.`;
+  if (e.status === 404) return `${host} doesn't have the model ${e.model}, or provider.base_url doesn't point at its OpenAI-compatible API (it usually ends in /v1). Check "models" and "provider" in synthe.json. ${e.message}`;
+  if (e.status === 429 || e.status === 408 || e.status >= 500) return `${host} is busy or rate-limiting this key right now. Wait a few minutes and try again.`;
+  return `${host} refused the request for ${e.model}. Check "models" and "provider" in synthe.json. ${e.message}`;
 }
 
 // src/core/run-alpha.ts
@@ -30487,7 +30712,7 @@ function headlineBase(goal, state, stoppedByTeam = false, mode = "plain") {
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}${guardLine}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? fromSyntheProxy(last?.plain) ? ` ${last.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
+    const wait = busy(last) ? fromSyntheProxy(last?.plain) ? ` ${last.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : ` The last round didn't finish because ${apiName(goal.provider)} was busy; Synthe tried again right away; if it stopped, run \`npx synthe restart\`.` : "";
     return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}${guardLine}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
@@ -30499,7 +30724,7 @@ function headlineBase(goal, state, stoppedByTeam = false, mode = "plain") {
     if (refusedCode(end)) return { title: "Stopped: the Synthe proxy refused this repo's code", summary: `${end.plain} ${CODE_FIX} ${spent}` };
     if (badKey(end)) return { title: end.plain === PROXY_AUTH_MESSAGE ? "Stopped: the Synthe proxy couldn't verify this run" : "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
     if (busy(end) && isFinished(state.stopped)) {
-      return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
+      return { title: `Stopped: the last rounds didn't finish because ${apiName(goal.provider)} was busy`, summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
     }
     if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, run `npx synthe key`." };
   }
@@ -30535,12 +30760,12 @@ function nextSteps(goal, state, pilot = false) {
   } else if (!state.stopped && !state.proposal && badKey(last)) {
     steps.push(`${last.plain} Run \`npx synthe restart\` after ${last.plain === PROXY_AUTH_MESSAGE ? "that" : "replacing the key"}.`);
   } else if (!state.stopped && !state.proposal) {
-    steps.push(busy(last) ? fromSyntheProxy(last?.plain) ? `${last.plain} Synthe tried again; if it has stopped, run \`npx synthe restart\`.` : "Nothing to do. Anthropic's API was busy during the last round, so Synthe tried again; if it has stopped, run `npx synthe restart`. Otherwise Synthe stops by itself." : "Nothing to do. Completed rounds start back to back and Synthe stops by itself.");
+    steps.push(busy(last) ? fromSyntheProxy(last?.plain) ? `${last.plain} Synthe tried again; if it has stopped, run \`npx synthe restart\`.` : `Nothing to do. ${apiName(goal.provider)} was busy during the last round, so Synthe tried again; if it has stopped, run \`npx synthe restart\`. Otherwise Synthe stops by itself.` : "Nothing to do. Completed rounds start back to back and Synthe stops by itself.");
     steps.push("To keep your agent unchanged, for example before a demo, run `npx synthe stop`.");
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");
   }
-  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete whichever of the `SYNTHE_ANTHROPIC_KEY`, `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE` secrets your repo has, in its settings.");
+  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete whichever of the `SYNTHE_API_KEY`, `SYNTHE_ANTHROPIC_KEY`, `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE` secrets your repo has, in its settings.");
   return steps;
 }
 var TRIED_GROUPS = ["not clearly better", "did not hold on the hidden test cases", "broke a rule or a guard"];
@@ -31009,12 +31234,12 @@ ${notTested(goal).slice(1).join("\n")}
       state.stopped = "credit";
       stall = false;
     } else if (error?.kind === "busy") {
-      record.reasons.push(fromSyntheProxy(error.message) ? error.message : `Anthropic's API was busy during the ${error.step} step: ${error.message}`);
-      record.plain = fromSyntheProxy(error.message) ? error.message : "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
+      record.reasons.push(fromSyntheProxy(error.message) ? error.message : `${apiName(goal.provider)} was busy during the ${error.step} step: ${error.message}`);
+      record.plain = fromSyntheProxy(error.message) ? error.message : `This round didn't finish because ${apiName(goal.provider)} was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run \`npx synthe restart\` later.`;
       stall = false;
     } else if (error?.kind === "key") {
       record.reasons.push(error.message.startsWith(PROXY_REFUSED) ? `the ${error.step} step was refused by the Synthe proxy: ${error.message.slice(PROXY_REFUSED.length)}` : `the ${error.step} step's key was refused: ${error.message}`);
-      record.plain = error.message.startsWith("The Synthe proxy") ? error.message : `This round didn't finish. ${error.message.split(/(?<=\.) /)[0]} Run \`npx synthe key\` to replace your Anthropic key.`;
+      record.plain = error.message.startsWith("The Synthe proxy") ? error.message : `This round didn't finish. ${error.message.split(/(?<=\.) /)[0]} Run \`npx synthe key\` to replace your ${goal.provider?.kind === "openai-compatible" ? "key" : "Anthropic key"}.`;
     } else {
       record.reasons.push("the round did not finish; check the Actions log and the API key");
       record.plain = "This round didn't finish. If it keeps happening, check the Actions log and that your key still has credit.";
@@ -31300,6 +31525,10 @@ function failureOf(step, e) {
   if (e instanceof Error && e.message === PROXY_AUTH_MESSAGE) return { step, kind: "key", message: e.message };
   if (e instanceof CreditError) return { step, kind: "credit", message: e.message };
   if (e instanceof ProxyError) return { step, kind: e.status === 401 || e.status === 403 ? "key" : "busy", message: e.message };
+  if (e instanceof ProviderError) {
+    const kind = e.quota || e.status === 401 || e.status === 402 || e.status === 403 ? "key" : e.status === null || e.status === 408 || e.status === 429 || e.status >= 500 ? "busy" : "other";
+    return { step, kind, message: modelProblem(e) };
+  }
   const plain = modelProblem(e);
   if (plain !== null) return { step, kind: /\bkey\b/i.test(plain) ? "key" : "busy", message: plain };
   const raw = e instanceof Error ? e.message : String(e);
@@ -31662,6 +31891,11 @@ async function stillWaiting(repo, branch) {
     return true;
   }
 }
+function actionKey(provider) {
+  const generic = (input("api-key") || process.env.SYNTHE_API_KEY)?.trim();
+  if (provider?.kind === "openai-compatible") return generic || void 0;
+  return generic || (input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() || void 0;
+}
 async function main() {
   const step = input("step");
   if (step === "receipt-start" || step === "receipt-finish") {
@@ -31670,7 +31904,7 @@ async function main() {
     return;
   }
   if (step === "cancel") return captureCancel();
-  if (step !== "decide" && !(input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() && (input("event-code") || process.env.SYNTHE_EVENT_CODE)?.trim()) requireOidc();
+  if (step !== "decide" && !actionKey(void 0)?.trim() && (input("event-code") || process.env.SYNTHE_EVENT_CODE)?.trim()) requireOidc();
   const repo = githubRepo(process.env.GITHUB_REPOSITORY, input("github-token"), process.env.GITHUB_API_URL);
   if (step === "decide") {
     const branch = await repo.defaultBranch();
@@ -31755,10 +31989,10 @@ async function main() {
   const prompt = readPrompt(readFileSync4(goal.prompt.path, "utf8"), goal, state.prompt);
   if (prompt === null) throw new Error(`could not find the prompt in ${goal.prompt.path}`);
   const scenarios = parseScenarios(readFileSync4(goal.scenarios, "utf8"));
-  const key = input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY;
+  const key = actionKey(goal.provider);
   const eventCode = input("event-code") || process.env.SYNTHE_EVENT_CODE;
-  if (!key && eventCode) eventModels(goal.models);
-  const model = configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE);
+  if (!key && eventCode && goal.provider?.kind !== "openai-compatible") eventModels(goal.models);
+  const model = configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE, goal.provider);
   if (step === "write") {
     const written = await observeRoundStep("write", { prompt }, () => runWrite(goal, state, prompt, scenarios, model));
     console.log(`Wrote ${written.candidates.length} candidates for ${written.costUsd === null ? "an unknown cost" : `$${written.costUsd.toFixed(4)}`}`);

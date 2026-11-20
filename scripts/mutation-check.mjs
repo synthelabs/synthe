@@ -25,7 +25,7 @@ const allMutations = [
   ["event: credit requests are retried", "src/model/client.ts", 'refusedHeaders.set("x-should-retry", "false");', 'refusedHeaders.set("x-should-retry", "true");'],
   ["event: credit does not stop the chain", DECIDE, 'state.stopped = "credit";', 'state.stopped = null;'],
   ["event: agent mode prompts", "src/cli/init.ts", 'if (!agent && (await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)', 'if ((await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)'],
-  ["event: codes are mistaken for keys", "src/cli/init.ts", 'const event = !key.startsWith("sk-ant-");', 'const event = key.startsWith("sk-ant-");'],
+  ["event: codes are mistaken for keys", "src/cli/init.ts", 'const event = !otherHost && !key.startsWith("sk-ant-");', 'const event = !otherHost && key.startsWith("sk-ant-");'],
   ["event: budget is not four dollars", "src/cli/init.ts", 'if (event) goal.budget = { max_usd: EVENT_BUDGET_USD };', 'if (event) goal.budget = { max_usd: 3 };'],
   ["history accepts unvalidated text", "src/core/candidate-history.ts", 'Object.keys(entry).sort().join(",") !== "fingerprint,scope"', 'false'],
   ["history ignores the goal", "src/core/candidate-history.ts", 'JSON.stringify([goal, prompt])', 'JSON.stringify([prompt])'],

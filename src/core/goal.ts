@@ -4,6 +4,38 @@ export const MAX_CHECKS = 5;
 
 export type Delimiter = "`" | '"' | "'" | '"""';
 
+// Which API Synthe's model calls go to. Absent means Anthropic, exactly as before this field existed.
+// prices (openai-compatible only): USD per million tokens for each model the goal names. Synthe can't
+// check other providers' current prices, so the team supplies them (see src/core/cost.ts).
+export interface ModelPrice { input: number; output: number }
+export type Provider =
+  | { kind: "anthropic" }
+  | { kind: "openai-compatible"; base_url: string; prices?: Record<string, ModelPrice> };
+export type OtherProvider = Extract<Provider, { kind: "openai-compatible" }>;
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+export const isLoopback = (url: URL) => LOOPBACK_HOSTS.has(url.hostname);
+
+// The key is sent to this URL, so it must be https, or http only to a server on this machine (Ollama, LM Studio).
+// Null when it is fine, otherwise what is wrong in plain words.
+export function baseUrlProblem(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return "provider.base_url is required for an openai-compatible provider, for example https://api.openai.com/v1";
+  let url: URL;
+  try { url = new URL(value.trim()); } catch { return `provider.base_url "${value.slice(0, 80)}" isn't a URL. Use the provider's OpenAI-compatible address, for example https://api.openai.com/v1`; }
+  if (url.username || url.password) return "provider.base_url must not contain a user name or password. Synthe sends the key in a header, never in the URL.";
+  if (url.search || url.hash) return "provider.base_url must not have a query string or # part. Synthe sends the key in a header, never in the URL.";
+  if (url.protocol === "https:") return null;
+  if (url.protocol === "http:" && isLoopback(url)) return null;
+  if (url.protocol === "http:") return "provider.base_url must use https. Plain http is allowed only for a server on this machine (localhost, 127.0.0.1 or [::1]), because the key travels with every request.";
+  return "provider.base_url must start with https://";
+}
+
+// How reports name where model calls go: Anthropic, as always, or the host in provider.base_url.
+export function apiName(provider?: Provider): string {
+  if (provider?.kind !== "openai-compatible") return "Anthropic's API";
+  try { return `the model API at ${new URL(provider.base_url).host}`; } catch { return "your model provider's API"; }
+}
+
 export type PromptLocation =
   | { kind: "file"; path: string }
   | { kind: "inline"; path: string; delimiter: Delimiter; initial: string };
@@ -51,6 +83,8 @@ export interface Goal {
   // Population (prototype, off by default): keep changes that won some training cases without winning the round, and
   // each round add one candidate that combines them, judged by the same merge rule. See src/loop/pool.ts.
   population?: boolean;
+  // Optional. Absent means Anthropic with Synthe's default models and prices.
+  provider?: Provider;
 }
 
 export const DEFAULTS = {
@@ -100,6 +134,26 @@ export function parseGoal(text: string): Goal {
   if (g.merge_rule?.allow_shorter !== undefined && typeof g.merge_rule.allow_shorter !== "boolean") bad("merge_rule.allow_shorter must be true or false");
   if (g.compose !== undefined && typeof g.compose !== "boolean") bad("compose must be true or false");
   if (g.population !== undefined && typeof g.population !== "boolean") bad("population must be true or false");
+  if (g.provider !== undefined) {
+    const p = g.provider;
+    if (!p || typeof p !== "object" || Array.isArray(p)) bad('provider must be an object, for example { "kind": "openai-compatible", "base_url": "https://api.openai.com/v1" }');
+    if (p.kind !== "anthropic" && p.kind !== "openai-compatible") bad("provider.kind must be anthropic or openai-compatible");
+    if (p.kind === "openai-compatible") { const why = baseUrlProblem(p.base_url); if (why) bad(why); }
+    if (p.kind === "anthropic" && p.base_url !== undefined) bad("provider.base_url is only for an openai-compatible provider; an Anthropic key is only ever sent to Anthropic");
+    if (p.kind === "anthropic" && p.prices !== undefined) bad("provider.prices is only for an openai-compatible provider; Synthe already knows Anthropic's prices");
+    if (p.prices !== undefined) {
+      if (!p.prices || typeof p.prices !== "object" || Array.isArray(p.prices)) bad('provider.prices must map each model to { "input": USD, "output": USD } per million tokens');
+      for (const [model, price] of Object.entries(p.prices as Record<string, any>)) {
+        const ok = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0;
+        if (!price || !ok(price.input) || !ok(price.output)) bad(`provider.prices.${model} needs "input" and "output": USD per million tokens, 0 or more`);
+      }
+    }
+    // Every role's model on another provider needs a name Synthe can't guess.
+    if (p.kind === "openai-compatible") {
+      const missing = (["writer", "runner", "judge", "checker"] as const).filter((role) => typeof g.models?.[role] !== "string" || !g.models[role].trim());
+      if (missing.length) bad(`an openai-compatible provider needs every model named in "models": ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} missing. Synthe's defaults are Claude models.`);
+    }
+  }
   return {
     ...g,
     guardrails: g.guardrails ?? [],

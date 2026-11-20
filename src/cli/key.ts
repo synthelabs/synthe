@@ -1,12 +1,15 @@
 import { STATE_BRANCH } from "../core/goal.ts";
 import type { Io } from "./init.ts";
-import { anthropicModel, modelProblem } from "../model/client.ts";
-import { parseGoal, type Goal } from "../core/goal.ts";
+import { anthropicModel, modelProblem, providerHost, providerModel } from "../model/client.ts";
+import { parseGoal, type Goal, type OtherProvider, type Provider } from "../core/goal.ts";
 import { newState, type State } from "../core/state.ts";
 
-export async function setKey(io: Pick<Io, "askSecret" | "run" | "say"> & Partial<Pick<Io, "model">>, env: NodeJS.ProcessEnv = process.env, terminal = Boolean(process.stdin.isTTY)): Promise<boolean> {
+// provider: from synthe.json on this computer. Another provider gets its own flow (setOtherKey); without one, this is
+// the Anthropic flow as it always was, with SYNTHE_API_KEY also accepted.
+export async function setKey(io: Pick<Io, "askSecret" | "run" | "say"> & Partial<Pick<Io, "model" | "other">>, env: NodeJS.ProcessEnv = process.env, terminal = Boolean(process.stdin.isTTY), provider?: Provider): Promise<boolean> {
+  if (provider?.kind === "openai-compatible") return setOtherKey(io, provider, env, terminal);
   // ANTHROPIC_API_KEY is often the team's app key, so it is only used after a deliberate Enter, as in init.
-  const own = env.SYNTHE_ANTHROPIC_KEY?.trim(), app = env.ANTHROPIC_API_KEY?.trim();
+  const own = env.SYNTHE_API_KEY?.trim() || env.SYNTHE_ANTHROPIC_KEY?.trim(), app = env.ANTHROPIC_API_KEY?.trim();
   if (!own && !terminal) {
     io.say("Ask the person to run `npx synthe key` in their own terminal.");
     return false;
@@ -15,13 +18,11 @@ export async function setKey(io: Pick<Io, "askSecret" | "run" | "say"> & Partial
   const key = own || typed || app || "";
   if (!/^sk-ant-\S+$/.test(key)) { io.say("That doesn't look like an Anthropic key: it must start with sk-ant-. Nothing changed."); return false; }
   if (!own && !typed && app) io.say("Using the key in ANTHROPIC_API_KEY.");
-  const slug = (await io.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
-  let goal: Goal;
-  try {
-    goal = parseGoal(await io.run("gh", ["api", `repos/${slug}/contents/synthe.json`, "-H", "Accept: application/vnd.github.raw+json"]));
-  } catch (error) {
-    if (!/404|Not Found/i.test((error as Error).message)) throw error;
-    io.say("Synthe isn't set up on this repo's default branch. Finish `npx synthe init` and merge its setup pull request before running `npx synthe key`. Nothing changed.");
+  const found = await remoteGoal(io);
+  if (!found) return false;
+  const { slug, goal } = found;
+  if (goal.provider?.kind === "openai-compatible") {
+    io.say(`synthe.json on GitHub sends model calls to ${providerHost(goal.provider)}, but the one here doesn't. Run \`git pull\`, then \`npx synthe key\` again. Nothing changed.`);
     return false;
   }
   try {
@@ -30,6 +31,53 @@ export async function setKey(io: Pick<Io, "askSecret" | "run" | "say"> & Partial
     io.say(`${modelProblem(error) ?? (error as Error).message} Nothing changed.`);
     return false;
   }
+  // Saved as SYNTHE_ANTHROPIC_KEY, which every workflow passes, including ones installed before SYNTHE_API_KEY existed.
+  await saveKey(io, slug, goal, "SYNTHE_ANTHROPIC_KEY", key, "this Anthropic key", "your own Anthropic key");
+  return true;
+}
+
+async function remoteGoal(io: Pick<Io, "run" | "say">): Promise<{ slug: string; goal: Goal } | null> {
+  const slug = (await io.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
+  try {
+    return { slug, goal: parseGoal(await io.run("gh", ["api", `repos/${slug}/contents/synthe.json`, "-H", "Accept: application/vnd.github.raw+json"])) };
+  } catch (error) {
+    if (!/404|Not Found/i.test((error as Error).message)) throw error;
+    io.say("Synthe isn't set up on this repo's default branch. Finish `npx synthe init` and merge its setup pull request before running `npx synthe key`. Nothing changed.");
+    return null;
+  }
+}
+
+// A key for the OpenAI-compatible provider in synthe.json. Only SYNTHE_API_KEY or a pasted key: OPENAI_API_KEY and
+// the like are never read, since they are usually the app's own. It is tested on the runner model at the base URL
+// synthe.json names on GitHub, which is where the workflow sends it, and saved as SYNTHE_API_KEY.
+async function setOtherKey(io: Pick<Io, "askSecret" | "run" | "say"> & Partial<Pick<Io, "other">>, provider: OtherProvider, env: NodeJS.ProcessEnv, terminal: boolean): Promise<boolean> {
+  const host = providerHost(provider);
+  const fromEnv = env.SYNTHE_API_KEY?.trim();
+  if (!fromEnv && !terminal) {
+    io.say("Ask the person to run `npx synthe key` in their own terminal.");
+    return false;
+  }
+  const key = fromEnv || (await io.askSecret(`Paste your key for ${host}: `)).trim();
+  if (!key || /\s/.test(key)) { io.say(`Paste the key for ${host} on one line, then press Enter. Nothing changed.`); return false; }
+  const found = await remoteGoal(io);
+  if (!found) return false;
+  const { slug, goal } = found;
+  if (goal.provider?.kind !== "openai-compatible" || goal.provider.base_url !== provider.base_url) {
+    io.say(`synthe.json on GitHub doesn't send model calls to ${provider.base_url} yet, and the workflow uses the one there. Push your synthe.json first, then run \`npx synthe key\` again. Nothing changed.`);
+    return false;
+  }
+  try {
+    await (io.other ?? providerModel)(goal.provider, key).ask({ model: goal.models.runner, user: "Say OK.", maxTokens: 5 });
+  } catch (error) {
+    io.say(`${modelProblem(error) ?? (error as Error).message} Nothing changed.`);
+    return false;
+  }
+  await saveKey(io, slug, goal, "SYNTHE_API_KEY", key, `this key for ${host}`, `your own key for ${host}`);
+  return true;
+}
+
+// Saves the secret (on stdin, never in argv) and starts the own-key budget the first time a key is saved.
+async function saveKey(io: Pick<Io, "run" | "say">, slug: string, goal: Goal, secret: string, key: string, thisKey: string, ownKey: string): Promise<void> {
   const path = `repos/${slug}/contents/state.json`;
   let file: { sha: string; content: string } | null = null;
   try {
@@ -46,15 +94,14 @@ export async function setKey(io: Pick<Io, "askSecret" | "run" | "say"> & Partial
       await io.run("gh", ["api", "-X", "POST", `repos/${slug}/git/refs`, "-f", `ref=refs/heads/${STATE_BRANCH}`, "-f", `sha=${head}`]);
     }
   }
-  await io.run("gh", ["secret", "set", "SYNTHE_ANTHROPIC_KEY", "--repo", slug], key);
+  await io.run("gh", ["secret", "set", secret, "--repo", slug], key);
   if (state.ownKeyFromUsd !== undefined) {
     const budgetStop = Boolean(state.stopped && /^budget/.test(state.stopped));
-    io.say(`Rounds now use this Anthropic key. The budget is unchanged: $${goal.budget.max_usd} from when you first ran \`npx synthe key\` (budget.max_usd in synthe.json).${budgetStop ? " To keep going, raise budget.max_usd in synthe.json and push it, then run `npx synthe restart`." : state.stopped ? " Run `npx synthe restart` to continue." : ""}`);
-    return true;
+    io.say(`Rounds now use ${thisKey}. The budget is unchanged: $${goal.budget.max_usd} from when you first ran \`npx synthe key\` (budget.max_usd in synthe.json).${budgetStop ? " To keep going, raise budget.max_usd in synthe.json and push it, then run `npx synthe restart`." : state.stopped ? " Run `npx synthe restart` to continue." : ""}`);
+    return;
   }
   state.ownKeyFromUsd = state.spendUsd;
   const content = Buffer.from(`${JSON.stringify(state, null, 2)}\n`).toString("base64");
   await io.run("gh", ["api", "-X", "PUT", path, "-f", "message=Synthe: switched to own key", "-f", `branch=${STATE_BRANCH}`, ...(file ? ["-f", `sha=${file.sha}`] : []), "-f", `content=${content}`]);
-  io.say(`Rounds now use your own Anthropic key, with a fresh $${goal.budget.max_usd} budget (budget.max_usd in synthe.json).${state.stopped ? " Run `npx synthe restart` to continue." : ""}`);
-  return true;
+  io.say(`Rounds now use ${ownKey}, with a fresh $${goal.budget.max_usd} budget (budget.max_usd in synthe.json).${state.stopped ? " Run `npx synthe restart` to continue." : ""}`);
 }

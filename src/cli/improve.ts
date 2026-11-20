@@ -1,5 +1,5 @@
 import { relative, join } from "node:path";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { AgentSetupError, askPerson } from "./agent.ts";
 import { DEFAULT_RUNS, improveFile, parseImproveConfig, type Direction, type ImproveConfig, type PresetId } from "../improve/config.ts";
 import type { Exec } from "../improve/exec.ts";
@@ -10,7 +10,8 @@ import { candidateDiff, RECORD_NOTICE, recorded, startRecord, type RunRecord } f
 import { baselineLine, loopPrBody, loopPrTitle, money, movement, quantity, taskCard, triedLines } from "../improve/text.ts";
 import { measureAt } from "../improve/worktree.ts";
 import { EDIT_MODEL } from "../improve/writer.ts";
-import { anthropicModel, normalizeTeamCode, proxyModel, TEAM_CODE, type Model } from "../model/client.ts";
+import { anthropicModel, normalizeTeamCode, onModel, providerHost, providerModel, proxyModel, TEAM_CODE, type Model } from "../model/client.ts";
+import { GOAL_FILE, parseGoal, type OtherProvider } from "../core/goal.ts";
 
 // env, makeModel and onInterrupt are only used by the loop; main.ts passes the real ones, tests pass fakes. fetcher is
 // what the run record sends with (tests point it at a fake).
@@ -27,7 +28,7 @@ export interface ImproveOptions {
 
 export const IMPROVE_BRANCH = (n: number) => `synthe/improve-${n}`;
 export const IMPROVE_NEXT = "NEXT: Synthe measured the current code and saved its config inside .git (nothing to commit). Show the person the baseline and the task card as written. Then create the branch named in the card, make ONE small change to product code only, commit it, and run `npx synthe submit`. Do not edit tests, the metric, package.json or anything under .synthe/.";
-export const IMPROVE_LIST_NEXT = "NEXT: Show the person this list as written. Ask them, in one message: what should get better (one sentence), which metric, which regression check, and auto or review. Then run `npx synthe improve --agent` with their answers: Synthe proposes code changes itself, measures each one and keeps only wins, which takes several minutes, so give the command a long timeout (30 minutes). It needs SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE, or SYNTHE_ANTHROPIC_KEY, in the environment. To make the change yourself instead, add --handoff.";
+export const IMPROVE_LIST_NEXT = "NEXT: Show the person this list as written. Ask them, in one message: what should get better (one sentence), which metric, which regression check, and auto or review. Then run `npx synthe improve --agent` with their answers: Synthe proposes code changes itself, measures each one and keeps only wins, which takes several minutes, so give the command a long timeout (30 minutes). It needs SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE, or SYNTHE_API_KEY, in the environment. To make the change yourself instead, add --handoff.";
 export const IMPROVE_LOOP_NEXT_WIN = "NEXT: Show the person every round line, the result and the pull request link as written. In auto mode, tell them to run git pull. In review mode, tell them to review the pull request and merge it to keep the changes.";
 export const IMPROVE_LOOP_NEXT_NONE = "NEXT: Show the person what was tried and why each change was not kept, as written. Nothing was pushed. To try again, run the same command (the next run reads these lessons); to make the change yourself instead, run it with --handoff.";
 
@@ -146,22 +147,40 @@ export async function preflight(io: ImproveIo, dirtyMessage: string, more?: (fou
   return problems.length ? { problems, found } : { problems, repo: found, found };
 }
 
-export interface LoopCredential { key?: string; eventCode?: string; teamCode?: string; line: string }
+// provider and model: another provider from synthe.json, and the model all of the loop's calls go to there.
+export interface LoopCredential { key?: string; eventCode?: string; teamCode?: string; line: string; provider?: OtherProvider; model?: string }
+
+// The provider in synthe.json, when this repo has one that names another provider. improve needs no synthe.json, so
+// a missing or unreadable one means Anthropic, as before.
+export function goalProvider(root: string): { provider: OtherProvider; model: string } | null {
+  try {
+    const goal = parseGoal(readFileSync(join(root, GOAL_FILE), "utf8"));
+    return goal.provider?.kind === "openai-compatible" ? { provider: goal.provider, model: goal.models.writer } : null;
+  } catch { return null; }
+}
 
 // Which credential the loop spends, chosen only from Synthe's own variables. Unlike `try`, it never falls back to
-// ANTHROPIC_API_KEY: that is usually the app's own key, and the loop makes several calls per round.
-export function loopCredential(env: Partial<Record<string, string>>): { credential: LoopCredential } | { problem: string } {
-  const key = env.SYNTHE_ANTHROPIC_KEY?.trim(), eventCode = env.SYNTHE_EVENT_CODE?.trim(), team = env.SYNTHE_TEAM_CODE?.trim();
-  if (key) return { credential: { key, line: "Credential: your own key from SYNTHE_ANTHROPIC_KEY, charged to that Anthropic account." } };
+// ANTHROPIC_API_KEY: that is usually the app's own key, and the loop makes several calls per round. OPENAI_API_KEY
+// and the like are never read either.
+export function loopCredential(env: Partial<Record<string, string>>, other: { provider: OtherProvider; model: string } | null = null): { credential: LoopCredential } | { problem: string } {
+  const generic = env.SYNTHE_API_KEY?.trim();
+  if (other) {
+    const host = providerHost(other.provider);
+    if (!generic) return { problem: `synthe.json sends model calls to ${host}, so Synthe needs your key for it: set SYNTHE_API_KEY in your terminal. Or run npx synthe improve --handoff to make the change with your own coding agent; that needs no credential.` };
+    if (!other.provider.prices?.[other.model]) return { problem: `synthe.json has no price for ${other.model} in provider.prices. improve stops at a budget, so it needs to know what each call costs: add "${other.model}": { "input": USD, "output": USD } per million tokens to provider.prices, then run this again.` };
+    return { credential: { key: generic, provider: other.provider, model: other.model, line: `Credential: your own key from SYNTHE_API_KEY, sent to ${host} for ${other.model} and charged to that account.` } };
+  }
+  const key = generic || env.SYNTHE_ANTHROPIC_KEY?.trim(), eventCode = env.SYNTHE_EVENT_CODE?.trim(), team = env.SYNTHE_TEAM_CODE?.trim();
+  if (key) return { credential: { key, line: `Credential: your own key from ${generic ? "SYNTHE_API_KEY" : "SYNTHE_ANTHROPIC_KEY"}, charged to that Anthropic account.` } };
   if (eventCode) {
     if (!team) return { problem: "SYNTHE_EVENT_CODE is set but SYNTHE_TEAM_CODE isn't. Set SYNTHE_TEAM_CODE to your team code from the Synthe table, then run this again." };
     if (!TEAM_CODE.test(normalizeTeamCode(team))) return { problem: "SYNTHE_TEAM_CODE doesn't look like a team code (crim- and four groups of four letters or digits). Check it against your card from the Synthe table." };
     return { credential: { eventCode, teamCode: normalizeTeamCode(team), line: "Credential: Crimson Hacks event credit, with your team code from SYNTHE_TEAM_CODE." } };
   }
-  return { problem: "Synthe writes the changes itself, so it needs a credential: set SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE (event credit) or SYNTHE_ANTHROPIC_KEY (your own key) in your terminal. ANTHROPIC_API_KEY is not used: it is often your app's own key. Or run npx synthe improve --handoff to make the change with your own coding agent; that needs no credential." };
+  return { problem: "Synthe writes the changes itself, so it needs a credential: set SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE (event credit) or SYNTHE_API_KEY (your own key) in your terminal. ANTHROPIC_API_KEY is not used: it is often your app's own key. Or run npx synthe improve --handoff to make the change with your own coding agent; that needs no credential." };
 }
 
-export const credentialModel = (c: LoopCredential): Model => (c.key ? anthropicModel(c.key) : proxyModel(c.eventCode!, false, c.teamCode));
+export const credentialModel = (c: LoopCredential): Model => (c.provider && c.model && c.key ? onModel(providerModel(c.provider, c.key), c.model) : c.key ? anthropicModel(c.key) : proxyModel(c.eventCode!, false, c.teamCode));
 
 // The loop starts from HEAD, and the pull request must contain only the kept changes and the lessons commit. So the
 // base is the branch HEAD is on when GitHub has it (otherwise the default branch), and HEAD must equal its tip there.
@@ -218,7 +237,7 @@ async function improveRun(io: ImproveIo, root: string, options: ImproveOptions, 
   if (record) io.say(RECORD_NOTICE);
   record?.event("settings", { goal: options.goal ?? null, preset: options.metric ?? null, label: options.label ?? null, unit: options.unit ?? null, command: options.command ?? null, direction: options.direction ?? null, guard: options.guard ?? null, mode: options.mode ?? null, rounds: options.rounds, budget_usd: options.budgetUsd, protect: options.protect, lessons: options.lessons ?? null, agent: options.agent, handoff: options.handoff, list: options.list });
   const loop = !options.handoff && !options.list;
-  const chosen = loop ? loopCredential(io.env ?? {}) : null;
+  const chosen = loop ? loopCredential(io.env ?? {}, goalProvider(root)) : null;
   let base = "";
   const { problems, repo, found } = await preflight(io, "Commit your changes first: Synthe measures committed code.", loop ? async (found) => {
     const more = chosen && "problem" in chosen ? [chosen.problem] : [];
@@ -335,7 +354,7 @@ async function improveLoop(io: ImproveIo, o: ImproveOptions, a: { top: string; g
     io.say(`Pushing ${branch} and opening a pull request into ${base}...`);
     const published = await publish(io, {
       top, start: config.baseline.commit, base, branch, config, result, lessonsChoice: o.lessons, title: loopPrTitle(config, result.best),
-      body: (lessonsCommit, diffstat, lessonsFiles) => loopPrBody({ config, best: result.best, rows: result.rounds, spentUsd: result.spentUsd, costKnown: result.costKnown, stopped: result.stopped, base, lessonsCommit, lessonsFiles, diffstat, model: EDIT_MODEL }),
+      body: (lessonsCommit, diffstat, lessonsFiles) => loopPrBody({ config, best: result.best, rows: result.rounds, spentUsd: result.spentUsd, costKnown: result.costKnown, stopped: result.stopped, base, lessonsCommit, lessonsFiles, diffstat, model: a.credential.model ?? EDIT_MODEL }),
     });
     record?.finished(credit ? "credit" : "win", { stopReason: result.stopped, costUsd: result.costKnown ? result.spentUsd : null, prUrl: published.url ?? null });
     record?.event("result", { outcome: credit ? "credit" : "win", kept, rounds: result.rounds.length, before: config.baseline.median, after: result.best.median, cost_usd: result.spentUsd, cost_known: result.costKnown, pr_url: published.url ?? null, merged: published.merged ?? null, problem: published.problem ?? null, branch });
