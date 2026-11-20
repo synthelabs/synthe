@@ -8,6 +8,7 @@ import { composeCandidate, type ComposeResult } from "./compose.ts";
 import { NO_LENGTH_PREFERENCE } from "./length.ts";
 import { couldStillPass, currentScores, inChunks } from "./futility.ts";
 import { shorterFields } from "./shorter.ts";
+import { couldStillPool, POOL_ID } from "./pool.ts";
 
 const CONCURRENCY = 6; // also the futility chunk, so it must stay even (see futility.ts)
 export const AGENT_MAX_TOKENS = 2000; // the agent's reply limit; every prompt gets the same one
@@ -342,8 +343,14 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
   // writer's candidates when compose is on, since compose reads every candidate's full training rows. Never used for
   // the held-back cases or the replaced prompt, which other rules read.
   const current = currentScores(train, trainReplies);
-  // Each candidate is stopped by its own rule: a shorter one only once it can no longer show it is no worse.
-  const stopFor = (c: Candidate) => (stopEarly ? (done: ScoreRow[]) => !couldStillPass(c.id, done, train.slice(done.length), current, goal, c.kind) : undefined);
+  // Each candidate is stopped by its own rule: a shorter one only once it can no longer show it is no worse. With
+  // population on, the pool (pool.ts) keeps a change that didn't pass when its own training wins clear a lower bar,
+  // reading its whole record, so a candidate the pool could still keep isn't stopped either.
+  const poolable = (c: Candidate) => goal.population === true && c.id !== POOL_ID;
+  const stopFor = (c: Candidate) => (stopEarly ? (done: ScoreRow[]) => {
+    const rest = train.slice(done.length);
+    return !couldStillPass(c.id, done, rest, current, goal, c.kind) && !(poolable(c) && couldStillPool(done, rest, current));
+  } : undefined);
   for (const c of safe) {
     const duels = await challenge(c.id, c.text, train, trainReplies, goal.compose === true ? undefined : stopFor(c));
     trainDuels.push(duels);
@@ -355,7 +362,10 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
   // differently on the training cases (see compose.ts). It is dueled on the same cases and then judged by the same
   // rule as every other candidate, so it can add an option but never loosen the gate.
   let compose: ComposeResult | undefined;
-  if (goal.compose === true) {
+  // One extra candidate a round, not two: when the pool already added its merge candidate (see pool.ts), compose
+  // sits the round out, so turning both on never adds more than one comparison.
+  if (goal.compose === true && safe.some((c) => c.id === POOL_ID)) compose = { candidate: null, skipped: "the pool already added this round's extra candidate", costUsd: 0 };
+  else if (goal.compose === true) {
     compose = await composeCandidate({ goal, baseline, train, candidates: safe, scored: scores.candidates, currentReplies: trainReplies, model });
     costs.push(compose.costUsd);
     if (compose.candidate) {

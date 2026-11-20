@@ -87,6 +87,7 @@ function parseGoal(text4) {
   if (margin !== void 0 && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad5("merge_rule.guard_margin must be 0 or more");
   if (g.merge_rule?.allow_shorter !== void 0 && typeof g.merge_rule.allow_shorter !== "boolean") bad5("merge_rule.allow_shorter must be true or false");
   if (g.compose !== void 0 && typeof g.compose !== "boolean") bad5("compose must be true or false");
+  if (g.population !== void 0 && typeof g.population !== "boolean") bad5("population must be true or false");
   return {
     ...g,
     guardrails: g.guardrails ?? [],
@@ -29185,8 +29186,8 @@ function writeAtomic(path4, content) {
   }
 }
 function printable2(text4, max = 80) {
-  const flat = text4.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, " ").replace(/ {2,}/g, " ").trim();
-  return flat.length > max ? `${flat.slice(0, max)}... (cut at ${max} characters)` : flat;
+  const flat2 = text4.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, " ").replace(/ {2,}/g, " ").trim();
+  return flat2.length > max ? `${flat2.slice(0, max)}... (cut at ${max} characters)` : flat2;
 }
 var MAX_INPUT_BYTES, UNSAFE_KEYS, isObject, isNonEmpty, isInt;
 var init_io = __esm({
@@ -33246,11 +33247,11 @@ function buildReviewBundle(input) {
   };
 }
 function inline(text4) {
-  const flat = text4.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").trim();
-  const longest = Math.max(0, ...(flat.match(/`+/g) ?? []).map((run2) => run2.length));
+  const flat2 = text4.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, " ").trim();
+  const longest = Math.max(0, ...(flat2.match(/`+/g) ?? []).map((run2) => run2.length));
   const fence = "`".repeat(longest + 1);
-  const pad2 = flat.startsWith("`") || flat.endsWith("`") || flat === "" ? " " : "";
-  return `${fence}${pad2}${flat}${pad2}${fence}`;
+  const pad2 = flat2.startsWith("`") || flat2.endsWith("`") || flat2 === "" ? " " : "";
+  return `${fence}${pad2}${flat2}${pad2}${fence}`;
 }
 function shower(index) {
   return (what, text4, cap, byName = true) => {
@@ -36917,6 +36918,99 @@ function shorterFields(c, baseline2) {
   return c.kind === "shorter" ? { kind: "shorter", chars: { before: size(baseline2), after: size(c.text) } } : {};
 }
 
+// src/loop/pool.ts
+init_goal();
+init_merge_rule();
+init_safety();
+var POOL_ID = "combined";
+var MAX_ENTRY_CHARS = 2e3;
+var SUMMARY_KEPT = 200;
+var MAX_WON = 200;
+var POOL_MAX_P = 0.25;
+var isEdit = (e) => typeof e?.find === "string" && typeof e?.replace === "string";
+var poolable = (edits) => Array.isArray(edits) && edits.length >= 1 && edits.length <= MAX_EDITS && edits.every(isEdit) && edits.reduce((n, e) => n + e.find.length + e.replace.length, 0) <= MAX_ENTRY_CHARS;
+function validPool(value) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((v) => {
+    const e = v;
+    if (!e || typeof e.id !== "string" || !Number.isSafeInteger(e.round) || e.round < 1 || typeof e.summary !== "string" || !poolable(e.edits) || !Array.isArray(e.wonOn) || e.wonOn.some((id) => typeof id !== "string") || typeof e.promptHash !== "string") return [];
+    const wonOn = [...new Set(e.wonOn)].slice(0, MAX_WON);
+    return wonOn.length ? [{ id: e.id, round: e.round, summary: e.summary.slice(0, SUMMARY_KEPT + 3), edits: e.edits.map(({ find, replace }) => ({ find, replace })), wonOn, promptHash: e.promptHash }] : [];
+  });
+}
+var flat = (t) => t.replace(/\s+/g, " ").trim().toLowerCase();
+function apply(text4, entry, goal) {
+  const have = flat(text4);
+  if (entry.edits.some((e) => e.find === "" && have.includes(flat(e.replace)))) return { problem: "the prompt already has this text" };
+  return applyEdits(text4, entry.edits, `${goal.objective}
+${goal.policy ?? ""}`);
+}
+function couldStillPool(done, rest, current) {
+  const even = new Map(current.map((r) => [r.id, r.score]));
+  let wins = rest.filter((s) => typeof even.get(s.id) === "number").length;
+  let losses = 0;
+  for (const r of done) {
+    const before = even.get(r.id);
+    if (typeof r.score !== "number" || typeof before !== "number") continue;
+    if (r.score > before) wins++;
+    else if (r.score < before) losses++;
+  }
+  return wins > 0 && signP(wins, losses) <= POOL_MAX_P;
+}
+var paragraphs = (t) => t.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).sort().join("\n\n");
+function combine(prompt, picks, goal) {
+  const [x, y] = picks;
+  const first = apply(prompt, x, goal);
+  if (!y || "problem" in first) return first;
+  const both = apply(first.text, y, goal);
+  const yFirst = apply(prompt, y, goal);
+  const other = "problem" in yFirst ? yFirst : apply(yFirst.text, x, goal);
+  if ("problem" in both || "problem" in other || paragraphs(both.text) !== paragraphs(other.text)) return { problem: "their edits conflict" };
+  return both;
+}
+function mergeFromPool(a) {
+  const { goal, prompt } = a;
+  const trainIds = new Set(a.train.map((s) => s.id));
+  const saved = validPool(a.pool);
+  if (saved.length === 0) return { candidate: null, skipped: "the pool is empty" };
+  const live2 = saved.map((e) => ({ ...e, wonOn: e.wonOn.filter((id) => trainIds.has(id)) })).filter((e) => e.wonOn.length > 0 && !("problem" in apply(prompt, e, goal))).sort((x, y) => x.round - y.round);
+  if (live2.length === 0) return { candidate: null, skipped: "no pooled change still applies to the current prompt" };
+  const now = sha256(prompt);
+  const options = [
+    ...live2.flatMap((x, i) => live2.slice(i + 1).map((y) => [x, y])),
+    ...live2.filter((e) => e.promptHash !== now).map((e) => [e])
+  ];
+  const cover = (o) => new Set(o.flatMap((e) => e.wonOn)).size;
+  const newest = (o) => o.reduce((n, e) => n + e.round, 0) / o.length;
+  options.sort((x, y) => cover(y) - cover(x) || x.length - y.length || newest(y) - newest(x));
+  const refused = [];
+  for (const picks of options) {
+    const built = combine(prompt, picks, goal);
+    const print = "text" in built ? candidateFingerprint(built.text) : "";
+    const problem = "problem" in built ? built.problem : candidateProblem(built.text, goal.prompt) ?? (print === candidateFingerprint(prompt) ? "it changes only formatting or case" : a.tried.has(print) ? "it was already tried for this goal and prompt" : null);
+    if (problem || !("text" in built)) {
+      refused.push(`${picks.map((e) => e.id).join(" + ")}: ${problem}`);
+      continue;
+    }
+    a.tried.add(print);
+    const rounds = [...new Set(picks.map((e) => e.round))].sort((x, y) => x - y);
+    const where = rounds.length === 1 ? `round ${rounds[0]}` : `rounds ${rounds.slice(0, -1).join(", ")} and ${rounds.at(-1)}`;
+    const ideas = picks.map((e) => clip(e.summary.replace(/[.\s]+$/, ""), 100)).join("; ");
+    const summary = picks.length === 1 ? `Brings back a change from ${where} that did better in ${picks[0].wonOn.length} test case${picks[0].wonOn.length === 1 ? "" : "s"} before the prompt changed: ${ideas}` : `Combines two changes from ${where} that each did better in different test cases: ${ideas}`;
+    return {
+      candidate: {
+        id: POOL_ID,
+        text: built.text,
+        edits: picks.flatMap((e) => e.edits),
+        summary: summary.slice(0, 300),
+        title: picks.length === 1 ? `retry a fix from ${where}` : `combine fixes from ${where}`,
+        combines: picks.map((e) => ({ round: e.round, summary: e.summary }))
+      }
+    };
+  }
+  return { candidate: null, skipped: refused.length ? `no new combination (${refused[0]})` : "nothing to combine yet" };
+}
+
 // src/loop/write.ts
 var ANGLES = [
   "Fix what made the current prompt lose in the cases below.",
@@ -37069,7 +37163,9 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
       ...isShorter ? { kind: "shorter" } : {}
     });
   });
-  return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
+  const merged = goal.population === true ? mergeFromPool({ goal, prompt, train, pool: state.pool, tried }) : void 0;
+  if (merged?.candidate) candidates.push(merged.candidate);
+  return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected, ...merged ? { population: merged } : {} };
 }
 var clip = (t, n = 300) => (t === void 0 ? "(none)" : t.length > n ? `${t.slice(0, n)}...` : t).replaceAll("\n", " / ");
 
@@ -37476,7 +37572,11 @@ async function runScore(goal, baseline2, candidates, scenarios, model, prior = n
   const holdDuels = [];
   const scores = { baselineHash: sha256(baseline2), baselineTrain: [], baselineHoldout: [], candidates: [] };
   const current = currentScores(train, trainReplies);
-  const stopFor = (c) => stopEarly ? (done) => !couldStillPass(c.id, done, train.slice(done.length), current, goal, c.kind) : void 0;
+  const poolable2 = (c) => goal.population === true && c.id !== POOL_ID;
+  const stopFor = (c) => stopEarly ? (done) => {
+    const rest = train.slice(done.length);
+    return !couldStillPass(c.id, done, rest, current, goal, c.kind) && !(poolable2(c) && couldStillPool(done, rest, current));
+  } : void 0;
   for (const c of safe) {
     const duels = await challenge(c.id, c.text, train, trainReplies, goal.compose === true ? void 0 : stopFor(c));
     trainDuels.push(duels);
@@ -37484,7 +37584,8 @@ async function runScore(goal, baseline2, candidates, scenarios, model, prior = n
   }
   scores.baselineTrain = currentRows(train, trainReplies, trainDuels);
   let compose;
-  if (goal.compose === true) {
+  if (goal.compose === true && safe.some((c) => c.id === POOL_ID)) compose = { candidate: null, skipped: "the pool already added this round's extra candidate", costUsd: 0 };
+  else if (goal.compose === true) {
     compose = await composeCandidate({ goal, baseline: baseline2, train, candidates: safe, scored: scores.candidates, currentReplies: trainReplies, model });
     costs.push(compose.costUsd);
     if (compose.candidate) {
