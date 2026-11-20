@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ImproveConfig } from "../../src/improve/config.ts";
 import { shellExec } from "../../src/improve/exec.ts";
+import { lastNumber } from "../../src/improve/presets.ts";
 import { runLoop, type LoopIo } from "../../src/improve/loop.ts";
 import { measureAt } from "../../src/improve/worktree.ts";
 import type { Ask, Model } from "../../src/model/client.ts";
@@ -87,14 +88,19 @@ export async function runFixture(f: Fixture, seed: string): Promise<ImproveRun> 
 
     const order = shuffle(f.menu, seed, f.name, "menu");
     const { model, calls } = scriptedWriter(order);
+    // Metric runs are counted at the shell: each run of the metric command that printed a number. The loop has no
+    // hooks of its own to report measurements.
+    let metricRuns = start.measurement.runs.length;
     const io: LoopIo = {
       say: () => {},
-      exec: shellExec,
+      exec: async (cwd, command, timeoutMs) => {
+        const r = await shellExec(cwd, command, timeoutMs);
+        if (command === config.metric.command && r.ok && lastNumber(r.stdout) !== null) metricRuns++;
+        return r;
+      },
       run: async (cmd, args, stdin) => execFileSync(cmd, args, { cwd: dir, encoding: "utf8", input: stdin, env: gitEnv, stdio: ["pipe", "pipe", "pipe"] }),
     };
-    let metricRuns = start.measurement.runs.length;
-    const hooks = { measured: (m: { measurement: { runs: number[] } | null }) => { metricRuns += m.measurement?.runs.length ?? 0; } };
-    const result = await runLoop(io, { top: dir, gitDir: join(dir, ".git"), config, model, rounds: order.length, budgetUsd: 10, hooks });
+    const result = await runLoop(io, { top: dir, gitDir: join(dir, ".git"), config, model, rounds: order.length, budgetUsd: 10 });
     const kinds: ChangeKind[] = result.rounds.filter((r) => r.kept).map((r) => order.find((c) => c.summary === r.summary)!.kind);
     const kept = result.rounds.filter((r) => r.kept).map((r) => order.find((c) => c.summary === r.summary)!.id);
     return {

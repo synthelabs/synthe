@@ -8,13 +8,13 @@ npx synthe init
 
 Using Claude Code, Cursor or Codex? Tell it: Set up Synthe in this repo. Run `npx synthe@latest guide` and follow it.
 
-Setup reads your README and the code around your prompt, asks what your agent should get better at (and, optionally, a few real messages users send it), proposes checks that measure a good reply for you to confirm, shows you a few of your agent's real replies so you can fix any check that doesn't mean what you mean, asks whether to merge changes automatically or have you review them, and asks for your event code or own Anthropic key. When the run finishes, open the **Synthe: prompt report** issue in your repo. It says what changed, why, and how to undo it.
+Setup reads your README and the code around your prompt, asks what your agent should get better at (and, optionally, a few real messages users send it), proposes checks that measure a good reply for you to confirm, shows you a few of your agent's real replies so you can fix any check that doesn't mean what you mean, asks whether to merge changes automatically or have you review them, and asks for your own Anthropic key. When the run finishes, open the **Synthe: prompt report** issue in your repo. It says what changed, why, and how to undo it.
 
 ## Improve mode (no AI prompt needed)
 
 No prompt in your app yet? `npx synthe improve` raises a number you choose: tests passing, bundle size, build time, or your own command that prints one number. Synthe proposes a code change each round, measures it in a throwaway checkout next to the current code, and keeps it only if it wins by more than the run-to-run noise, still wins when measured a second time, and your regression check (default `npm test`) still passes. Each kept change builds on the one before. At the end it opens ONE pull request, titled like `Synthe: valid signups 3 → 12`, with a table of every round.
 
-It needs an event code and team code, or your own Anthropic key, in the environment: `SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe improve`, or `SYNTHE_ANTHROPIC_KEY=<key> npx synthe improve`. `ANTHROPIC_API_KEY` is never used. Run it inside your repo, with the code committed and pushed and `gh` signed in. It asks what should get better, which number measures it, which check must keep passing, and whether to merge wins automatically (Enter means a pull request waits for you).
+It needs your own Anthropic key in the environment: `SYNTHE_ANTHROPIC_KEY=<key> npx synthe improve`. `ANTHROPIC_API_KEY` is never used. Run it inside your repo, with the code committed and pushed and `gh` signed in. It asks what should get better, which number measures it, which check must keep passing, and whether to merge wins automatically (Enter means a pull request waits for you).
 
 Example, ending with the pull request:
 
@@ -38,8 +38,8 @@ That output is from a test run with a fake model. A first real run on a small si
 - **Lessons.** What each round learned goes in `.synthe/improve-lessons.md` and the pull request, so the next run can read it. `CLAUDE.md` or `AGENTS.md` are only changed with `--lessons claude` or `--lessons agents`.
 - **Interrupted?** Press Ctrl-C any time: Synthe stops its measurements, removes its temporary checkouts and pushes nothing (it pushes only at the end). Run the same command again to start over. Don't commit to the branch while it runs.
 - **Undo.** Close the pull request and nothing changes. After merging, revert the pull request on GitHub or run `git revert` on it.
-- **No event code or key?** `npx synthe improve --handoff` measures the current code and prints a task card for the coding agent you already use. Have it make ONE small change on the branch the card names, commit it, then run `npx synthe submit`. Nothing is sent to a model.
-- **With a coding agent**, tell it: Set up Synthe in this repo. Run `npx synthe@latest guide` and follow it. Give it the codes in the same message. It asks you the four questions, runs `improve` for you and shows each round.
+- **No key?** `npx synthe improve --handoff` measures the current code and prints a task card for the coding agent you already use. Have it make ONE small change on the branch the card names, commit it, then run `npx synthe submit`. Nothing is sent to a model.
+- **With a coding agent**, tell it: Set up Synthe in this repo. Run `npx synthe@latest guide` and follow it. Give it your key in the same message. It asks you the four questions, runs `improve` for you and shows each round.
 
 ## Enterprise pilot (a production metric)
 
@@ -47,32 +47,22 @@ That output is from a test run with a fake model. A first real run on a small si
 
 ## Data
 
-During Crimson Hacks, new installs use `"share": "full"` until November 9, 2026 at 23:59 UTC. This shares the prompt at the start of round 1, the full test-case file (train and holdout), the final prompt when the run stops, and how the run goes. After the cutoff, a full install automatically behaves like detail and stops sending the prompt and test-case file. New installs after the cutoff default to `"share": "detail"`.
-
-Detail shares rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example message with its replies. Numbers go to the private `synthelabs/synthe-runs` repository and shared text goes to the private `synthelabs/synthe-feedback` repository. The Synthe team reads both. These sharing levels never send your code, and Synthe removes keys, emails and phone numbers before sending. Detail never sends your whole prompt or test-case file.
-
-**Event credit is different.** When you use a Crimson Hacks event code, every model call from `init` and `improve` on your laptop goes through the organizers' proxy, which keeps the request and the reply and the Synthe team reads them. For `init` that is your prompt, the code file that holds it, part of your README, and the test cases and checks Claude writes. For `improve` it is a record of the run: what the terminal shows, your settings, the code changes Claude proposes and the measurements. This applies whatever your `share` setting is. Keys and other secrets are removed first. With your own Anthropic key, laptop calls never reach the proxy.
+New installs default to `"share": "detail"`. Detail shares rounds, checks and spend, plus your goal, your checks, Synthe's prompt edits and one example message with its replies. Numbers go to the private `synthelabs/synthe-runs` repository and shared text goes to the private `synthelabs/synthe-feedback` repository. The Synthe team reads both. These sharing levels never send your code, and Synthe removes keys, emails and phone numbers before sending. Detail never sends your whole prompt or test-case file.
 
 To turn sharing off any time, set `"share": "none"` in `synthe.json`. Set `"share": "numbers"` to send numbers only, or run init with `DO_NOT_TRACK=1` to start with sharing off. Existing installs without a `share` setting stay off. To ask us to delete your team's data, open an issue on `synthelabs/synthe`.
-
-Crimson Hacks requires a tracking receipt before an enrolled workflow starts and a final status when it ends. This applies even if you use your own Anthropic key or turn off optional sharing. The receipt carries the team association, repository name and ID, workflow run ID and attempt, timing, and the workflow-reported outcome. New runs are tracked until November 8, 2026 at 23:59 UTC. Completions for those runs can arrive for another 48 hours. Your sharing settings still control the prompt, test case and other research data that workflow rounds send.
 
 ## Before you start
 
 - A GitHub repo you can admin, with your agent's system prompt in it, either in its own file or as a string in your code.
 - The [GitHub CLI](https://cli.github.com), signed in (`gh auth login`), and Node 20 or later.
-- A Crimson Hacks event code from the QR card, or your own Anthropic key. Event credit goes through Synthe's capped proxy; no Anthropic key is needed at the event.
+- Your own Anthropic key.
 - **Your main branch gets Synthe's changes if you choose automatic merging.** If main deploys your app, each change goes live. Choose review mode at setup if that's not what you want. Repos that require reviews get review mode automatically.
 
 ## What it adds to your repo
 
-Setup commits `synthe.json` (the goal, your rules and settings), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). Crimson setup also installs `.github/workflows/synthe-diagnostics.yml` and saves the event and team codes as the repo secrets `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE`. To enroll with your own key, supply both event codes alongside `SYNTHE_ANTHROPIC_KEY` during setup. Your own key always wins over event credit. Event credit defaults to a $4 local run budget and own-key billing defaults to $3. Organizer credit caps may stop a run sooner than its local budget. After that, the only file Synthe ever changes is your prompt. It never runs your agent's code.
+Setup commits `synthe.json` (the goal, your rules and settings), `.synthe/scenarios.jsonl` (the test cases) and `.github/workflows/synthe.yml` (the workflow). It saves your key as the repo secret `SYNTHE_ANTHROPIC_KEY`. A run's budget defaults to $3. After that, the only file Synthe ever changes is your prompt. It never runs your agent's code.
 
-Agent setup requires explicit `SYNTHE_ANTHROPIC_KEY` or `SYNTHE_EVENT_CODE` in both draft and confirmation; it never falls back to `ANTHROPIC_API_KEY`. Local event requests reuse a non-secret install ID at `$XDG_CONFIG_HOME/synthe/install-id`, or `~/.config/synthe/install-id` when no absolute config directory is set. The directory is private (0700), and the ID file is owner-only (0600), created atomically across CLI processes. It is not stored in your repo. This ID keeps the setup allowance stable on this installation, not across people, machines, deleted config directories or resets; it is not a server-side abuse boundary.
-
-Set `SYNTHE_EVENT_CODE` in your environment to skip the code question. Local `try` and `calibrate` also accept it. To switch to your own key, run `npx synthe key` in your terminal, or explicitly supply `SYNTHE_ANTHROPIC_KEY` for noninteractive use. Using `ANTHROPIC_API_KEY` with `key` requires deliberately pressing Enter in your terminal. Rounds then use your key. If credit stopped the run, run `npx synthe restart` afterward.
-
-For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.10.0 init`. For an existing event repo, run `npx --yes github:synthelabs/synthe#v1.10.0 upgrade --event`, commit both workflow files, and push them to the default branch. Add both event and team secrets in GitHub Actions settings if needed.
+Agent setup requires explicit `SYNTHE_ANTHROPIC_KEY` in both draft and confirmation; it never falls back to `ANTHROPIC_API_KEY`. To replace the key later, run `npx synthe key` in your terminal. Using `ANTHROPIC_API_KEY` with `key` requires deliberately pressing Enter in your terminal. If the key's credit stopped the run, run `npx synthe restart` afterward.
 
 ## What happens each round
 
@@ -81,7 +71,7 @@ For a new Crimson install, run `npx --yes github:synthelabs/synthe#v1.10.0 init`
 3. A change is kept only if its replies are better in clearly more cases than they're worse (more than luck would explain), better again on test cases it never saw, also by more than luck would explain, and it breaks none of your rules where your old prompt followed them. On the unseen cases that means at least 4 wins with no losses, 6 wins with 1 loss, or a larger lead on more cases (`merge_rule.holdout_max_p` in `synthe.json`, default 0.1). Setup writes 20 test cases Synthe learns from and 20 it keeps unseen, so a real improvement has a fair chance to show. Each test is strict, but a run makes many of them: the report's details for reviewers give the chance that a whole run merges a change that does nothing, for your case counts. To cap it, set `merge_rule.run_alpha` (for example 0.05); real improvements then merge less often too.
 4. If a kept change later turns out worse than the prompt it replaced, Synthe puts the old one back.
 
-It runs at most 12 rounds, a session of up to about half an hour. It stops sooner when 3 rounds in a row find nothing better, or when it has used its run budget. If Anthropic's API is busy, it tries again right away, up to twice. Event-credit refusals stop immediately without retries; the report shows what to do. Once you've fixed the cause, `npx synthe restart` continues it. (An hourly scheduled run is a backup, but GitHub often skips scheduled runs, so don't rely on it.) Review mode pauses until the team merges or closes Synthe's pull request.
+It runs at most 12 rounds, a session of up to about half an hour. It stops sooner when 3 rounds in a row find nothing better, or when it has used its run budget. If Anthropic's API is busy, it tries again right away, up to twice. A rejected key or a key out of credit stops it without retries; the report shows what to do. Once you've fixed the cause, `npx synthe restart` continues it. (An hourly scheduled run is a backup, but GitHub often skips scheduled runs, so don't rely on it.) Review mode pauses until the team merges or closes Synthe's pull request.
 
 ## While it runs
 
@@ -118,16 +108,15 @@ The test cases are simulated single messages, not real users or full conversatio
 | `npx synthe improve` | Improve mode: Synthe proposes code changes, measures each, keeps only wins and opens one pull request (`--list` shows what this repo can measure) |
 | `npx synthe improve --handoff` | Improve mode without a credential: measure, then make the change with your own coding agent |
 | `npx synthe submit` | After `--handoff`: measure your committed change; open the pull request, or merge it in auto mode |
-| `npx synthe key` | Save your own Anthropic key and stop using event credit |
+| `npx synthe key` | Save or replace your own Anthropic key |
 | `npx synthe upgrade` | Update only the workflow for chained rounds; commit and push the changed workflow |
-| `npx synthe upgrade --event` | Install Crimson tracking in an existing event repo; commit both workflows and push to the default branch |
 | `npx synthe status` | Show where it is |
 | `npx synthe stop` | Stop it. Nothing more runs or changes |
 | `npx synthe restart` | Start it again, after `stop` or once you've fixed what stopped it |
-| `npx synthe try` | Run one round on your machine, changing nothing (event code or own key in the environment) |
+| `npx synthe try` | Run one round on your machine, changing nothing (own key in the environment) |
 | `npx synthe try --noise` | Compare your prompt with itself to see how much the judge varies |
-| `npx synthe calibrate` | Check that your checks are marked the same way each time and the way you mean them, and reword any that aren't (event code or own key in the environment) |
-| `npx synthe vault` | At the end of a run, compare your prompt with the one the run started from on your vault cases (event code or own key in the environment; says the number of model calls and asks before spending) |
+| `npx synthe calibrate` | Check that your checks are marked the same way each time and the way you mean them, and reword any that aren't (own key in the environment) |
+| `npx synthe vault` | At the end of a run, compare your prompt with the one the run started from on your vault cases (own key in the environment; says the number of model calls and asks before spending) |
 | `npx synthe verify FILE` | Check one round's evidence record, for example `.synthe/evidence/round-3.json` |
 | `npx synthe undo N` | Open a pull request that puts back the prompt from before round N |
 | `npx synthe pilot help` | Enterprise pilot: every command of the review-first loop for one agent and one production metric ([docs/PILOT.md](docs/PILOT.md)) |
@@ -158,4 +147,4 @@ Default-on guards still need a live fixture reviewed by a person: block at least
 
 ## Removing it
 
-Run `npx synthe stop`, then delete `synthe.json`, `.synthe/`, and both Synthe workflow files under `.github/workflows/`. Remove the `SYNTHE_EVENT_CODE`, `SYNTHE_TEAM_CODE`, and `SYNTHE_ANTHROPIC_KEY` secrets if present.
+Run `npx synthe stop`, then delete `synthe.json`, `.synthe/`, and `.github/workflows/synthe.yml` (and `.github/workflows/synthe-diagnostics.yml` if an older setup added it). Remove the `SYNTHE_ANTHROPIC_KEY` secret.

@@ -1,9 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { anthropicModel, proxyModel, type Ask, type Model } from "../src/model/client.ts";
+import { anthropicModel, type Ask, type Model } from "../src/model/client.ts";
 import { WARM_MIN_CHARS } from "../src/model/cache.ts";
 import { costUsd } from "../src/core/cost.ts";
 import { breakSystem, duelSystem, runScore } from "../src/loop/score.ts";
@@ -59,7 +56,7 @@ test("the first request for a system prompt is answered before the rest are sent
   assert.ok(api.sent.slice(1).every((s) => s.at < api.answered[1]));
 });
 
-test("short system prompts, different prompts and the proxy path are not held back", async () => {
+test("short system prompts and different prompts are not held back", async () => {
   const api = fakeApi();
   const model = anthropicModel("sk-ant-test");
   try {
@@ -69,24 +66,6 @@ test("short system prompts, different prompts and the proxy path are not held ba
   // Short: below the cacheable minimum, so all three go at once. Different long prompts: each is its own first.
   assert.ok(api.sent.slice(0, 3).every((s) => s.at < api.answered[0]));
   assert.ok(api.sent.slice(3, 6).every((s) => s.at < api.answered[3]));
-});
-
-test("requests through Synthe's proxy are sent as before: no cache marker, a plain system string, no waiting", async () => {
-  const home = mkdtempSync(join(tmpdir(), "synthe-cache-"));
-  const saved = process.env.XDG_CONFIG_HOME;
-  process.env.XDG_CONFIG_HOME = home;
-  const api = fakeApi();
-  try {
-    const model = proxyModel("event-code");
-    await Promise.all([1, 2, 3].map((n) => model.ask(ask(LONG, `case ${n}`))));
-  } finally {
-    api.restore();
-    if (saved === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = saved;
-    rmSync(home, { recursive: true, force: true });
-  }
-  assert.equal(api.sent.length, 3);
-  assert.ok(api.sent.every((s) => s.body.system === LONG && !JSON.stringify(s.body).includes("cache_control")));
-  assert.ok(api.sent.every((s) => s.at < api.answered[0]));
 });
 
 test("a reply's cost counts cache writes at 1.25x and cache reads at 0.1x of the input price", async () => {
