@@ -37791,6 +37791,7 @@ var package_default = {
     mutation: "node scripts/mutation-check.mjs",
     simulate: "node scripts/simulate-gate.ts",
     "simulate:pilot": "node scripts/simulate-pilot.ts",
+    bench: "node scripts/bench.ts",
     "mutation:operators": "stryker run mutation/stryker.config.mjs",
     "mutation:compare": "node mutation/compare.mjs"
   },
