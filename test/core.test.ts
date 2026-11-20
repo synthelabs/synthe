@@ -314,3 +314,5 @@ test("a failed model call is explained in words a team can act on", async () => 
   assert.equal(modelProblem(new Error("could not find the prompt")), null);
   assert.equal(modelProblem({ status: 400, message: "400 max_tokens too large" }), null);
 });
+
+// Probe: comment only, to time the Stryker job on main (draft PR, closed after the run).
