@@ -2,7 +2,7 @@
 // replaying a reopened analysis. Each one fails if the command line wiring is removed.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEMO, demoConfig, demoPack, experimentCFinal, telemetryExport } from "../src/pilot/demo-data.ts";
+import { baselineExport, DEMO, demoConfig, demoPack, experimentCFinal, telemetryExport } from "../src/pilot/demo-data.ts";
 import { addDays, candidateTag } from "../src/pilot/ids.ts";
 import type { BaselineReport, ExperimentAnalysis, ExperimentSpec } from "../src/pilot/types.ts";
 import { json, replayedPilot, workspace, writeExport, type Ctx } from "./pilot-cli-helpers.ts";

@@ -1,3 +1,4 @@
+import type { ScoreRow } from "./merge-rule.ts";
 import type { CandidateMemory } from "./candidate-history.ts";
 
 export interface RoundRecord {
