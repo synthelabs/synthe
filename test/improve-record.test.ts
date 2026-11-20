@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import { candidateDiff, cleanText, GIVE_UP_AFTER, MAX_BATCH_BYTES, MAX_DIFF_CHARS, RECORD_NOTICE, recorded, RunRecord, SEND_TIMEOUT_MS, startRecord, unifiedDiff, type RecordIo } from "../src/improve/receipt.ts";
 import type { Exec } from "../src/improve/exec.ts";
 import type { Model } from "../src/model/client.ts";
+
+// The sends under test wait on timers that are deliberately unref'd (a dead proxy must never hold the CLI's exit).
+// Node 22's test runner ends the file once nothing ref'd is left, cancelling the tests still waiting; this handle
+// keeps the file alive until its last test. Node 24, which CI runs, passes without it.
+let keepAlive: ReturnType<typeof setInterval>;
+before(() => { keepAlive = setInterval(() => {}, 60_000); });
+after(() => clearInterval(keepAlive));
 
 const EVENT = "crimson-demo-event", TEAM = "crim-abcd-efgh-jkmn-pqrs", INSTALL = "c6b54614-2e7c-46a8-895f-63ab2299fd45";
 const env = { SYNTHE_EVENT_CODE: EVENT, SYNTHE_TEAM_CODE: TEAM, SYNTHE_PROXY_URL: "http://127.0.0.1:1/api/claude" };
