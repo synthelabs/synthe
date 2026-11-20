@@ -15,7 +15,7 @@ Initial snapshot verified against GitHub and npm on November 4, before the readi
 | Proxy PR #2 | Open, head `50af26494fa5f202b40c708549e04ce7d75560c0`, mergeable | The proxy branch is not merged. Production deployment was not verified in this audit. |
 | GitHub checks | No status checks returned for either PR | Mergeable does not mean CI passed; use recorded local test results and required human review. |
 
-Before publishing, merge the reviewed changes and choose a release version/tag that actually contains them. Prefer a fresh version rather than silently rewriting the existing `v1.6.2` tag. Verify the built artifacts and npm package contents, then have the owner publish and move `v1` to the intended release commit. Do not print participant QR cards claiming the new flow is live until both entry points are verified. `scripts/go-live.sh` is an old bootstrap script that pushes, force-moves `v1` and dispatches paid work; do not use it for this checklist.
+Before publishing, merge the reviewed changes and choose a release version/tag that actually contains them. Prefer a fresh version rather than silently rewriting the existing `v1.6.2` tag. Verify the built artifacts and npm package contents, then have the owner publish and move `v1` to the intended release commit. Do not print participant QR cards claiming the new flow is live until both entry points are verified.
 
 ## Offline setup rehearsal
 
@@ -34,7 +34,7 @@ The tests use injected models, command stubs and loopback HTTP servers. They exe
 - Confirm `key` and both `init --agent` steps reject noninteractive app-key fallback, preserve the first key-command budget offset and do not suggest switching keys to reset an exhausted own-key budget.
 - Confirm `test/e2e.test.ts` passes against local fake GitHub and model endpoints.
 - From the proxy checkout, run `npm run smoke:ledger` and `npm test`. These use fake upstream responses and in-memory production Lua, not real model calls.
-- Do not run `init`, `try`, `calibrate`, `key`, `go-live.sh` or dispatch an installed workflow against real credentials during this no-spend pass. Even key validation can call the model.
+- Do not run `init`, `try`, `calibrate`, `key` or dispatch an installed workflow against real credentials during this no-spend pass. Even key validation can call the model.
 
 ## Caps require founder confirmation
 
