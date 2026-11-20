@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { modelTextProblem } from "./egress.ts";
 import { PilotError } from "./errors.ts";
 import { contentId, shortId } from "./ids.ts";
+import { isObject } from "./io.ts";
 import type { ChatMessage, ChatModel, ChatReply, ChatRequest, Proposer, ProposerContext, ToolCall } from "./types.ts";
 
 // Models the pilot can run without sending anything anywhere: a scripted agent and a scripted proposer, both read
@@ -38,7 +39,6 @@ export interface ScriptRule {
 export interface ModelScript { version: 1; name: string; rules: ScriptRule[]; fallback: string }
 
 const lower = (s: string) => s.toLowerCase();
-const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
 
 export function parseModelScript(source: string): ModelScript {
