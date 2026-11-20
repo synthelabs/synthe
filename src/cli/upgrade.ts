@@ -1,23 +1,25 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ACTION, CRIMSON_ACTION, renderWorkflow, WORKFLOW_FILE } from "./init.ts";
-import { CRIMSON_NOTICE, DIAGNOSTICS_FILE, previousDiagnostics, renderCrimsonDiagnostics } from "./workflows.ts";
+import { ACTION, renderWorkflow, WORKFLOW_FILE } from "./init.ts";
+
+// A second workflow that older setups added for event tracking. Synthe no longer uses it.
+const OLD_TRACKING_FILE = ".github/workflows/synthe-diagnostics.yml";
 
 // Replace the installed workflow files. Keep the team's backup minute and all other files intact.
-export function upgrade(root: string, template: string, enroll = false): string {
+export function upgrade(root: string, template: string): string {
   const path = join(root, WORKFLOW_FILE);
   if (!existsSync(path)) throw new Error(`No ${WORKFLOW_FILE} found. Run \`npx synthe init\` first.`);
   const before = readFileSync(path, "utf8");
   if (!before.includes(ACTION)) throw new Error(`${WORKFLOW_FILE} is not a Synthe workflow; left it unchanged.`);
   const cron = before.match(/cron:\s*["']?(\d+)(?:-59\/10)? \* \* \* \*/);
   const minute = cron ? Math.max(1, Number(cron[1])) : undefined;
-  const event = enroll || before.includes("step: receipt-start");
-  const after = renderWorkflow(template, Math.random, minute, event);
-  const diagnostics = event ? renderCrimsonDiagnostics(CRIMSON_ACTION) : null;
-  const diagnosticsChanged = diagnostics !== null && previousDiagnostics(root) !== diagnostics;
-  if (after === before && !diagnosticsChanged) return `${WORKFLOW_FILE} is already up to date. No files changed.`;
-  if (diagnosticsChanged) writeFileSync(join(root, DIAGNOSTICS_FILE), diagnostics);
-  if (after !== before) writeFileSync(path, after);
-  if (event) return `Updated the Crimson workflows. ${CRIMSON_NOTICE} Commit ${WORKFLOW_FILE} and ${DIAGNOSTICS_FILE}, then push both to the default branch. Set both event and team secrets before starting a round.`;
-  return `Updated ${WORKFLOW_FILE}: rounds now chain immediately, a cancelled run no longer counts as a round, sharing (if you turned it on) can prove which repo sent it, and event credit works through the Synthe proxy; kept backup minute ${minute ?? "random"}. No other files changed. Commit and push this workflow file to activate it.`;
+  const after = renderWorkflow(template, Math.random, minute);
+  // Event setups (receipt steps, an action pinned to a release) ran on secrets that no longer work; rounds now need an
+  // own key. Own-key workflows from 1.7 to 1.10 also pass the old credential inputs, so those don't count.
+  const event = /step: receipt-start|synthelabs\/synthe@v\d+\.\d+\.\d+/.test(before)
+    ? " This workflow was set up during the hackathon, whose event credit has ended. If this repo has no Anthropic key of its own, run `npx synthe key` to save one; then delete the old event secrets in the repo's settings." : "";
+  const old = `${existsSync(join(root, OLD_TRACKING_FILE)) ? ` You can delete ${OLD_TRACKING_FILE}; Synthe no longer uses it.` : ""}${event}`;
+  if (after === before) return `${WORKFLOW_FILE} is already up to date. No files changed.${old}`;
+  writeFileSync(path, after);
+  return `Updated ${WORKFLOW_FILE}: rounds now chain immediately, a cancelled run no longer counts as a round, and sharing (if you turned it on) can prove which repo sent it; kept backup minute ${minute ?? "random"}. No other files changed. Commit and push this workflow file to activate it.${old}`;
 }

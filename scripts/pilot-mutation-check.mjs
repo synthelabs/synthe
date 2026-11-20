@@ -295,8 +295,15 @@ if (process.env.MUTATION_STALE) {
   process.exit(stale.length ? 1 : 0);
 }
 console.log(`Checking ${mutations.length} pilot mutations${selectedFiles.length ? ` in ${selectedFiles.join(", ")}` : ""}`);
-const run = (files) => spawnSync(process.execPath, [...process.execArgv, "--test", ...files], { stdio: "ignore", timeout: 300000 }).status;
+// Time limits: MUTATION_TIMEOUT_MS when set. Otherwise the unmutated run gets 30 minutes, and each later run gets three
+// times what that run took (never less than 300 s), so the limit grows with the pilot's tests instead of cutting them off.
+const fixedLimit = Number(process.env.MUTATION_TIMEOUT_MS) > 0 ? Number(process.env.MUTATION_TIMEOUT_MS) : null;
+let limit = fixedLimit ?? 30 * 60_000;
+const run = (files) => spawnSync(process.execPath, [...process.execArgv, "--test", ...files], { stdio: "ignore", timeout: limit }).status;
+const baselineStart = Date.now();
 if (run(TESTS) !== 0) throw new Error("The unmutated pilot tests must pass before checking mutations");
+limit = fixedLimit ?? Math.max(300_000, 3 * (Date.now() - baselineStart));
+console.log(`Each test run may take ${Math.round(limit / 1000)} s (set MUTATION_TIMEOUT_MS to change it)`);
 
 // Every mutated file as it was before the run, restored at the end whatever happened in between.
 const before = new Map([...new Set(mutations.map(([, file]) => file))].map((f) => [f, readFileSync(f, "utf8")]));
