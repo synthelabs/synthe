@@ -1,15 +1,9 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { after, test } from "node:test";
+import { test } from "node:test";
 import { candidateDiff, cleanText, GIVE_UP_AFTER, MAX_BATCH_BYTES, MAX_DIFF_CHARS, RECORD_NOTICE, recorded, RunRecord, SEND_TIMEOUT_MS, startRecord, unifiedDiff, type RecordIo } from "../src/improve/receipt.ts";
 import type { Exec } from "../src/improve/exec.ts";
 import type { Model } from "../src/model/client.ts";
-
-// The record's send timeouts and close wait never hold the process open, on purpose (it must not slow a run's
-// exit). In a test that awaits them, nothing else may be holding the event loop, and some Node versions then
-// cancel the test as "still pending". This timer keeps the loop open until the file's tests finish.
-const keepAlive = setInterval(() => {}, 1000);
-after(() => clearInterval(keepAlive));
 
 const EVENT = "crimson-demo-event", TEAM = "crim-abcd-efgh-jkmn-pqrs", INSTALL = "c6b54614-2e7c-46a8-895f-63ab2299fd45";
 const env = { SYNTHE_EVENT_CODE: EVENT, SYNTHE_TEAM_CODE: TEAM, SYNTHE_PROXY_URL: "http://127.0.0.1:1/api/claude" };
