@@ -7,7 +7,7 @@
 // counts, tags, fields and row positions, never a conversation id, unit id or value, because they are printed.
 import { PilotError } from "./errors.ts";
 import { DAY_MS, isSha256, ms, shortId } from "./ids.ts";
-import { unsafeKey } from "./io.ts";
+import { isNonEmpty, isObject, unsafeKey } from "./io.ts";
 import { personalDataKinds } from "./pii.ts";
 import { TOKEN_SHAPE } from "./wrap.ts";
 import { canonicalJson } from "../core/evidence.ts";
@@ -37,8 +37,6 @@ export interface ImportInput {
 const fail = (code: ConstructorParameters<typeof PilotError>[0], message: string): never => { throw new PilotError(code, message); };
 const bad = (message: string): never => fail("invalid_telemetry", message);
 
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const isNonEmpty = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
 // A count above 2^53 is not exact in a double, so "successes plus missing is more than n" can be defeated by rounding
 // (1.8e16 + 2 equals 1.8e16). No pilot has a trillion conversations; larger numbers are refused, never analysed.
 export const MAX_COUNT = 1e12;

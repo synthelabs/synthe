@@ -2,7 +2,7 @@
 import { canonicalJson } from "../core/evidence.ts";
 import { PilotError } from "./errors.ts";
 import { isSha256, ms } from "./ids.ts";
-import { unsafeKey } from "./io.ts";
+import { isInt, isNonEmpty as isStr, isObject as isObj, unsafeKey } from "./io.ts";
 import { personalDataKinds } from "./pii.ts";
 import type { Pack, PackCase, PackSummary, Sha256 } from "./types.ts";
 
@@ -13,9 +13,6 @@ const CASE_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
 const NAME = /^[A-Za-z0-9_.-]{1,64}$/;
 
 type Obj = Record<string, unknown>;
-const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
-const isStr = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
-const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
 
 const bad = (message: string): never => { throw new PilotError("invalid_pack", message); };
 

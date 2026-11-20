@@ -83,6 +83,11 @@ export function unsafeKey(value: unknown): string | null {
   return null;
 }
 
+// Shape checks for parsed input, shared by the pilot's file readers.
+export const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+export const isNonEmpty = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
+export const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
+
 // Replaces a file that is only a rendering of stored records (a report), in one step so a crash never leaves half.
 export function writeAtomic(path: string, content: string): void {
   mkdirSync(dirname(path), { recursive: true });
