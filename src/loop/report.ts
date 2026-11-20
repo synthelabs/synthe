@@ -1,7 +1,6 @@
 import { STATE_BRANCH, type Goal } from "../core/goal.ts";
 import { guardSentence } from "../core/merge-rule.ts";
 import { budgetSpend, isFinished, type RoundRecord, type State } from "../core/state.ts";
-import { FULL_SHARE_UNTIL, fromSyntheProxy, PROXY_AUTH_MESSAGE, PROXY_REFUSED } from "../core/share.ts";
 import { displaySeries, scoreSeries } from "./delta.ts";
 
 export const ISSUE_TITLE = "Synthe: prompt report";
@@ -30,9 +29,6 @@ const missing = (r: RoundRecord | undefined) => r?.outcome === "failed" && r.rea
 // A key that stopped working needs a person too; a busy API waits for the hourly backup.
 const badKey = (r: RoundRecord | undefined) => r?.outcome === "failed" && r.failure === "key";
 const busy = (r: RoundRecord | undefined) => r?.outcome === "failed" && r.failure === "busy";
-// The proxy refused the team or event code: the fix is the repo secret, not an Anthropic key.
-const refusedCode = (r: RoundRecord | undefined) => badKey(r) && Boolean(r!.plain?.startsWith(PROXY_REFUSED));
-const CODE_FIX = "If the Synthe table gave you a new code, save it with `gh secret set SYNTHE_TEAM_CODE` (or `gh secret set SYNTHE_EVENT_CODE` for the event code), then run `npx synthe restart`.";
 
 const fmtScore = (n: number) => (Number.isInteger(n) ? `${n}` : n.toFixed(1));
 
@@ -99,7 +95,8 @@ function headlineBase(goal: Goal, state: State, stoppedByTeam = false, mode: Gai
     return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
   }
   const last = state.rounds.at(-1);
-  if (state.stopped === "credit") return { title: "Stopped: event credit needs attention", summary: last?.plain ?? "Run `npx synthe key`, then `npx synthe restart`." };
+  // "credit" is set by older versions only.
+  if (state.stopped === "credit") return { title: "Stopped: model credit needs attention", summary: last?.plain ?? "Run `npx synthe key`, then `npx synthe restart`." };
   if (!state.stopped && (missing(last) || badKey(last))) {
     return { title: "Synthe needs you to fix something", summary: `${last!.plain} ${spent}` };
   }
@@ -107,7 +104,7 @@ function headlineBase(goal: Goal, state: State, stoppedByTeam = false, mode: Gai
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}${guardLine}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? fromSyntheProxy(last?.plain) ? ` ${last!.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
+    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
     return merged > 0
       ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}${guardLine}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` }
       : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
@@ -118,10 +115,8 @@ function headlineBase(goal: Goal, state: State, stoppedByTeam = false, mode: Gai
   if (recent.length > 0 && (recent.every((r) => r.outcome === "failed") || badKey(recent.at(-1)))) {
     // Blame what really failed: the latest round's cause, not always the key's credit.
     const end = recent.at(-1)!;
-    if (busy(end) && fromSyntheProxy(end.plain)) return { title: "Stopped: Synthe's proxy needs attention", summary: end.plain! };
     if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain! };
-    if (refusedCode(end)) return { title: "Stopped: the Synthe proxy refused this repo's code", summary: `${end.plain} ${CODE_FIX} ${spent}` };
-    if (badKey(end)) return { title: end.plain === PROXY_AUTH_MESSAGE ? "Stopped: the Synthe proxy couldn't verify this run" : "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
+    if (badKey(end)) return { title: "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
     if (busy(end) && isFinished(state.stopped)) {
       return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money(state)} of $${goal.budget.max_usd}.` };
     }
@@ -142,7 +137,6 @@ function nextSteps(goal: Goal, state: State): string[] {
   // Before the steps for starting again, which would only fail on the same key.
   if (state.stopped === "credit") steps.push("To use your own Anthropic key, run `npx synthe key`, then `npx synthe restart`.");
   else if (state.stopped && /^budget/.test(state.stopped)) steps.push(`${state.ownKeyFromUsd === undefined ? "Run `npx synthe key` for a fresh own-key budget, or raise" : "Raise"} budget.max_usd in synthe.json${state.round >= goal.merge_rule.max_rounds ? `. Synthe has also run all ${goal.merge_rule.max_rounds} rounds, so raise merge_rule.max_rounds too` : ""} and push it, then run \`npx synthe restart\`.`);
-  else if (state.stopped && refusedCode(last)) steps.push(`${last!.plain} ${CODE_FIX}`);
   else if (state.stopped && badKey(last)) steps.push(`${last!.plain} Then run \`npx synthe restart\` to start Synthe again.`);
   else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
   if (state.stopped && /no winner$/.test(state.stopped) && !badKey(last)) {
@@ -154,19 +148,17 @@ function nextSteps(goal: Goal, state: State): string[] {
   }
   if (!state.stopped && !state.proposal && missing(last)) {
     steps.push(`${last!.plain} Once it's fixed, run \`npx synthe restart\`. Until then Synthe spends nothing.`);
-  } else if (!state.stopped && !state.proposal && refusedCode(last)) {
-    steps.push(`${last!.plain} ${CODE_FIX}`);
   } else if (!state.stopped && !state.proposal && badKey(last)) {
-    steps.push(`${last!.plain} Run \`npx synthe restart\` after ${last!.plain === PROXY_AUTH_MESSAGE ? "that" : "replacing the key"}.`);
+    steps.push(`${last!.plain} Run \`npx synthe restart\` after replacing the key.`);
   } else if (!state.stopped && !state.proposal) {
     steps.push(busy(last)
-      ? fromSyntheProxy(last?.plain) ? `${last!.plain} Synthe tried again; if it has stopped, run \`npx synthe restart\`.` : "Nothing to do. Anthropic's API was busy during the last round, so Synthe tried again; if it has stopped, run `npx synthe restart`. Otherwise Synthe stops by itself."
+      ? "Nothing to do. Anthropic's API was busy during the last round, so Synthe tried again; if it has stopped, run `npx synthe restart`. Otherwise Synthe stops by itself."
       : "Nothing to do. Completed rounds start back to back and Synthe stops by itself.");
     steps.push("To keep your agent unchanged, for example before a demo, run `npx synthe stop`.");
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");
   }
-  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete whichever of the `SYNTHE_ANTHROPIC_KEY`, `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE` secrets your repo has, in its settings.");
+  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete the `SYNTHE_ANTHROPIC_KEY` secret in your repo's settings.");
   return steps;
 }
 
@@ -318,9 +310,7 @@ export function renderReport(goal: Goal, state: State, now: Date = new Date(), r
     `- Goal: ${goal.objective}`,
     `- Rounds: ${state.round} of up to ${goal.merge_rule.max_rounds}. Spent ${money(state)} of $${goal.budget.max_usd}.`,
     goal.share === "none" || !goal.share ? "- Sharing with Synthe: off." :
-      goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL)
-        ? '- Sharing with Synthe: everything for Crimson Hacks (prompt and test cases until November 9), then numbers and what changed.'
-        : `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}.`,
+      `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}.`,
     `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
     ...(state.rounds.some((r) => r.attacks) ? ["- Attacks: each round, the current prompt and the winning change also answer the frozen attack messages in `.synthe/attacks.jsonl`, and a change that fails one the current prompt passes isn't merged. Attacks are a basic check, not a security test."] : []),

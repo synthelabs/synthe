@@ -22,7 +22,7 @@ before(() => {
 
 const EMAILS = ["ann@example.com", "bob@test.com", "cy@site.com", "Dana@example.com", "eve.smith@example.com", "fay@mail.example.org",
   "gus+tag@example.com", "hal@example.io", "ivy_2@example.com", "jo@example.co.uk", "kim@EXAMPLE.COM", "lee-ann@example.net"];
-const EVENT = "crimson-demo-event", TEAM = "crim-abcd-efgh-jkmn-pqrs";
+const KEY = "sk-ant-improve-e2e-test-0000";
 
 // Each scenario gets its own folder: app, bare origin, gh state, temp dir. They share only the bundle.
 function signupApp(name: string) {
@@ -98,7 +98,7 @@ const NOOP = { summary: "explain the email pattern in a comment", edits: [{ path
 const NOTHING = { summary: "no further honest change to the validator would raise the count", edits: [] };
 const TOUCH_TEST = { summary: "loosen the test so more addresses pass", edits: [{ path: "test/validate.test.js", search: "assert.equal(valid(\"a@b\"), false);", replace: "" }] };
 const TOUCH_PACKAGE = { summary: "swap the test script for a no-op", edits: [{ path: "package.json", search: "node --test test/validate.test.js", replace: "true" }] };
-const CREDIT = { status: 402, error: { type: "synthe_credit", message: "Your team's event credit is used up. Ask at the Synthe table for more." } } as const;
+const CREDIT = { status: 400, error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits." } } as const;
 
 // The scripted model: `proposals[n-1]` is what round n proposes (an empty proposal after the script runs out), or a
 // refusal in place of any reply.
@@ -110,11 +110,11 @@ const script = (proposals: (typeof RIGHT | FakeReply)[]) => (kind: "pick" | "pro
 
 interface Run { code: number | null; out: string }
 // Runs the bundled CLI the way a person's agent would: flags only, no questions, TMPDIR inside the scenario so a
-// leaked scratch checkout shows up, and only the event credential (never a real key).
+// leaked scratch checkout shows up, and only a test own key sent to the local fake (never a real key).
 function synthe(app: App, gh: ReturnType<typeof stubGh>, url: string, args: string[], extra: NodeJS.ProcessEnv = {}) {
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${gh.bin}:${process.env.PATH}`, SYNTHE_PROXY_URL: url, SYNTHE_EVENT_CODE: EVENT, SYNTHE_TEAM_CODE: TEAM,
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${gh.bin}:${process.env.PATH}`, SYNTHE_ANTHROPIC_BASE_URL: url, SYNTHE_ANTHROPIC_KEY: KEY,
     XDG_CONFIG_HOME: join(app.root, "config"), TMPDIR: join(app.root, "tmp"), ...extra };
-  for (const k of ["ANTHROPIC_API_KEY", "SYNTHE_ANTHROPIC_KEY", "ANTHROPIC_BASE_URL"]) delete env[k];
+  for (const k of ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"]) delete env[k];
   const child = spawn("node", [cli, ...args], { cwd: app.dir, env, stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
   child.stdout.on("data", (d) => { out += d; });
@@ -128,7 +128,7 @@ const IMPROVE = ["improve", "--agent", "--goal", "Let normal emails sign up", "-
   "--label", "valid signups", "--unit", "of 12", "--direction", "higher", "--guard", "npm test"];
 const improveArgs = (mode: "review" | "auto", rounds: number) => [...IMPROVE, "--mode", mode, "--rounds", String(rounds)];
 
-// Every scenario: what the person owns is untouched, nothing was left behind, and the proxy saw only what it should.
+// Every scenario: what the person owns is untouched, nothing was left behind, and the model API saw only what it should.
 function assertClean(app: App, fake: Awaited<ReturnType<typeof startFakeAnthropic>>, run: Run) {
   assert.equal(app.git("status", "--porcelain"), "", "the person's working tree is untouched");
   assert.equal(app.git("rev-parse", "--abbrev-ref", "HEAD"), "main");
@@ -138,11 +138,11 @@ function assertClean(app: App, fake: Awaited<ReturnType<typeof startFakeAnthropi
   assert.deepEqual(readdirSync(join(app.root, "tmp")).filter((n) => n.startsWith("synthe-improve-")), [], "no scratch checkout left in the temp folder");
   assert.ok(fake.requests.length > 0);
   for (const r of fake.requests) {
-    assert.equal(r.headers["x-synthe-team"], TEAM);
-    assert.equal(r.headers["x-synthe-event"], EVENT);
-    assert.ok(!/key|synthe-|crim/i.test(r.path.replace("/v1/messages", "")), `no credential in the URL: ${r.path}`);
+    assert.equal(r.headers.authorization, `Bearer ${KEY}`);
+    assert.deepEqual(Object.keys(r.headers).filter((h) => h.startsWith("x-synthe")), [], "no Synthe headers beside the key");
+    assert.ok(!/key|sk-ant/i.test(r.path.replace("/v1/messages", "")), `no credential in the URL: ${r.path}`);
   }
-  assert.ok(!run.out.includes(EVENT) && !run.out.includes(TEAM), "no event or team code in the output");
+  assert.ok(!run.out.includes(KEY), "the key is never printed");
 }
 
 async function scenario(name: string, proposals: Parameters<typeof script>[0], args: (app: App) => string[], check: (x: { app: App; gh: ReturnType<typeof stubGh>; fake: Awaited<ReturnType<typeof startFakeAnthropic>>; run: Run }) => void) {
@@ -201,8 +201,8 @@ describe("improve loop through the bundle", { concurrency: true }, () => {
       assert.equal(run.code, 0, run.out);
       assert.equal(gh.creates().length, 1);
       assert.match(arg(gh.creates()[0], "--title"), TITLE);
-      assert.ok(run.out.includes("event credit is used up"), run.out);
-      assert.equal(fake.requests.filter((r) => r.round === 2).length, 1, "the 402 was asked once");
+      assert.ok(run.out.includes("Your Anthropic key has no credit left."), run.out);
+      assert.equal(fake.requests.filter((r) => r.round === 2).length, 1, "the 400 was asked once");
       assert.equal(fake.requests.length, 3, "round 1 pick and propose, round 2 pick");
     });
   });
