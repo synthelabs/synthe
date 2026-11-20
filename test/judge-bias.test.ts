@@ -5,7 +5,7 @@ import { calibrateJudge, judgeAgreement, type JudgedPair } from "../src/cli/cali
 import { sameModelNote } from "../src/core/model-notes.ts";
 import { runDecide } from "../src/loop/decide.ts";
 import { GUARD_EXAMPLE, LENGTH_WARN, NO_LENGTH_PREFERENCE, lengthLines, lengthShift } from "../src/loop/length.ts";
-import { JUDGE_PROMPT_VERSION, measureNoise, runScore, scoreKey } from "../src/loop/score.ts";
+import { JUDGE_PROMPT_VERSION, duelSystem, measureNoise, runScore, scoreKey } from "../src/loop/score.ts";
 import { DEFAULTS, type Scenario } from "../src/core/goal.ts";
 import type { Ask, Model } from "../src/model/client.ts";
 import { MemoryRepo, goal, heldRows, scenarios, scored, trainRows } from "./helpers.ts";
@@ -158,6 +158,8 @@ test("calibrate --judge compares the judge with the team in both orders and meas
   assert.equal(m.asks.filter((a) => a.schema).length, 12, "6 pairs, each judged in both orders");
   assert.ok(m.asks.every((a) => !a.user.includes("HIDDEN") && !a.system?.includes("HIDDEN")));
   assert.ok(m.asks.filter((a) => a.schema).every((a) => a.user.includes(NO_LENGTH_PREFERENCE) && a.user.includes("a good answer")));
+  // The same judge as scoring: its static instructions are scoring's own duel system prompt.
+  assert.ok(m.asks.filter((a) => a.schema).every((a) => a.system === duelSystem(goal())));
   assert.deepEqual([out!.asked, out!.agreed, out!.flipped], [6, 0, 0]);
   assert.deepEqual(out!.longer, { picked: 12, total: 12 });
   assert.match(text, /Agreement: the judge picked the same reply as you, in both orders, on 0 of 6 pairs \(0%\)\. Reading: disagrees with you\./);
@@ -219,7 +221,7 @@ test("default calibrate never asks about reply pairs or calls the duel judge", a
   const said: string[] = [];
   const prompts: string[] = [];
   await calibrate({ say: (t) => said.push(t), async ask(q) { prompts.push(q); return "y"; } }, goal({ checks: ["Be clear"] }), "Prompt", cases, m);
-  assert.ok(asks.every((a) => !a.user.includes("Compare two replies")));
+  assert.ok(asks.every((a) => !a.user.includes("Compare two replies") && !a.system?.includes("Compare two replies")));
   assert.ok(prompts.every((q) => !q.includes("Which reply is better")));
   assert.doesNotMatch(said.join("\n"), /Reply A|calibrate --judge/);
 });

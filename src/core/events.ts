@@ -213,7 +213,8 @@ export async function observeRoundStep<T>(stage: "write" | "score" | "decide", c
         const { scores } = result as { scores: RoundScores };
         for (const c of scores.candidates) for (const split of ["train", "holdout"] as const) {
           const baseline = split === "train" ? scores.baselineTrain : scores.baselineHoldout;
-          for (const row of c[split] ?? []) {
+          // Cases futility stopping skipped were never run, so there is no result to record for them.
+          for (const row of (c[split] ?? []).slice(0, split === "train" ? c.stoppedAfter : undefined)) {
             const before = baseline.find((b) => b.id === row.id);
             capture("case_result", stage, { candidate_id: c.id, case_id: row.id, split, baseline_output: before?.reply ?? null, candidate_output: row.reply ?? null,
               baseline_score: before?.score ?? null, candidate_score: row.score, failed_checks: row.failedChecks ?? null, failed: row.failed ?? null, applicable: row.applicable ?? null,

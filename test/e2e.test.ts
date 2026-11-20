@@ -13,6 +13,7 @@ const issues: string[] = [];
 const merges: { sha: string }[] = [];
 const models: Record<string, number> = {};
 const bodies: any[] = [];
+const systemText = (b: any): string => (typeof b.system === "string" ? b.system : (b.system ?? []).map((x: any) => x.text).join(""));
 let denyKey = false;
 let dispatches = 0;
 let dispatchStatus = 204;
@@ -113,7 +114,8 @@ const anthropic = createServer((req, res) => {
       const current = /<prompt>\n([\s\S]*?)\n<\/prompt>/.exec(user)![1];
       text = JSON.stringify({ edits: [{ find: current, replace: "You are careful and use the store policy." }], summary: "Uses the store policy." });
     }
-    else text = b.system?.includes("careful") ? "A policy-aware answer." : "A vague answer.";
+    // The API takes the system prompt as a string or as text blocks (the own-key path sends blocks, to cache it).
+    else text = systemText(b).includes("careful") ? "A policy-aware answer." : "A vague answer.";
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify({ id: "m", type: "message", role: "assistant", model: b.model, stop_reason: "end_turn", stop_sequence: null, content: [{ type: "text", text }], usage: { input_tokens: 1000, output_tokens: 200 } }));
   });
@@ -193,6 +195,10 @@ test("requests carry valid model settings", () => {
   assert.ok(bodies.filter((b) => b.model.startsWith("claude-haiku")).every((b) => b.thinking?.type === "disabled"));
   assert.ok(bodies.filter((b) => b.model.startsWith("claude-sonnet")).every((b) => b.thinking === undefined));
   assert.ok(bodies.every((b) => b.output_config.effort === "low"));
+  // Own key: every system prompt is one cached text block; the per-case message never carries a cache marker.
+  const withSystem = bodies.filter((b) => b.system !== undefined);
+  assert.ok(withSystem.length > 0 && withSystem.every((b) => Array.isArray(b.system) && b.system.length === 1 && b.system[0].cache_control?.type === "ephemeral"));
+  assert.ok(bodies.every((b) => b.cache_control === undefined && !JSON.stringify(b.messages).includes("cache_control")));
 });
 
 test("a stopped run says so and doesn't call the model", async () => {

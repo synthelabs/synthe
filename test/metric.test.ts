@@ -61,14 +61,19 @@ test("the team's checks decide each test case, even against the judge's preferen
 
 test("when both replies fail the same checks, the judge breaks the tie", async () => {
   const { scores } = await runScore(withChecks(), "Old", [{ id: "c1", text: "New" }], cases, model({ newFails: 1 }));
-  assert.ok(scores.candidates[0].train.every((r) => r.score === 0), "same checks failed, and the judge prefers the current prompt");
+  // It loses every case, so futility stopping drops it after the first chunk of six; every case it ran was a loss.
+  const c = scores.candidates[0];
+  assert.equal(c.stoppedAfter, 6);
+  assert.ok(c.train.slice(0, 6).every((r) => r.score === 0), "same checks failed, and the judge prefers the current prompt");
   assert.equal(judgeRound(scores, withChecks(), null).action, "skip");
 });
 
 test("a check answer that skips a check leaves the case to the judge, and the rate unknown", async () => {
   const half = () => JSON.stringify({ results: [{ check: 1, applies: true, passes: true }] });
   const { scores } = await runScore(withChecks(), "Old", [{ id: "c1", text: "New" }], cases, model({ checkAnswer: half }));
-  assert.ok(scores.candidates[0].train.every((r) => r.score === 0 && r.failed === undefined));
+  const c = scores.candidates[0];
+  assert.equal(c.stoppedAfter, 6);
+  assert.ok(c.train.slice(0, 6).every((r) => r.score === 0 && r.failed === undefined));
   assert.equal(checkRate(scores.baselineTrain), null);
 });
 
