@@ -29121,6 +29121,41 @@ function buildEvidence(p) {
   return record;
 }
 
+// src/loop/length.ts
+var LENGTH_WARN = 0.3;
+var GUARD_EXAMPLE = "Answers the question without padding";
+var NO_LENGTH_PREFERENCE = "Don't prefer a reply because it is longer or more elaborate; prefer it only when it meets the goal better.";
+function median(xs) {
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = s.length >> 1;
+  return Math.round(s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2);
+}
+function lengthShift(rows) {
+  const pairs = (rows ?? []).filter((r) => Number.isSafeInteger(r.chars) && Number.isSafeInteger(r.currentChars) && r.chars >= 0 && r.currentChars >= 0);
+  if (pairs.length === 0) return null;
+  return { before: median(pairs.map((r) => r.currentChars)), after: median(pairs.map((r) => r.chars)) };
+}
+var growth = (s) => s.before > 0 ? (s.after - s.before) / s.before : null;
+var lengthGrewTooMuch = (s) => {
+  const g = growth(s);
+  return g !== null && g > LENGTH_WARN;
+};
+function lengthSentence(s) {
+  const g = growth(s);
+  const span = `median ${s.before} \u2192 ${s.after} characters`;
+  if (g === null) return `Replies are now a median of ${s.after} characters.`;
+  const pct2 = Math.round(Math.abs(g) * 100);
+  return pct2 === 0 ? `Replies stayed about the same length (${span}).` : `Replies got ${pct2}% ${g > 0 ? "longer" : "shorter"} (${span}).`;
+}
+function lengthWarning(s) {
+  return lengthGrewTooMuch(s) ? `Warning: AI judges tend to prefer longer replies, so this change may be winning on length rather than quality. Read the example replies, and if they are padded, add a guard such as "${GUARD_EXAMPLE}" to \`counter_checks\` in \`synthe.json\`.` : null;
+}
+function lengthLines(s) {
+  if (!s) return [];
+  const warning = lengthWarning(s);
+  return [lengthSentence(s), ...warning ? [warning] : []];
+}
+
 // src/loop/delta.ts
 function scoreSeries(state) {
   return state.rounds.map((r) => ({
@@ -29423,6 +29458,7 @@ function roundSummary(goal, state, record, repo) {
     `## Synthe round ${record.round}: ${OUTCOME[record.outcome].toLowerCase()}${record.pr ? ` (#${record.pr})` : ""}`,
     "",
     ...record.plain ? [record.plain, ""] : [],
+    ...record.replyLength ? [lengthLines(record.replyLength).join(" "), ""] : [],
     ...attacks ? [attacks, ""] : [],
     ...tried.length ? ["What Synthe tried:", ...tried, ""] : [],
     `Cost of this round: ${cost}. ${summary}`,
@@ -29455,6 +29491,7 @@ function renderReport(goal, state, now = /* @__PURE__ */ new Date(), repoSlug) {
       const check = r.unverified?.length ? ` **Check these are real:** ${r.unverified.map((d) => `\`${d}\``).join(", ")} ${r.unverified.length === 1 ? "isn't" : "aren't"} in your old prompt or policy.` : "";
       lines.push(`- ${label} ${(r.changed ?? "A change to the prompt").replace(/[.\s]+$/, "")}. ${r.plain ?? ""}${check}${undo}`);
       if (r.example) lines.push("", exampleText(r.example).split("\n").map((l) => `  ${l}`).join("\n"), "");
+      if (r.replyLength) lines.push("", `  ${lengthLines(r.replyLength).join(" ")}`, "");
     }
     lines.push("");
   }
@@ -29792,6 +29829,7 @@ function explainCompose(r) {
 // src/loop/score.ts
 var CONCURRENCY = 6;
 var AGENT_MAX_TOKENS = 2e3;
+var JUDGE_PROMPT_VERSION = 2;
 var REPLY_KEPT = 800;
 var WIN = 100;
 var TIE = 50;
@@ -29899,7 +29937,7 @@ ${a}
 ${b}
 </reply_b>
 
-Which reply better meets the goal for this situation? Answer "A" or "B", or "tie" only if they are equally good. Then say for each reply whether it keeps every guardrail.`
+Which reply better meets the goal for this situation? ${NO_LENGTH_PREFERENCE} Answer "A" or "B", or "tie" only if they are equally good. Then say for each reply whether it keeps every guardrail.`
     });
     costs.push(judged.costUsd);
     const v = judged.value;
@@ -29922,7 +29960,9 @@ Which reply better meets the goal for this situation? Answer "A" or "B", or "tie
         const swapped = await duel(s, set.indexOf(s) % 2 === 0 === flip, current, mine);
         if (judged.row.score !== swapped.row.score) judged.row.score = null;
       }
-      return measureGuards(s, await decideByChecks(s, judged, current, mine), current, mine);
+      const result = await measureGuards(s, await decideByChecks(s, judged, current, mine), current, mine);
+      Object.assign(result.row, { chars: mine.length, currentChars: current.length });
+      return result;
     });
   };
   const repliesFor = async (prompt, set) => new Map(await pool(set, CONCURRENCY, async (s) => [s.id, await reply(prompt, s)]));
@@ -30025,13 +30065,14 @@ function currentRows(set, replies, duels) {
     };
   });
 }
-function scoreKey(goal, baseline, holdout) {
+function scoreKey(goal, baseline, holdout, judgePromptVersion = JUDGE_PROMPT_VERSION) {
   return sha256([
     sha256(baseline),
     sha256(JSON.stringify(holdout.map((s) => [s.id, s.input, s.expected]))),
     sha256(JSON.stringify((goal.checks ?? []).filter((c) => c.trim()))),
     goal.models.runner,
-    goal.models.judge
+    goal.models.judge,
+    `judge-prompt-${judgePromptVersion}`
   ].join("\n"));
 }
 async function runScore(goal, baseline, candidates, scenarios, model, prior = null, random = Math.random, attacks = [], attackCache = null, scoreCache = null) {
@@ -30136,7 +30177,7 @@ async function runScore(goal, baseline, candidates, scenarios, model, prior = nu
       else checks.failed++;
     });
   }
-  for (const c of scores.candidates) if (c.holdout) c.holdout = c.holdout.map((r) => ({ ...r, reply: void 0 }));
+  for (const c of scores.candidates) if (c.holdout) c.holdout = c.holdout.map((r) => ({ ...r, reply: void 0, chars: void 0, currentChars: void 0 }));
   if (cutOffCount() > 0) scores.cutOff = cutOffCount();
   return { scores, costUsd: sumCosts(costs), calls: costs.length, checks, attackCache: freshAttackCache, scoreCache: freshScoreCache, ...compose ? { compose } : {} };
 }
@@ -30416,6 +30457,7 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
       ...why.unverified?.length ? [`**Check these are real:** this change adds ${why.unverified.map((d) => `\`${d}\``).join(", ")}, which ${why.unverified.length === 1 ? "isn't" : "aren't"} in your old prompt or your policy. Make sure your business really offers ${why.unverified.length === 1 ? "it" : "them"}${proposed ? " before merging" : ", or revert this change"}.`] : [],
       `**Why:** ${why.plain}`,
       ...why.example ? [exampleText(why.example)] : [],
+      ...why.length ? [lengthLines(why.length).join(" ")] : [],
       proposed ? "After merging, pull before you edit the prompt yourself." : "**Before you edit the prompt yourself, pull the latest changes,** so this change isn't overwritten. To undo it, click **Revert** on this pull request.",
       "Tested on simulated messages only. It can't tell you how real users will react.",
       `<details><summary>Fingerprints of what was tested</summary>
@@ -30578,6 +30620,7 @@ ${notTested(goal).slice(1).join("\n")}
         const pair = pickExamplePair(scores, verdict.candidateId, scenarioText);
         const unverified = newDetails(chosen?.edits, `${current}
 ${goal.policy ?? ""}`);
+        const length = lengthShift(scores.candidates.find((c) => c.id === verdict.candidateId)?.train);
         const name = chosen?.title ?? (changed.length > 60 ? `${changed.slice(0, 57)}...` : changed);
         const landed = await land(
           text,
@@ -30590,6 +30633,7 @@ ${goal.policy ?? ""}`);
             diff: diffLines(chosen?.edits),
             example,
             unverified,
+            length,
             evidence: evidenceOf("merge", verdict.candidateId, text, { checks: verdict.checks }),
             // The round's record only joins state.rounds at the end of the round, with its score
             // recorded there too, so the block is rendered from a state carrying this round's record
@@ -30604,6 +30648,7 @@ ${goal.policy ?? ""}`);
           if (unverified.length) record.unverified = unverified;
         }
         if (landed) {
+          if (length) record.replyLength = length;
           winnerId = verdict.candidateId;
           Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...verdict.checks ? { checks: verdict.checks } : {}, ...verdict.guards ? { guards: verdict.guards } : {} });
           record.changed = chosen?.summary ?? "A change to the prompt";

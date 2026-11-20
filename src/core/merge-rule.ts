@@ -4,7 +4,9 @@ import { DEFAULTS, type Goal } from "./goal.ts";
 // reply is kept only for the current prompt's training rows, so the next writer can study what went wrong.
 // failed and applicable count the team's checks on this reply; failedChecks names them for the next writer.
 // guardFailed and guardApplicable count the team's guards the same way. Guards are measured, never used to score.
-export interface ScoreRow { id: string; score: number | null; violation: boolean | null; reply?: string; failed?: number; applicable?: number; failedChecks?: string[]; guardFailed?: number; guardApplicable?: number }
+export interface ScoreRow { id: string; score: number | null; violation: boolean | null; reply?: string; failed?: number; applicable?: number; failedChecks?: string[]; guardFailed?: number; guardApplicable?: number;
+  // Full character length of this reply and of the current prompt's reply it was judged against, before the kept-text clip. Training rows only; display, never read by the merge rule.
+  chars?: number; currentChars?: number }
 
 // The share of the team's checks the replies passed, as a whole percentage, or null when no check applied or a reply
 // wasn't checked. The same rows must be compared on both sides.

@@ -1,5 +1,6 @@
 import { STATE_BRANCH, type Goal } from "../core/goal.ts";
 import { guardSentence } from "../core/merge-rule.ts";
+import { lengthLines } from "./length.ts";
 import { budgetSpend, isFinished, type RoundRecord, type State } from "../core/state.ts";
 import { FULL_SHARE_UNTIL, fromSyntheProxy, PROXY_AUTH_MESSAGE, PROXY_REFUSED } from "../core/share.ts";
 import { displaySeries, scoreSeries } from "./delta.ts";
@@ -261,6 +262,7 @@ export function roundSummary(goal: Goal, state: State, record: RoundRecord | nul
   return [
     `## Synthe round ${record.round}: ${OUTCOME[record.outcome].toLowerCase()}${record.pr ? ` (#${record.pr})` : ""}`, "",
     ...(record.plain ? [record.plain, ""] : []),
+    ...(record.replyLength ? [lengthLines(record.replyLength).join(" "), ""] : []),
     ...(attacks ? [attacks, ""] : []),
     ...(tried.length ? ["What Synthe tried:", ...tried, ""] : []),
     `Cost of this round: ${cost}. ${summary}`, "", report, "",
@@ -300,6 +302,7 @@ export function renderReport(goal: Goal, state: State, now: Date = new Date(), r
       const check = r.unverified?.length ? ` **Check these are real:** ${r.unverified.map((d) => `\`${d}\``).join(", ")} ${r.unverified.length === 1 ? "isn't" : "aren't"} in your old prompt or policy.` : "";
       lines.push(`- ${label} ${(r.changed ?? "A change to the prompt").replace(/[.\s]+$/, "")}. ${r.plain ?? ""}${check}${undo}`);
       if (r.example) lines.push("", exampleText(r.example).split("\n").map((l) => `  ${l}`).join("\n"), "");
+      if (r.replyLength) lines.push("", `  ${lengthLines(r.replyLength).join(" ")}`, "");
     }
     lines.push("");
   }

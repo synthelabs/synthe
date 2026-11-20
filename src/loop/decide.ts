@@ -14,6 +14,7 @@ import type { Failure } from "./failure.ts";
 import { LOSS, TIE, WIN } from "./score.ts";
 import { candidateScope, rememberCandidates } from "../core/candidate-history.ts";
 import { fromSyntheProxy, PROXY_REFUSED } from "../core/share.ts";
+import { lengthLines, lengthShift, type LengthShift } from "./length.ts";
 
 export const BUSY_RETRIES = 2;
 export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null; calibration?: { check: string; reading: string }[] | null;
@@ -280,7 +281,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
 
   // Opens the pull request, then merges it (auto mode) or leaves it for a person (propose mode, or a repo whose
   // branch rules require a review). Returns the pull request and whether it was only proposed, or null.
-  type Why = { changed: string; plain: string; technical: string; diff?: string[]; example?: Example; unverified?: string[]; evidence?: (proposed: boolean) => EvidenceRecord; delta?: (proposed: boolean) => string };
+  type Why = { changed: string; plain: string; technical: string; diff?: string[]; example?: Example; unverified?: string[]; length?: LengthShift | null; evidence?: (proposed: boolean) => EvidenceRecord; delta?: (proposed: boolean) => string };
   const land = async (text: string, kind: "merge" | "revert", title: string, why: Why): Promise<{ pr: number; proposed: boolean } | null> => {
     const branch = `synthe/round-${round}`;
     const landing: Landing = { branch, kind, text, priorPrompt: current!, propose: merge_rule.mode === "propose" };
@@ -312,6 +313,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       ...(why.unverified?.length ? [`**Check these are real:** this change adds ${why.unverified.map((d) => `\`${d}\``).join(", ")}, which ${why.unverified.length === 1 ? "isn't" : "aren't"} in your old prompt or your policy. Make sure your business really offers ${why.unverified.length === 1 ? "it" : "them"}${proposed ? " before merging" : ", or revert this change"}.`] : []),
       `**Why:** ${why.plain}`,
       ...(why.example ? [exampleText(why.example)] : []),
+      ...(why.length ? [lengthLines(why.length).join(" ")] : []),
       proposed
         ? "After merging, pull before you edit the prompt yourself."
         : "**Before you edit the prompt yourself, pull the latest changes,** so this change isn't overwritten. To undo it, click **Revert** on this pull request.",
@@ -467,9 +469,10 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
         const example = pickExample(scores, verdict.candidateId, scenarioText);
         const pair = pickExamplePair(scores, verdict.candidateId, scenarioText);
         const unverified = newDetails(chosen?.edits, `${current}\n${goal.policy ?? ""}`);
+        const length = lengthShift(scores.candidates.find((c) => c.id === verdict.candidateId)?.train);
         const name = chosen?.title ?? (changed.length > 60 ? `${changed.slice(0, 57)}...` : changed);
         const landed = await land(text!, "merge", `Synthe: ${name}`,
-          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified, evidence: evidenceOf("merge", verdict.candidateId, text!, { checks: verdict.checks }),
+          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified, length, evidence: evidenceOf("merge", verdict.candidateId, text!, { checks: verdict.checks }),
             // The round's record only joins state.rounds at the end of the round, with its score
             // recorded there too, so the block is rendered from a state carrying this round's record
             // with the same score and pair that are about to be recorded on it.
@@ -481,6 +484,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
           if (unverified.length) record.unverified = unverified;
         }
         if (landed) {
+          if (length) record.replyLength = length;
           winnerId = verdict.candidateId;
           Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...(verdict.checks ? { checks: verdict.checks } : {}), ...(verdict.guards ? { guards: verdict.guards } : {}) });
           record.changed = chosen?.summary ?? "A change to the prompt";
