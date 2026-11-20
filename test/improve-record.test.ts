@@ -15,7 +15,12 @@ function fakeProxy(mode: "ok" | "refuse" | "hang" | "down" = "ok") {
   const fetcher = (async (url: string | URL | Request, init?: RequestInit) => {
     calls++;
     if (mode === "down") throw new TypeError("fetch failed");
-    if (mode === "hang") return new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("timed out"), { name: "TimeoutError" }))));
+    // A real hung request holds a socket open; the fake must keep the event loop alive too, or the runner
+    // cancels the test while the unref'd send timeout is still pending.
+    if (mode === "hang") return new Promise<Response>((_, reject) => {
+      const hold = setInterval(() => {}, 1000);
+      init?.signal?.addEventListener("abort", () => { clearInterval(hold); reject(Object.assign(new Error("timed out"), { name: "TimeoutError" })); });
+    });
     batches.push({ url: String(url), headers: init!.headers as Record<string, string>, body: JSON.parse(init!.body as string) });
     return Response.json(mode === "refuse" ? { error: "no" } : { ok: true }, { status: mode === "refuse" ? 403 : 200 });
   }) as typeof fetch;
