@@ -36891,9 +36891,7 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
     const applied = applyEdits(prompt, r.value.edits, known);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
-    const isShorter = shorter && i === 1;
-    const tooLong = isShorter ? shorterProblem(prompt, applied.text) : null;
-    if (tooLong) return void rejected.push(`${id}: ${tooLong}`);
+    const isShorter = shorter && i === 1 && shorterProblem(prompt, applied.text) === null;
     const fingerprint = candidateFingerprint(applied.text);
     if (fingerprint === candidateFingerprint(prompt)) return void rejected.push(`${id}: edits change only formatting or case`);
     if (tried.has(fingerprint)) return void rejected.push(`${id}: materially identical candidate already tried for this goal and prompt`);

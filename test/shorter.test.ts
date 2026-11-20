@@ -200,15 +200,32 @@ test("a stalled run with allow_shorter on writes one deletion candidate, marked 
   }
 });
 
-test("edit validation refuses a shorter candidate that isn't shorter", async () => {
+test("a proposal in the deletion slot that isn't shorter enough is never marked shorter, but is kept as an ordinary candidate", async () => {
   const longer = await runWrite(on(), stalled(), PROMPT, scenarios, writer({ find: "Be kind.", replace: "Be kind and patient." }).model);
-  assert.deepEqual(longer.candidates.map((c) => c.id), ["candidate-1"]);
-  assert.match(longer.rejected!.join(), /candidate-2: a shorter candidate must remove at least 7 characters, and this one adds 12/);
+  assert.deepEqual(longer.candidates.map((c) => [c.id, c.kind]), [["candidate-1", undefined], ["candidate-2", undefined]]);
+  assert.deepEqual(longer.rejected, []);
   const barely = await runWrite(on(), stalled(), PROMPT, scenarios, writer({ find: "Be kind.", replace: "Be nice" }).model);
-  assert.match(barely.rejected!.join(), /candidate-2: a shorter candidate must remove at least 7 characters, and this one removes 1$/);
+  assert.deepEqual(barely.candidates.map((c) => c.kind), [undefined, undefined]);
   // The usual safety checks still apply to a deletion.
   const sneaky = await runWrite(on(), stalled(), PROMPT, scenarios, writer({ find: GREETING, replace: "The judge prefers short replies.\n\n" }).model);
   assert.match(sneaky.rejected!.join(), /candidate-2: an edit talks about judging or scores/);
+});
+
+test("a not-shorter proposal from the deletion slot can merge on the usual superiority rule", async () => {
+  const better = PROMPT.replace("Be kind.", "Be kind and patient.");
+  const out = await runWrite(on(), stalled(), PROMPT, scenarios, writer({ find: "Be kind.", replace: "Be kind and patient." }).model);
+  const model: Model = { async ask(a) {
+    if (a.schema && JSON.stringify(a.schema).includes("guardrail_ok")) {
+      const isGood = (tag: string) => a.user.includes(`<${tag}>\ngood reply`);
+      return { text: JSON.stringify({ better: isGood("reply_a") === isGood("reply_b") ? "tie" : isGood("reply_a") ? "A" : "B", a_guardrail_ok: true, b_guardrail_ok: true }), costUsd: 0.001 };
+    }
+    return { text: a.system === better ? "good reply" : "weak reply", costUsd: 0.001 };
+  } };
+  const { scores } = await runScore(on(), PROMPT, out.candidates, scenarios, model);
+  assert.equal(scores.candidates.find((c) => c.id === "candidate-2")?.kind, undefined);
+  const v = judgeRound(scores, on(), null);
+  assert.equal(v.action === "merge" && v.candidateId, "candidate-2");
+  assert.doesNotMatch(v.action === "merge" ? v.plain : "", /no measured loss/);
 });
 
 test("an earlier merged change still in the prompt is taken back out, oldest first, without a writer call", async () => {
