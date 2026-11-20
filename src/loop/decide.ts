@@ -124,8 +124,15 @@ async function writeReport(goal: Goal, repo: Repo, state: State) {
       console.log(`::warning::${note}`);
     }
   }
+  // Case counts for the no-win section; the report is better without them than lost over them.
+  let counts: { train: number; holdout: number } | undefined;
   try {
-    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state, new Date(), repo.slug));
+    const text = await repo.readFile(goal.scenarios, await repo.headSha(await repo.defaultBranch()));
+    const parsed = text === null ? [] : parseScenarios(text);
+    if (parsed.length) counts = { train: parsed.filter((r) => r.split === "train").length, holdout: parsed.filter((r) => r.split === "holdout").length };
+  } catch { /* no counts */ }
+  try {
+    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state, new Date(), repo.slug, counts));
   } catch (e) {
     if (!(e instanceof Refusal)) throw e;
     const note = `couldn't write the report issue: ${e.plain}`;

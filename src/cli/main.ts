@@ -6,6 +6,7 @@ import { readPrompt } from "../core/prompt.ts";
 import { newState, type State } from "../core/state.ts";
 import { sha256 } from "../core/safety.ts";
 import { headline } from "../loop/report.ts";
+import { powerLines } from "../core/power.ts";
 import { anthropicModel, configuredModel, eventModels, modelProblem } from "../model/client.ts";
 import { explainNoise, measureNoise } from "../loop/score.ts";
 import { runLocalTry } from "./try-round.ts";
@@ -116,6 +117,11 @@ async function status() {
   console.log(goal.merge_rule.mode === "propose" ? "Mode: review." : "Mode: automatic merging.");
   const sameModel = sameModelNote(goal.models);
   if (sameModel) console.log(sameModel);
+  try {
+    const rows = parseScenarios(readFileSync(goal.scenarios, "utf8"));
+    const power = powerLines(goal, rows.filter((r) => r.split === "train").length, rows.filter((r) => r.split === "holdout").length);
+    console.log(`What your test cases can detect: ${power[0]} ${power.at(-1)}`);
+  } catch { /* scenarios unreadable here: status still reports the rest */ }
   if (s.issue) console.log(`Full report: https://github.com/${slug}/issues/${s.issue}`);
 }
 

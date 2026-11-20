@@ -36209,6 +36209,39 @@ init_merge_rule();
 var GUARD_EXAMPLE = "Answers the question without padding";
 var NO_LENGTH_PREFERENCE = "Don't prefer a reply because it is longer or more elaborate; prefer it only when it meets the goal better.";
 
+// src/core/power.ts
+init_merge_rule();
+function minWinsToPass(decided, maxP) {
+  for (let w = 0; w <= decided; w++) if (signP(w, decided - w) <= maxP) return w;
+  return null;
+}
+function casesForSixtyForty(maxP) {
+  for (let n = 1; n <= 2e3; n++) {
+    const wins = Math.ceil(0.6 * n);
+    if (signP(wins, n - wins) <= maxP) return n;
+  }
+  return null;
+}
+function powerLines(goal, trainCount, holdoutCount) {
+  const { max_p, holdout_max_p } = goal.merge_rule;
+  const lines2 = [];
+  const need2 = minWinsToPass(trainCount, max_p);
+  if (need2 === null) {
+    lines2.push(`With ${trainCount} training cases, no change can pass: even better in every one isn't enough to rule out luck.`);
+  } else {
+    lines2.push(`With ${trainCount} training cases, a change must be better in at least ${need2} and worse in at most ${trainCount - need2} (ties don't count) to pass.`);
+  }
+  const heldNeed = minWinsToPass(holdoutCount, holdout_max_p);
+  lines2.push(heldNeed === null ? `With ${holdoutCount} held-back cases, no change can pass the held-back check.` : `With ${holdoutCount} held-back cases, at least ${heldNeed} of ${holdoutCount}.`);
+  const target = casesForSixtyForty(max_p);
+  if (target !== null && target > trainCount) {
+    lines2.push(`Adding about ${target - trainCount} more cases your agent gets wrong lets a smaller real gain pass (a change better in 6 of every 10 decided cases passes at ${target}).`);
+  } else if (target !== null) {
+    lines2.push("You have enough training cases for a change that is better in 6 of every 10 decided cases to pass; harder cases still help, because easy ones end in ties.");
+  }
+  return lines2;
+}
+
 // src/loop/report.ts
 init_state();
 
@@ -41204,6 +41237,12 @@ async function status2() {
   console.log(goal.merge_rule.mode === "propose" ? "Mode: review." : "Mode: automatic merging.");
   const sameModel = sameModelNote(goal.models);
   if (sameModel) console.log(sameModel);
+  try {
+    const rows = parseScenarios(readFileSync19(goal.scenarios, "utf8"));
+    const power = powerLines(goal, rows.filter((r) => r.split === "train").length, rows.filter((r) => r.split === "holdout").length);
+    console.log(`What your test cases can detect: ${power[0]} ${power.at(-1)}`);
+  } catch {
+  }
   if (s.issue) console.log(`Full report: https://github.com/${slug}/issues/${s.issue}`);
 }
 async function changes() {
