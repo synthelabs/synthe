@@ -14,7 +14,7 @@ const mutations = [
   ["confirmation ignores DO_NOT_TRACK", "src/cli/init.ts", 'if (sharingDisabled(env)) draft.goal.share = "none";', ''],
   ["confirmation ignores --share", "src/cli/init.ts", 'if (agent.share) draft.goal.share = agent.share;', ''],
   ["key never records the budget switch", "src/cli/key.ts", 'state.ownKeyFromUsd = state.spendUsd;', ''],
-  ["budget still charges event spend", "src/core/state.ts", 'state.spendUsd - (state.ownKeyFromUsd ?? 0)', 'state.spendUsd'],
+  ["budget still charges spend from before the own key", "src/core/state.ts", 'state.spendUsd - (state.ownKeyFromUsd ?? 0)', 'state.spendUsd'],
   ["restart rejects a fresh or raised budget", "src/cli/restart.ts", '&& !budgetAvailable', ''],
   ["closed stdin succeeds without a key", "src/cli/key.ts", 'io.say("Ask the person to run `npx synthe key` in their own terminal.");\n    return false;', 'io.say("Ask the person to run `npx synthe key` in their own terminal.");\n    return true;'],
   ["key skips the cheap test call", "src/cli/key.ts", 'await (io.model ?? anthropicModel)(key).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });', ''],

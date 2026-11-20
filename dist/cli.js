@@ -38367,7 +38367,7 @@ function upgrade(root, template2) {
   const cron = before.match(/cron:\s*["']?(\d+)(?:-59\/10)? \* \* \* \*/);
   const minute = cron ? Math.max(1, Number(cron[1])) : void 0;
   const after = renderWorkflow(template2, Math.random, minute);
-  const event = /step: receipt-start|synthelabs\/synthe@v\d+\.\d+\.\d+/.test(before) ? " This workflow was set up for event credit, which has ended: run `npx synthe key` to save your own Anthropic key, then delete the old event secrets in the repo's settings." : "";
+  const event = /step: receipt-start|synthelabs\/synthe@v\d+\.\d+\.\d+/.test(before) ? " This workflow was set up during the hackathon, whose event credit has ended. If this repo has no Anthropic key of its own, run `npx synthe key` to save one; then delete the old event secrets in the repo's settings." : "";
   const old = `${existsSync4(join6(root, OLD_TRACKING_FILE)) ? ` You can delete ${OLD_TRACKING_FILE}; Synthe no longer uses it.` : ""}${event}`;
   if (after === before) return `${WORKFLOW_FILE} is already up to date. No files changed.${old}`;
   writeFileSync4(path4, after);

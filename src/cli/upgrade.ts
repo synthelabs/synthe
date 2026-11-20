@@ -17,7 +17,7 @@ export function upgrade(root: string, template: string): string {
   // Event setups (receipt steps, an action pinned to a release) ran on secrets that no longer work; rounds now need an
   // own key. Own-key workflows from 1.7 to 1.10 also pass the old credential inputs, so those don't count.
   const event = /step: receipt-start|synthelabs\/synthe@v\d+\.\d+\.\d+/.test(before)
-    ? " This workflow was set up for event credit, which has ended: run `npx synthe key` to save your own Anthropic key, then delete the old event secrets in the repo's settings." : "";
+    ? " This workflow was set up during the hackathon, whose event credit has ended. If this repo has no Anthropic key of its own, run `npx synthe key` to save one; then delete the old event secrets in the repo's settings." : "";
   const old = `${existsSync(join(root, OLD_TRACKING_FILE)) ? ` You can delete ${OLD_TRACKING_FILE}; Synthe no longer uses it.` : ""}${event}`;
   if (after === before) return `${WORKFLOW_FILE} is already up to date. No files changed.${old}`;
   writeFileSync(path, after);
