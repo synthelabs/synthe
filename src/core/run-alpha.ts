@@ -3,13 +3,15 @@ import { DEFAULTS, type Goal } from "./goal.ts";
 // merge_rule.run_alpha: an opt-in cap on the chance that a whole run merges at least one change that does nothing.
 // Each comparison is strict on its own, but a run makes many of them, and unset this file changes nothing.
 
-// One candidate per writing angle in write.ts, plus the composed one when compose is on. The count is the planned
-// one, not how many happened to be scored: compose only writes its candidate after seeing the others' training
-// results, so a limit that loosened when compose came up empty would let a round spend more than its share.
+// One candidate per writing angle in write.ts, plus one more when compose or population is on: the composed one, or
+// the pool's combined one (src/loop/pool.ts). Never both, since compose sits out a round where the pool added its
+// candidate. The count is the planned one, not how many happened to be scored: compose only writes its candidate
+// after seeing the others' training results, and the pool has nothing to combine in some rounds, so a limit that
+// loosened when either came up empty would let a round spend more than its share.
 // A round that somehow scores more than planned uses its real count, so the cap can only get stricter.
 export const WRITTEN_PER_ROUND = 2;
 export function plannedCandidates(goal: Goal, scored = 0): number {
-  return Math.max(WRITTEN_PER_ROUND + (goal.compose === true ? 1 : 0), scored);
+  return Math.max(WRITTEN_PER_ROUND + (goal.compose === true || goal.population === true ? 1 : 0), scored);
 }
 
 // The sign-test limit for the held-back cases this round. With run_alpha unset it is holdout_max_p, as before.

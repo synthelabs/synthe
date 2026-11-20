@@ -39,7 +39,8 @@ function world(hiddenRewardsBoth: boolean): Model & { calls: Record<string, numb
         const rule = script[next++];
         return { text: JSON.stringify({ edits: [{ find: "", replace: rule }], summary: `Adds ${rule.replace(".", "").toLowerCase()}.`, title: "add a rule" }), costUsd: 0.01 };
       }
-      if (a.system !== undefined) { calls.agent++; return { text: `reply to ${a.user} using ${a.system}`, costUsd: 0.001 }; }
+      // The agent. The judge has a system prompt too (the duel's static part), but always a schema.
+      if (a.system !== undefined && !a.schema) { calls.agent++; return { text: `reply to ${a.user} using ${a.system}`, costUsd: 0.001 }; }
       calls.judge++;
       const situation = a.user.match(/Situation: (.*)/)![1];
       const va = value(a.user.match(/<reply_a>\n([\s\S]*?)\n<\/reply_a>/)![1], situation), vb = value(a.user.match(/<reply_b>\n([\s\S]*?)\n<\/reply_b>/)![1], situation);
@@ -64,9 +65,11 @@ async function run(label: string, population: boolean, hiddenRewardsBoth: boolea
     const verdict = judgeRound(scores, g, null);
     console.log(`    round ${n}: ${record?.outcome}${verdict.action === "merge" ? ` (${verdict.candidateId})` : ""}; model calls: writer ${m.calls.writer - before.writer}, agent ${m.calls.agent - before.agent}, judge ${m.calls.judge - before.judge}`);
     for (const c of scores.candidates) {
-      const t = paired(c.train, scores.baselineTrain)!;
+      // Futility stopping leaves the cases it never ran unknown, so only the ones it ran are counted.
+      const ran = c.stoppedAfter ?? c.train.length;
+      const t = paired(c.train.slice(0, ran), scores.baselineTrain.slice(0, ran))!;
       const h = c.holdout ? paired(c.holdout, scores.baselineHoldout)! : null;
-      console.log(`      ${c.id.padEnd(11)} training: won ${t.wins}, lost ${t.losses}, tied ${c.train.length - t.wins - t.losses} (p ${t.p.toFixed(4)}, needs ${g.merge_rule.max_p})${h ? `; hidden: won ${h.wins}, lost ${h.losses} (p ${signP(h.wins, h.losses).toFixed(4)}, needs ${g.merge_rule.holdout_max_p})` : "; hidden: not tried"}`);
+      console.log(`      ${c.id.padEnd(11)} training: won ${t.wins}, lost ${t.losses}, tied ${ran - t.wins - t.losses}${c.stoppedAfter === undefined ? "" : `, stopped after ${ran} of ${c.train.length}`} (p ${t.p.toFixed(4)}, needs ${g.merge_rule.max_p})${h ? `; hidden: won ${h.wins}, lost ${h.losses} (p ${signP(h.wins, h.losses).toFixed(4)}, needs ${g.merge_rule.holdout_max_p})` : "; hidden: not tried"}`);
     }
     if (written.population && !written.population.candidate) console.log(`      pool: no merge candidate, ${written.population.skipped}`);
     if (population) console.log(`      pool after the round: ${JSON.stringify((repo.state.pool ?? []).map((e) => ({ id: e.id, wonOn: e.wonOn.join(",") })))}`);

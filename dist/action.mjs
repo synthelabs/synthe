@@ -28893,7 +28893,7 @@ function modelProblem(e) {
 // src/core/run-alpha.ts
 var WRITTEN_PER_ROUND = 2;
 function plannedCandidates(goal, scored = 0) {
-  return Math.max(WRITTEN_PER_ROUND + (goal.compose === true ? 1 : 0), scored);
+  return Math.max(WRITTEN_PER_ROUND + (goal.compose === true || goal.population === true ? 1 : 0), scored);
 }
 function heldBackLimit(goal, candidates) {
   const base = goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p;

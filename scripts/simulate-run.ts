@@ -6,7 +6,7 @@
 //   node scripts/simulate-run.ts 2000 7      2,000 runs per cell, seed 7
 //
 // A run is what the workflow does: rounds until max_rounds, or until stall_rounds rounds in a row merge nothing.
-// Each round tries 2 candidates (3 with compose). Only the best candidate that passes training gets held-back
+// Each round tries 2 candidates (3 with compose or population). Only the best candidate that passes training gets held-back
 // duels, as in runScore. While the last merge is live, the prompt it replaced challenges the current one on every
 // case and a clear win puts it back (a revert counts as a round without a winner, as in decide.ts).
 // Each duel is independent: a win, loss or tie with the true rates below. Prompts carry a true quality; a change

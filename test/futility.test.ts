@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Scenario } from "../src/core/goal.ts";
-import { judgeRound, mean, trainingProblem, type ScoreRow } from "../src/core/merge-rule.ts";
+import { DEFAULTS, type Scenario } from "../src/core/goal.ts";
+import { candidateTrainingProblem, judgeRound, mean, trainingProblem, type ScoreRow } from "../src/core/merge-rule.ts";
 import { couldStillPass, inChunks } from "../src/loop/futility.ts";
+import { lengthShift } from "../src/loop/length.ts";
 import { explainScores, runScore } from "../src/loop/score.ts";
 import { runDecide } from "../src/loop/decide.ts";
 import type { Ask, Model } from "../src/model/client.ts";
@@ -146,6 +147,59 @@ test("with compose on, the writer's candidates are scored in full, since compose
   const { scores } = await runScore(goal({ compose: true }), "Base", [{ id: "loser", text: "Loser" }], cases(24), m, null, () => 0.3);
   assert.equal(scores.candidates[0].stoppedAfter, undefined);
   assert.equal(duels(m, "Loser"), 24);
+});
+
+test("a shorter candidate is stopped only once it can no longer show it is no worse, not once it can no longer be better", async () => {
+  // On 24 cases: the first 18 split 6 wins, 6 losses and 6 ties, then the last 6 are wins (12-6 in all). Even winning
+  // the last six, 12-6 isn't clearly better (sign test p 0.119), so an ordinary candidate stops after 18. A shorter
+  // one (merge_rule.allow_shorter) only has to be no worse, which 12-6 shows (p 0.006), so it is dueled to the end.
+  const pattern = (id: string) => (idx(id) >= 18 ? "win" : (["win", "loss", "tie"] as const)[idx(id) % 3]);
+  const allow = goal({ merge_rule: { ...DEFAULTS.merge_rule, allow_shorter: true } });
+  const set = cases(24);
+  const short = { id: "short", text: "Short", kind: "shorter" as const };
+  const m = world({ Short: pattern });
+  const { scores } = await runScore(allow, "Base", [short], set, m, null, () => 0.3);
+  const c = scores.candidates[0];
+  assert.equal(c.kind, "shorter");
+  assert.equal(c.stoppedAfter, undefined);
+  // All 24 training cases, then the 4 hidden ones: it passed training, so it is the round's leader.
+  assert.equal(duels(m, "Short"), 28);
+  assert.equal(c.holdout?.length, 4);
+  assert.equal(candidateTrainingProblem(c, scores.baselineTrain, allow), null, "no worse on training");
+  assert.notEqual(trainingProblem(c, scores.baselineTrain, allow), null, "but not clearly better");
+  // The same replies under the superiority rule stop after 18: with allow_shorter off, or as an ordinary candidate.
+  for (const [g, cand] of [[goal(), short], [allow, { id: "short", text: "Short" }]] as const) {
+    const again = world({ Short: pattern });
+    const r = await runScore(g, "Base", [cand], set, again, null, () => 0.3);
+    assert.equal(r.scores.candidates[0].stoppedAfter, 18);
+    assert.equal(duels(again, "Short"), 18);
+  }
+  // A shorter candidate that keeps losing is still stopped, by its own rule, and the round says it stopped.
+  const lose = world({ Short: () => "loss" });
+  const lost = await runScore(allow, "Base", [short], set, lose, null, () => 0.3);
+  const l = lost.scores.candidates[0];
+  assert.ok(l.stoppedAfter !== undefined && l.stoppedAfter < 24);
+  assert.equal(duels(lose, "Short"), l.stoppedAfter);
+  assert.match(candidateTrainingProblem(l, lost.scores.baselineTrain, allow)!, new RegExp(`short: stopped after ${l.stoppedAfter} test cases, it could no longer pass`));
+  assert.equal(judgeRound(lost.scores, allow, null).notes.short, `Stopped after ${l.stoppedAfter} cases: it could no longer pass.`);
+  // One chunk earlier it could still have passed the no-worse test by winning the rest.
+  const base = set.filter((s) => s.split === "train").map((s): ScoreRow => ({ id: s.id, score: 50, violation: null }));
+  const train = set.filter((s) => s.split === "train");
+  const before = l.stoppedAfter! - 6;
+  assert.equal(couldStillPass("short", l.train.slice(0, before), train.slice(before), base, allow, "shorter"), true);
+  assert.equal(couldStillPass("short", l.train.slice(0, l.stoppedAfter), train.slice(l.stoppedAfter), base, allow, "shorter"), false);
+});
+
+test("reply lengths come only from the cases a stopped candidate was dueled on", async () => {
+  const m = world({ Fader: (id) => (idx(id) < 6 ? "win" : "loss") });
+  const { scores } = await runScore(goal(), "Base", [{ id: "fader", text: "Fader" }], cases(24), m, null, () => 0.3);
+  const c = scores.candidates[0];
+  assert.equal(c.stoppedAfter, 18);
+  assert.ok(c.train.slice(0, 18).every((r) => Number.isSafeInteger(r.chars) && Number.isSafeInteger(r.currentChars)));
+  assert.ok(c.train.slice(18).every((r) => r.chars === undefined && r.currentChars === undefined));
+  const shift = lengthShift(c.train);
+  assert.ok(shift && shift.before > 0 && shift.after > shift.before, "Fader's replies are a character longer than Base's");
+  assert.deepEqual(shift, lengthShift(c.train.slice(0, 18)));
 });
 
 test("chunks run in order, stop between chunks, and must be even to keep the reply order balanced", async () => {

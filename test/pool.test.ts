@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseGoal, type Goal, type Scenario } from "../src/core/goal.ts";
+import { DEFAULTS, parseGoal, type Goal, type Scenario } from "../src/core/goal.ts";
 import { judgeRound, type CandidateScore, type RoundScores, type ScoreRow } from "../src/core/merge-rule.ts";
+import { heldBackLimit, plannedCandidates } from "../src/core/run-alpha.ts";
 import { candidateFingerprint } from "../src/core/candidate-history.ts";
 import { sha256 } from "../src/core/safety.ts";
 import { newState, type PoolEntry, type State } from "../src/core/state.ts";
@@ -333,6 +334,27 @@ test("with population on, futility stopping duels in full every candidate the po
   // never on the unscored cases.
   const { stoppedAfter: _, ...unstopped } = partial;
   assert.deepEqual(update({ candidates: [ruleA], scores: scoresOf(unstopped) }).map((e) => e.wonOn), [["t1", "t2"]]);
+});
+
+test("with population on, merge_rule.run_alpha plans for the pool's candidate, and no round scores more than planned", async () => {
+  assert.equal(plannedCandidates(goal()), 2);
+  assert.equal(plannedCandidates(on()), 3);
+  assert.equal(plannedCandidates(on({ compose: true })), 3, "compose sits out a round where the pool added one");
+  const capped = on({ merge_rule: { ...DEFAULTS.merge_rule, run_alpha: 0.05 } });
+  assert.ok(Math.abs(heldBackLimit(capped, plannedCandidates(capped)) - 0.05 / (12 * 3 * 0.05)) < 1e-12);
+  // Real rounds, population alone and with compose: the most any round scores is the planned three.
+  let most = 0;
+  for (const over of [{}, { compose: true }]) {
+    const repo = freshRepo();
+    const m = world();
+    for (let n = 1; n <= 3; n++) {
+      const { scored } = await round(on(over), repo, m);
+      const count = scored.scores.candidates.length;
+      most = Math.max(most, count);
+      assert.ok(count <= plannedCandidates(on(over)), `round ${n} with ${JSON.stringify(over)} scored ${count}`);
+    }
+  }
+  assert.equal(most, 3);
 });
 
 test("the gate still refuses a merge candidate that doesn't win the hidden cases", async () => {
