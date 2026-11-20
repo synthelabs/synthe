@@ -188,7 +188,7 @@ test("the key goes only to the configured base URL; OPENAI_BASE_URL and other ke
     const provider: OtherProvider = { kind: "openai-compatible", base_url: `${url(server)}/v1` };
     fake.queue.push(ok("one"), ok("two"));
     assert.equal((await providerModel(provider, "team-key").ask(ask)).text, "one");
-    assert.equal((await configuredModel("team-key", "event-code", true, undefined, provider).ask(ask)).text, "two");
+    assert.equal((await configuredModel("team-key", provider).ask(ask)).text, "two");
   } finally { process.env = saved; }
   assert.equal(other.seen.length, 0);
   assert.equal(fake.seen.length, 2);
@@ -196,8 +196,8 @@ test("the key goes only to the configured base URL; OPENAI_BASE_URL and other ke
     assert.equal(s.headers.authorization, "Bearer team-key");
     assert.ok(!s.url.includes("team-key") && !s.url.includes("app-key"));
   }
-  // No key: event credit doesn't cover another provider, so nothing is sent anywhere.
-  assert.throws(() => configuredModel(undefined, "event-code", true, undefined, { kind: "openai-compatible", base_url: `${url(server)}/v1` }), /no key for it is set.*SYNTHE_API_KEY/);
+  // No key: nothing is sent anywhere, and the error says which secret to set.
+  assert.throws(() => configuredModel(undefined, { kind: "openai-compatible", base_url: `${url(server)}/v1` }), /no key for it is set.*SYNTHE_API_KEY/);
   assert.equal(fake.seen.length, 2);
 });
 
@@ -218,7 +218,7 @@ test("old goal files parse exactly as before, with no provider, and still use th
     return new Response(JSON.stringify({ id: "m", type: "message", role: "assistant", model: "claude-haiku-5-5", stop_reason: "end_turn", stop_sequence: null, content: [{ type: "text", text: "OK" }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } });
   };
   try {
-    assert.equal((await configuredModel("sk-ant-x", undefined, false, undefined, goal.provider).ask({ model: "claude-haiku-5-5", user: "hi", maxTokens: 5 })).text, "OK");
+    assert.equal((await configuredModel("sk-ant-x", goal.provider).ask({ model: "claude-haiku-5-5", user: "hi", maxTokens: 5 })).text, "OK");
     assert.equal((await providerModel(goal.provider, "sk-ant-x").ask({ model: "claude-haiku-5-5", user: "hi", maxTokens: 5 })).text, "OK");
   } finally {
     globalThis.fetch = real;
@@ -254,7 +254,7 @@ test("parseGoal validates the provider: https, or http only on this machine, and
 
 test("local commands and improve take another provider's key only from SYNTHE_API_KEY", () => {
   const provider: OtherProvider = { kind: "openai-compatible", base_url: "https://api.example.com/v1", prices: { w: { input: 1, output: 2 } } };
-  const apps = { OPENAI_API_KEY: "app", ANTHROPIC_API_KEY: "sk-ant-app", SYNTHE_ANTHROPIC_KEY: "sk-ant-own", SYNTHE_EVENT_CODE: "event" };
+  const apps = { OPENAI_API_KEY: "app", ANTHROPIC_API_KEY: "sk-ant-app", SYNTHE_ANTHROPIC_KEY: "sk-ant-own" };
   assert.equal(localCredential(apps, provider), null);
   assert.deepEqual(localCredential({ ...apps, SYNTHE_API_KEY: "mine" }, provider), { key: "mine", line: "Credential: your own key from SYNTHE_API_KEY, sent to api.example.com and charged to that account." });
   // An Anthropic goal is unchanged, and also takes SYNTHE_API_KEY.
@@ -296,7 +296,6 @@ function setupIo(dir: string, answers: Record<string, string>) {
     template: () => readFileSync("templates/synthe.yml", "utf8"),
     sleep: async () => {},
     model: () => { throw new Error("an Anthropic call in an OpenAI-compatible setup"); },
-    proxy: () => { throw new Error("a proxy call in an OpenAI-compatible setup"); },
     other: (provider, key): Model => ({ ask: async (a) => { calls.push({ provider, key, model: a.model }); return { text: scenarioReply, costUsd: 0.01 }; } }),
     async run(cmd, args, stdin) {
       ran.push({ cmd, args, stdin });
@@ -364,14 +363,14 @@ test("init refuses an unsafe --base-url, and a pasted non-Anthropic key is only 
   assert.match(refused.said.at(-1)!, /--base-url must use https.*Nothing changed/);
   assert.equal(refused.calls.length, 0);
 
-  const pasted = setupIo(dir, { "Type that API's base URL": "https://api.example.com/v1", "Price of gpt-4.1-mini per million": "1" });
+  const pasted = setupIo(dir, { "To use it with another provider": "https://api.example.com/v1", "Price of gpt-4.1-mini per million": "1" });
   pasted.io.askSecret = async () => "sk-proj-typed";
   assert.equal(await init(pasted.io, dir, undefined, "", {}), true);
   assert.match(pasted.said.join("\n"), /another provider's key.*Nothing was sent/);
   assert.ok(pasted.calls.length > 0 && pasted.calls.every((c) => c.key === "sk-proj-typed" && c.provider.base_url === "https://api.example.com/v1"));
   assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).provider?.kind, "openai-compatible");
 
-  // SYNTHE_API_KEY holding another provider's key, without --base-url, is never taken for an event code.
+  // SYNTHE_API_KEY holding another provider's key, without --base-url, is never used as an Anthropic key.
   const dir2 = setupRepo();
   const envOnly = setupIo(dir2, {});
   envOnly.io.askSecret = async () => "";

@@ -5,17 +5,15 @@ import { sumCosts } from "./core/cost.ts";
 import { calibrationReadings, resumeIfScenariosChanged, stopReason } from "./core/state.ts";
 import { sha256 } from "./core/safety.ts";
 import { githubRepo, type Repo } from "./github/repo.ts";
-import { configuredModel, eventModels } from "./model/client.ts";
+import { configuredModel } from "./model/client.ts";
 import { runDecide } from "./loop/decide.ts";
-import { fullShareActive, requireOidc, sharePayload, shareRound, shouldShare } from "./core/share.ts";
+import { sharePayload, shareRound, shouldShare } from "./core/share.ts";
 import packageJson from "../package.json" with { type: "json" };
 import { roundSummary } from "./loop/report.ts";
 import { failureOf, type Failure } from "./loop/failure.ts";
 import { explainScores, runScore } from "./loop/score.ts";
 import { explainWrite, runWrite } from "./loop/write.ts";
 import { explainCompose, withComposed } from "./loop/compose.ts";
-import { captureCancel, captureFailure, flushEvents, observeRoundStep, startEventsWorker } from "./core/events.ts";
-import { deliverReceipt } from "./core/receipts.ts";
 import { cleanStop, countCalls, type CleanStop } from "./core/calls.ts";
 
 const OUT = ".synthe-out";
@@ -40,7 +38,6 @@ async function stillWaiting(repo: Repo, branch: string): Promise<boolean> {
 // The model key. api-key (SYNTHE_API_KEY) serves whichever provider synthe.json names. anthropic-api-key
 // (SYNTHE_ANTHROPIC_KEY) is the older name, still passed by every workflow installed before api-key existed, so it
 // keeps working for Anthropic. It is never sent to another provider: it is an Anthropic key.
-// undefined provider: before synthe.json is read, only to tell whether any own key is set.
 function actionKey(provider: Provider | undefined): string | undefined {
   const generic = (input("api-key") || process.env.SYNTHE_API_KEY)?.trim();
   if (provider?.kind === "openai-compatible") return generic || undefined;
@@ -53,13 +50,12 @@ let counter: ReturnType<typeof countCalls> | null = null;
 
 async function main() {
   const step = input("step");
-  if (step === "receipt-start" || step === "receipt-finish") {
-    const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"), { conclusion: input("conclusion") });
-    console.log(acknowledged ? "Crimson tracking acknowledged this run." : "Crimson tracking does not apply to this run.");
+  // Steps that workflows from older versions still call. They do nothing now, and succeed so the round goes on.
+  if (step === "cancel" || step === "receipt-start" || step === "receipt-finish") {
+    console.log(`The ${step} step is no longer used. Run \`npx synthe upgrade\` to remove it from your workflow.`);
     return;
   }
-  if (step === "cancel") return captureCancel();
-  if (step !== "decide" && !actionKey(undefined)?.trim() && (input("event-code") || process.env.SYNTHE_EVENT_CODE)?.trim()) requireOidc();
+
   const repo = githubRepo(process.env.GITHUB_REPOSITORY!, input("github-token"), process.env.GITHUB_API_URL);
 
   if (step === "decide") {
@@ -74,15 +70,9 @@ async function main() {
     const calls = [written?.calls, scored?.calls, error?.calls].reduce((n: number, c) => n + (typeof c === "number" ? c : 0), 0);
     const stopped: CleanStop | null = scored?.stopped ?? written?.stopped ?? null;
     const goal = parseGoal(goalText);
-    const fullNow = new Date();
-    const fullActive = fullShareActive(goal, fullNow);
-    const beforeState = fullActive ? await repo.readState() : null;
-    const startSource = fullActive && beforeState?.round === 0 ? await repo.readFile(goal.prompt.path, branch) : null;
-    const startPrompt = startSource === null || !beforeState ? null : readPrompt(startSource, goal, beforeState.prompt);
-    const scenarios = startPrompt !== null ? await repo.readFile(goal.scenarios, branch) : null;
     const calibrationText = await repo.readFile(".synthe/calibration.json", branch);
     const calibration = calibrationText === null ? null : calibrationReadings(calibrationText);
-    const record = await observeRoundStep("decide", { candidates: written?.candidates }, () => runDecide(goal, repo, { candidates: withComposed(written?.candidates, scored?.compose), scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error, calls, stopped, calibration, caches: { attack: scored?.attackCache ?? null, score: scored?.scoreCache ?? null } }));
+    const record = await runDecide(goal, repo, { candidates: withComposed(written?.candidates, scored?.compose), scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error, calls, stopped, calibration, caches: { attack: scored?.attackCache ?? null, score: scored?.scoreCache ?? null } });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : stopped ? stopped.message : "Stopped; nothing to do.");
     const state = await repo.readState();
     if (record && state.chainReady && state.round === record.round && state.round < goal.merge_rule.max_rounds && !state.stopped && !state.proposal && !state.pending) {
@@ -99,13 +89,7 @@ async function main() {
     }
     if (record && shouldShare(goal)) {
       const sharedState = await repo.readState();
-      const finalSource = fullActive && sharedState.stopped ? await repo.readFile(goal.prompt.path, branch) : null;
-      const finalPrompt = finalSource === null ? null : readPrompt(finalSource, goal, sharedState.prompt);
-      const full = fullActive ? {
-        ...(record.round === 1 && startPrompt !== null && scenarios !== null ? { prompt: startPrompt, scenarios } : {}),
-        ...(sharedState.stopped && finalPrompt !== null ? { finalPrompt } : {}),
-      } : undefined;
-      console.log(await shareRound(sharePayload(goal, sharedState, record, packageJson.version, full, new Date()), process.env));
+      console.log(await shareRound(sharePayload(goal, sharedState, record, packageJson.version), process.env));
     }
     // The run's own page then says what happened, for whoever opens it from the Actions tab.
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(goal, await repo.readState(), record, process.env.GITHUB_REPOSITORY!));
@@ -159,13 +143,10 @@ async function main() {
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, state.prompt);
   if (prompt === null) throw new Error(`could not find the prompt in ${goal.prompt.path}`);
   const scenarios = parseScenarios(readFileSync(goal.scenarios, "utf8"));
-  const key = actionKey(goal.provider);
-  const eventCode = input("event-code") || process.env.SYNTHE_EVENT_CODE;
-  if (!key && eventCode && goal.provider?.kind !== "openai-compatible") eventModels(goal.models);
   const maxCalls = goal.budget.max_calls;
   // State only learns this round's calls at decide, so scoring also subtracts what the write step just made.
   const writeCalls = step === "score" ? Number(load<{ calls?: number }>("candidates.json")?.calls ?? 0) : 0;
-  counter = countCalls(configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE, goal.provider), maxCalls === undefined ? Infinity : maxCalls - (state.calls ?? 0) - writeCalls, maxCalls);
+  counter = countCalls(configuredModel(actionKey(goal.provider), goal.provider), maxCalls === undefined ? Infinity : maxCalls - (state.calls ?? 0) - writeCalls, maxCalls);
   const model = counter.model;
   const steps = counter;
   // A free limit used up, or the run's call cap reached: the step ends cleanly and hands the stop to decide, which
@@ -180,7 +161,7 @@ async function main() {
   if (step === "write") {
     let written;
     try {
-      written = await observeRoundStep("write", { prompt }, () => runWrite(goal, state, prompt, scenarios, model));
+      written = await runWrite(goal, state, prompt, scenarios, model);
     } catch (e) {
       stopCleanly("write", e, "candidates.json");
       // "true" so the score job runs and carries the stop to decide, the only job that writes state.
@@ -206,7 +187,7 @@ async function main() {
     const attacks: Attack[] = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync(ATTACKS_FILE, "utf8")) : [];
     let scored;
     try {
-      scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null, state.scoreCache ?? null));
+      scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null, state.scoreCache ?? null);
     } catch (e) {
       stopCleanly("score", e, "scores.json");
       return;
@@ -224,13 +205,8 @@ async function main() {
   }
 }
 
-if (!startEventsWorker()) main().then(() => flushEvents(), async (e) => {
+main().catch((e) => {
   const step = input("step");
-  if (step === "receipt-start" || step === "receipt-finish") {
-    console.log(`::error title=Crimson tracking::${e.message}`);
-    process.exit(1);
-  }
-  captureFailure(input("step"), e);
   console.error(e);
   // The decide step reads this to tell a busy API (try again next hour) from a key a person has to replace.
   if (step === "write" || step === "score") {
@@ -242,6 +218,5 @@ if (!startEventsWorker()) main().then(() => flushEvents(), async (e) => {
       console.log(`::error title=Synthe::${failure.message.replace(/\r?\n/g, " ")}`);
     } catch (saveError) { console.error(saveError); }
   }
-  await flushEvents();
   process.exit(1);
 });

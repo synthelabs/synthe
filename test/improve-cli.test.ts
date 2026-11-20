@@ -201,12 +201,9 @@ test("improve runs the loop by default; --rounds, --budget and --lessons are che
 });
 
 test("the loop's credential comes only from Synthe's variables, is never printed, and ANTHROPIC_API_KEY is never used", () => {
-  const own = loopCredential({ SYNTHE_ANTHROPIC_KEY: "sk-ant-own-1234", SYNTHE_EVENT_CODE: "event", SYNTHE_TEAM_CODE: "crim-abcd-efgh-jkmn-pqrs" });
+  const own = loopCredential({ SYNTHE_ANTHROPIC_KEY: " sk-ant-own-1234 ", ANTHROPIC_API_KEY: "sk-ant-app" });
   assert.deepEqual(own, { credential: { key: "sk-ant-own-1234", line: "Credential: your own key from SYNTHE_ANTHROPIC_KEY, charged to that Anthropic account." } });
-  const event = loopCredential({ SYNTHE_EVENT_CODE: " event ", SYNTHE_TEAM_CODE: " CRIM-ABCD-EFGH-JKMN-PQRS ", ANTHROPIC_API_KEY: "sk-ant-app" });
-  assert.deepEqual(event, { credential: { eventCode: "event", teamCode: "crim-abcd-efgh-jkmn-pqrs", line: "Credential: Crimson Hacks event credit, with your team code from SYNTHE_TEAM_CODE." } });
-  assert.match((loopCredential({ SYNTHE_EVENT_CODE: "event" }) as { problem: string }).problem, /SYNTHE_TEAM_CODE isn't/);
-  assert.match((loopCredential({ SYNTHE_EVENT_CODE: "event", SYNTHE_TEAM_CODE: "team-7" }) as { problem: string }).problem, /doesn't look like a team code/);
+  assert.equal("problem" in loopCredential({ SYNTHE_ANTHROPIC_KEY: "  " }), true, "a blank key is no credential");
   const none = (loopCredential({ ANTHROPIC_API_KEY: "sk-ant-app-key" }) as { problem: string }).problem;
   assert.ok(none.includes("ANTHROPIC_API_KEY is not used") && none.includes("npx synthe improve --handoff") && !none.includes("sk-ant"));
 });

@@ -12,7 +12,7 @@ export interface VaultIo {
   ask(question: string): Promise<string>;
   // gh, for the repo name and the state file on the state branch. Never git or anything that runs the team's hooks.
   run(cmd: string, args: string[], stdin?: string): Promise<string>;
-  // The model to spend on and the line that names whose credit it is, or null when nothing is set.
+  // The model to spend on and the line that names whose key is charged, or null when no key is set.
   credential(goal: Goal): { model: Model; line: string } | null;
   now?: () => Date;
   random?: () => number;
@@ -90,8 +90,8 @@ export async function vault(io: VaultIo, args: string[]): Promise<number> {
   if (!credential) {
     if (goal.provider?.kind === "openai-compatible") io.say(`\`npx synthe vault\` runs on your computer and needs your key for ${providerHost(goal.provider)}. Set SYNTHE_API_KEY in your environment, then run this again.`);
     else {
-      io.say("`npx synthe vault` runs on your computer and needs an event code or your own Anthropic key.");
-      io.say("Set SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE, or SYNTHE_API_KEY, SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY, in your environment, then run this again.");
+      io.say("`npx synthe vault` runs on your computer and needs your own Anthropic key.");
+      io.say("Set SYNTHE_API_KEY, SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY in your environment, then run this again.");
     }
     return 1;
   }

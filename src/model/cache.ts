@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-// Prompt caching on the own-key path. Within a round the runner gets the same system prompt for every test case,
+// Prompt caching. Within a round the runner gets the same system prompt for every test case,
 // and the judge and checker get the same goal, guardrails and policy, so each request marks the end of its system
 // prompt as a cache breakpoint and later requests read that prefix at a tenth of the input price or less.
 //

@@ -234,7 +234,6 @@ function setupIo(dir: string, answers: Record<string, string>, secret = "free-ke
     template: () => readFileSync("templates/synthe.yml", "utf8"),
     sleep: async () => {},
     model: () => { throw new Error("an Anthropic call on the free path"); },
-    proxy: () => { throw new Error("a proxy call on the free path"); },
     other: (provider, key): Model => ({ ask: async (a) => { calls.push({ base: provider.base_url, key, model: a.model }); return { text: scenarioReply, costUsd: 0 }; } }),
     // Every preset's suggested models, plus two of OpenRouter's: never a real network call from a test.
     listModels: async (base, key) => { listed.push({ base, key }); return { ok: true, models: LISTED }; },
@@ -257,7 +256,7 @@ test("init offers free providers to a team with no key, and a free-tier key gets
   const gemini = PRESETS.find((p) => p.id === "gemini")!;
   const { io, ran, said, asked, calls } = setupIo(dir, { "Type a number, or press Enter": "1", "free tier": "y" });
   assert.equal(await init(io, dir, undefined, "", {}), true);
-  assert.equal(asked[0], "Type a number, or press Enter for a Crimson Hacks event code or your own Anthropic key: ");
+  assert.equal(asked[0], "Type a number, or press Enter for your own Anthropic key: ");
   assert.ok(said.some((s) => s.includes(`1. Google Gemini: get a free key at ${gemini.signup}`)));
   assert.ok(said.some((s) => s.includes("Free tiers have limits the provider sets; Synthe stops cleanly when they run out, and a paid key removes them.")));
   assert.ok(asked.includes("Is this key on Google Gemini's free tier? Type y, or n if it's a paid key: "));
@@ -273,7 +272,7 @@ test("init offers free providers to a team with no key, and a free-tier key gets
   assert.doesNotMatch(said.join("\n"), /\d+\s*(requests|calls|tokens)\s*(per|a|each)\s*(minute|day|hour)/i);
 });
 
-test("a paid key from a preset gives real prices and no cap; Enter keeps the event code or Anthropic path", async () => {
+test("a paid key from a preset gives real prices and no cap; Enter keeps the Anthropic path", async () => {
   const dir = setupRepo();
   const groq = PRESETS.find((p) => p.id === "groq")!;
   const answers: Record<string, string> = { "Type a number, or press Enter": "2", "free tier": "n" };

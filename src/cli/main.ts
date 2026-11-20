@@ -7,7 +7,7 @@ import { newState, type State } from "../core/state.ts";
 import { sha256 } from "../core/safety.ts";
 import { headline } from "../loop/report.ts";
 import { powerLines } from "../core/power.ts";
-import { anthropicModel, configuredModel, eventModels, modelProblem, providerHost } from "../model/client.ts";
+import { anthropicModel, configuredModel, modelProblem, providerHost } from "../model/client.ts";
 import { explainNoise, measureNoise } from "../loop/score.ts";
 import { runLocalTry } from "./try-round.ts";
 import { localCredential } from "./local-credential.ts";
@@ -224,21 +224,20 @@ function localRun(command: string) {
     process.exitCode = 1;
     return null;
   }
-  const { key, eventCode, teamCode } = credential;
   console.log(credential.line);
-  if (!key && eventCode) eventModels(goal.models);
+
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, teamCode, goal.provider) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync(goal.scenarios, "utf8")), model: configuredModel(credential.key, goal.provider) };
 }
 
 function noLocalCredential(command: string, goal: Goal): string {
   if (goal.provider?.kind === "openai-compatible") return `\`npx synthe ${command}\` runs on your computer, changing nothing, and needs your key for ${providerHost(goal.provider)}. Set SYNTHE_API_KEY in your environment, then run this again.`;
-  return `\`npx synthe ${command}\` runs on your computer, changing nothing, and needs an event code or your own Anthropic key.\nSet SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE, or SYNTHE_API_KEY, SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY, in your environment, then run this again.`;
+  return `\`npx synthe ${command}\` runs on your computer, changing nothing, and needs your own Anthropic key.\nSet SYNTHE_API_KEY, SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY in your environment, then run this again.`;
 }
 
 // Compares the prompt now with the one the run started from on the vault cases, which no round ever reads.
@@ -248,9 +247,7 @@ async function vaultCheck() {
     cwd: process.cwd(), say: console.log, ask, run,
     credential: (goal) => {
       const c = localCredential(process.env, goal.provider);
-      if (!c) return null;
-      if (!c.key && c.eventCode) eventModels(goal.models);
-      return { model: configuredModel(c.key, c.eventCode, false, c.teamCode, goal.provider), line: c.line };
+      return c ? { model: configuredModel(c.key, goal.provider), line: c.line } : null;
     },
   }, process.argv.slice(3));
 }
@@ -301,7 +298,7 @@ Start here, inside your project's folder:
   npx synthe init     set up this repo and start
   npx synthe init --base-url URL   the same, with any OpenAI-compatible provider's models (OpenAI, Gemini, Groq, OpenRouter, a local Ollama...)
   npx synthe guide    instructions for setup through a coding agent
-  npx synthe improve  raise a number you choose (tests passing, bundle size, build time or your own command): Synthe proposes code changes, measures each one, keeps only wins and opens one pull request (event code or own key; no AI prompt needed)
+  npx synthe improve  raise a number you choose (tests passing, bundle size, build time or your own command): Synthe proposes code changes, measures each one, keeps only wins and opens one pull request (own key; no AI prompt needed)
   npx synthe improve --rounds N --budget USD   at most N rounds (default 6) and USD dollars of model cost (default 1.50)
   npx synthe improve --handoff   measure only, and make the change with the coding agent you already use; then:
   npx synthe submit   measure that change; open the pull request, or merge it in auto mode
@@ -310,17 +307,16 @@ Then:
   npx synthe status   where it is and what it changed
   npx synthe changes  what it changed, and how the score moved
   npx synthe upgrade  update only the installed workflow for chained rounds
-  npx synthe upgrade --event  install Crimson tracking in an existing event repo
   npx synthe verify FILE   check a round's evidence record (.synthe/evidence/round-N.json)
   npx synthe undo N   open a pull request that puts back the prompt from before round N
   npx synthe stop     stop it; nothing more runs or changes
   npx synthe restart  start it again, after stop or once you've fixed what stopped it
-  npx synthe key      save your own model key (Anthropic, or the OpenAI-compatible provider in synthe.json) for the workflow
-  npx synthe try      run one round on your computer, changing nothing (event code or own key)
+  npx synthe key      save your own model key (Anthropic, or the OpenAI-compatible provider in synthe.json)
+  npx synthe try      run one round on your computer, changing nothing (own key)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
-  npx synthe vault   at the end of a run, compare your prompt with the one it started from on the "vault" test cases no round ever saw (event code or own key; asks before spending)
-  npx synthe calibrate     check that your checks are marked steadily and the way you mean them (event code or own key)
-  npx synthe calibrate --judge   check that the judge picks between two replies the way you do, and whether it favours longer ones (event code or own key)
+  npx synthe vault   at the end of a run, compare your prompt with the one it started from on the "vault" test cases no round ever saw (own key; asks before spending)
+  npx synthe calibrate     check that your checks are marked steadily and the way you mean them (own key)
+  npx synthe calibrate --judge   check that the judge picks between two replies the way you do, and whether it favours longer ones (own key)
   npx synthe migrate --to <model>   compare your prompt on another model, changing nothing (needs SYNTHE_API_KEY, or SYNTHE_ANTHROPIC_KEY for Anthropic; add --dry-run to spend nothing)
 
 Enterprise pilot (one support agent, one production metric, changes a person reviews):
@@ -339,7 +335,7 @@ async function main() {
     if (!setUpHere()) return;
     process.exitCode = (await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync(GOAL_FILE, "utf8")).provider, process.cwd())) ? 0 : 1;
   }
-  else if (command === "upgrade") console.log(upgrade(process.cwd(), template(), process.argv.includes("--event")));
+  else if (command === "upgrade") console.log(upgrade(process.cwd(), template()));
   else if (command === "stop") await stop();
   else if (command === "status") await status();
   else if (command === "changes") await changes();

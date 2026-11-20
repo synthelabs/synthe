@@ -13,7 +13,7 @@ export interface RoundRecord {
   examplePair?: { input: string; beforeReply: string; afterReply: string; improvedChecks: string[] };
   edits?: { find: string; replace: string }[];
   // Why a failed round's write or score step failed, when it said; the report's advice depends on it.
-  failure?: "busy" | "key" | "credit" | "other";
+  failure?: "busy" | "key" | "credit" | "other"; // "credit": written by older versions only
   // The share of the team's checks passed before and after a merged or proposed change, as whole percentages.
   checks?: { before: number; after: number };
   // The same for the team's guards, when they set counter_checks.

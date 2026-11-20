@@ -9,22 +9,12 @@ const SECRETS: [RegExp, string][] = [
   [/(?<![\w.])\+?\d[\d ().-]{8,}\d(?![\w.])/g, "[phone removed]"],
 ];
 export const scrub = (text: string): string => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
-export const FULL_SHARE_UNTIL = "2026-11-09T23:59:00Z";
 // The version of the sharing notice init showed when the team set up. Changing the notice text means a new version.
-export const SHARE_NOTICE_VERSION = "crimson-2026-11-v1";
-export const fullShareActive = (goal: Goal, now: Date = new Date()): boolean => goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL);
+// v2: setup no longer offers the time-limited "full" notice; the numbers and detail texts are unchanged.
+export const SHARE_NOTICE_VERSION = "share-2026-11-v2";
+// "full" is an older setting, kept so existing synthe.json files still load. It shares what "detail" shares.
 export const shouldShare = (goal: Goal): boolean => goal.share === "numbers" || goal.share === "detail" || goal.share === "full";
 const limited = (text: string, max: number) => scrub(text).slice(0, max);
-const fullText = (text: string): string => {
-  const clean = scrub(text);
-  const bytes = Buffer.from(clean);
-  return bytes.length <= 100 * 1024 ? clean : bytes.subarray(0, 100 * 1024).toString("utf8").replace(/\uFFFD$/, "");
-};
-// Vault test cases are never shared, even with share "full": only `npx synthe vault` looks at them. Held-back rows
-// are shared as before. Lines that aren't a vault row (including any that aren't JSON) pass through unchanged.
-const withoutVault = (text: string): string => text.split("\n").filter((line) => {
-  try { return (JSON.parse(line) as { split?: unknown } | null)?.split !== "vault"; } catch { return true; }
-}).join("\n");
 const measure = (value: number | null | undefined, max: number): number | null =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : null;
 
@@ -47,10 +37,9 @@ interface SharePayload {
     change: { title: string; summary: string; edits: { find: string; replace: string }[] } | null;
     example: { input: string; before: string; after: string } | null;
   };
-  full?: Record<string, string>;
 }
 
-export function sharePayload(goal: Goal, state: State, record: RoundRecord, version: string, full?: { prompt?: string; scenarios?: string; finalPrompt?: string }, now: Date = new Date()): SharePayload {
+export function sharePayload(goal: Goal, state: State, record: RoundRecord, version: string): SharePayload {
   const payload = {
     round: record.round,
     outcome: record.outcome,
@@ -64,7 +53,7 @@ export function sharePayload(goal: Goal, state: State, record: RoundRecord, vers
   };
   if (goal.share !== "detail" && goal.share !== "full") return payload;
   const edits = record.edits?.slice(0, 2).map((edit) => ({ find: limited(edit.find, 1500), replace: limited(edit.replace, 1500) }));
-  const detailPayload = {
+  return {
     ...payload,
     detail: {
       objective: limited(goal.objective, 2000),
@@ -81,30 +70,12 @@ export function sharePayload(goal: Goal, state: State, record: RoundRecord, vers
       } : null,
     },
   };
-  if (!fullShareActive(goal, now) || !full) return detailPayload;
-  const fullValue: Record<string, string> = Object.fromEntries(Object.entries(full).filter(([, value]) => value !== undefined).map(([key, value]) => [key, fullText(key === "scenarios" ? withoutVault(value!) : value!)]));
-  const result = { ...detailPayload, full: fullValue };
-  // A first round can also be the stopping round. Keep the whole request under the endpoint's 256 KB limit.
-  while (Buffer.byteLength(JSON.stringify(result)) > 256 * 1024) {
-    const [key, value] = Object.entries(fullValue).sort((a, b) => b[1].length - a[1].length)[0];
-    fullValue[key] = value.slice(0, Math.max(0, value.length - 1024));
-  }
-  return result;
 }
 
 type OidcEnv = Partial<Pick<NodeJS.ProcessEnv, "ACTIONS_ID_TOKEN_REQUEST_URL" | "ACTIONS_ID_TOKEN_REQUEST_TOKEN">>;
-// A 403 from the proxy (team or event code refused) starts with this, followed by the server's own words.
-export const PROXY_REFUSED = "The Synthe proxy refused this request: ";
-// Messages from the Synthe proxy itself, which need the organizers, not a wait for Anthropic. Every server
-// refusal points at the Synthe table ("Credit is unavailable…", "Credit could not be settled…").
-export const fromSyntheProxy = (text: string | undefined) => /Synthe's proxy|Synthe table/.test(text ?? "");
-export const PROXY_AUTH_MESSAGE = "The Synthe proxy couldn't verify this GitHub run. Run `npx synthe upgrade`, commit the workflow, and try again.";
 const oidcCache = new Map<string, { token: string; expires: number; fetcher: typeof fetch }>();
-export function requireOidc(env: OidcEnv = process.env): void {
-  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) throw new Error(PROXY_AUTH_MESSAGE);
-}
 export async function oidcToken(audience: string, env: OidcEnv = process.env, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<string> {
-  requireOidc(env);
+  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) throw new Error("GitHub OIDC is not available to this workflow. Run `npx synthe upgrade`.");
   const cacheKey = JSON.stringify([audience, env.ACTIONS_ID_TOKEN_REQUEST_URL, env.ACTIONS_ID_TOKEN_REQUEST_TOKEN]);
   const cached = oidcCache.get(cacheKey);
   if (cached && cached.fetcher === fetcher && cached.expires - 60_000 > Date.now()) return cached.token;
