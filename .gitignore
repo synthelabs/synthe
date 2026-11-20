@@ -4,3 +4,5 @@ node_modules
 .synthe-local
 mutation/reports
 .stryker-tmp
+bench/results.json
+bench/results-live.json
