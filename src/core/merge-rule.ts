@@ -150,7 +150,7 @@ export const judgedAsShorter = (c: CandidateScore, goal: Goal) => c.kind === "sh
 export function candidateTrainingProblem(c: CandidateScore, baselineTrain: ScoreRow[], goal: Goal): string | null {
   if (!judgedAsShorter(c, goal)) return trainingProblem(c, baselineTrain, goal);
   if (mean(baselineTrain) === null) return "baseline score unknown";
-  return notWorseProblem(c.id, paired(c.train, baselineTrain), goal.merge_rule.max_p, "test cases");
+  return notWorseProblem(c.id, tally(c.train, baselineTrain), goal.merge_rule.max_p, "test cases");
 }
 
 // replaced holds the head-to-head rows of the prompt the last merge replaced against the current prompt, or null
@@ -199,7 +199,7 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
     const holdoutMaxP = goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p;
     const heldP = signP(heldSplit.w, heldSplit.l);
     if (shorter) {
-      const why = notWorseProblem(c.id, { wins: heldSplit.w, losses: heldSplit.l }, holdoutMaxP, "hidden test cases");
+      const why = notWorseProblem(c.id, heldSplit, holdoutMaxP, "hidden test cases");
       if (why) { reasons.push(why); notes[c.id] = notWorseNote(heldSplit, " hidden"); continue; }
     } else if (heldP > holdoutMaxP) {
       reasons.push(`${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck (p ${heldP.toFixed(3)}, needs ${holdoutMaxP})`);
@@ -278,7 +278,7 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
         plain: shorter
           ? `${rates ? `Your checks passed ${rates.after}% of the time, against ${rates.before}% before. ` : ""}${shorterSentence(c.chars, { w: split.wins, l: split.losses, t: c.train.length - split.wins - split.losses })} On the hidden test cases it never saw: better in ${heldSplit.w}, worse in ${heldSplit.l}, the same in ${heldSplit.t}.${rules}${guardLine}${attackLine}`
           : `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}${guardLine}${attackLine}`,
-        reasons: [`${shorter ? `shorter and no worse: p ${nonInferiorityP(split.wins, split.losses).toFixed(3)} on the learned-from test cases, ${nonInferiorityP(heldSplit.w, heldSplit.l).toFixed(3)} on the hidden ones; ` : ""}judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`],
+        reasons: [`${shorter ? `shorter and no worse: p ${nonInferiorityP(split.wins, split.losses, c.train.length - split.wins - split.losses).toFixed(3)} on the learned-from test cases, ${nonInferiorityP(heldSplit.w, heldSplit.l, heldSplit.t).toFixed(3)} on the hidden ones; ` : ""}judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`],
       };
     }
   }

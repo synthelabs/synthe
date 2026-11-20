@@ -298,22 +298,75 @@ var init_safety = __esm({
 });
 
 // src/core/non-inferiority.ts
-function nonInferiorityP(wins, losses, margin = NON_INFERIORITY_MARGIN) {
-  const n = wins + losses;
-  if (!Number.isSafeInteger(wins) || !Number.isSafeInteger(losses) || wins < 0 || losses < 0 || n === 0) return 1;
-  const p = 0.5 + margin;
-  let logTerm = n * Math.log(1 - p);
-  let tail = Math.exp(logTerm);
-  for (let k = 0; k < losses; k++) {
-    logTerm += Math.log(n - k) - Math.log(k + 1) + Math.log(p) - Math.log(1 - p);
-    tail += Math.exp(logTerm);
+function logFactorial(k) {
+  for (let i = logFactorials.length; i <= k; i++) logFactorials[i] = logFactorials[i - 1] + Math.log(i);
+  return logFactorials[k];
+}
+function nonInferiorityZ(w, l, n, margin = NON_INFERIORITY_MARGIN) {
+  const t = n - w - l;
+  const B = w * (1 - 3 * margin) + l * (1 - margin) - 2 * t * margin;
+  const a = (B + Math.sqrt(B * B + 8 * n * w * margin * (1 - margin))) / (4 * n);
+  return (l - w - n * margin) / Math.sqrt(n * (2 * a + margin - margin * margin));
+}
+function nonInferiorityP(wins, losses, ties, margin = NON_INFERIORITY_MARGIN) {
+  const n = wins + losses + ties;
+  if (![wins, losses, ties].every((k) => Number.isSafeInteger(k) && k >= 0) || n === 0) return 1;
+  const key = `${wins},${losses},${ties},${margin}`;
+  const known = memo.get(key);
+  if (known !== void 0) return known;
+  const p = searchEdge(wins, losses, n, margin);
+  if (memo.size >= 1e3) memo.clear();
+  memo.set(key, p);
+  return p;
+}
+function searchEdge(wins, losses, n, margin) {
+  const seen = nonInferiorityZ(wins, losses, n, margin);
+  const limit2 = seen + 1e-9 * Math.max(1, Math.abs(seen));
+  const region = [];
+  let fewestWins = Infinity;
+  for (let l = n; l >= 0; l--) {
+    for (let w = 0; w + l <= n && w < fewestWins; w++) if (nonInferiorityZ(w, l, n, margin) <= limit2) {
+      fewestWins = w;
+      break;
+    }
+    for (let w = fewestWins; w + l <= n; w++) region.push({ w, l, t: n - w - l, c: logFactorial(n) - logFactorial(w) - logFactorial(l) - logFactorial(n - w - l) });
   }
-  return Math.min(1, tail);
+  const top = (1 - margin) / 2;
+  const logChance = (o, a) => o.c + kLog(o.w, a) + kLog(o.l, a + margin) + kLog(o.t, Math.max(0, 1 - margin - 2 * a));
+  const chance = (a) => region.reduce((sum, o) => sum + Math.exp(logChance(o, a)), 0);
+  const interval2 = (lo, hi) => {
+    const mid = (lo + hi) / 2;
+    let atLo = 0;
+    let atHi = 0;
+    let atMid = 0;
+    for (const o of region) {
+      const g = logChance(o, mid);
+      const slope = o.w / mid + o.l / (mid + margin) - 2 * o.t / (1 - margin - 2 * mid);
+      atLo += Math.exp(g + slope * (lo - mid));
+      atHi += Math.exp(g + slope * (hi - mid));
+      atMid += Math.exp(g);
+    }
+    return { lo, hi, bound: Math.min(1, Math.max(atLo, atHi)), atMid };
+  };
+  const first = interval2(0, top);
+  let best = Math.max(chance(0), chance(top), first.atMid);
+  let open = [first];
+  for (let splits = 0; open.length > 0; splits++) {
+    let i = 0;
+    for (let j = 1; j < open.length; j++) if (open[j].bound > open[i].bound) i = j;
+    const highest = open[i];
+    if (highest.bound <= best + Math.max(RELATIVE_TOLERANCE * best, ABSOLUTE_TOLERANCE) || splits >= MAX_SPLITS) return Math.min(1, Math.max(best, highest.bound));
+    const mid = (highest.lo + highest.hi) / 2;
+    const halves = [interval2(highest.lo, mid), interval2(mid, highest.hi)];
+    best = Math.max(best, ...halves.map((h) => h.atMid));
+    open = [...open.slice(0, i), ...open.slice(i + 1), ...halves].filter((h) => h.bound > best);
+  }
+  return Math.min(1, best);
 }
 function notWorseProblem(id, split, maxP, where) {
   if (split === null) return `${id}: ${where} could not be compared`;
-  const p = nonInferiorityP(split.wins, split.losses);
-  if (p > maxP) return `${id}: shorter, but better in ${split.wins} and worse in ${split.losses} ${where} doesn't rule out a loss (p ${p.toFixed(3)} that it is no worse, needs ${maxP})`;
+  const p = nonInferiorityP(split.w, split.l, split.t);
+  if (p > maxP) return `${id}: shorter, but better in ${split.w}, worse in ${split.l} and the same in ${split.t} ${where} doesn't rule out a loss (p ${p.toFixed(3)} that it is no worse, needs ${maxP})`;
   return null;
 }
 function notWorseNote(t, where) {
@@ -325,11 +378,17 @@ function shorterSentence(chars, t) {
   const what = chars && removed > 0 && chars.before > 0 ? `Removed ${removed} characters (${Math.round(100 * removed / chars.before)}%) from the prompt` : "Shortened the prompt";
   return `${what} with no measured loss: better in ${t.w}, worse in ${t.l}, the same in ${t.t}.`;
 }
-var NON_INFERIORITY_MARGIN;
+var NON_INFERIORITY_MARGIN, RELATIVE_TOLERANCE, ABSOLUTE_TOLERANCE, MAX_SPLITS, logFactorials, kLog, memo;
 var init_non_inferiority = __esm({
   "src/core/non-inferiority.ts"() {
     "use strict";
-    NON_INFERIORITY_MARGIN = 0.15;
+    NON_INFERIORITY_MARGIN = 0.3;
+    RELATIVE_TOLERANCE = 1e-4;
+    ABSOLUTE_TOLERANCE = 1e-6;
+    MAX_SPLITS = 500;
+    logFactorials = [0];
+    kLog = (k, x) => k === 0 ? 0 : k * Math.log(x);
+    memo = /* @__PURE__ */ new Map();
   }
 });
 
@@ -406,7 +465,7 @@ function trainingProblem(c, baselineTrain, goal) {
 function candidateTrainingProblem(c, baselineTrain, goal) {
   if (!judgedAsShorter(c, goal)) return trainingProblem(c, baselineTrain, goal);
   if (mean(baselineTrain) === null) return "baseline score unknown";
-  return notWorseProblem(c.id, paired(c.train, baselineTrain), goal.merge_rule.max_p, "test cases");
+  return notWorseProblem(c.id, tally(c.train, baselineTrain), goal.merge_rule.max_p, "test cases");
 }
 function judgeRound(scores, goal, replaced) {
   const { min_improvement, noise_margin, max_p } = goal.merge_rule;
@@ -461,7 +520,7 @@ function judgeRound(scores, goal, replaced) {
     const holdoutMaxP = goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p;
     const heldP = signP(heldSplit.w, heldSplit.l);
     if (shorter) {
-      const why = notWorseProblem(c.id, { wins: heldSplit.w, losses: heldSplit.l }, holdoutMaxP, "hidden test cases");
+      const why = notWorseProblem(c.id, heldSplit, holdoutMaxP, "hidden test cases");
       if (why) {
         reasons.push(why);
         notes[c.id] = notWorseNote(heldSplit, " hidden");
@@ -543,7 +602,7 @@ function judgeRound(scores, goal, replaced) {
         ...guards ? { guards } : {},
         ...attacks ? { attacks } : {},
         plain: shorter ? `${rates ? `Your checks passed ${rates.after}% of the time, against ${rates.before}% before. ` : ""}${shorterSentence(c.chars, { w: split.wins, l: split.losses, t: c.train.length - split.wins - split.losses })} On the hidden test cases it never saw: better in ${heldSplit.w}, worse in ${heldSplit.l}, the same in ${heldSplit.t}.${rules}${guardLine}${attackLine}` : `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}${guardLine}${attackLine}`,
-        reasons: [`${shorter ? `shorter and no worse: p ${nonInferiorityP(split.wins, split.losses).toFixed(3)} on the learned-from test cases, ${nonInferiorityP(heldSplit.w, heldSplit.l).toFixed(3)} on the hidden ones; ` : ""}judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
+        reasons: [`${shorter ? `shorter and no worse: p ${nonInferiorityP(split.wins, split.losses, c.train.length - split.wins - split.losses).toFixed(3)} on the learned-from test cases, ${nonInferiorityP(heldSplit.w, heldSplit.l, heldSplit.t).toFixed(3)} on the hidden ones; ` : ""}judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
       };
     }
   }

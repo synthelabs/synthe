@@ -1,10 +1,10 @@
 // Shorter rounds (merge_rule.allow_shorter): a deletion candidate merges when it is no worse, by an exact
-// non-inferiority test, and every other gate still applies.
+// non-inferiority test that counts ties, and every other gate still applies.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { DEFAULTS, parseGoal, type Goal, type Scenario } from "../src/core/goal.ts";
 import { judgeRound, signP, type CandidateScore, type RoundScores, type ScoreRow } from "../src/core/merge-rule.ts";
-import { NON_INFERIORITY_MARGIN, nonInferiorityP, notWorseProblem } from "../src/core/non-inferiority.ts";
+import { NON_INFERIORITY_MARGIN, nonInferiorityP, nonInferiorityZ, notWorseProblem } from "../src/core/non-inferiority.ts";
 import { buildEvidence, hashEvidence, recomputeProblem } from "../src/core/evidence.ts";
 import { newState, type State } from "../src/core/state.ts";
 import { sha256 } from "../src/core/safety.ts";
@@ -16,7 +16,8 @@ import type { Ask, Model } from "../src/model/client.ts";
 import { goal, MemoryRepo, rows, scored, trainRows, heldRows } from "./helpers.ts";
 
 const on = (over: Partial<Goal> = {}) => goal({ ...over, merge_rule: { ...DEFAULTS.merge_rule, allow_shorter: true, ...over.merge_rule } });
-const close = (a: number, b: number) => assert.ok(Math.abs(a - b) < 1e-12, `${a} is not ${b}`);
+// The edge search returns an upper bound within 0.01% of the true largest chance: never below it, barely above.
+const close = (p: number, exact: number) => assert.ok(p >= exact - 1e-12 && p <= exact * (1 + 1e-4) + 1e-6, `${p} is not ${exact}`);
 
 // w wins, l losses and t ties against an even current prompt.
 const mix = (w: number, l: number, t: number, prefix = "s") => rows([...Array(w).fill(100), ...Array(l).fill(0), ...Array(t).fill(50)], false, prefix);
@@ -26,33 +27,101 @@ const shorterCand = (train: [number, number, number], held: [number, number, num
   ({ id: "c2", kind: "shorter", chars: CHARS, train: mix(...train), holdout: mix(...held, "h"), ...over });
 const round = (cands: CandidateScore[], trainN = 40, heldN = 30): RoundScores =>
   ({ baselineHash: "h", baselineTrain: even(trainN), baselineHoldout: even(heldN, "h"), candidates: cands });
-// An even split: 18 wins, 18 losses, 4 ties on training (p 0.0457), 12, 12 and 6 on the hidden cases (p 0.0940).
+// An even split: 18 wins, 18 losses, 4 ties on training (p 0.022), 12, 12 and 6 on the hidden cases (p 0.034).
 const EVEN = () => shorterCand([18, 18, 4], [12, 12, 6]);
 
-test("non-inferiority p-values match the binomial worked by hand", () => {
-  assert.equal(NON_INFERIORITY_MARGIN, 0.15);
-  // H0: P(loss | decided) >= 0.65. p = P(X <= losses), X ~ Binomial(decided, 0.65).
-  assert.equal(nonInferiorityP(0, 0), 1); // nothing decided: no evidence
-  close(nonInferiorityP(1, 0), 0.35);
-  close(nonInferiorityP(2, 0), 0.35 ** 2); // 0.1225
-  close(nonInferiorityP(5, 0), 0.0052521875); // 0.35^5
-  close(nonInferiorityP(4, 1), 0.0052521875 + 5 * 0.65 * 0.35 ** 4); // 0.0540225
-  close(nonInferiorityP(3, 2), 0.0540225 + 10 * 0.65 ** 2 * 0.35 ** 3); // 0.235169375
-  close(nonInferiorityP(0, 3), 1); // every outcome is at most 3 losses
-  // With no margin the test is the sign test read from the other side: (1 + 10 + 45) / 1024.
-  close(nonInferiorityP(8, 2, 0), 56 / 1024);
-  close(nonInferiorityP(8, 2, 0), signP(8, 2));
-  // The numbers the margin's comment relies on.
-  assert.equal(nonInferiorityP(12, 8).toFixed(4), "0.0196");
-  assert.equal(nonInferiorityP(11, 9).toFixed(4), "0.0532");
-  assert.equal(nonInferiorityP(18, 18).toFixed(4), "0.0457");
-  assert.ok(nonInferiorityP(17, 17) > 0.05);
-  assert.ok(nonInferiorityP(-1, 2) === 1 && nonInferiorityP(1.5, 2) === 1);
+// The exact binomial test of the old, ties-left-out rule: P(X <= losses), X ~ Binomial(wins + losses, 0.65).
+function binomialP(wins: number, losses: number, q = 0.65): number {
+  const n = wins + losses;
+  let tail = 0;
+  let term = (1 - q) ** n;
+  for (let k = 0; k <= losses; k++) { tail += term; term *= ((n - k) / (k + 1)) * (q / (1 - q)); }
+  return tail;
+}
+
+test("non-inferiority p-values match the trinomial worked by hand", () => {
+  // H0: P(loss) - P(win) >= 0.3. On its edge P(win) = a, P(loss) = a + 0.3, P(tie) = 0.7 - 2a, a in [0, 0.35].
+  assert.equal(NON_INFERIORITY_MARGIN, 0.3);
+  assert.equal(nonInferiorityP(0, 0, 0), 1); // no test cases: no evidence
+  close(nonInferiorityP(1, 0, 0), 0.35); // P(win) = a, largest at a = 0.35
+  close(nonInferiorityP(0, 0, 1), 0.7); // P(win or tie) = 1 - a - 0.3, largest at a = 0
+  // Two ties: Z ranks 1 win and 1 loss (Z -0.445) above two ties (Z -0.926), so "as good" is "no loss":
+  // (0.7 - a)^2, largest at a = 0.
+  assert.ok(Math.abs(nonInferiorityZ(0, 0, 2) - -0.6 / Math.sqrt(0.42)) < 1e-12);
+  assert.ok(Math.abs(nonInferiorityZ(1, 1, 2) - -0.6 / Math.sqrt(1.82)) < 1e-12);
+  close(nonInferiorityP(0, 0, 2), 0.49);
+  // One win and one tie: "as good" is a win and no loss, a^2 + 2a(0.7 - 2a) = 1.4a - 3a^2. Its largest value is
+  // inside the edge, at a = 0.7/3, not at either end: 0.49/3. The search has to find it.
+  close(nonInferiorityP(1, 0, 1), 0.49 / 3);
+  // No ties: the old exact binomial test against 0.65 of decided cases.
+  close(nonInferiorityP(12, 8, 0), binomialP(12, 8));
+  close(nonInferiorityP(8, 2, 0), binomialP(8, 2));
+  assert.equal(nonInferiorityP(12, 8, 0).toFixed(4), "0.0196");
+  assert.equal(nonInferiorityP(11, 9, 0).toFixed(4), "0.0532");
+  // The margin's requirement: an exactly even 10-10 split at 20 cases passes at neither limit.
+  assert.equal(nonInferiorityP(10, 10, 0).toFixed(4), "0.1218");
+  // 0.40 would have passed it at max_p 0.05, which is why the margin is below that.
+  assert.ok(nonInferiorityP(10, 10, 0, 0.4) < 0.05);
+  // Ties are evidence: 20 ties pass, 6 wins, 6 losses and 8 ties don't at max_p 0.05, 5, 5 and 10 do.
+  assert.equal(nonInferiorityP(0, 0, 20).toFixed(4), "0.0026");
+  assert.ok(nonInferiorityP(6, 6, 8) > 0.05 && nonInferiorityP(5, 5, 10) < 0.05);
+  // The comment's thresholds for all ties: 7 cases at 0.1, 10 at 0.05.
+  assert.ok(nonInferiorityP(0, 0, 6) > 0.1 && nonInferiorityP(0, 0, 7) <= 0.1);
+  assert.ok(nonInferiorityP(0, 0, 9) > 0.05 && nonInferiorityP(0, 0, 10) <= 0.05);
+  assert.ok([[-1, 2, 0], [1.5, 2, 0], [1, 2, -1]].every(([w, l, t]) => nonInferiorityP(w, l, t) === 1));
+});
+
+test("with no ties the test is never more lenient than the old one, and agrees wherever either passes at 0.1", () => {
+  for (let n = 1; n <= 40; n++) {
+    for (let l = 0; l <= n; l++) {
+      const old = binomialP(n - l, l);
+      const p = nonInferiorityP(n - l, l, 0);
+      assert.ok(p >= old - 1e-12, `${n - l}/${l}: ${p} below ${old}`);
+      if (old > 0.1) break; // past here both refuse; the larger ones are slow to bound and prove nothing more
+      close(p, old);
+    }
+  }
+});
+
+test("Z never rises when a loss becomes a tie or a tie a win, so the edge is where the hypothesis is hardest", () => {
+  for (let n = 1; n <= 40; n++) {
+    for (let w = 0; w <= n; w++) {
+      for (let l = 0; w + l <= n; l++) {
+        if (l > 0) assert.ok(nonInferiorityZ(w, l - 1, n) <= nonInferiorityZ(w, l, n) + 1e-12);
+        if (w + l < n) assert.ok(nonInferiorityZ(w + 1, l, n) <= nonInferiorityZ(w, l, n) + 1e-12);
+      }
+    }
+  }
+});
+
+test("the test keeps its level: under the hypothesis, every outcome passing at 0.05 adds up to at most 0.05", () => {
+  // Every outcome of 20 cases, and the chance of the passing ones at win and loss rates on and inside the hypothesis.
+  const n = 20;
+  const passing: [number, number][] = [];
+  for (let w = 0; w <= n; w++) for (let l = 0; w + l <= n; l++) if (nonInferiorityP(w, l, n - w - l) <= 0.05) passing.push([w, l]);
+  assert.ok(passing.length > 0);
+  const logFact = (k: number) => { let s = 0; for (let i = 2; i <= k; i++) s += Math.log(i); return s; };
+  const kLog = (k: number, x: number) => (k === 0 ? 0 : k * Math.log(x));
+  let worst = 0;
+  for (let i = 0; i <= 70; i++) {
+    for (const extra of [0, 0.1, 0.3]) {
+      const a = i / 200;
+      const b = a + 0.3 + extra;
+      if (a + b > 1) continue;
+      let chance = 0;
+      for (const [w, l] of passing) chance += Math.exp(logFact(n) - logFact(w) - logFact(l) - logFact(n - w - l) + kLog(w, a) + kLog(l, b) + kLog(n - w - l, 1 - a - b));
+      worst = Math.max(worst, chance);
+    }
+  }
+  assert.ok(worst <= 0.05, `level ${worst}`);
+  assert.ok(worst > 0.03, `level ${worst}: the test should use most of what it is allowed`);
 });
 
 test("notWorseProblem refuses a split that can't rule out a loss, and an uncomparable one", () => {
-  assert.equal(notWorseProblem("c2", { wins: 12, losses: 8 }, 0.05, "test cases"), null);
-  assert.match(notWorseProblem("c2", { wins: 11, losses: 9 }, 0.05, "test cases")!, /shorter, but better in 11 and worse in 9 test cases doesn't rule out a loss \(p 0\.053 that it is no worse, needs 0\.05\)/);
+  assert.equal(notWorseProblem("c2", { w: 12, l: 8, t: 0 }, 0.05, "test cases"), null);
+  assert.equal(notWorseProblem("c2", { w: 0, l: 0, t: 20 }, 0.05, "test cases"), null);
+  assert.match(notWorseProblem("c2", { w: 11, l: 9, t: 0 }, 0.05, "test cases")!, /shorter, but better in 11, worse in 9 and the same in 0 test cases doesn't rule out a loss \(p 0\.053 that it is no worse, needs 0\.05\)/);
+  assert.match(notWorseProblem("c2", { w: 10, l: 10, t: 0 }, 0.1, "hidden test cases")!, /better in 10, worse in 10 and the same in 0 hidden test cases doesn't rule out a loss \(p 0\.122/);
   assert.match(notWorseProblem("c2", null, 0.05, "hidden test cases")!, /hidden test cases could not be compared/);
 });
 
@@ -61,7 +130,7 @@ test("an even shorter candidate merges when allow_shorter is on, with the plain 
   assert.equal(v.action, "merge");
   if (v.action !== "merge") return;
   assert.match(v.plain, /^Removed 412 characters \(9%\) from the prompt with no measured loss: better in 18, worse in 18, the same in 4\. On the hidden test cases it never saw: better in 12, worse in 12, the same in 6\./);
-  assert.match(v.reasons[0], /^shorter and no worse: p 0\.046 on the learned-from test cases, 0\.094 on the hidden ones; judge score 50\.0/);
+  assert.match(v.reasons[0], /^shorter and no worse: p 0\.022 on the learned-from test cases, 0\.034 on the hidden ones; judge score 50\.0/);
   assert.equal(v.notes.c2, "Merged.");
 });
 
@@ -76,18 +145,41 @@ test("the same even candidate is not merged when allow_shorter is off", () => {
 test("a shorter candidate that loses clearly is refused, on training or on the hidden cases", () => {
   const train = judgeRound(round([shorterCand([4, 12, 24], [12, 12, 6])]), on(), null);
   assert.equal(train.action, "skip");
-  assert.match(train.reasons.join(), /c2: shorter, but better in 4 and worse in 12 test cases doesn't rule out a loss/);
+  assert.match(train.reasons.join(), /c2: shorter, but better in 4, worse in 12 and the same in 24 test cases doesn't rule out a loss \(p 0\.156/);
   assert.equal(train.notes.c2, "Shorter, but it may do worse on your test cases: better in 4, worse in 12, the same in 24, so it wasn't used.");
   const held = judgeRound(round([shorterCand([18, 18, 4], [3, 8, 19])]), on(), null);
   assert.equal(held.action, "skip");
-  assert.match(held.reasons.join(), /better in 3 and worse in 8 hidden test cases doesn't rule out a loss/);
+  assert.match(held.reasons.join(), /better in 3, worse in 8 and the same in 19 hidden test cases doesn't rule out a loss \(p 0\.126/);
   assert.match(held.notes.c2, /may do worse on your hidden test cases: better in 3, worse in 8, the same in 19/);
-  // Every case tied: nothing decided, so no evidence it is no worse.
-  assert.equal(judgeRound(round([shorterCand([0, 0, 40], [0, 0, 30])]), on(), null).action, "skip");
+  // An exactly even split of 20 with no ties is refused on training (max_p 0.05) and on the hidden cases (0.1).
+  const evenTrain = judgeRound(round([shorterCand([10, 10, 0], [0, 0, 20])], 20, 20), on(), null);
+  assert.equal(evenTrain.action, "skip");
+  assert.match(evenTrain.reasons.join(), /better in 10, worse in 10 and the same in 0 test cases doesn't rule out a loss \(p 0\.122/);
+  const evenHeld = judgeRound(round([shorterCand([0, 0, 20], [10, 10, 0])], 20, 20), on(), null);
+  assert.equal(evenHeld.action, "skip");
+  assert.match(evenHeld.reasons.join(), /better in 10, worse in 10 and the same in 0 hidden test cases doesn't rule out a loss \(p 0\.122 that it is no worse, needs 0\.1\)/);
+  // Losing a few cases and tying the rest is still losing: 0 wins and 4 losses in 20.
+  assert.equal(judgeRound(round([shorterCand([0, 4, 16], [0, 0, 20])], 20, 20), on(), null).action, "skip");
   // An unjudged row is unknown, never a pass.
   const unknown = EVEN();
   unknown.train[0] = { ...unknown.train[0], score: null };
   assert.equal(judgeRound(round([unknown]), on(), null).action, "skip");
+});
+
+test("a deletion that ties every case merges: 20 training and 20 hidden cases, nothing decided", () => {
+  // The ties-left-out test had no decided cases here, so p was 1 and this could never pass.
+  const allTies = shorterCand([0, 0, 20], [0, 0, 20]);
+  const v = judgeRound(round([allTies], 20, 20), on(), null);
+  assert.equal(v.action === "merge" && v.candidateId, "c2");
+  if (v.action !== "merge") return;
+  assert.match(v.plain, /^Removed 412 characters \(9%\) from the prompt with no measured loss: better in 0, worse in 0, the same in 20\. On the hidden test cases it never saw: better in 0, worse in 0, the same in 20\./);
+  assert.match(v.reasons[0], /^shorter and no worse: p 0\.003 on the learned-from test cases, 0\.003 on the hidden ones;/);
+  // More cases, more evidence.
+  assert.equal(judgeRound(round([shorterCand([0, 0, 40], [0, 0, 30])]), on(), null).action, "merge");
+  // A mostly tied deletion with a few cases each way passes too.
+  assert.equal(judgeRound(round([shorterCand([2, 3, 35], [2, 2, 26])]), on(), null).action, "merge");
+  // But one loss and nothing else in too few cases is not enough: 6 hidden ties fail at holdout_max_p 0.1.
+  assert.equal(judgeRound(round([shorterCand([0, 0, 20], [0, 0, 6])], 20, 6), on(), null).action, "skip");
 });
 
 test("guardrail, guard and attack gates still block a shorter candidate", () => {
@@ -137,6 +229,7 @@ test("with allow_shorter off, verdicts are byte-identical to the rule without it
     { ...scored("p", 50, 50, 100, 100), candidates: [{ id: "c1", train: trainRows(100, true), holdout: heldRows(100) }] },
     round([EVEN()]), round([shorterCand([30, 0, 10], [20, 0, 10])]), round([shorterCand([4, 12, 24], [12, 12, 6])]),
     round([EVEN(), { id: "c1", train: mix(14, 2, 24), holdout: mix(8, 0, 22, "h") }]),
+    round([shorterCand([0, 0, 20], [0, 0, 20])], 20, 20), round([shorterCand([0, 0, 40], [0, 0, 30])]), round([shorterCand([10, 10, 0], [10, 10, 0])], 20, 20),
   ];
   const plain = (s: RoundScores) => ({ ...s, candidates: s.candidates.map(({ kind: _k, chars: _c, ...c }) => c) });
   for (const s of fixtures) {
@@ -302,4 +395,49 @@ test("verify re-runs a shorter verdict with the no-worse test, and catches the f
   const usual = scored("p", 50, 50, 100, 100);
   const plainRec = buildEvidence({ round: 1, goal: g, promptBefore: "p", promptAfter: "q", verdict: "merge", verdictReasons: judgeRound(usual, g, null).reasons, scores: usual, candidateId: "c1", costUsd: 0.1, prevEvidenceHash: null });
   assert.equal("shorter" in plainRec, false);
+});
+
+// A prompt with a paragraph the agent's replies don't depend on: it restates what the first line already says.
+// Removing it changes no reply, so every case ties, and the round should keep the shorter prompt.
+const REDUNDANT = "Remember that you are the support agent for this shop. Your job is supporting the shop's customers, and you are the one they talk to when they need support. As the support agent, you support them.\n\n";
+const PADDED = `You are the support agent for this shop.\n\n${REDUNDANT}Answer the question.`;
+
+test("a round with genuinely removable text merges the deletion end to end: write, score, decide", async () => {
+  const many: Scenario[] = [
+    ...Array.from({ length: 24 }, (_, i) => ({ id: `t${i}`, input: `question ${i}`, expected: "good", split: "train" as const })),
+    ...Array.from({ length: 20 }, (_, i) => ({ id: `h${i}`, input: `HOLDOUT ${i}`, expected: "good", split: "holdout" as const })),
+  ];
+  // The agent answers well whenever the prompt says to answer, with or without the redundant paragraph, so the
+  // current and shorter prompts give the same reply to every case and the judge calls every one a tie.
+  const agent: Model = { async ask(a) {
+    if (a.schema && JSON.stringify(a.schema).includes("guardrail_ok")) {
+      const isGood = (tag: string) => a.user.includes(`<${tag}>\ngood reply`);
+      return { text: JSON.stringify({ better: isGood("reply_a") === isGood("reply_b") ? "tie" : isGood("reply_a") ? "A" : "B", a_guardrail_ok: true, b_guardrail_ok: true }), costUsd: 0.001 };
+    }
+    return { text: a.system?.includes("Answer the question") ? `good reply to ${a.user}` : "weak reply", costUsd: 0.001 };
+  } };
+  const run = async (g: Goal) => {
+    const repo = new MemoryRepo(PADDED);
+    repo.state = stalled();
+    const written = await runWrite(g, repo.state, PADDED, many, writer({ find: REDUNDANT, replace: "" }).model);
+    const { scores } = await runScore(g, PADDED, written.candidates, many, agent);
+    const decided = await runDecide(g, repo, { candidates: written.candidates, scores, costUsd: 0.1 });
+    return { repo, written, scores, decided };
+  };
+
+  const { repo, written, scores, decided } = await run(on());
+  assert.deepEqual(written.candidates.map((c) => c.kind), [undefined, "shorter"]);
+  const shorter = scores.candidates.find((c) => c.kind === "shorter")!;
+  // Every case tied: nothing decided, so the ties-left-out test had no evidence here and could never pass.
+  assert.deepEqual([shorter.train.length, shorter.train.every((r) => r.score === 50)], [24, true]);
+  assert.deepEqual([shorter.holdout?.length, shorter.holdout?.every((r) => r.score === 50)], [20, true]);
+  assert.equal(decided?.outcome, "merged");
+  assert.equal(repo.files.get("prompt.md"), PADDED.replace(REDUNDANT, ""));
+  assert.match(repo.prs[0].title, /^Synthe: shorter prompt, /);
+  assert.match(repo.prs[0].body, new RegExp(`Removed ${REDUNDANT.length} characters \\(\\d+%\\) from the prompt with no measured loss: better in 0, worse in 0, the same in 24\\. On the hidden test cases it never saw: better in 0, worse in 0, the same in 20\\.`));
+
+  // With the flag off the same round keeps the longer prompt: neither candidate is better.
+  const off = await run(goal());
+  assert.notEqual(off.decided?.outcome, "merged");
+  assert.equal(off.repo.files.get("prompt.md"), PADDED);
 });
