@@ -6,7 +6,7 @@ import { candidateFingerprint } from "../src/core/candidate-history.ts";
 import { sha256 } from "../src/core/safety.ts";
 import { newState, type PoolEntry, type State } from "../src/core/state.ts";
 import { runDecide } from "../src/loop/decide.ts";
-import { POOL_ID, POOL_SIZE, combinedRounds, explainPool, mergeFromPool, updatePool, validPool } from "../src/loop/pool.ts";
+import { POOL_ID, POOL_MAX_P, POOL_SIZE, combinedRounds, explainPool, mergeFromPool, updatePool, validPool } from "../src/loop/pool.ts";
 import { runScore } from "../src/loop/score.ts";
 import { explainWrite, runWrite, type Candidate } from "../src/loop/write.ts";
 import type { Ask, Model } from "../src/model/client.ts";
@@ -76,14 +76,14 @@ test("pool update adds each change that won a training case and broke no guardra
   const long = "x".repeat(1200);
   const candidates = [adds("candidate-1", "Rule A."), adds("candidate-2", "Rule B."), adds("candidate-3", "Rule C."), adds("candidate-4", "Rule D."),
     adds(POOL_ID, "Rule E."), adds("winner", "Rule W."), { ...adds("candidate-5", "Rule L."), edits: [{ find: long, replace: long }] }];
-  const scores = scoresOf(scoreOf("candidate-1", ["t1", "t2"]), scoreOf("candidate-2", ["t5"]), scoreOf("candidate-3", []), scoreOf(POOL_ID, ["t6"]), scoreOf("winner", ["t7"]), scoreOf("candidate-5", ["t8"]),
+  const scores = scoresOf(scoreOf("candidate-1", ["t1", "t2"]), scoreOf("candidate-2", ["t5", "t6"]), scoreOf("candidate-3", []), scoreOf(POOL_ID, ["t6", "t7"]), scoreOf("winner", ["t7", "t8"]), scoreOf("candidate-5", ["t3", "t8"]),
     { id: "candidate-4", train: train.map((s) => ({ id: s.id, score: 100, violation: s.id === "t3" })) });
   const pool = update({ candidates, scores, round: 3, outcome: "proposed", winnerId: "winner" });
   // No wins (candidate-3), a new guardrail break (candidate-4), the merge candidate itself, the round's winner and
   // a change too long to carry in state (candidate-5) are all left out.
   assert.deepEqual(pool, [
     { id: "r3-candidate-1", round: 3, summary: "adds Rule A.", edits: [{ find: "", replace: "Rule A." }], wonOn: ["t1", "t2"], promptHash: sha256(BASE) },
-    { id: "r3-candidate-2", round: 3, summary: "adds Rule B.", edits: [{ find: "", replace: "Rule B." }], wonOn: ["t5"], promptHash: sha256(BASE) },
+    { id: "r3-candidate-2", round: 3, summary: "adds Rule B.", edits: [{ find: "", replace: "Rule B." }], wonOn: ["t5", "t6"], promptHash: sha256(BASE) },
   ]);
   // A row that couldn't be judged counts as a break, as it does in the merge rule.
   const unknown = scoresOf({ id: "candidate-1", train: train.map((s) => ({ id: s.id, score: s.id === "t1" ? null : 100, violation: s.id === "t1" ? null : false })) });
@@ -93,6 +93,19 @@ test("pool update adds each change that won a training case and broke no guardra
   // A long summary is clipped the way the Actions log clips.
   const wordy = update({ candidates: [{ ...adds("candidate-1", "Rule A."), summary: "s".repeat(500) }], scores });
   assert.equal(wordy[0].summary.length, 203);
+});
+
+test("only a change with evidence of its own is pooled: beyond a coin's record, and not already refused on the hidden cases", () => {
+  const record = (wins: number, losses: number): CandidateScore => ({ id: "candidate-1", train: train.map((s, i) => ({ id: s.id, score: i < wins ? 100 : i < wins + losses ? 0 : 50, violation: false })) });
+  const pooled = (c: CandidateScore) => update({ candidates: [adds("candidate-1", "Rule A.")], scores: scoresOf(c) }).length === 1;
+  assert.equal(POOL_MAX_P, 0.25);
+  // Two wins and no loss just pass; one win, or wins matched by losses, could be a coin.
+  assert.deepEqual([[2, 0], [4, 0], [4, 1], [1, 0], [3, 2], [4, 4], [3, 5]].map(([w, l]) => pooled(record(w, l))), [true, true, true, false, false, false, false]);
+  // The round's training leader was tried on the hidden cases and didn't merge: the gate refused it, so pooling it
+  // would give the same change a second draw at those cases inside a combination.
+  const refused = { ...record(8, 0), holdout: hidden.map((s) => ({ id: s.id, score: 50, violation: false })) };
+  assert.equal(pooled(refused), false);
+  assert.equal(pooled(record(8, 0)), true);
 });
 
 test("pool update prunes an entry whose wins are all inside another's, and keeps the newer of two equals", () => {
@@ -119,17 +132,20 @@ test("pool update caps the pool, dropping the oldest first", () => {
   assert.equal(pool.length, POOL_SIZE);
   assert.deepEqual(pool.map((e) => e.round), [2, 3, 4, 5]);
   // A new round's entry pushes out the oldest again.
-  const next = update({ pool, round: 6, candidates: [adds("candidate-1", "Rule 6.")], scores: scoresOf(scoreOf("candidate-1", ["t6"])) });
+  const next = update({ pool, round: 6, candidates: [adds("candidate-1", "Rule 6.")], scores: scoresOf(scoreOf("candidate-1", ["t6", "t7"])) });
   assert.deepEqual(next.map((e) => e.round), [3, 4, 5, 6]);
 });
 
 test("held-back ids are never stored in the pool, even from tampered scores or state", () => {
   // The scores file comes from another job: a held-back row planted among the training rows must not be kept.
-  const planted = scoresOf(scoreOf("candidate-1", ["t1"], [{ id: "h1" }, { id: "not-a-case" }]));
+  const planted = scoresOf(scoreOf("candidate-1", ["t1", "t3"], [{ id: "h1" }, { id: "not-a-case" }]));
   planted.baselineTrain.push({ id: "h1", score: 50, violation: false }, { id: "not-a-case", score: 50, violation: false });
-  planted.candidates[0].holdout = hidden.map((s) => ({ id: s.id, score: 100, violation: false }));
   const pool = update({ pool: [entry("r1-candidate-9", 1, "Rule H.", ["h2", "h3"]), entry("r1-candidate-8", 1, "Rule G.", ["t2", "h4"])], round: 2, candidates: [adds("candidate-1", "Rule A.")], scores: planted });
-  assert.deepEqual(pool.map((e) => [e.id, e.wonOn]), [["r1-candidate-8", ["t2"]], ["r2-candidate-1", ["t1"]]]);
+  assert.deepEqual(pool.map((e) => [e.id, e.wonOn]), [["r1-candidate-8", ["t2"]], ["r2-candidate-1", ["t1", "t3"]]]);
+  // Planted wins don't help a change over the evidence bar either: one real win is still one win.
+  const lifted = scoresOf(scoreOf("candidate-1", ["t1"], [{ id: "h1" }, { id: "not-a-case" }]));
+  lifted.baselineTrain.push({ id: "h1", score: 50, violation: false }, { id: "not-a-case", score: 50, violation: false });
+  assert.deepEqual(update({ candidates: [adds("candidate-1", "Rule A.")], scores: lifted }), []);
   assert.doesNotMatch(JSON.stringify(pool), /"h\d"|HOLDOUT/);
   // A case moved to the held-back split stops counting, and without a readable scenario file nothing is kept.
   const moved = scenarios.map((s) => JSON.stringify(s.id === "t2" ? { ...s, split: "holdout" } : s)).join("\n");

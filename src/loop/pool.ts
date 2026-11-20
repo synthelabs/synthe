@@ -1,5 +1,5 @@
 import { parseScenarios, type Goal, type Scenario } from "../core/goal.ts";
-import { addedBreaks, type RoundScores } from "../core/merge-rule.ts";
+import { addedBreaks, signP, type RoundScores } from "../core/merge-rule.ts";
 import { candidateProblem, sha256 } from "../core/safety.ts";
 import { candidateFingerprint } from "../core/candidate-history.ts";
 import type { PoolEntry, RoundRecord } from "../core/state.ts";
@@ -29,6 +29,11 @@ export const POOL_ID = "combined";
 const MAX_ENTRY_CHARS = 2000;
 const SUMMARY_KEPT = 200;
 const MAX_WON = 200;
+// How sure the pool must be that a change helps somewhere before it keeps it: a one-sided sign test on its own
+// training wins and losses, far more lenient than the merge rule's 0.05. Two wins and no loss just pass; five wins
+// and four losses do not. Without this bar a change with a coin's record gets pooled, and when it is combined with
+// a real gain it rides into the prompt on the gain's wins (seen in the bench with a noisy judge).
+export const POOL_MAX_P = 0.25;
 
 export interface PoolCandidate extends Candidate { combines: { round: number; summary: string }[] }
 export interface PoolMerge { candidate: PoolCandidate | null; skipped?: string }
@@ -77,10 +82,11 @@ export function updatePool(a: {
   // Without a readable scenario file the ids can't be checked, and an empty pool is always safe.
   try { trainIds = new Set(parseScenarios(a.scenarioText ?? "").filter((s) => s.split === "train").map((s) => s.id)); } catch { return []; }
   const even = new Map(a.scores.baselineTrain.map((r) => [r.id, r.score]));
-  const winsOf = (id: string) => (a.scores.candidates.find((c) => c.id === id)?.train ?? []).filter((r) => {
+  const splitOf = (id: string, sign: 1 | -1) => (a.scores.candidates.find((c) => c.id === id)?.train ?? []).filter((r) => {
     const current = even.get(r.id);
-    return typeof r.score === "number" && typeof current === "number" && r.score > current;
+    return typeof r.score === "number" && typeof current === "number" && Math.sign(r.score - current) === sign;
   }).map((r) => r.id);
+  const winsOf = (id: string) => splitOf(id, 1);
 
   let entries = validPool(a.pool);
   // After an undo the candidates' wins were against a prompt that is gone, so none are added.
@@ -94,8 +100,14 @@ export function updatePool(a: {
       // The merge rule's own test, on the training rows: a new guardrail break, or a row that couldn't be judged,
       // keeps a change out.
       if (!scored || entries.some((e) => e.id === id) || addedBreaks(scored.train, a.scores.baselineTrain) > 0) continue;
-      const wonOn = winsOf(c.id);
-      if (wonOn.length) entries.push({ id, round: a.round, summary: clip(c.summary ?? "A change to the prompt", SUMMARY_KEPT), edits: c.edits.map(({ find, replace }) => ({ find, replace })), wonOn, promptHash: a.scores.baselineHash });
+      // Only the round's leader on training is tried on the hidden cases. One that was tried and is not in the
+      // prompt was refused there, and pooling it would hand the same change a second draw at the hidden cases inside
+      // a combination (seen in the bench: a padding edit refused once merged this way on the retry).
+      if (scored.holdout) continue;
+      // Wins and losses on real training cases only, so a planted row can't lift a change over the bar.
+      const wonOn = winsOf(c.id).filter((x) => trainIds.has(x));
+      const lost = splitOf(c.id, -1).filter((x) => trainIds.has(x)).length;
+      if (wonOn.length && signP(wonOn.length, lost) <= POOL_MAX_P) entries.push({ id, round: a.round, summary: clip(c.summary ?? "A change to the prompt", SUMMARY_KEPT), edits: c.edits.map(({ find, replace }) => ({ find, replace })), wonOn, promptHash: a.scores.baselineHash });
     }
   }
   // A merged change's wins are fixed in the prompt now, so they stop counting for everyone else.

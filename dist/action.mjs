@@ -29519,6 +29519,7 @@ var POOL_ID = "combined";
 var MAX_ENTRY_CHARS = 2e3;
 var SUMMARY_KEPT = 200;
 var MAX_WON = 200;
+var POOL_MAX_P = 0.25;
 var isEdit = (e) => typeof e?.find === "string" && typeof e?.replace === "string";
 var poolable = (edits) => Array.isArray(edits) && edits.length >= 1 && edits.length <= MAX_EDITS && edits.every(isEdit) && edits.reduce((n, e) => n + e.find.length + e.replace.length, 0) <= MAX_ENTRY_CHARS;
 function validPool(value) {
@@ -29545,10 +29546,11 @@ function updatePool(a) {
     return [];
   }
   const even = new Map(a.scores.baselineTrain.map((r) => [r.id, r.score]));
-  const winsOf = (id) => (a.scores.candidates.find((c) => c.id === id)?.train ?? []).filter((r) => {
+  const splitOf = (id, sign) => (a.scores.candidates.find((c) => c.id === id)?.train ?? []).filter((r) => {
     const current = even.get(r.id);
-    return typeof r.score === "number" && typeof current === "number" && r.score > current;
+    return typeof r.score === "number" && typeof current === "number" && Math.sign(r.score - current) === sign;
   }).map((r) => r.id);
+  const winsOf = (id) => splitOf(id, 1);
   let entries = validPool(a.pool);
   if (a.outcome !== "reverted") {
     for (const c of a.candidates) {
@@ -29556,8 +29558,10 @@ function updatePool(a) {
       const id = `r${a.round}-${c.id}`;
       const scored = a.scores.candidates.find((s) => s.id === c.id);
       if (!scored || entries.some((e) => e.id === id) || addedBreaks(scored.train, a.scores.baselineTrain) > 0) continue;
-      const wonOn = winsOf(c.id);
-      if (wonOn.length) entries.push({ id, round: a.round, summary: clip(c.summary ?? "A change to the prompt", SUMMARY_KEPT), edits: c.edits.map(({ find, replace }) => ({ find, replace })), wonOn, promptHash: a.scores.baselineHash });
+      if (scored.holdout) continue;
+      const wonOn = winsOf(c.id).filter((x) => trainIds.has(x));
+      const lost = splitOf(c.id, -1).filter((x) => trainIds.has(x)).length;
+      if (wonOn.length && signP(wonOn.length, lost) <= POOL_MAX_P) entries.push({ id, round: a.round, summary: clip(c.summary ?? "A change to the prompt", SUMMARY_KEPT), edits: c.edits.map(({ find, replace }) => ({ find, replace })), wonOn, promptHash: a.scores.baselineHash });
     }
   }
   const fixed = new Set(a.outcome === "merged" && a.winnerId ? winsOf(a.winnerId) : []);
