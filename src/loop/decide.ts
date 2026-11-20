@@ -261,6 +261,8 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   state.spendUsd += input.costUsd ?? 0;
   state.stalls = priorStalls + 1;
   state.pending = { round, at: record.at, costUsd: input.costUsd };
+  // The prompt the run started from, kept for `npx synthe vault`, which compares the end of the run with it.
+  if (round === 1 && current !== null && state.startPrompt === undefined) state.startPrompt = current;
   if (current !== null) state.candidateHistory = rememberCandidates(state.candidateHistory ?? [], candidateScope(goal, current), (input.candidates ?? []).filter((candidate) => typeof candidate.text === "string").map((candidate) => candidate.text));
   await repo.writeState(state);
   let stall = true;

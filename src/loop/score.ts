@@ -95,7 +95,7 @@ For every check, by its number: does it apply to this message at all, and if it 
   return { verdicts: checks.map((_, i) => ({ applies: by.get(i + 1)!.applies === true, passes: by.get(i + 1)!.passes === true })), costUsd: judged.costUsd };
 }
 
-function scorer(goal: Goal, model: Model, random: () => number = Math.random, noise = false) {
+export function scorer(goal: Goal, model: Model, random: () => number = Math.random, noise = false) {
   const costs: (number | null)[] = [];
   // A cut-off reply is still judged as it is, since every prompt has the same limit. The judge is told, so it
   // doesn't mark a reply down for just ending early.

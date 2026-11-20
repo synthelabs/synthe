@@ -76,7 +76,14 @@ export interface State {
   // Hash of the last evidence record written, so the next one can chain to it.
   evidenceHash?: string;
   rounds: RoundRecord[];
+  // The prompt the run started from, saved by the first round, so `npx synthe vault` can compare the end of a run
+  // with its start. State files from before this field don't have it; the vault command then asks for the file.
+  startPrompt?: string;
+  // The last `npx synthe vault` result: the prompt after `round` against the starting prompt, on the vault cases only.
+  vault?: VaultResult;
 }
+
+export interface VaultResult { at: string; round: number; wins: number; losses: number; ties: number; unknown: number; p: number; cases: number; costUsd: number | null }
 
 // The readings in a .synthe/calibration.json file's text: each check and how its marking read against the
 // team's. Null when the text isn't a calibration file, so a stray or damaged file is simply ignored.

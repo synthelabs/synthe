@@ -24,6 +24,7 @@ import { setKey } from "./key.ts";
 import { guide } from "./guide.ts";
 import { verify } from "./verify.ts";
 import { undo } from "./undo.ts";
+import { vault } from "./vault.ts";
 import { githubRepo } from "../github/repo.ts";
 import { improve, improveOptions } from "./improve.ts";
 import { submit, submitOptions } from "./submit.ts";
@@ -226,6 +227,20 @@ function localRun(command: string) {
   return { goal, prompt, scenarios: parseScenarios(readFileSync(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, teamCode) };
 }
 
+// Compares the prompt now with the one the run started from on the vault cases, which no round ever reads.
+async function vaultCheck() {
+  if (!setUpHere()) return;
+  process.exitCode = await vault({
+    cwd: process.cwd(), say: console.log, ask, run,
+    credential: (goal) => {
+      const c = localCredential(process.env);
+      if (!c) return null;
+      if (!c.key && c.eventCode) eventModels(goal.models);
+      return { model: configuredModel(c.key, c.eventCode, false, c.teamCode), line: c.line };
+    },
+  }, process.argv.slice(3));
+}
+
 // Checks whether the team's checks are marked steadily, and the way the team means them.
 async function calibrateChecks() {
   const local = localRun("calibrate");
@@ -284,6 +299,7 @@ Then:
   npx synthe key      use your own Anthropic key instead of event credit
   npx synthe try      run one round on your computer, changing nothing (event code or own key)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
+  npx synthe vault   at the end of a run, compare your prompt with the one it started from on the "vault" test cases no round ever saw (event code or own key; asks before spending)
   npx synthe calibrate     check that your checks are marked steadily and the way you mean them (event code or own key)
   npx synthe migrate --to <model>   compare your prompt on another model, changing nothing (needs ANTHROPIC_API_KEY; add --dry-run to spend nothing)
 
@@ -312,6 +328,7 @@ async function main() {
   else if (command === "verify") process.exitCode = verify(process.argv[3], process.cwd());
   else if (command === "undo") await undoRound();
   else if (command === "calibrate") await calibrateChecks();
+  else if (command === "vault") await vaultCheck();
   else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.ANTHROPIC_API_KEY });
   else if (command === "pilot") {
     // Loaded on demand, so no other command pays for the pilot's code. The pilot reports its own refusals and

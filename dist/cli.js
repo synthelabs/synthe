@@ -105,7 +105,7 @@ function parseScenarios(text4) {
       throw new Error(`${file} line ${line} isn't valid JSON: ${e.message}`);
     }
     const problems = ["id", "input", "expected"].filter((k) => !s?.[k]).map((k) => `"${k}" is missing`);
-    if (s?.split !== "train" && s?.split !== "holdout") problems.push(`"split" must be "train" or "holdout"`);
+    if (s?.split !== "train" && s?.split !== "holdout" && s?.split !== "vault") problems.push(`"split" must be "train", "holdout" or "vault"`);
     if (problems.length) throw new Error(`${file} line ${line} has a problem: ${problems.join("; ")}.`);
     if (lineOf.has(s.id)) throw new Error(`${file}: lines ${lineOf.get(s.id)} and ${line} both use the id "${s.id}"; give each test case its own id`);
     lineOf.set(s.id, line);
@@ -28628,7 +28628,7 @@ function verifyEvidence(filePath, repoRoot) {
   let splits;
   try {
     goal = parseGoal(readFileSync7(goalPath, "utf8"));
-    splits = new Map(parseScenarios(readFileSync7(join9(repoRoot, goal.scenarios), "utf8")).map((s) => [s.id, s.split]));
+    splits = new Map(parseScenarios(readFileSync7(join9(repoRoot, goal.scenarios), "utf8")).flatMap((s) => s.split === "train" || s.split === "holdout" ? [[s.id, s.split]] : []));
   } catch (e) {
     return { ok: false, reason: `couldn't read the goal and test cases in ${repoRoot} to recheck the verdict: ${e.message}` };
   }
@@ -29005,7 +29005,7 @@ var init_approval = __esm({
 });
 
 // src/pilot/io.ts
-import { existsSync as existsSync13, linkSync as linkSync2, lstatSync as lstatSync5, mkdirSync as mkdirSync7, readFileSync as readFileSync15, realpathSync as realpathSync3, renameSync as renameSync3, statSync as statSync4, unlinkSync as unlinkSync4, writeFileSync as writeFileSync8 } from "node:fs";
+import { existsSync as existsSync14, linkSync as linkSync2, lstatSync as lstatSync5, mkdirSync as mkdirSync7, readFileSync as readFileSync16, realpathSync as realpathSync3, renameSync as renameSync3, statSync as statSync4, unlinkSync as unlinkSync4, writeFileSync as writeFileSync8 } from "node:fs";
 import { dirname as dirname5, isAbsolute as isAbsolute3, relative as relative2, resolve as resolve2 } from "node:path";
 function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
   let size;
@@ -29018,7 +29018,7 @@ function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
     throw new PilotError("not_found", `${path4} does not exist or cannot be read.`);
   }
   if (size > maxBytes) throw new PilotError("too_large", `${path4} is ${size} bytes; the limit is ${maxBytes}. Export a smaller, bounded file.`);
-  return readFileSync15(path4, "utf8");
+  return readFileSync16(path4, "utf8");
 }
 function inside(root, name) {
   const full = resolve2(root, name);
@@ -29050,16 +29050,16 @@ function writeOnce(path4, content) {
       return "written";
     } catch (e) {
       const code = e.code;
-      if (code !== "EEXIST" && !existsSync13(path4)) {
+      if (code !== "EEXIST" && !existsSync14(path4)) {
         renameSync3(tmp, path4);
         return "written";
       }
       if (code !== "EEXIST" && code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV") throw e;
     }
-    if (readFileSync15(path4, "utf8") === content) return "already there";
+    if (readFileSync16(path4, "utf8") === content) return "already there";
     throw new PilotError("conflict", `${path4} already exists with different content. Stored pilot records are never replaced.`);
   } finally {
-    if (existsSync13(tmp)) unlinkSync4(tmp);
+    if (existsSync14(tmp)) unlinkSync4(tmp);
   }
 }
 function unsafeKey(value) {
@@ -29085,7 +29085,7 @@ function writeAtomic(path4, content) {
     writeFileSync8(tmp, content, { mode: 384 });
     renameSync3(tmp, path4);
   } finally {
-    if (existsSync13(tmp)) unlinkSync4(tmp);
+    if (existsSync14(tmp)) unlinkSync4(tmp);
   }
 }
 function printable2(text4, max = 80) {
@@ -29483,11 +29483,11 @@ function parsePack(text4) {
     if (!isNonEmpty(id)) bad3("check_catalog has an empty check id.");
   }
   if (!Array.isArray(raw.cases) || raw.cases.length === 0) bad3("The pack needs at least one case.");
-  const cases2 = raw.cases;
-  if (cases2.length > PACK_LIMITS.cases) throw new PilotError("too_large", `The pack has ${cases2.length} cases; the limit is ${PACK_LIMITS.cases}.`);
+  const cases3 = raw.cases;
+  if (cases3.length > PACK_LIMITS.cases) throw new PilotError("too_large", `The pack has ${cases3.length} cases; the limit is ${PACK_LIMITS.cases}.`);
   const seen = /* @__PURE__ */ new Set();
   const ctx = { packVersion, toolNames, catalog, seen };
-  cases2.forEach((c, i) => checkCase(c, i, ctx));
+  cases3.forEach((c, i) => checkCase(c, i, ctx));
   scanForPersonalData(raw);
   return raw;
 }
@@ -29845,9 +29845,9 @@ function renderFindings(findings, pack2) {
   if (findings.length === 0) return "No check failed in enough discovery cases to count as a recurring failure.\n";
   const out = ["# Recurring failures on discovery cases", ""];
   for (const f of findings) {
-    const cases2 = new Set(f.failing.map((x) => x.case_id)).size;
+    const cases3 = new Set(f.failing.map((x) => x.case_id)).size;
     out.push(`## ${f.check_id}`, "", pack2.check_catalog[f.check_id] ?? f.description, "");
-    out.push(`- Fails in ${cases2} of ${f.discovery_cases_with_check} discovery cases that test it`);
+    out.push(`- Fails in ${cases3} of ${f.discovery_cases_with_check} discovery cases that test it`);
     out.push(`- Failing: ${f.failing.map((x) => `${x.case_id} (turn ${x.turn})`).join(", ")}`, "");
   }
   return out.join("\n");
@@ -29949,11 +29949,11 @@ function sensitiveIndex(packs, allow = [], telemetryIds = []) {
       }
     }
   }
-  const cases2 = /* @__PURE__ */ new Map();
-  for (const items of byCase.values()) for (const item of items) cases2.set(item, (cases2.get(item) ?? 0) + 1);
+  const cases3 = /* @__PURE__ */ new Map();
+  for (const items of byCase.values()) for (const item of items) cases3.set(item, (cases3.get(item) ?? 0) + 1);
   const few = Math.max(2, Math.ceil(byCase.size * 0.02));
   const all = /* @__PURE__ */ new Set();
-  for (const [item, count2] of cases2) if (count2 <= few) all.add(item);
+  for (const [item, count2] of cases3) if (count2 <= few) all.add(item);
   for (const word of always) all.add(word);
   const allNames = /* @__PURE__ */ new Set();
   for (const word of capital) if (!lower2.has(word)) {
@@ -30395,7 +30395,7 @@ var init_stats = __esm({
 // src/pilot/wrap.ts
 import { createHash as createHash2, createHmac } from "node:crypto";
 import { closeSync as closeSync3, constants as constants3, fstatSync as fstatSync2, mkdirSync as mkdirSync8, openSync as openSync3, readSync, writeFileSync as writeFileSync9, writeSync } from "node:fs";
-import { join as join19 } from "node:path";
+import { join as join20 } from "node:path";
 function appendLine(path4, text4) {
   const fd = openSync3(path4, constants3.O_RDWR | constants3.O_APPEND | constants3.O_CREAT | (constants3.O_NOFOLLOW ?? 0), 384);
   try {
@@ -30434,11 +30434,11 @@ function pilotRecorder(options) {
     try {
       mkdirSync8(logDir, { recursive: true, mode: 448 });
       try {
-        writeFileSync9(join19(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
+        writeFileSync9(join20(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
       } catch (e) {
         if (e.code !== "EEXIST") throw e;
       }
-      return appendLine(join19(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
+      return appendLine(join20(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
 `);
     } catch {
       return false;
@@ -32372,17 +32372,17 @@ function promote(input) {
     if (conversationText(a.case).some((t) => personalDataKinds(t).length > 0)) invalid(`Added case ${id} contains what looks like personal data or a secret. Redact it and try again.`);
   }
   const version = old.pack_version + 1;
-  const cases2 = old.cases.map((c) => {
+  const cases3 = old.cases.map((c) => {
     const e = req.existing.find((x) => x.case_id === c.id);
     return e === void 0 ? c : { ...c, regression: regression(e.reason) };
   });
   for (const a of req.added) {
-    cases2.push({ ...structuredClone(a.case), provenance: { kind: "promoted", ref, added_in_pack_version: version }, regression: regression(a.reason) });
+    cases3.push({ ...structuredClone(a.case), provenance: { kind: "promoted", ref, added_in_pack_version: version }, regression: regression(a.reason) });
   }
   for (const c of old.cases) {
-    if (cases2.find((n) => n.id === c.id)?.split !== c.split) throw new PilotError("holdout_leak", `Case ${c.id} would change split. A promotion never moves a case between discovery and held-out.`);
+    if (cases3.find((n) => n.id === c.id)?.split !== c.split) throw new PilotError("holdout_leak", `Case ${c.id} would change split. A promotion never moves a case between discovery and held-out.`);
   }
-  return { version: 1, name: old.name, pack_version: version, parent_pack_id: pack2.id, source: old.source, tools: old.tools, check_catalog: old.check_catalog, cases: cases2 };
+  return { version: 1, name: old.name, pack_version: version, parent_pack_id: pack2.id, source: old.source, tools: old.tools, check_catalog: old.check_catalog, cases: cases3 };
 }
 function renderPromotion(record, before, after) {
   return [
@@ -32553,12 +32553,12 @@ var init_checks = __esm({
 async function replayArm(input) {
   const { pack: pack2, settings, model } = input;
   const counter = { calls: 0 };
-  const cases2 = [];
+  const cases3 = [];
   for (const c of pack2.cases) {
     if (input.split !== void 0 && c.split !== input.split) continue;
-    cases2.push(await replayCase(c, input, counter));
+    cases3.push(await replayCase(c, input, counter));
   }
-  return { prompt_id: promptId(input.prompt), pack_id: input.pack_id, settings, model_destination: model.destination, cases: cases2, model_calls: counter.calls };
+  return { prompt_id: promptId(input.prompt), pack_id: input.pack_id, settings, model_destination: model.destination, cases: cases3, model_calls: counter.calls };
 }
 async function replayCase(c, input, counter) {
   const { pack: pack2, settings, model, prompt } = input;
@@ -33300,8 +33300,8 @@ var init_review = __esm({
 });
 
 // src/pilot/store.ts
-import { appendFileSync as appendFileSync2, closeSync as closeSync4, existsSync as existsSync14, mkdirSync as mkdirSync9, openSync as openSync4, readdirSync as readdirSync3, readFileSync as readFileSync16, statSync as statSync5, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
-import { join as join20 } from "node:path";
+import { appendFileSync as appendFileSync2, closeSync as closeSync4, existsSync as existsSync15, mkdirSync as mkdirSync9, openSync as openSync4, readdirSync as readdirSync3, readFileSync as readFileSync17, statSync as statSync5, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
+import { join as join21 } from "node:path";
 var OBJECT_KINDS, entryHash, MAX_OBJECT_BYTES, LOCK_STALE_MS, HELD, PilotStore;
 var init_store = __esm({
   "src/pilot/store.ts"() {
@@ -33338,7 +33338,7 @@ var init_store = __esm({
       }
       objectPath(kind, id) {
         if (!isSha256(id)) throw new PilotError("usage", `${String(id).slice(0, 80)} is not a full 64-character id.`);
-        return join20(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
+        return join21(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
       }
       // Stores a record under its content id. Storing the same record again is a no-op, so every step can be retried.
       put(kind, value) {
@@ -33356,7 +33356,7 @@ var init_store = __esm({
           writeOnce(path4, content);
         } catch (e) {
           if (!(e instanceof PilotError) || e.code !== "conflict") throw e;
-          if (!content.startsWith(readFileSync16(path4, "utf8"))) {
+          if (!content.startsWith(readFileSync17(path4, "utf8"))) {
             throw new PilotError("tampered", `${path4} already exists with content that does not match its name, so it was changed after it was written. It was not overwritten. Compare it with a backup, or start a new pilot directory.`);
           }
           writeAtomic(path4, content);
@@ -33365,7 +33365,7 @@ var init_store = __esm({
       // Reads a record and checks it still hashes to its name: an edited record is refused, not used.
       get(kind, id) {
         const path4 = this.objectPath(kind, id);
-        if (!existsSync14(path4)) throw new PilotError("not_found", `No ${kind} record ${id.slice(0, 12)} in ${this.dir}.`);
+        if (!existsSync15(path4)) throw new PilotError("not_found", `No ${kind} record ${id.slice(0, 12)} in ${this.dir}.`);
         let value;
         try {
           value = JSON.parse(readBounded(path4, MAX_OBJECT_BYTES));
@@ -33380,11 +33380,11 @@ var init_store = __esm({
         return { id, value: this.get(kind, id) };
       }
       has(kind, id) {
-        return isSha256(id) && existsSync14(this.objectPath(kind, id));
+        return isSha256(id) && existsSync15(this.objectPath(kind, id));
       }
       list(kind) {
-        const dir = join20(this.dir, "objects", kind);
-        if (!existsSync14(dir)) return [];
+        const dir = join21(this.dir, "objects", kind);
+        if (!existsSync15(dir)) return [];
         return readdirSync3(dir).map((f) => f.replace(/\.(json|txt)$/, "")).filter(isSha256).sort();
       }
       // A full id, or a prefix of at least 8 characters that names exactly one record. Approvals and publication
@@ -33408,23 +33408,23 @@ var init_store = __esm({
       }
       getPrompt(id) {
         const path4 = this.objectPath("prompt", id);
-        if (!existsSync14(path4)) throw new PilotError("not_found", `No prompt ${id.slice(0, 12)} in ${this.dir}.`);
+        if (!existsSync15(path4)) throw new PilotError("not_found", `No prompt ${id.slice(0, 12)} in ${this.dir}.`);
         const text4 = readBounded(path4);
         if (promptId(text4) !== id) throw new PilotError("tampered", `The stored prompt ${id.slice(0, 12)} no longer matches its id, so it was changed after it was written.`);
         return text4;
       }
       journalPath() {
-        return join20(this.dir, "journal.jsonl");
+        return join21(this.dir, "journal.jsonl");
       }
       // The sequence number and hash of the newest entry, kept beside the journal. The chain alone cannot show that
       // entries were cut off the end; a journal shorter than its recorded head can.
       headPath() {
-        return join20(this.dir, "journal.head");
+        return join21(this.dir, "journal.head");
       }
       head() {
-        if (!existsSync14(this.headPath())) return null;
+        if (!existsSync15(this.headPath())) return null;
         try {
-          const h = JSON.parse(readFileSync16(this.headPath(), "utf8"));
+          const h = JSON.parse(readFileSync17(this.headPath(), "utf8"));
           if (Number.isInteger(h.seq) && h.seq >= 1 && isSha256(h.hash)) return { seq: h.seq, hash: h.hash };
         } catch {
         }
@@ -33433,7 +33433,7 @@ var init_store = __esm({
       // Every entry, after checking the chain: each line must hash to its own `hash` and name the line before it.
       journal() {
         const path4 = this.journalPath();
-        if (!existsSync14(path4)) return [];
+        if (!existsSync15(path4)) return [];
         const entries = [];
         let prev = null;
         const text4 = readBounded(path4, MAX_OBJECT_BYTES);
@@ -33466,8 +33466,8 @@ var init_store = __esm({
       // next record() removes it.
       tornTail() {
         const path4 = this.journalPath();
-        if (!existsSync14(path4)) return false;
-        const bytes = readFileSync16(path4);
+        if (!existsSync15(path4)) return false;
+        const bytes = readFileSync17(path4);
         return bytes.length > 0 && bytes[bytes.length - 1] !== 10;
       }
       find(step, key) {
@@ -33491,7 +33491,7 @@ var init_store = __esm({
           const rest = { seq: entries.length + 1, at, step, key, refs, prev: entries.at(-1)?.hash ?? null };
           const entry = { ...rest, hash: entryHash(rest) };
           mkdirSync9(this.dir, { recursive: true });
-          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync16(this.journalPath()).lastIndexOf(10) + 1);
+          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync17(this.journalPath()).lastIndexOf(10) + 1);
           appendFileSync2(this.journalPath(), `${JSON.stringify(entry)}
 `, { mode: 384 });
           writeAtomic(this.headPath(), `${JSON.stringify({ seq: entry.seq, hash: entry.hash })}
@@ -33525,11 +33525,11 @@ var init_store = __esm({
       // reading it again and finding the same content, so a lock that was replaced in between is not removed.
       acquire(file, staleMs) {
         mkdirSync9(this.dir, { recursive: true });
-        const lock = join20(this.dir, file);
+        const lock = join21(this.dir, file);
         const pause = new Int32Array(new SharedArrayBuffer(4));
         const read = () => {
           try {
-            return { text: readFileSync16(lock, "utf8"), age: Date.now() - statSync5(lock).mtimeMs };
+            return { text: readFileSync17(lock, "utf8"), age: Date.now() - statSync5(lock).mtimeMs };
           } catch (e) {
             if (e.code === "ENOENT") return null;
             throw e;
@@ -33578,14 +33578,14 @@ var init_store = __esm({
         return () => {
           HELD.delete(lock);
           try {
-            if (readFileSync16(lock, "utf8") === String(process.pid)) unlinkSync5(lock);
+            if (readFileSync17(lock, "utf8") === String(process.pid)) unlinkSync5(lock);
           } catch {
           }
         };
       }
       // A rendering of stored records. Safe to overwrite: the records, not the report, are the evidence.
       report(name, content) {
-        const path4 = join20(this.dir, "reports", name);
+        const path4 = join21(this.dir, "reports", name);
         writeAtomic(path4, content);
         return path4;
       }
@@ -33595,8 +33595,8 @@ var init_store = __esm({
 
 // src/pilot/commands.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
-import { appendFileSync as appendFileSync3, existsSync as existsSync15, readFileSync as readFileSync17 } from "node:fs";
-import { dirname as dirname6, join as join21 } from "node:path";
+import { appendFileSync as appendFileSync3, existsSync as existsSync16, readFileSync as readFileSync18 } from "node:fs";
+import { dirname as dirname6, join as join22 } from "node:path";
 function defaultGit(args, cwd) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_")));
   return execFileSync4("git", args, { cwd, encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
@@ -33670,14 +33670,14 @@ function assertNotFromTheFuture(imported, now, cutoff) {
   }
 }
 function protectDirectory(dir, say) {
-  if (existsSync15(join21(dir, ".git"))) {
+  if (existsSync16(join22(dir, ".git"))) {
     throw new PilotError("usage", "The pilot directory is a git repository root. It holds customer data; use a directory that is not a repository, or a subdirectory with its own .gitignore.");
   }
-  const file = join21(dir, ".gitignore");
-  if (!existsSync15(file)) writeOnce(file, "*\n");
+  const file = join22(dir, ".gitignore");
+  if (!existsSync16(file)) writeOnce(file, "*\n");
   else {
-    const lines2 = readFileSync17(file, "utf8").split(/\r?\n/).map((l) => l.trim());
-    if (!lines2.includes("*")) appendFileSync3(file, `${readFileSync17(file, "utf8").endsWith("\n") ? "" : "\n"}*
+    const lines2 = readFileSync18(file, "utf8").split(/\r?\n/).map((l) => l.trim());
+    if (!lines2.includes("*")) appendFileSync3(file, `${readFileSync18(file, "utf8").endsWith("\n") ? "" : "\n"}*
 `);
   }
   try {
@@ -34428,7 +34428,7 @@ var init_commands = __esm({
 
 // src/pilot/calllog.ts
 import { readdirSync as readdirSync4 } from "node:fs";
-import { join as join22 } from "node:path";
+import { join as join23 } from "node:path";
 function valuesBefore(c, before) {
   const values = /* @__PURE__ */ new Map();
   const seen = /* @__PURE__ */ new Map();
@@ -34464,7 +34464,7 @@ function readCallLog(dir) {
     return c;
   };
   for (const name of names2) {
-    const text4 = readBounded(join22(dir, name), MAX_LOG_FILE_BYTES);
+    const text4 = readBounded(join23(dir, name), MAX_LOG_FILE_BYTES);
     const parts = text4.split("\n");
     parts.pop();
     for (const part of parts) {
@@ -34562,7 +34562,7 @@ var init_calllog = __esm({
 });
 
 // src/pilot/export.ts
-import { join as join23 } from "node:path";
+import { join as join24 } from "node:path";
 function buildLogExport(input) {
   const { log, contract } = input;
   if (contract.query_hash !== void 0) throw new PilotError("usage", "The metric contract pins a query hash. A call-log export comes from the wrapper, not from a query, so it cannot carry one. Export from the signed-off query instead.");
@@ -34691,9 +34691,9 @@ function writeLogExport(input) {
     tags,
     ...experiment2 ? { window: experiment2.window } : {}
   });
-  const outDir = input.outDir ?? join23(store.dir, "exports");
-  const path4 = join23(outDir, `${exportId}.json`);
-  writeAtomic(join23(outDir, csvName), built.csv);
+  const outDir = input.outDir ?? join24(store.dir, "exports");
+  const path4 = join24(outDir, `${exportId}.json`);
+  writeAtomic(join24(outDir, csvName), built.csv);
   writeAtomic(path4, `${JSON.stringify(built.header, null, 2)}
 `);
   const notes = [];
@@ -34769,7 +34769,7 @@ var init_export = __esm({
 
 // src/pilot/watch.ts
 import { readdirSync as readdirSync5 } from "node:fs";
-import { dirname as dirname7, join as join24 } from "node:path";
+import { dirname as dirname7, join as join25 } from "node:path";
 function whole(interimDays) {
   if (!Number.isInteger(interimDays) || interimDays < 1) throw new PilotError("usage", "--interim-days must be a whole number of 1 or more.");
   return interimDays;
@@ -34870,7 +34870,7 @@ function scanInbox(store, inbox, experimentId, spec) {
   const importedKeys = new Set(imports.map((e) => e.key));
   const newest = Math.max(-Infinity, ...imports.map((e) => ms(store.get("telemetry", e.refs.telemetry).exported_at)));
   const files = names2.map((name) => {
-    const path4 = join24(inbox, name);
+    const path4 = join25(inbox, name);
     try {
       const imported = importTelemetry({
         text: readBounded(path4),
@@ -35230,20 +35230,20 @@ function statusCase(s) {
   };
 }
 function demoPack() {
-  const cases2 = [];
+  const cases3 = [];
   let n = 0;
   for (let i = 1; i <= 8; i++) {
-    cases2.push(returnCase({ id: `ret-d${pad(i)}`, split: "discovery", n: ++n, ...i === 3 ? { order: CANARIES.discovery_order, extra: `It was ${CANARIES.discovery_words}.` } : {} }));
+    cases3.push(returnCase({ id: `ret-d${pad(i)}`, split: "discovery", n: ++n, ...i === 3 ? { order: CANARIES.discovery_order, extra: `It was ${CANARIES.discovery_words}.` } : {} }));
   }
   for (let i = 1; i <= 4; i++) {
-    cases2.push(returnCase({ id: `ret-h${pad(i)}`, split: "heldout", n: ++n, ...i === 2 ? { order: CANARIES.heldout_order, extra: `Sadly ${CANARIES.heldout_words}.` } : {} }));
+    cases3.push(returnCase({ id: `ret-h${pad(i)}`, split: "heldout", n: ++n, ...i === 2 ? { order: CANARIES.heldout_order, extra: `Sadly ${CANARIES.heldout_words}.` } : {} }));
   }
-  for (let i = 1; i <= 3; i++) cases2.push(statusThenReturnCase({ id: `sta-ret-d${pad(i)}`, split: "discovery", n: ++n }));
-  for (let i = 1; i <= 2; i++) cases2.push(statusThenReturnCase({ id: `sta-ret-h${pad(i)}`, split: "heldout", n: ++n }));
-  for (let i = 1; i <= 3; i++) cases2.push(lateReturnCase({ id: `late-d${pad(i)}`, split: "discovery", n: ++n }));
-  cases2.push(lateReturnCase({ id: "late-h01", split: "heldout", n: ++n }));
-  for (let i = 1; i <= 2; i++) cases2.push(statusCase({ id: `status-d${pad(i)}`, split: "discovery", n: ++n }));
-  cases2.push(statusCase({ id: "status-h01", split: "heldout", n: ++n }));
+  for (let i = 1; i <= 3; i++) cases3.push(statusThenReturnCase({ id: `sta-ret-d${pad(i)}`, split: "discovery", n: ++n }));
+  for (let i = 1; i <= 2; i++) cases3.push(statusThenReturnCase({ id: `sta-ret-h${pad(i)}`, split: "heldout", n: ++n }));
+  for (let i = 1; i <= 3; i++) cases3.push(lateReturnCase({ id: `late-d${pad(i)}`, split: "discovery", n: ++n }));
+  cases3.push(lateReturnCase({ id: "late-h01", split: "heldout", n: ++n }));
+  for (let i = 1; i <= 2; i++) cases3.push(statusCase({ id: `status-d${pad(i)}`, split: "discovery", n: ++n }));
+  cases3.push(statusCase({ id: "status-h01", split: "heldout", n: ++n }));
   const input = { type: "object", properties: { order_id: { type: "string" } }, required: ["order_id"] };
   return {
     version: 1,
@@ -35264,7 +35264,7 @@ function demoPack() {
       { name: "escalate_to_human", description: "Hand the conversation to the support team.", input_schema: { type: "object", properties: { reason: { type: "string" } }, required: ["reason"] } }
     ],
     check_catalog: CATALOG,
-    cases: cases2
+    cases: cases3
   };
 }
 function experimentFailureCases() {
@@ -35701,16 +35701,16 @@ __export(demo_exports, {
   demo: () => demo
 });
 import { execFileSync as execFileSync5 } from "node:child_process";
-import { existsSync as existsSync16, mkdirSync as mkdirSync10, readdirSync as readdirSync6, readFileSync as readFileSync18, statSync as statSync6, writeFileSync as writeFileSync10 } from "node:fs";
-import { dirname as dirname8, join as join25, resolve as resolve3 } from "node:path";
+import { existsSync as existsSync17, mkdirSync as mkdirSync10, readdirSync as readdirSync6, readFileSync as readFileSync19, statSync as statSync6, writeFileSync as writeFileSync10 } from "node:fs";
+import { dirname as dirname8, join as join26, resolve as resolve3 } from "node:path";
 function git(args, cwd) {
   const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_"))), ...GIT_ENV };
   return execFileSync5("git", args, { cwd, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
 }
 function filesUnder(dir) {
-  if (!existsSync16(dir)) return [];
+  if (!existsSync17(dir)) return [];
   return readdirSync6(dir).flatMap((name) => {
-    const path4 = join25(dir, name);
+    const path4 = join26(dir, name);
     return statSync6(path4).isDirectory() ? filesUnder(path4) : [path4];
   });
 }
@@ -35719,20 +35719,20 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
   const outFlag = flags.out;
   if (typeof outFlag !== "string" || !outFlag.trim()) throw new PilotError("usage", "--out is required: a new, empty directory for the demo's inputs, pilot records and reports.");
   const out = resolve3(outFlag);
-  if (existsSync16(out) && readdirSync6(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
-  const inputs = join25(out, "inputs");
-  const repoDir = join25(out, "customer-repo");
-  const dir = join25(out, "pilot");
+  if (existsSync17(out) && readdirSync6(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
+  const inputs = join26(out, "inputs");
+  const repoDir = join26(out, "customer-repo");
+  const dir = join26(out, "pilot");
   mkdirSync10(inputs, { recursive: true });
-  mkdirSync10(join25(repoDir, dirname8(DEMO.prompt_path)), { recursive: true });
+  mkdirSync10(join26(repoDir, dirname8(DEMO.prompt_path)), { recursive: true });
   const put = (name, content) => {
-    const path4 = join25(inputs, name);
+    const path4 = join26(inputs, name);
     writeFileSync10(path4, content);
     return path4;
   };
   const json = (value) => `${JSON.stringify(value, null, 2)}
 `;
-  writeFileSync10(join25(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
+  writeFileSync10(join26(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
   git(["init", "-q", "-b", DEMO.base], repoDir);
   git(["add", DEMO.prompt_path], repoDir);
   git(["commit", "-q", "-m", "Juniper prompt v14"], repoDir);
@@ -35793,7 +35793,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Synthe enterprise pilot: synthetic run for Fernhill Outfitters' support agent Juniper (all data invented).");
     say(`Inputs: ${inputs}   Pilot records and reports: ${dir}`);
     expect("init succeeds", await run2("Freeze the contract and the baseline prompt", ["init", "--config", put("pilot.json", json(demoConfig())), "--repo-dir", repoDir]) === 0);
-    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync16(join25(dir, "reports", "baseline.md")));
+    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync17(join26(dir, "reports", "baseline.md")));
     expect("pack frozen", await run2("Freeze the redacted conversation pack", ["pack", "--file", put("pack.v1.json", json(demoPack()))]) === 0);
     const packV1 = activePack(store);
     expect("discover succeeds", await run2("Find recurring failures on the discovery cases", ["discover", "--model", model]) === 0);
@@ -35900,7 +35900,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("approval recorded against the exact candidate and experiment", await run2("Record the approval", ["approve", "--candidate", candD, "--experiment", expD, "--approver", DEMO.metric_owner]) === 0);
     const tagD = candidateTag(candD);
     const specD = store.get("experiment", expD);
-    const logDir = join25(out, "agent-log");
+    const logDir = join26(out, "agent-log");
     let recorderClock = 0;
     const traffic = demoTraffic({
       recorder: pilotRecorder({ logDir, agent: "Juniper", idKey: DEMO_ID_KEY, now: () => new Date(recorderClock) }),
@@ -35917,7 +35917,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     });
     const looksD = () => store.find("analysis.decided").filter((e) => e.refs.experiment === expD);
     const importsD = () => store.find("telemetry.imported").filter((e) => e.refs.scope === expD).length;
-    const watchMd = () => readFileSync18(join25(dir, "reports", "WATCH.md"), "utf8");
+    const watchMd = () => readFileSync19(join26(dir, "reports", "WATCH.md"), "utf8");
     const tick2 = async (title, iso3) => {
       traffic.upTo(Date.parse(iso3));
       atTime(iso3);
@@ -35928,7 +35928,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const lastLook = () => store.get("analysis", looksD().at(-1)?.refs.analysis ?? "");
     expect("watch --log without --assignment is refused, even while no look is due", await run2("Try a watch tick without saying how traffic was assigned", ["watch", "--log", logDir]) === 1 && looksD().length === 0);
     const t0 = await tick2("Watch tick before the experiment starts (2026-11-27)", "2026-11-27T09:00:00Z");
-    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join25(dir, "exports")).length === 0);
+    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join26(dir, "exports")).length === 0);
     const t1 = await tick2("Watch tick at the end of day 1 (2026-11-29)", "2026-11-29T23:30:00Z");
     expect("day 1: one interim look, HOLD", t1.code === 0 && looksD().length === 1 && lastLook().recommendation === "hold" && lastLook().final === false && importsD() === 1);
     const t1b = await tick2("Watch tick again on day 1, twenty minutes later", "2026-11-29T23:50:00Z");
@@ -35942,9 +35942,9 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("the cutoff: the final analysis is HOLD (inconclusive), final", t4.code === 0 && looksD().length === 4 && finalD.recommendation === "hold" && finalD.final === true && t4.md.startsWith("# HOLD"));
     expect("the lift is real but smaller than the minimum effect, so it is not a keep", (finalD.primary.candidate.estimate ?? 0) - (finalD.primary.baseline.estimate ?? 0) < specD.primary.min_effect);
     const importsAtFinal = importsD();
-    const exportsAtFinal = filesUnder(join25(dir, "exports")).length;
+    const exportsAtFinal = filesUnder(join26(dir, "exports")).length;
     const t5 = await tick2("Watch tick after the final analysis (2026-12-16)", "2026-12-16T09:00:00Z");
-    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join25(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
+    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join26(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
     const pl = traffic.planted;
     const byVersion = (m) => Object.entries(m).sort().map(([t, n]) => `${t} ${n}`).join(", ");
     const count2 = (m) => Object.values(m).reduce((a, b) => a + b, 0);
@@ -35957,9 +35957,9 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect(`the cutoff export notes carry the planted counts (${count2(pl.no_outcome)} no outcome, ${count2(pl.two_versions)} two versions, ${pl.other_version_after_outcome} after the outcome, ${pl.outcome_after_other_version} of them with the outcome recorded again, ${pl.outcome_without_call} outcome without a call), in the tick's output and in WATCH.md`, count2(pl.no_outcome) === TRAFFIC.no_outcome.length && count2(pl.two_versions) === TRAFFIC.call_before_outcome.length && pl.other_version_after_outcome === TRAFFIC.call_after_outcome.length && pl.outcome_after_other_version === TRAFFIC.repeat_after_other_call.length && pl.outcome_without_call === TRAFFIC.outcome_without_call.length && notesOk(t4.out) && notesOk(t4.md));
     expect("every conversation with a recorded call is a row, including the ones with no outcome or two versions", finalD.coverage.rows === 14 * TRAFFIC.per_day);
     expect("no new GitHub request was made after the review", github.requests.length === requestsAfterReview);
-    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync18(p, "utf8")).join("\n");
+    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync19(p, "utf8")).join("\n");
     const rawId = /fernhill-(conv|unit|orphan)-/;
-    const pilotText = [...filesUnder(join25(dir, "reports")), ...filesUnder(join25(dir, "exports")), join25(dir, "journal.jsonl")].map((p) => readFileSync18(p, "utf8")).join("\n");
+    const pilotText = [...filesUnder(join26(dir, "reports")), ...filesUnder(join26(dir, "exports")), join26(dir, "journal.jsonl")].map((p) => readFileSync19(p, "utf8")).join("\n");
     const canariesList = Object.values(CANARIES);
     expect(`the ${filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).length} log files hold no raw conversation or unit id and no message text`, logText.length > 0 && !rawId.test(logText) && !traffic.rawIds.filter((_, i) => i % 997 === 0).some((id) => logText.includes(id)) && !canariesList.some((c) => logText.toLowerCase().includes(c.toLowerCase())));
     expect("the exports, reports and journal hold no raw conversation or unit id either", !rawId.test(pilotText));
@@ -35972,8 +35972,8 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const canaries = Object.values(CANARIES);
     const leaks = (text4) => canaries.some((c) => text4.toLowerCase().includes(c.toLowerCase()));
     expect(`nothing sent to GitHub holds pack conversation text (${github.requests.length} requests checked)`, !github.requests.some((r) => leaks(r.body) || leaks(r.path)));
-    expect("no report holds pack conversation text", !filesUnder(join25(dir, "reports")).some((p) => leaks(readFileSync18(p, "utf8"))));
-    expect("the journal holds no pack conversation text", !leaks(readFileSync18(join25(dir, "journal.jsonl"), "utf8")));
+    expect("no report holds pack conversation text", !filesUnder(join26(dir, "reports")).some((p) => leaks(readFileSync19(p, "utf8"))));
+    expect("the journal holds no pack conversation text", !leaks(readFileSync19(join26(dir, "journal.jsonl"), "utf8")));
     expect("nothing printed by the commands holds pack conversation text", !leaks(transcript2.join("\n")));
     expect("the GitHub token went only to the loopback server and was never printed", github.requests.every((r) => r.authorization === "Bearer demo-token-for-the-loopback-server") && !transcript2.join("\n").includes("demo-token-for-the-loopback-server"));
     expect("no provider credential was read: the commands saw only the GitHub token variable", Object.keys(inner.env).length === 1);
@@ -35981,21 +35981,21 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Outcomes:");
     for (const line of outcomes) say(`- ${line}`);
     const decisionFiles = [`replay-${shortId(candA)}-pack-v1.md`, `decision-${shortId(expB)}.md`, `decision-${shortId(expC)}.md`, `decision-${shortId(expD)}.md`];
-    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync16(join25(dir, "reports", f))));
+    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync17(join26(dir, "reports", f))));
     say("");
     say("The four outcomes, and the file that holds each decision:");
-    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join25(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
-    say(`- Reverted: candidate ${shortId(candB)}   ${join25(dir, "reports", `decision-${shortId(expB)}.md`)}`);
-    say(`- Kept: candidate ${shortId(candC)}   ${join25(dir, "reports", `decision-${shortId(expC)}.md`)}`);
-    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join25(dir, "reports", `decision-${shortId(expD)}.md`)}`);
+    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join26(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
+    say(`- Reverted: candidate ${shortId(candB)}   ${join26(dir, "reports", `decision-${shortId(expB)}.md`)}`);
+    say(`- Kept: candidate ${shortId(candC)}   ${join26(dir, "reports", `decision-${shortId(expC)}.md`)}`);
+    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join26(dir, "reports", `decision-${shortId(expD)}.md`)}`);
     say("");
     say("Evidence to open:");
-    say(`- ${join25(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
-    say(`- ${join25(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
-    say(`- ${join25(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
-    say(`- ${join25(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
-    say(`- ${join25(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
-    say(`- ${join25(dir, "journal.jsonl")}   every step, in order`);
+    say(`- ${join26(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
+    say(`- ${join26(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
+    say(`- ${join26(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
+    say(`- ${join26(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
+    say(`- ${join26(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
+    say(`- ${join26(dir, "journal.jsonl")}   every step, in order`);
     say("");
     say(failures.length === 0 ? `Synthetic pilot passed: ${step} steps, every expectation held (${((Date.now() - startedAt) / 1e3).toFixed(1)} s).` : `Synthetic pilot FAILED: ${failures.length} expectation(s) did not hold:`);
     for (const f of failures) say(`- ${f}`);
@@ -36198,7 +36198,7 @@ init_prompt();
 init_state();
 init_safety();
 import { spawn as spawn3 } from "node:child_process";
-import { existsSync as existsSync17, readFileSync as readFileSync19, writeFileSync as writeFileSync11 } from "node:fs";
+import { existsSync as existsSync18, readFileSync as readFileSync20, writeFileSync as writeFileSync11 } from "node:fs";
 import { createInterface as createInterface4 } from "node:readline/promises";
 
 // src/loop/report.ts
@@ -36306,87 +36306,38 @@ function renderDeltaBlock(goal, state, maxRounds = 3) {
 }
 var CHANGED = /* @__PURE__ */ new Set(["merged", "reverted", "proposed"]);
 
-// src/loop/report.ts
-var ISSUE_TITLE = "Synthe: prompt report";
-var money2 = (state) => state.spendUnknown ? `over $${budgetSpend(state).toFixed(2)}` : `$${budgetSpend(state).toFixed(2)}`;
-var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")} back to back`;
-var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
-var badKey = (r) => r?.outcome === "failed" && r.failure === "key";
-var busy = (r) => r?.outcome === "failed" && r.failure === "busy";
-var refusedCode = (r) => badKey(r) && Boolean(r.plain?.startsWith(PROXY_REFUSED));
-var CODE_FIX = "If the Synthe table gave you a new code, save it with `gh secret set SYNTHE_TEAM_CODE` (or `gh secret set SYNTHE_EVENT_CODE` for the event code), then run `npx synthe restart`.";
-var fmtScore = (n) => Number.isInteger(n) ? `${n}` : n.toFixed(1);
-function scoreMovement(state) {
-  const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
-  return measured.length > 1 ? { first: measured[0].pct, last: measured.at(-1).pct } : null;
+// src/loop/vault.ts
+init_merge_rule();
+
+// src/core/cost.ts
+var PRICES = {
+  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
+  "claude-sonnet-5-5": { input: 2, output: 10 },
+  "claude-opus-5-5": { input: 4, output: 20 },
+  // Teams still on Sonnet 4.5 need a price to see what moving off it (it retires 2026-11-30) would cost.
+  "claude-sonnet-4-5": { input: 3, output: 15 }
+};
+var knownModels = () => Object.keys(PRICES);
+function costUsd(model, usage) {
+  const base = PRICES[model];
+  if (!base || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
+  const totalInput = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
+  const price = model === "claude-haiku-5-5" && totalInput > 1e5 ? { input: 0.5, output: 2.5 } : base;
+  const input = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) * 1.25 + (usage.cache_read_input_tokens ?? 0) * 0.1;
+  return (input * price.input + usage.output_tokens * price.output) / 1e6;
 }
-function bestStep(state) {
-  let best = null;
-  let prev = null;
-  for (const p of displaySeries(scoreSeries(state))) {
-    if (!p.measured) continue;
-    if (p.merged && prev !== null && p.pct > prev && (!best || p.pct - prev > best.to - best.from)) best = { round: p.round, from: prev, to: p.pct };
-    prev = p.pct;
+function sumCosts(costs) {
+  let total = 0;
+  for (const c of costs) {
+    if (c === null) return null;
+    total += c;
   }
-  return best ? `The biggest single step was round ${best.round}: ${fmtScore(best.from)}% to ${fmtScore(best.to)}%.` : null;
+  return total;
 }
-function headline(goal, state, stoppedByTeam = false) {
-  const move = scoreMovement(state);
-  const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
-  const lastChange = Math.max(0, ...state.rounds.filter((r) => r.outcome === "merged" || r.outcome === "reverted").map((r) => r.round));
-  const gain = !move && measured.length !== 1 ? "plain" : measured.some((p) => p.round > lastChange) ? "none" : "practice";
-  const base = headlineBase(goal, state, stoppedByTeam, gain);
-  if (!move) {
-    if (measured.length === 1) {
-      const lead2 = `Your prompt scores ${fmtScore(measured[0].pct)}% (checks passed on test cases Synthe never trains on).`;
-      return { title: base.title, summary: `${lead2} ${base.summary}` };
-    }
-    return base;
-  }
-  const lead = `Your prompt: ${fmtScore(move.first)}% \u2192 ${fmtScore(move.last)}% (checks passed on test cases Synthe never trains on).`;
-  const step = state.stopped ? bestStep(state) : null;
-  return { title: base.title, summary: `${lead}${step ? ` ${step}` : ""} ${base.summary}` };
-}
-function headlineBase(goal, state, stoppedByTeam = false, mode = "plain") {
-  const merged = state.rounds.filter((r) => r.outcome === "merged").length;
-  const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
-  const rates = rated.length ? `${rated.at(-1).checks.after}% of the time, up from ${rated[0].checks.before}%. ` : "";
-  const gain = !rates || mode === "none" ? "" : mode === "practice" ? `On the practice cases Synthe learns from, your checks now pass ${rates}` : `Your checks now pass ${rates}`;
-  const guarded = state.rounds.filter((r) => r.outcome === "merged" && r.guards);
-  const guardLine = guarded.length ? `${guardSentence({ before: guarded[0].guards.before, after: guarded.at(-1).guards.after })} ` : "";
-  const spent = `It has spent ${money2(state)} of $${goal.budget.max_usd}.`;
-  if (state.proposal) {
-    return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
-  }
-  const last = state.rounds.at(-1);
-  if (state.stopped === "credit") return { title: "Stopped: event credit needs attention", summary: last?.plain ?? "Run `npx synthe key`, then `npx synthe restart`." };
-  if (!state.stopped && (missing(last) || badKey(last))) {
-    return { title: "Synthe needs you to fix something", summary: `${last.plain} ${spent}` };
-  }
-  if (!state.stopped && stoppedByTeam) {
-    return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}${guardLine}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
-  }
-  if (!state.stopped) {
-    const wait = busy(last) ? fromSyntheProxy(last?.plain) ? ` ${last.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
-    return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}${guardLine}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
-  }
-  const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
-  const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
-  if (recent.length > 0 && (recent.every((r) => r.outcome === "failed") || badKey(recent.at(-1)))) {
-    const end = recent.at(-1);
-    if (busy(end) && fromSyntheProxy(end.plain)) return { title: "Stopped: Synthe's proxy needs attention", summary: end.plain };
-    if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain };
-    if (refusedCode(end)) return { title: "Stopped: the Synthe proxy refused this repo's code", summary: `${end.plain} ${CODE_FIX} ${spent}` };
-    if (badKey(end)) return { title: end.plain === PROXY_AUTH_MESSAGE ? "Stopped: the Synthe proxy couldn't verify this run" : "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
-    if (busy(end) && isFinished(state.stopped)) {
-      return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
-    }
-    if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, run `npx synthe key`." };
-  }
-  if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
-  return merged > 0 ? { title: `Done: your prompt got better (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
-}
+
+// src/loop/score.ts
+init_merge_rule();
+init_safety();
 
 // src/model/client.ts
 init_sdk();
@@ -36449,32 +36400,6 @@ function readInstallId(path4) {
   } finally {
     closeSync(descriptor);
   }
-}
-
-// src/core/cost.ts
-var PRICES = {
-  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
-  "claude-sonnet-5-5": { input: 2, output: 10 },
-  "claude-opus-5-5": { input: 4, output: 20 },
-  // Teams still on Sonnet 4.5 need a price to see what moving off it (it retires 2026-11-30) would cost.
-  "claude-sonnet-4-5": { input: 3, output: 15 }
-};
-var knownModels = () => Object.keys(PRICES);
-function costUsd(model, usage) {
-  const base = PRICES[model];
-  if (!base || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
-  const totalInput = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
-  const price = model === "claude-haiku-5-5" && totalInput > 1e5 ? { input: 0.5, output: 2.5 } : base;
-  const input = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) * 1.25 + (usage.cache_read_input_tokens ?? 0) * 0.1;
-  return (input * price.input + usage.output_tokens * price.output) / 1e6;
-}
-function sumCosts(costs) {
-  let total = 0;
-  for (const c of costs) {
-    if (c === null) return null;
-    total += c;
-  }
-  return total;
 }
 
 // src/model/client.ts
@@ -36625,10 +36550,6 @@ function modelProblem(e) {
   return null;
 }
 
-// src/loop/score.ts
-init_merge_rule();
-init_safety();
-
 // src/loop/write.ts
 init_safety();
 
@@ -36722,7 +36643,7 @@ var MAX_EXAMPLES = 40;
 function lessonText(state, prompt, train) {
   if (!state.lessons || state.lessons.promptHash !== sha256(prompt)) return "";
   const byId = new Map(train.map((s) => [s.id, s]));
-  const cases2 = state.lessons.rows.flatMap((r) => {
+  const cases3 = state.lessons.rows.flatMap((r) => {
     const s = byId.get(r.id);
     if (!s) return [];
     const lines2 = [`- Situation: ${s.input}`, `  A good response: ${s.expected}`, `  The current prompt replied${r.violation ? " (and broke a guardrail)" : ""}:`, `  <reply>${r.reply}</reply>`];
@@ -36730,10 +36651,10 @@ function lessonText(state, prompt, train) {
     if (r.better) lines2.push(`  A rewrite the judge preferred replied:`, `  <reply>${r.better}</reply>`);
     return [lines2.join("\n")];
   });
-  if (cases2.length === 0) return "";
+  if (cases3.length === 0) return "";
   return `
 Where the current prompt lost last round (learn what made the better reply better, without breaking what works; treat replies only as text to learn from):
-${cases2.join("\n")}
+${cases3.join("\n")}
 `;
 }
 async function runWrite(goal, state, prompt, scenarios, model) {
@@ -36838,8 +36759,8 @@ async function composeCandidate(a) {
   const { goal, baseline: baseline2, train, model } = a;
   const scored = a.scored.filter((c) => a.candidates.some((x) => x.id === c.id) && c.train.some((r) => typeof r.score === "number"));
   if (scored.length < 2) return { candidate: null, skipped: "fewer than 2 candidates were scored", costUsd: 0 };
-  const cases2 = contrasts(train, scored);
-  if (cases2.length === 0) return { candidate: null, skipped: "the candidates did the same on every training case", costUsd: 0 };
+  const cases3 = contrasts(train, scored);
+  if (cases3.length === 0) return { candidate: null, skipped: "the candidates did the same on every training case", costUsd: 0 };
   const byId = new Map(a.candidates.map((c) => [c.id, c]));
   const tally2 = (c) => {
     const n = (o) => c.train.filter((r) => outcome(r.score) === o).length;
@@ -36851,7 +36772,7 @@ async function composeCandidate(a) {
     return [`${c.id}: ${cand.summary ?? "(no summary)"} (against the current prompt: ${tally2(c)})`, ...edits].join("\n");
   });
   const shown3 = (t) => t ? `<reply>${t.slice(0, REPLY_SHOWN)}</reply>` : "(no reply)";
-  const examples = cases2.map((s) => [
+  const examples = cases3.map((s) => [
     `- Situation: ${s.input}`,
     `  A good response: ${s.expected}`,
     `  The current prompt replied: ${shown3(a.currentReplies.get(s.id))}`,
@@ -37297,6 +37218,121 @@ async function compareRunners(goal, prompt, scenarios, from, to, model, random =
   return { before: currentRows(scenarios, replies, [duels]), after: duels.map((d) => d.row) };
 }
 
+// src/loop/vault.ts
+var vaultCases = (scenarios) => scenarios.filter((s) => s.split === "vault");
+async function runVault(goal, startPrompt, currentPrompt, scenarios, model, random = Math.random) {
+  const vault2 = vaultCases(scenarios);
+  if (vault2.length === 0) return { wins: 0, losses: 0, ties: 0, unknown: 0, p: 1, cases: 0, costUsd: 0 };
+  const { costs, challenge, repliesFor } = scorer(goal, model, random);
+  const startReplies = await repliesFor(startPrompt, vault2);
+  const rows = (await challenge("vault", currentPrompt, vault2, startReplies)).map((d) => d.row);
+  const known = rows.filter((r) => r.score !== null);
+  const split = paired(known, known.map((r) => ({ ...r, score: EVEN })));
+  return {
+    wins: split?.wins ?? 0,
+    losses: split?.losses ?? 0,
+    ties: known.filter((r) => r.score === TIE).length,
+    unknown: rows.length - known.length,
+    p: split?.p ?? 1,
+    cases: vault2.length,
+    costUsd: sumCosts(costs)
+  };
+}
+var cases2 = (n) => `${n} ${n === 1 ? "case" : "cases"}`;
+function vaultLines(state, heldBackGained) {
+  const v = state.vault;
+  if (!v) return [];
+  const unknown = v.unknown ? `, ${v.unknown} couldn't be judged` : "";
+  const lines2 = [`Vault check (cases no round ever saw): better in ${v.wins}, worse in ${v.losses}, the same in ${v.ties}${unknown}. That is your prompt after round ${v.round} against the one the run started from, on ${cases2(v.cases)}.`];
+  if (state.round > v.round) lines2.push(`Rounds ran after this check; run \`npx synthe vault\` again for a reading of the current prompt.`);
+  if (heldBackGained && v.wins <= v.losses) {
+    lines2.push(v.losses > v.wins ? "The held-back cases improved but the vault got worse, so the run's gains may fit the held-back cases rather than your users. Read the merged changes before you rely on them (`npx synthe undo N` puts back the prompt from before round N), and add fresh held-back cases to your test cases before the next run." : "The held-back cases improved but the vault shows no gain, so the run's gains may not carry beyond the cases it was checked on. Add fresh held-back cases before the next run, and more vault cases if you want a clearer reading.");
+  }
+  return lines2;
+}
+
+// src/loop/report.ts
+var ISSUE_TITLE = "Synthe: prompt report";
+var money2 = (state) => state.spendUnknown ? `over $${budgetSpend(state).toFixed(2)}` : `$${budgetSpend(state).toFixed(2)}`;
+var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_rounds - state.round), "more round")} back to back`;
+var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
+var badKey = (r) => r?.outcome === "failed" && r.failure === "key";
+var busy = (r) => r?.outcome === "failed" && r.failure === "busy";
+var refusedCode = (r) => badKey(r) && Boolean(r.plain?.startsWith(PROXY_REFUSED));
+var CODE_FIX = "If the Synthe table gave you a new code, save it with `gh secret set SYNTHE_TEAM_CODE` (or `gh secret set SYNTHE_EVENT_CODE` for the event code), then run `npx synthe restart`.";
+var fmtScore = (n) => Number.isInteger(n) ? `${n}` : n.toFixed(1);
+function scoreMovement(state) {
+  const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
+  return measured.length > 1 ? { first: measured[0].pct, last: measured.at(-1).pct } : null;
+}
+function bestStep(state) {
+  let best = null;
+  let prev = null;
+  for (const p of displaySeries(scoreSeries(state))) {
+    if (!p.measured) continue;
+    if (p.merged && prev !== null && p.pct > prev && (!best || p.pct - prev > best.to - best.from)) best = { round: p.round, from: prev, to: p.pct };
+    prev = p.pct;
+  }
+  return best ? `The biggest single step was round ${best.round}: ${fmtScore(best.from)}% to ${fmtScore(best.to)}%.` : null;
+}
+function headline(goal, state, stoppedByTeam = false) {
+  const move = scoreMovement(state);
+  const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
+  const lastChange = Math.max(0, ...state.rounds.filter((r) => r.outcome === "merged" || r.outcome === "reverted").map((r) => r.round));
+  const gain = !move && measured.length !== 1 ? "plain" : measured.some((p) => p.round > lastChange) ? "none" : "practice";
+  const base = headlineBase(goal, state, stoppedByTeam, gain);
+  if (!move) {
+    if (measured.length === 1) {
+      const lead2 = `Your prompt scores ${fmtScore(measured[0].pct)}% (checks passed on test cases Synthe never trains on).`;
+      return { title: base.title, summary: `${lead2} ${base.summary}` };
+    }
+    return base;
+  }
+  const lead = `Your prompt: ${fmtScore(move.first)}% \u2192 ${fmtScore(move.last)}% (checks passed on test cases Synthe never trains on).`;
+  const step = state.stopped ? bestStep(state) : null;
+  return { title: base.title, summary: `${lead}${step ? ` ${step}` : ""} ${base.summary}` };
+}
+function headlineBase(goal, state, stoppedByTeam = false, mode = "plain") {
+  const merged = state.rounds.filter((r) => r.outcome === "merged").length;
+  const rated = state.rounds.filter((r) => r.outcome === "merged" && r.checks);
+  const rates = rated.length ? `${rated.at(-1).checks.after}% of the time, up from ${rated[0].checks.before}%. ` : "";
+  const gain = !rates || mode === "none" ? "" : mode === "practice" ? `On the practice cases Synthe learns from, your checks now pass ${rates}` : `Your checks now pass ${rates}`;
+  const guarded = state.rounds.filter((r) => r.outcome === "merged" && r.guards);
+  const guardLine = guarded.length ? `${guardSentence({ before: guarded[0].guards.before, after: guarded.at(-1).guards.after })} ` : "";
+  const spent = `It has spent ${money2(state)} of $${goal.budget.max_usd}.`;
+  if (state.proposal) {
+    return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
+  }
+  const last = state.rounds.at(-1);
+  if (state.stopped === "credit") return { title: "Stopped: event credit needs attention", summary: last?.plain ?? "Run `npx synthe key`, then `npx synthe restart`." };
+  if (!state.stopped && (missing(last) || badKey(last))) {
+    return { title: "Synthe needs you to fix something", summary: `${last.plain} ${spent}` };
+  }
+  if (!state.stopped && stoppedByTeam) {
+    return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}${guardLine}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
+  }
+  if (!state.stopped) {
+    const wait = busy(last) ? fromSyntheProxy(last?.plain) ? ` ${last.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
+    return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}${guardLine}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
+  }
+  const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
+  const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
+  if (recent.length > 0 && (recent.every((r) => r.outcome === "failed") || badKey(recent.at(-1)))) {
+    const end = recent.at(-1);
+    if (busy(end) && fromSyntheProxy(end.plain)) return { title: "Stopped: Synthe's proxy needs attention", summary: end.plain };
+    if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain };
+    if (refusedCode(end)) return { title: "Stopped: the Synthe proxy refused this repo's code", summary: `${end.plain} ${CODE_FIX} ${spent}` };
+    if (badKey(end)) return { title: end.plain === PROXY_AUTH_MESSAGE ? "Stopped: the Synthe proxy couldn't verify this run" : "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
+    if (busy(end) && isFinished(state.stopped)) {
+      return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
+    }
+    if (!busy(end)) return { title: "Stopped: the last rounds didn't finish", summary: "Look at the latest run in the Actions tab for the error. If it mentions your key or credit, run `npx synthe key`." };
+  }
+  if (!isFinished(state.stopped)) return { title: "Stopped: Synthe needs you to fix something", summary: `${state.stopped[0].toUpperCase()}${state.stopped.slice(1)}.` };
+  return merged > 0 ? { title: `Done: your prompt got better (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
+}
+
 // src/cli/try-round.ts
 init_goal();
 import { closeSync as closeSync2, existsSync, mkdirSync as mkdirSync2, openSync as openSync2, readFileSync as readFileSync2, renameSync, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "node:fs";
@@ -37533,8 +37569,8 @@ async function reviewReplies(io2, model, writer, checks, items, costs) {
 async function reviewChecksAtSetup(io2, goal, prompt, scenarios, model, agent = false) {
   const checks = [...goal.checks ?? []];
   const costs = [];
-  const cases2 = scenarios.filter((s) => s.split === "train").slice(0, SETUP_CASES);
-  const marked = await pool(cases2, 6, async (s) => {
+  const cases3 = scenarios.filter((s) => s.split === "train").slice(0, SETUP_CASES);
+  const marked = await pool(cases3, 6, async (s) => {
     const r = await model.ask({ model: goal.models.runner, system: prompt, user: s.input, maxTokens: AGENT_MAX_TOKENS, allowCutOff: true });
     costs.push(r.costUsd);
     if (r.text === null) return null;
@@ -37565,16 +37601,16 @@ async function calibrate(io2, goal, prompt, scenarios, model, outDir) {
     io2.say("There are no checks in synthe.json, so there's nothing to calibrate. Synthe is using its AI judge's side-by-side preference instead.");
     return null;
   }
-  const cases2 = scenarios.filter((s) => s.split === "train").slice(0, CASES);
-  io2.say(`Calibrate checks whether Synthe's marking of your ${checks.length} checks can be trusted. It answers ${cases2.length} of your test cases with your current prompt, marks each reply twice, then asks you about up to ${QUESTIONS} of them. A few minutes, and about a cent.
+  const cases3 = scenarios.filter((s) => s.split === "train").slice(0, CASES);
+  io2.say(`Calibrate checks whether Synthe's marking of your ${checks.length} checks can be trusted. It answers ${cases3.length} of your test cases with your current prompt, marks each reply twice, then asks you about up to ${QUESTIONS} of them. A few minutes, and about a cent.
 `);
   const costs = [];
-  const replies = await pool(cases2, 6, async (s) => {
+  const replies = await pool(cases3, 6, async (s) => {
     const r = await model.ask({ model: goal.models.runner, system: prompt, user: s.input, maxTokens: AGENT_MAX_TOKENS, allowCutOff: true });
     costs.push(r.costUsd);
     return r.text;
   });
-  const marked = await pool(cases2.map((s, i) => ({ s, text: replies[i] })), 6, async ({ s, text: text4 }) => {
+  const marked = await pool(cases3.map((s, i) => ({ s, text: replies[i] })), 6, async ({ s, text: text4 }) => {
     if (text4 === null) return null;
     const twice = await Promise.all([askChecks(goal, model, s, text4), askChecks(goal, model, s, text4)]);
     costs.push(twice[0].costUsd, twice[1].costUsd);
@@ -37591,7 +37627,7 @@ async function calibrate(io2, goal, prompt, scenarios, model, outDir) {
     }
     return { check, applied, steady, asked: 0, agreed: 0, verdict: "unused" };
   });
-  const open = checks.map((_, c) => marked.flatMap((m, i) => m && m[0][c].applies && m[1][c].applies && m[0][c].passes === m[1][c].passes ? [{ input: cases2[i].input, reply: replies[i], c, passes: m[0][c].passes }] : []));
+  const open = checks.map((_, c) => marked.flatMap((m, i) => m && m[0][c].applies && m[1][c].applies && m[0][c].passes === m[1][c].passes ? [{ input: cases3[i].input, reply: replies[i], c, passes: m[0][c].passes }] : []));
   const items = pick(open, QUESTIONS);
   if (items.length) io2.say(`Now ${items.length} quick questions. For each, say whether the reply passes the check, as you mean it. If you disagree with Synthe, you can fix the check's wording right there.
 `);
@@ -38559,7 +38595,7 @@ async function migrate(args, env) {
   if (from === to) return fail3(`--from and --to are both ${to}. Pick two different models to compare.`);
   const prompt = readPrompt(readFileSync5(join7(env.cwd, goal.prompt.path), "utf8"), goal, null);
   if (prompt === null) return fail3(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
-  const scenarios = parseScenarios(readFileSync5(join7(env.cwd, goal.scenarios), "utf8"));
+  const scenarios = parseScenarios(readFileSync5(join7(env.cwd, goal.scenarios), "utf8")).filter((s) => s.split === "train" || s.split === "holdout");
   let real = env.model;
   if (!parsed.dryRun && !real) {
     if (!env.apiKey) return fail3("`npx synthe migrate` runs on your computer, changing nothing, and needs your Synthe key:\n  ANTHROPIC_API_KEY=your-key npx synthe migrate --to " + to + "\nTo see the layout without spending anything, add --dry-run.");
@@ -38909,16 +38945,122 @@ async function undo(d, roundArg) {
   return 0;
 }
 
+// src/cli/vault.ts
+init_goal();
+init_prompt();
+init_state();
+import { existsSync as existsSync7, readFileSync as readFileSync9 } from "node:fs";
+import { join as join11 } from "node:path";
+var vaultOptions = (args) => {
+  const out = { yes: false };
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--yes") out.yes = true;
+    else if (args[i] === "--start" && args[i + 1] && !args[i + 1].startsWith("--")) out.start = args[++i];
+    else return `Unknown option ${args[i]}. Use --start <file> (the prompt the run started from) and --yes (skip the cost question).`;
+  }
+  return out;
+};
+async function readStateFile(io2, slug) {
+  try {
+    const file = JSON.parse(await io2.run("gh", ["api", `repos/${slug}/contents/state.json?ref=${encodeURIComponent(STATE_BRANCH)}`]));
+    return { sha: file.sha, state: { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) } };
+  } catch {
+    return null;
+  }
+}
+async function vault(io2, args) {
+  const opts = vaultOptions(args);
+  if (typeof opts === "string") {
+    io2.say(opts);
+    return 1;
+  }
+  const goal = parseGoal(readFileSync9(join11(io2.cwd, GOAL_FILE), "utf8"));
+  const scenarios = parseScenarios(readFileSync9(join11(io2.cwd, goal.scenarios), "utf8"));
+  const cases3 = vaultCases(scenarios);
+  if (cases3.length === 0) {
+    io2.say(`${goal.scenarios} has no vault cases, so there is nothing to check. Before the next run starts, mark a few test cases \`"split": "vault"\`: no round ever reads them, so at the end of the run \`npx synthe vault\` can tell whether its gains carry to cases nobody picked winners on.`);
+    return 1;
+  }
+  let slug;
+  try {
+    slug = (await io2.run("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])).trim();
+  } catch {
+    io2.say("Couldn't reach this project on GitHub. Check you're signed in to the GitHub CLI (`gh auth status`) and inside your project's folder.");
+    return 1;
+  }
+  const saved = await readStateFile(io2, slug);
+  if (!saved) {
+    io2.say("No round has finished yet, so there is no run to check. Run `npx synthe vault` once the run is over.");
+    return 1;
+  }
+  const state = saved.state;
+  let start2;
+  if (opts.start) {
+    const path4 = join11(io2.cwd, opts.start);
+    if (!existsSync7(path4)) {
+      io2.say(`Couldn't find ${opts.start}. Give the file that holds the prompt the run started from.`);
+      return 1;
+    }
+    start2 = readFileSync9(path4, "utf8");
+  } else start2 = state.startPrompt ?? null;
+  if (start2 === null) {
+    io2.say("This run started before Synthe saved its starting prompt. Put the prompt from before the first round in a file (for example from `git log` on your prompt file) and run `npx synthe vault --start <file>`.");
+    return 1;
+  }
+  const current = readPrompt(readFileSync9(join11(io2.cwd, goal.prompt.path), "utf8"), goal, state.prompt);
+  if (current === null) {
+    io2.say(`Couldn't find your prompt in ${goal.prompt.path}. Run \`git pull\` so this folder has the latest round's prompt, then try again.`);
+    return 1;
+  }
+  if (current.trim() === start2.trim()) {
+    io2.say("Your prompt is the same as when the run started, so there is nothing to compare. Nothing was spent.");
+    return 0;
+  }
+  const credential = io2.credential(goal);
+  if (!credential) {
+    io2.say("`npx synthe vault` runs on your computer and needs an event code or your own Anthropic key.");
+    io2.say("Set SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE, or SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY, in your environment, then run this again.");
+    return 1;
+  }
+  io2.say(credential.line);
+  const perCase = 3 + (goal.checks?.some((c) => c.trim()) ? 2 : 0) + (goal.counter_checks?.some((c) => c.trim()) ? 2 : 0);
+  io2.say(`This compares the prompt in ${goal.prompt.path} on this computer (run \`git pull\` first so it is the latest round's) with the one the run started from, on ${cases3.length} vault ${cases3.length === 1 ? "case" : "cases"}. It makes about ${cases3.length * perCase} model calls, which cost money.`);
+  io2.say("Look at the vault once per run: each time you change something because of it, it stops being a fair check.");
+  if (!opts.yes && (await io2.ask("Type yes to go on: ")).trim().toLowerCase() !== "yes") {
+    io2.say("Stopped. Nothing was spent.");
+    return 0;
+  }
+  const result2 = await runVault(goal, start2, current, scenarios, credential.model, io2.random);
+  const record = { at: (io2.now?.() ?? /* @__PURE__ */ new Date()).toISOString(), round: state.round, ...result2 };
+  const shown3 = { ...state, vault: record };
+  for (const line of vaultLines(shown3, state.rounds.some((r) => r.outcome === "merged"))) io2.say(line);
+  io2.say(`p = ${result2.p.toFixed(3)} (the chance of a split at least this good if the two prompts were really equal). Cost: ${result2.costUsd === null ? "unknown" : `$${result2.costUsd.toFixed(2)}`}.`);
+  const latest = await readStateFile(io2, slug);
+  if (!latest) {
+    io2.say("Couldn't save the result to the run's state; the numbers above are the result.");
+    return 0;
+  }
+  const content = Buffer.from(`${JSON.stringify({ ...latest.state, vault: record }, null, 2)}
+`).toString("base64");
+  try {
+    await io2.run("gh", ["api", "-X", "PUT", `repos/${slug}/contents/state.json`, "-f", "message=Synthe: vault check by npx synthe vault", "-f", `branch=${STATE_BRANCH}`, "-f", `sha=${latest.sha}`, "-f", `content=${content}`]);
+    io2.say("Saved. The prompt report shows it the next time it updates.");
+  } catch (e) {
+    io2.say(`Couldn't save the result to the run's state (${e.message.trim().split("\n")[0]}); the numbers above are the result.`);
+  }
+  return 0;
+}
+
 // src/cli/main.ts
 init_repo();
 
 // src/cli/improve.ts
-import { relative, join as join18 } from "node:path";
+import { relative, join as join19 } from "node:path";
 import { writeFileSync as writeFileSync7 } from "node:fs";
 
 // src/improve/config.ts
-import { join as join11 } from "node:path";
-var improveFile = (gitDir) => join11(gitDir, "synthe-improve.json");
+import { join as join12 } from "node:path";
+var improveFile = (gitDir) => join12(gitDir, "synthe-improve.json");
 var DEFAULT_RUNS = 3;
 var COMMAND_TIMEOUT_MS = 6e5;
 var PRESETS = ["test-pass", "pytest", "bundle-size", "build-time", "custom"];
@@ -38967,13 +39109,13 @@ function parseImproveConfig(raw) {
 
 // src/improve/loop.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { existsSync as existsSync11, mkdirSync as mkdirSync6, mkdtempSync as mkdtempSync2, readFileSync as readFileSync13, realpathSync as realpathSync2, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync12, mkdirSync as mkdirSync6, mkdtempSync as mkdtempSync2, readFileSync as readFileSync14, realpathSync as realpathSync2, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { basename as basename2, dirname as dirname4, join as join17 } from "node:path";
+import { basename as basename2, dirname as dirname4, join as join18 } from "node:path";
 
 // src/improve/lessons.ts
-import { appendFileSync, mkdirSync as mkdirSync5, readFileSync as readFileSync9 } from "node:fs";
-import { join as join12 } from "node:path";
+import { appendFileSync, mkdirSync as mkdirSync5, readFileSync as readFileSync10 } from "node:fs";
+import { join as join13 } from "node:path";
 
 // src/improve/verdict.ts
 var median = (xs) => {
@@ -39158,15 +39300,15 @@ function lessonLine(l) {
   const summary = clip3(oneLine2(l.summary).replace(/[.\s]+$/, ""), Math.max(20, LINE_MAX - head.length - tail.length));
   return clip3(`${head}${summary}${tail}`, LINE_MAX);
 }
-var lessonsFile = (gitRoot) => join12(gitRoot, ".synthe", "improve-lessons.md");
+var lessonsFile = (gitRoot) => join13(gitRoot, ".synthe", "improve-lessons.md");
 function appendLessons(gitRoot, lines2) {
   const clean = lines2.map((l) => oneLine2(l).replace(/^- /, "")).filter(Boolean);
   if (!clean.length) return;
   const file = lessonsFile(gitRoot);
-  mkdirSync5(join12(gitRoot, ".synthe"), { recursive: true });
+  mkdirSync5(join13(gitRoot, ".synthe"), { recursive: true });
   let text4 = "";
   try {
-    text4 = readFileSync9(file, "utf8");
+    text4 = readFileSync10(file, "utf8");
   } catch {
   }
   const lead = !text4 ? `${HEADER}
@@ -39177,7 +39319,7 @@ function appendLessons(gitRoot, lines2) {
 function readLessons(gitRoot, max = 20) {
   let text4;
   try {
-    text4 = readFileSync9(lessonsFile(gitRoot), "utf8");
+    text4 = readFileSync10(lessonsFile(gitRoot), "utf8");
   } catch {
     return [];
   }
@@ -39207,13 +39349,13 @@ function lessonsTarget(_gitRoot, choice) {
 }
 
 // src/improve/worktree.ts
-import { existsSync as existsSync8, lstatSync as lstatSync3, mkdtempSync, rmSync as rmSync2, symlinkSync, unlinkSync as unlinkSync3 } from "node:fs";
+import { existsSync as existsSync9, lstatSync as lstatSync3, mkdtempSync, rmSync as rmSync2, symlinkSync, unlinkSync as unlinkSync3 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 
 // src/improve/presets.ts
-import { existsSync as existsSync7, readdirSync as readdirSync2, readFileSync as readFileSync10, statSync as statSync2 } from "node:fs";
-import { delimiter as delimiter2, join as join13 } from "node:path";
+import { existsSync as existsSync8, readdirSync as readdirSync2, readFileSync as readFileSync11, statSync as statSync2 } from "node:fs";
+import { delimiter as delimiter2, join as join14 } from "node:path";
 import { gzipSync } from "node:zlib";
 var NPM_PLACEHOLDER = 'echo "Error: no test specified" && exit 1';
 var win = process.platform === "win32";
@@ -39250,28 +39392,28 @@ function hasPythonTests(dir, depth = 3) {
   } catch {
     return false;
   }
-  return entries.some((e) => e.isFile() && PYTHON_TEST_FILE.test(e.name) || depth > 0 && e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules" && hasPythonTests(join13(dir, e.name), depth - 1));
+  return entries.some((e) => e.isFile() && PYTHON_TEST_FILE.test(e.name) || depth > 0 && e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules" && hasPythonTests(join14(dir, e.name), depth - 1));
 }
-var onPath = (name) => (process.env.PATH ?? "").split(delimiter2).some((d) => d && existsSync7(join13(d, win ? `${name}.exe` : name)));
+var onPath = (name) => (process.env.PATH ?? "").split(delimiter2).some((d) => d && existsSync8(join14(d, win ? `${name}.exe` : name)));
 function srcLayout(top) {
   try {
-    return readdirSync2(join13(top, "src"), { withFileTypes: true }).some((e) => e.isFile() && e.name.endsWith(".py") || e.isDirectory() && existsSync7(join13(top, "src", e.name, "__init__.py")));
+    return readdirSync2(join14(top, "src"), { withFileTypes: true }).some((e) => e.isFile() && e.name.endsWith(".py") || e.isDirectory() && existsSync8(join14(top, "src", e.name, "__init__.py")));
   } catch {
     return false;
   }
 }
 function pythonSetup(top) {
-  const signals = ["pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"].some((f) => existsSync7(join13(top, f))) || hasPythonTests(join13(top, "tests")) || readdirSync2(top, { withFileTypes: true }).some((e) => e.isFile() && PYTHON_TEST_FILE.test(e.name));
+  const signals = ["pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"].some((f) => existsSync8(join14(top, f))) || hasPythonTests(join14(top, "tests")) || readdirSync2(top, { withFileTypes: true }).some((e) => e.isFile() && PYTHON_TEST_FILE.test(e.name));
   if (!signals) return null;
-  const venv = VENV_NAMES.find((v) => existsSync7(join13(top, v, win ? "Scripts" : "bin", win ? "python.exe" : "python")));
+  const venv = VENV_NAMES.find((v) => existsSync8(join14(top, v, win ? "Scripts" : "bin", win ? "python.exe" : "python")));
   const python = venv ? win ? `${venv}\\Scripts\\python` : `${venv}/bin/python` : win || !onPath("python3") ? "python" : "python3";
   const src = srcLayout(top);
   const run2 = `${python} -m pytest -q${src && win ? " -o pythonpath=src" : ""}`;
   return { command: src && !win ? `PYTHONPATH=src ${run2}` : run2 };
 }
 function presetsForRepo(top) {
-  const pkg = join13(top, "package.json");
-  return detectPresets(existsSync7(pkg) ? [{ path: "package.json", text: readFileSync10(pkg, "utf8") }] : [], pythonSetup(top));
+  const pkg = join14(top, "package.json");
+  return detectPresets(existsSync8(pkg) ? [{ path: "package.json", text: readFileSync11(pkg, "utf8") }] : [], pythonSetup(top));
 }
 var NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 function lastNumber(stdout) {
@@ -39341,17 +39483,17 @@ function failingTests(output) {
 var OUTPUT_DIRS = ["dist", "build", "out", ".next/static", "public/build"];
 function builtFiles(dir) {
   return readdirSync2(dir, { withFileTypes: true }).flatMap((e) => {
-    const path4 = join13(dir, e.name);
+    const path4 = join14(dir, e.name);
     if (e.isDirectory()) return e.name === "node_modules" ? [] : builtFiles(path4);
     return e.isFile() && /\.(m?js|css)$/.test(e.name) ? [path4] : [];
   });
 }
 function bundleBytes(root) {
-  const dir = OUTPUT_DIRS.map((d) => join13(root, d)).find((d) => existsSync7(d) && statSync2(d).isDirectory());
+  const dir = OUTPUT_DIRS.map((d) => join14(root, d)).find((d) => existsSync8(d) && statSync2(d).isDirectory());
   if (!dir) return null;
   const files = builtFiles(dir);
   if (!files.length) return null;
-  return files.reduce((sum, f) => sum + gzipSync(readFileSync10(f)).length, 0);
+  return files.reduce((sum, f) => sum + gzipSync(readFileSync11(f)).length, 0);
 }
 var REASONS = {
   noNumber: "The metric command printed no number.",
@@ -39394,7 +39536,7 @@ var quote = (s) => win2 ? `"${s}"` : `'${s.replace(/'/g, "'\\''")}'`;
 var GIT_TIMEOUT_MS = 12e4;
 var LINKED = ["node_modules", ".venv", "venv"];
 async function withWorktree(exec, root, commit, fn) {
-  const dir = mkdtempSync(join14(tmpdir(), "synthe-improve-"));
+  const dir = mkdtempSync(join15(tmpdir(), "synthe-improve-"));
   const added = await exec(root, `git worktree add --detach ${quote(dir)} ${commit}`, GIT_TIMEOUT_MS);
   if (!added.ok) {
     rmSync2(dir, { recursive: true, force: true });
@@ -39403,9 +39545,9 @@ async function withWorktree(exec, root, commit, fn) {
   const linked = [];
   try {
     for (const name of LINKED) {
-      const link = join14(dir, name);
-      if (existsSync8(join14(root, name)) && !existsSync8(link)) {
-        symlinkSync(join14(root, name), link, win2 ? "junction" : "dir");
+      const link = join15(dir, name);
+      if (existsSync9(join15(root, name)) && !existsSync9(link)) {
+        symlinkSync(join15(root, name), link, win2 ? "junction" : "dir");
         linked.push(link);
       }
     }
@@ -39448,15 +39590,15 @@ async function measureAt(exec, root, commit, config, say = () => {
 
 // src/improve/writer.ts
 init_safety();
-import { existsSync as existsSync10, lstatSync as lstatSync4, readFileSync as readFileSync12, realpathSync } from "node:fs";
-import { dirname as dirname3, join as join16, sep } from "node:path";
+import { existsSync as existsSync11, lstatSync as lstatSync4, readFileSync as readFileSync13, realpathSync } from "node:fs";
+import { dirname as dirname3, join as join17, sep } from "node:path";
 
 // src/improve/protect.ts
 init_goal();
 init_safety();
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync9, readFileSync as readFileSync11, statSync as statSync3 } from "node:fs";
-import { join as join15, posix } from "node:path";
+import { existsSync as existsSync10, readFileSync as readFileSync12, statSync as statSync3 } from "node:fs";
+import { join as join16, posix } from "node:path";
 var DEPENDENCY_FILES = /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pnpm-workspace\.yaml|bun\.lockb?|poetry\.lock|uv\.lock|Pipfile(\.lock)?|pyproject\.toml|pytest\.ini|tox\.ini|setup\.cfg|requirements[^/]*\.txt|Cargo\.(toml|lock)|go\.(mod|sum)|Gemfile(\.lock)?|composer\.(json|lock))$/i;
 var RULES = [
   [/(^|\/)\.synthe(\/|$)|(^|\/)synthe\.json$/i, "is Synthe's own setup; a measured change leaves it alone."],
@@ -39496,9 +39638,9 @@ function protectedChanges(paths, config) {
 }
 function promptModeProtect(top) {
   try {
-    const file = join15(top, GOAL_FILE);
-    if (!existsSync9(file)) return [];
-    const goal = JSON.parse(readFileSync11(file, "utf8"));
+    const file = join16(top, GOAL_FILE);
+    if (!existsSync10(file)) return [];
+    const goal = JSON.parse(readFileSync12(file, "utf8"));
     const clean = (p) => {
       if (typeof p !== "string") return [];
       const path4 = p.trim().replace(/\\/g, "/").replace(/^\.\//, "");
@@ -39559,7 +39701,7 @@ function metricOnlyFiles(top, config) {
   const known = new Set(tracked);
   const read = (f) => {
     try {
-      return statSync3(join15(top, f)).size > MAX_BYTES ? null : readFileSync11(join15(top, f), "utf8");
+      return statSync3(join16(top, f)).size > MAX_BYTES ? null : readFileSync12(join16(top, f), "utf8");
     } catch {
       return null;
     }
@@ -39600,7 +39742,7 @@ function candidateFiles(dir, tracked, config) {
     if (protectedPathProblem(path4, config) || GENERATED.test(path4) || AGENT_NOTES.test(path4) || BINARY.test(path4)) continue;
     let stat2;
     try {
-      stat2 = lstatSync4(join16(dir, path4));
+      stat2 = lstatSync4(join17(dir, path4));
     } catch {
       continue;
     }
@@ -39665,7 +39807,7 @@ function shownFiles(dir, paths) {
   for (const path4 of paths) {
     let raw;
     try {
-      raw = readFileSync12(join16(dir, path4));
+      raw = readFileSync13(join17(dir, path4));
     } catch {
       continue;
     }
@@ -39759,8 +39901,8 @@ var count = (text4, part) => {
 };
 function insideCheckout(dir, path4) {
   const root = realpathSync(dir);
-  let parent = dirname3(join16(dir, path4));
-  while (!existsSync10(parent)) parent = dirname3(parent);
+  let parent = dirname3(join17(dir, path4));
+  while (!existsSync11(parent)) parent = dirname3(parent);
   const real = realpathSync(parent);
   return real === root || real.startsWith(root + sep);
 }
@@ -39779,8 +39921,8 @@ function checkEdits(dir, edits, shown3, config) {
     if (GENERATED.test(path4)) return { problem: `${path4} is generated output; change the source it is built from` };
     let entry = texts.get(path4);
     if (!entry) {
-      const onDisk = existsSync10(join16(dir, path4));
-      if (shown3.has(path4)) entry = { original: readFileSync12(join16(dir, path4), "utf8"), text: "" };
+      const onDisk = existsSync11(join17(dir, path4));
+      if (shown3.has(path4)) entry = { original: readFileSync13(join17(dir, path4), "utf8"), text: "" };
       else if (onDisk) return { problem: `${path4} was not among the files shown, so it can't be edited` };
       else if (e.search !== "") return { problem: `${path4} does not exist` };
       else if (!insideCheckout(dir, path4)) return { problem: `${path4} is not a path inside the repo` };
@@ -39822,7 +39964,7 @@ var SYNTHE_IDENTITY = ["-c", "user.name=Synthe", "-c", "user.email=synthe@users.
 var SCRATCH_PREFIX = "synthe-improve-";
 var firstLine = (e) => (e?.message ?? String(e)).trim().split("\n")[0];
 async function withScratch(io2, top, commit, fn) {
-  const dir = mkdtempSync2(join17(tmpdir2(), SCRATCH_PREFIX));
+  const dir = mkdtempSync2(join18(tmpdir2(), SCRATCH_PREFIX));
   try {
     await io2.run("git", ["-C", top, "worktree", "add", "--detach", "--quiet", dir, commit]);
   } catch (e) {
@@ -39858,7 +40000,7 @@ function removeScratchCheckouts(top) {
       }
       if (parent !== temp || !scratch.test(basename2(path4))) continue;
       for (const name of ["node_modules", ".venv", "venv"]) try {
-        rmSync3(join17(path4, name));
+        rmSync3(join18(path4, name));
       } catch {
       }
       try {
@@ -39985,8 +40127,8 @@ async function runLoop(io2, o) {
         const changed = checked.writes.map((w) => w.path);
         io2.say(`Round ${n}: trying "${summary}" (${changed.join(", ")})`);
         for (const w of checked.writes) {
-          mkdirSync6(dirname4(join17(dir, w.path)), { recursive: true });
-          writeFileSync6(join17(dir, w.path), w.text);
+          mkdirSync6(dirname4(join18(dir, w.path)), { recursive: true });
+          writeFileSync6(join18(dir, w.path), w.text);
         }
         try {
           const commit = await commitPaths(io2, dir, changed, `${summary}
@@ -40058,8 +40200,8 @@ async function publish(io2, a) {
     const files = [LESSONS_FILE];
     const target = lessonsTarget(dir, a.lessonsChoice);
     if (target) {
-      const path4 = join17(dir, target);
-      writeFileSync6(path4, upsertLessonsBlock(existsSync11(path4) ? readFileSync13(path4, "utf8") : "", a.result.lessons));
+      const path4 = join18(dir, target);
+      writeFileSync6(path4, upsertLessonsBlock(existsSync12(path4) ? readFileSync14(path4, "utf8") : "", a.result.lessons));
       files.push(target);
     }
     const sha = await commitPaths(io2, dir, files, "Synthe: lessons from this improve run\n\nOnly adds what was measured in each round. No code changes.\n", true);
@@ -40483,7 +40625,7 @@ async function preflight(io2, dirtyMessage, more) {
   if ("error" in topRun) problems.push("This folder is not inside a git repository. Run this inside your project's folder.");
   else {
     top = topRun.out.trim();
-    gitDir = (await tryRun("git", ["rev-parse", "--absolute-git-dir"])).out?.trim() ?? join18(top, ".git");
+    gitDir = (await tryRun("git", ["rev-parse", "--absolute-git-dir"])).out?.trim() ?? join19(top, ".git");
     const headRun = await tryRun("git", ["rev-parse", "--verify", "HEAD"]);
     if ("error" in headRun) problems.push("This repository has no commit yet. Commit your code first: Synthe measures committed code.");
     else head = headRun.out.trim();
@@ -40671,7 +40813,7 @@ async function improveLoop(io2, o, a) {
         for (const line of triedLines(result2.rounds)) io2.say(line);
       }
       io2.say(`Model cost: ${total}.`);
-      if (result2.rounds.length) io2.say(`Lessons from these rounds are saved in ${relative(top, join18(a.gitDir, LESSONS_FILE))} (not part of your code); the next run reads them.`);
+      if (result2.rounds.length) io2.say(`Lessons from these rounds are saved in ${relative(top, join19(a.gitDir, LESSONS_FILE))} (not part of your code); the next run reads them.`);
       if (o.agent) io2.say(IMPROVE_LOOP_NEXT_NONE);
       return false;
     }
@@ -40759,7 +40901,7 @@ async function settle(io2, o, presets, defaultBranch, top) {
 }
 
 // src/cli/submit.ts
-import { existsSync as existsSync12, readFileSync as readFileSync14 } from "node:fs";
+import { existsSync as existsSync13, readFileSync as readFileSync15 } from "node:fs";
 var SUBMIT_NEXT_WIN = "NEXT: Show the person the result and the pull request link as written.";
 var SUBMIT_NEXT_LOSS = "NEXT: Show the person why this change did not win, as written. If they want another try, make a different small change on the same branch, commit, and run `npx synthe submit` again.";
 var MAX_CHANGED_FILES = 60;
@@ -40796,13 +40938,13 @@ async function submitRun(io2, _root, options, record) {
     return false;
   }
   const file = improveFile(repo.gitDir);
-  if (!existsSync12(file)) {
+  if (!existsSync13(file)) {
     io2.say("Run npx synthe improve first. It measures the current code and saves what to compare against.");
     return false;
   }
   let config;
   try {
-    config = parseImproveConfig(readFileSync14(file, "utf8"));
+    config = parseImproveConfig(readFileSync15(file, "utf8"));
   } catch (e) {
     io2.say(`${e.message}. Run npx synthe improve again.`);
     return false;
@@ -41006,10 +41148,10 @@ function onInterrupt(cleanup) {
     for (const s of signals) process.off(s, stop2);
   };
 }
-var template = () => readFileSync19(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync20(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms2) => new Promise((r) => setTimeout(r, ms2)) };
 function setUpHere() {
-  if (existsSync17(GOAL_FILE)) return true;
+  if (existsSync18(GOAL_FILE)) return true;
   console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
   process.exitCode = 1;
   return false;
@@ -41038,7 +41180,7 @@ async function status2() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync19(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync20(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -41057,7 +41199,7 @@ async function changes() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync19(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync20(GOAL_FILE, "utf8"));
   console.log(changesText(goal, s));
 }
 async function stop() {
@@ -41076,7 +41218,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync19(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync20(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -41086,7 +41228,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync17(goal.scenarios) ? sha256(readFileSync19(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync18(goal.scenarios) ? sha256(readFileSync20(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -41115,7 +41257,7 @@ async function undoRound() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync19(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync20(GOAL_FILE, "utf8"));
   const token2 = (await run("gh", ["auth", "token"])).trim();
   const history = async (path4) => {
     const shas = (await run("git", ["log", "--format=%H", "--", path4])).split("\n").filter(Boolean);
@@ -41134,15 +41276,30 @@ function localRun(command) {
   }
   const { key, eventCode, teamCode } = credential;
   console.log(credential.line);
-  const goal = parseGoal(readFileSync19(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync20(GOAL_FILE, "utf8"));
   if (!key && eventCode) eventModels(goal.models);
-  const prompt = readPrompt(readFileSync19(goal.prompt.path, "utf8"), goal, null);
+  const prompt = readPrompt(readFileSync20(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync19(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, teamCode) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync20(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, teamCode) };
+}
+async function vaultCheck() {
+  if (!setUpHere()) return;
+  process.exitCode = await vault({
+    cwd: process.cwd(),
+    say: console.log,
+    ask,
+    run,
+    credential: (goal) => {
+      const c = localCredential(process.env);
+      if (!c) return null;
+      if (!c.key && c.eventCode) eventModels(goal.models);
+      return { model: configuredModel(c.key, c.eventCode, false, c.teamCode), line: c.line };
+    }
+  }, process.argv.slice(3));
 }
 async function calibrateChecks() {
   const local = localRun("calibrate");
@@ -41150,7 +41307,7 @@ async function calibrateChecks() {
   const result2 = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result2) return;
   if (result2.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync19(GOAL_FILE, "utf8"));
+    const saved = JSON.parse(readFileSync20(GOAL_FILE, "utf8"));
     writeFileSync11(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result2.checks }, null, 2)}
 `);
     console.log(`
@@ -41199,6 +41356,7 @@ Then:
   npx synthe key      use your own Anthropic key instead of event credit
   npx synthe try      run one round on your computer, changing nothing (event code or own key)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
+  npx synthe vault   at the end of a run, compare your prompt with the one it started from on the "vault" test cases no round ever saw (event code or own key; asks before spending)
   npx synthe calibrate     check that your checks are marked steadily and the way you mean them (event code or own key)
   npx synthe migrate --to <model>   compare your prompt on another model, changing nothing (needs ANTHROPIC_API_KEY; add --dry-run to spend nothing)
 
@@ -41225,6 +41383,7 @@ async function main2() {
   else if (command === "verify") process.exitCode = verify(process.argv[3], process.cwd());
   else if (command === "undo") await undoRound();
   else if (command === "calibrate") await calibrateChecks();
+  else if (command === "vault") await vaultCheck();
   else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.ANTHROPIC_API_KEY });
   else if (command === "pilot") {
     const pilot = await Promise.resolve().then(() => (init_main(), main_exports));
