@@ -141,6 +141,7 @@ function parseGoal(text4) {
       if (missing2.length) bad5(`an openai-compatible provider needs every model named in "models": ${missing2.join(", ")} ${missing2.length === 1 ? "is" : "are"} missing. Synthe's defaults are Claude models.`);
       const rpm = p.max_requests_per_minute;
       if (rpm !== void 0 && !(typeof rpm === "number" && Number.isFinite(rpm) && rpm > 0)) bad5("provider.max_requests_per_minute must be a number above 0");
+      if (p.reasoning_effort !== void 0 && !REASONING_EFFORTS.includes(p.reasoning_effort)) bad5(`provider.reasoning_effort must be one of ${REASONING_EFFORTS.join(", ")}`);
       const unpriced = unpricedModels(g.models, p);
       if (unpriced.length && g.budget.max_calls === void 0) bad5(`${unpriced.join(", ")} ${unpriced.length === 1 ? "has" : "have"} no price, or a price of 0, in provider.prices, so budget.max_usd can't stop the run. Set budget.max_calls (the most model calls a run may make, for example 500), or add real prices: { "input": USD, "output": USD } per million tokens.`);
     }
@@ -203,13 +204,14 @@ function parseAttacks(text4) {
   if (rows.length > MAX_ATTACKS) throw new Error(`${file} has ${rows.length} attacks; Synthe runs at most ${MAX_ATTACKS} per round. Trim the file to the attacks that matter most.`);
   return rows;
 }
-var STATE_BRANCH, GOAL_FILE, MAX_CHECKS, LOOPBACK_HOSTS, isLoopback, DEFAULTS, ATTACKS_FILE, MAX_ATTACKS;
+var STATE_BRANCH, GOAL_FILE, MAX_CHECKS, REASONING_EFFORTS, LOOPBACK_HOSTS, isLoopback, DEFAULTS, ATTACKS_FILE, MAX_ATTACKS;
 var init_goal = __esm({
   "src/core/goal.ts"() {
     "use strict";
     STATE_BRANCH = "synthe/state";
     GOAL_FILE = "synthe.json";
     MAX_CHECKS = 5;
+    REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high"];
     LOOPBACK_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
     isLoopback = (url) => LOOPBACK_HOSTS.has(url.hostname);
     DEFAULTS = {
@@ -36904,6 +36906,7 @@ function openAiCompatibleModel(o) {
         model,
         messages: [...system === void 0 ? [] : [{ role: "system", content: system }], { role: "user", content: schema && jsonInPrompt ? `${user2}${JSON_ONLY(schema)}` : user2 }],
         [tokensField]: maxTokens,
+        ...o.reasoningEffort ? { reasoning_effort: o.reasoningEffort } : {},
         ...schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}
       };
       const r = await post(model, body);
@@ -36947,6 +36950,22 @@ function openAiCompatibleModel(o) {
         stopReason: refused ? "refusal" : reason
       };
     }
+  }
+}
+async function listModels(baseUrl, apiKey) {
+  const url = new URL(`${baseUrl.trim().replace(/\/+$/, "")}/models`);
+  const hide = (text4) => apiKey ? text4.split(apiKey).join("[your key]") : text4;
+  try {
+    const response = await fetch(url, { headers: { authorization: `Bearer ${apiKey}` }, redirect: "error", signal: AbortSignal.timeout(3e4) });
+    if (response.status === 404) return { ok: false, missing: true, why: "it has no /models route" };
+    if (!response.ok) return { ok: false, missing: false, why: `it answered ${response.status}` };
+    const body = await response.json();
+    const rows = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
+    if (!rows) return { ok: false, missing: false, why: "its answer had no list of models" };
+    const zero = (v) => (typeof v === "number" || typeof v === "string" && v.trim() !== "") && Number(v) === 0;
+    return { ok: true, models: rows.flatMap((m) => typeof m?.id === "string" && m.id ? [{ id: m.id.replace(/^models\//, ""), free: zero(m.pricing?.prompt) && zero(m.pricing?.completion) }] : []) };
+  } catch (error) {
+    return { ok: false, missing: false, why: hide(`it couldn't be reached (${error instanceof Error ? error.message : String(error)})`) };
   }
 }
 
@@ -37039,7 +37058,7 @@ function ownKeyBaseUrl(env = process.env) {
   return ANTHROPIC_API_URL;
 }
 function providerModel(provider, apiKey) {
-  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices, maxRequestsPerMinute: provider.max_requests_per_minute });
+  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices, maxRequestsPerMinute: provider.max_requests_per_minute, reasoningEffort: provider.reasoning_effort });
   return anthropicModel(apiKey);
 }
 function onModel(model, id) {
@@ -38180,11 +38199,13 @@ var PRESETS = [
     id: "gemini",
     name: "Google Gemini",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-    signup: "https://aistudio.google.com/apikey",
-    models: { writer: "gemini-2.5-flash", runner: "gemini-2.5-flash", judge: "gemini-2.5-flash", checker: "gemini-2.5-flash" },
-    maxRequestsPerMinute: 15
+    signup: "https://aistudio.google.com/app/apikey",
+    models: { writer: "gemini-4-hydrogen", runner: "gemini-4-hydrogen", judge: "gemini-4-hydrogen", checker: "gemini-4-hydrogen" },
+    maxRequestsPerMinute: 15,
+    reasoningEffort: "low"
   },
   {
+    // Non-reasoning models suit Synthe's short JSON calls.
     id: "groq",
     name: "Groq",
     baseUrl: "https://api.groq.com/openai/v1",
@@ -38193,11 +38214,12 @@ var PRESETS = [
     maxRequestsPerMinute: 20
   },
   {
+    // Free model ids come and go, so none is named here: setup offers what the /models list prices at 0.
     id: "openrouter",
     name: "OpenRouter (free models)",
     baseUrl: "https://openrouter.ai/api/v1",
     signup: "https://openrouter.ai/keys",
-    models: { writer: "meta-llama/llama-3.3-70b-instruct:free", runner: "meta-llama/llama-3.3-70b-instruct:free", judge: "meta-llama/llama-3.3-70b-instruct:free", checker: "meta-llama/llama-3.3-70b-instruct:free" },
+    models: null,
     maxRequestsPerMinute: 15
   }
 ];
@@ -38985,13 +39007,14 @@ var modelName = (text4) => /^[^\s]{1,200}$/.test(text4);
 async function chooseModels(io2, host, found, agent, preset) {
   if (agent) {
     if (agent.model) return { writer: agent.model, runner: agent.model, judge: agent.model, checker: agent.model };
-    if (preset) return preset.models;
+    if (preset?.models) return preset.models;
     askPerson(`--model (the model the agent uses on ${host}${found ? `; its code names ${found.model} in ${found.path}` : ""})`);
   }
   let runner = "";
-  if (preset) {
-    if (found) io2.say(`Your agent's code names the model ${found.model} (${found.path}). On ${preset.name}, Synthe suggests ${preset.models.runner}; type another model if ${preset.name} serves the one your agent uses.`);
-    runner = (await io2.ask(`Press Enter to use ${preset.models.runner} as your agent's model, or type another: `)).trim() || preset.models.runner;
+  const suggested = preset?.models;
+  if (preset && suggested) {
+    if (found) io2.say(`Your agent's code names the model ${found.model} (${found.path}). On ${preset.name}, Synthe suggests ${suggested.runner}; type another model if ${preset.name} serves the one your agent uses.`);
+    runner = (await io2.ask(`Press Enter to use ${suggested.runner} as your agent's model, or type another: `)).trim() || suggested.runner;
   } else if (found) {
     io2.say(`Your agent's code names the model ${found.model} (${found.path}). Synthe plays your agent on the model it runs on, so its tests match what your users get.`);
     const typed = (await io2.ask(`Press Enter to use ${found.model} as your agent's model, or type the model it uses: `)).trim();
@@ -39006,7 +39029,7 @@ async function chooseModels(io2, host, found, agent, preset) {
     const typed = (await io2.ask(question)).trim();
     return modelName(typed) ? typed : fallback;
   };
-  const writerDefault = preset?.models.writer ?? runner, judgeDefault = preset?.models.judge ?? runner;
+  const writerDefault = suggested?.writer ?? runner, judgeDefault = suggested?.judge ?? runner;
   const writer = await pick2(`Model that writes Synthe's prompt edits (press Enter for ${writerDefault}): `, writerDefault);
   const judge2 = await pick2(`Model that judges replies and marks your checks (press Enter for ${judgeDefault}): `, judgeDefault);
   return { writer, runner, judge: judge2, checker: judge2 };
@@ -39074,9 +39097,9 @@ async function checkOther(io2, other, key, nothing) {
     return false;
   }
 }
-function otherSetup(baseUrl, models, costs) {
+function otherSetup(baseUrl, models, costs, preset) {
   return {
-    provider: { kind: "openai-compatible", base_url: baseUrl, prices: costs.prices, ...costs.maxRequestsPerMinute ? { max_requests_per_minute: costs.maxRequestsPerMinute } : {} },
+    provider: { kind: "openai-compatible", base_url: baseUrl, prices: costs.prices, ...costs.maxRequestsPerMinute ? { max_requests_per_minute: costs.maxRequestsPerMinute } : {}, ...preset?.reasoningEffort ? { reasoning_effort: preset.reasoningEffort } : {} },
     models,
     ...costs.maxCalls ? { maxCalls: costs.maxCalls } : {}
   };
@@ -39085,9 +39108,9 @@ async function setUpOther(io2, baseUrl, key, files, location, agent, preset) {
   const host = providerHost({ kind: "openai-compatible", base_url: baseUrl });
   const code = agentCode(files, location);
   const named = code ? modelsInCode(code.text)[0] : void 0;
-  const models = await chooseModels(io2, host, code && named ? { model: named, path: code.path } : null, agent, preset);
+  const models = await pickModels(io2, baseUrl, key, code && named ? { model: named, path: code.path } : null, agent, preset);
   if (!models) {
-    io2.say("Synthe needs your agent's model name. Nothing in your repo was changed; run `npx synthe init` again when you have it.");
+    io2.say("Synthe needs a model name the provider serves. Nothing in your repo was changed; run `npx synthe init` again when you have it.");
     return null;
   }
   const costs = await askCosts(io2, host, models, agent, preset);
@@ -39095,8 +39118,53 @@ async function setUpOther(io2, baseUrl, key, files, location, agent, preset) {
     io2.say("Synthe needs a price for each model. Nothing in your repo was changed; run `npx synthe init` again when you have them.");
     return null;
   }
-  const other = otherSetup(baseUrl, models, costs);
+  const other = otherSetup(baseUrl, models, costs, preset);
   return await checkOther(io2, other, key, "Nothing in your repo was changed.") ? other : null;
+}
+var ROLES = ["writer", "runner", "judge", "checker"];
+var everyRole = (m) => ({ writer: m, runner: m, judge: m, checker: m });
+async function pickModels(io2, baseUrl, key, found, agent, preset) {
+  const host = providerHost({ kind: "openai-compatible", base_url: baseUrl });
+  const list = preset ? await (io2.listModels ?? listModels)(baseUrl, key) : null;
+  if (preset && list && !list.ok) io2.say(`Synthe couldn't read ${preset.name}'s model list (${list.why}), so it can't check the model names before saving them.`);
+  const listed2 = list?.ok ? list.models : null;
+  const models = preset && !preset.models ? await chooseFree(io2, preset, listed2, agent) : await chooseModels(io2, host, found, agent, preset);
+  if (!models || !preset || !listed2) return models;
+  return onlyListed(io2, preset, models, listed2, agent);
+}
+async function chooseFree(io2, preset, listed2, agent) {
+  const free = (listed2 ?? []).filter((m) => m.free).map((m) => m.id);
+  if (agent) {
+    if (agent.model) return everyRole(agent.model);
+    if (free[0]) return everyRole(free[0]);
+    askPerson(`--model (Synthe couldn't list ${preset.name}'s free models; ask the person which model id to use)`);
+  }
+  let chosen = "";
+  if (free.length) {
+    io2.say(`Free models on ${preset.name} right now: ${free.slice(0, 5).join(", ")}${free.length > 5 ? ", and more" : ""}.`);
+    chosen = (await io2.ask(`Press Enter to use ${free[0]} for every role, or type another model id: `)).trim() || free[0];
+  }
+  for (let i = 0; i < 3 && !modelName(chosen); i++) chosen = (await io2.ask(`Type the id of the model to use on ${preset.name}, as its model list shows it: `)).trim();
+  return modelName(chosen) ? everyRole(chosen) : null;
+}
+async function onlyListed(io2, preset, models, listed2, agent) {
+  const ids = new Set(listed2.map((m) => m.id));
+  const next = { ...models };
+  for (const m of new Set(Object.values(models))) {
+    if (ids.has(m)) continue;
+    const some = (preset.models ? listed2 : listed2.filter((x) => x.free)).slice(0, 5).map((x) => x.id);
+    const offer = some.length ? ` Some it lists: ${some.join(", ")}.` : "";
+    if (agent) askPerson(`--model (${m} isn't in ${preset.name}'s model list.${offer})`);
+    io2.say(`${m} isn't in ${preset.name}'s model list, so Synthe won't save it.${offer}`);
+    let typed = "";
+    for (let i = 0; i < 3 && !ids.has(typed); i++) {
+      typed = (await io2.ask(`Type a model id ${preset.name} lists, to use instead of ${m}: `)).trim().replace(/^models\//, "");
+      if (typed && !ids.has(typed)) io2.say(`${typed} isn't in the list either.`);
+    }
+    if (!ids.has(typed)) return null;
+    for (const role of ROLES) if (next[role] === m) next[role] = typed;
+  }
+  return next;
 }
 async function choosePreset(io2, enter) {
   io2.say("\nWhich models should Synthe use? No key? Pick a free one. Free tiers have limits the provider sets; Synthe stops cleanly when they run out, and a paid key removes them.");
@@ -40031,9 +40099,9 @@ async function switchProvider(io2, picked, root) {
   }
   const found = await remoteGoal(io2);
   if (!found) return false;
-  const models = await chooseModels(io2, host, null, void 0, picked.preset);
+  const models = await pickModels(io2, picked.baseUrl, key, null, void 0, picked.preset);
   if (!models) {
-    io2.say("Synthe needs your agent's model name. Nothing changed.");
+    io2.say("Synthe needs a model name the provider serves. Nothing changed.");
     return false;
   }
   const costs = await askCosts(io2, host, models, void 0, picked.preset);
@@ -40041,7 +40109,7 @@ async function switchProvider(io2, picked, root) {
     io2.say("Synthe needs a price for each model. Nothing changed.");
     return false;
   }
-  const other = otherSetup(picked.baseUrl, models, costs);
+  const other = otherSetup(picked.baseUrl, models, costs, picked.preset);
   if (!await checkOther(io2, other, key, "Nothing changed.")) return false;
   const path4 = join9(root, GOAL_FILE);
   const saved = JSON.parse(readFileSync7(path4, "utf8"));

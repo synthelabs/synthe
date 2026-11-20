@@ -28053,6 +28053,7 @@ import { appendFileSync, existsSync, mkdirSync as mkdirSync2, readFileSync as re
 var STATE_BRANCH = "synthe/state";
 var GOAL_FILE = "synthe.json";
 var MAX_CHECKS = 5;
+var REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high"];
 var LOOPBACK_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
 var isLoopback = (url) => LOOPBACK_HOSTS.has(url.hostname);
 function baseUrlProblem(value) {
@@ -28159,6 +28160,7 @@ function parseGoal(text) {
       if (missing2.length) bad(`an openai-compatible provider needs every model named in "models": ${missing2.join(", ")} ${missing2.length === 1 ? "is" : "are"} missing. Synthe's defaults are Claude models.`);
       const rpm = p.max_requests_per_minute;
       if (rpm !== void 0 && !(typeof rpm === "number" && Number.isFinite(rpm) && rpm > 0)) bad("provider.max_requests_per_minute must be a number above 0");
+      if (p.reasoning_effort !== void 0 && !REASONING_EFFORTS.includes(p.reasoning_effort)) bad(`provider.reasoning_effort must be one of ${REASONING_EFFORTS.join(", ")}`);
       const unpriced = unpricedModels(g.models, p);
       if (unpriced.length && g.budget.max_calls === void 0) bad(`${unpriced.join(", ")} ${unpriced.length === 1 ? "has" : "have"} no price, or a price of 0, in provider.prices, so budget.max_usd can't stop the run. Set budget.max_calls (the most model calls a run may make, for example 500), or add real prices: { "input": USD, "output": USD } per million tokens.`);
     }
@@ -28943,6 +28945,7 @@ function openAiCompatibleModel(o) {
         model,
         messages: [...system === void 0 ? [] : [{ role: "system", content: system }], { role: "user", content: schema && jsonInPrompt ? `${user}${JSON_ONLY(schema)}` : user }],
         [tokensField]: maxTokens,
+        ...o.reasoningEffort ? { reasoning_effort: o.reasoningEffort } : {},
         ...schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}
       };
       const r = await post(model, body);
@@ -29077,7 +29080,7 @@ function ownKeyBaseUrl(env = process.env) {
   return ANTHROPIC_API_URL;
 }
 function providerModel(provider, apiKey) {
-  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices, maxRequestsPerMinute: provider.max_requests_per_minute });
+  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices, maxRequestsPerMinute: provider.max_requests_per_minute, reasoningEffort: provider.reasoning_effort });
   return anthropicModel(apiKey);
 }
 function providerHost(provider) {

@@ -15,6 +15,8 @@ export interface OpenAiCompatibleOptions {
   prices?: Record<string, ModelPrice>;
   // provider.max_requests_per_minute: requests are spaced to stay under it, and at most PACED_AT_ONCE are in flight.
   maxRequestsPerMinute?: number;
+  // provider.reasoning_effort, sent only when the goal sets it.
+  reasoningEffort?: string;
   // Tests shorten the waits and move the clock; the real client waits as the server asks.
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -151,6 +153,7 @@ export function openAiCompatibleModel(o: OpenAiCompatibleOptions): Model {
         model,
         messages: [...(system === undefined ? [] : [{ role: "system", content: system }]), { role: "user", content: schema && jsonInPrompt ? `${user}${JSON_ONLY(schema)}` : user }],
         [tokensField]: maxTokens,
+        ...(o.reasoningEffort ? { reasoning_effort: o.reasoningEffort } : {}),
         ...(schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}),
       };
       const r = await post(model, body);
@@ -192,5 +195,28 @@ export function openAiCompatibleModel(o: OpenAiCompatibleOptions): Model {
         ...(input !== null && output !== null ? { usage: { input, output } } : {}), stopReason: refused ? "refusal" : reason,
       };
     }
+  }
+}
+
+// A provider's own list of models (GET {baseUrl}/models), so setup can check a model id before saving it instead of
+// every round failing on a renamed or retired one. free: priced at 0 for both prompt and completion, as OpenRouter
+// lists its free models. Gemini lists ids as "models/<id>"; the prefix is dropped to match the ids its API takes.
+export interface ListedModel { id: string; free: boolean }
+export type ModelList = { ok: true; models: ListedModel[] } | { ok: false; missing: boolean; why: string };
+
+export async function listModels(baseUrl: string, apiKey: string): Promise<ModelList> {
+  const url = new URL(`${baseUrl.trim().replace(/\/+$/, "")}/models`);
+  const hide = (text: string) => (apiKey ? text.split(apiKey).join("[your key]") : text);
+  try {
+    const response = await fetch(url, { headers: { authorization: `Bearer ${apiKey}` }, redirect: "error", signal: AbortSignal.timeout(30_000) });
+    if (response.status === 404) return { ok: false, missing: true, why: "it has no /models route" };
+    if (!response.ok) return { ok: false, missing: false, why: `it answered ${response.status}` };
+    const body = await response.json() as { data?: unknown; models?: unknown };
+    const rows = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
+    if (!rows) return { ok: false, missing: false, why: "its answer had no list of models" };
+    const zero = (v: unknown) => (typeof v === "number" || (typeof v === "string" && v.trim() !== "")) && Number(v) === 0;
+    return { ok: true, models: rows.flatMap((m: any) => (typeof m?.id === "string" && m.id ? [{ id: m.id.replace(/^models\//, ""), free: zero(m.pricing?.prompt) && zero(m.pricing?.completion) }] : [])) };
+  } catch (error) {
+    return { ok: false, missing: false, why: hide(`it couldn't be reached (${error instanceof Error ? error.message : String(error)})`) };
   }
 }

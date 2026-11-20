@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,7 @@ import { newState, stopReason } from "../src/core/state.ts";
 import { runDecide } from "../src/loop/decide.ts";
 import { restartState } from "../src/cli/restart.ts";
 import { modelProblem, type Ask, type Model } from "../src/model/client.ts";
-import { openAiCompatibleModel, ProviderError } from "../src/model/openai-compatible.ts";
+import { listModels, openAiCompatibleModel, ProviderError } from "../src/model/openai-compatible.ts";
 import { FREE_MAX_CALLS, PRESETS } from "../src/model/presets.ts";
 import { loopCredential } from "../src/cli/improve.ts";
 import { init, RAW, type Io } from "../src/cli/init.ts";
@@ -27,11 +27,13 @@ import { goal as baseGoal, MemoryRepo } from "./helpers.ts";
 type Reply = { status?: number; body: unknown; holdMs?: number };
 const fake = { queue: [] as Reply[], arrivals: [] as number[], realArrivals: [] as number[], inFlight: 0, maxInFlight: 0 };
 let clock = 0;
+const bodies: any[] = [];
 const server: Server = createServer((req, res) => {
   let raw = "";
   req.on("data", (d) => (raw += d));
   req.on("end", () => {
     fake.arrivals.push(clock);
+    bodies.push(raw ? JSON.parse(raw) : null);
     fake.realArrivals.push(performance.now());
     fake.inFlight++;
     fake.maxInFlight = Math.max(fake.maxInFlight, fake.inFlight);
@@ -47,7 +49,7 @@ const server: Server = createServer((req, res) => {
 before(async () => { await new Promise<void>((r) => server.listen(0, "127.0.0.1", r)); });
 after(() => { server.close(); });
 const baseUrl = () => `http://127.0.0.1:${(server.address() as { port: number }).port}/v1`;
-const reset = () => { fake.queue.length = 0; fake.arrivals.length = 0; fake.realArrivals.length = 0; fake.inFlight = 0; fake.maxInFlight = 0; clock = 0; };
+const reset = () => { bodies.length = 0; fake.queue.length = 0; fake.arrivals.length = 0; fake.realArrivals.length = 0; fake.inFlight = 0; fake.maxInFlight = 0; clock = 0; };
 const ask: Ask = { model: "m", user: "hi", maxTokens: 10 };
 // Retries wait on a fake clock, so backoff never slows the tests.
 const paced = (rpm?: number) => openAiCompatibleModel({ baseUrl: baseUrl(), apiKey: "test-key", maxRequestsPerMinute: rpm, now: () => clock, sleep: async (ms) => { clock += ms; } });
@@ -224,7 +226,7 @@ function setupRepo() {
 }
 function setupIo(dir: string, answers: Record<string, string>, secret = "free-key") {
   const ran: { args: string[]; stdin?: string }[] = [];
-  const said: string[] = [], asked: string[] = [], calls: { base: string; key: string; model: string }[] = [];
+  const said: string[] = [], asked: string[] = [], calls: { base: string; key: string; model: string }[] = [], listed: { base: string; key: string }[] = [];
   const io: Io = {
     say: (t) => said.push(t),
     ask: async (q) => { asked.push(q); return Object.entries({ "automatically?": "y", "Real message": "", "What should your agent": "Give correct trail advice", ...answers }).find(([k]) => q.includes(k))?.[1] ?? ""; },
@@ -234,6 +236,8 @@ function setupIo(dir: string, answers: Record<string, string>, secret = "free-ke
     model: () => { throw new Error("an Anthropic call on the free path"); },
     proxy: () => { throw new Error("a proxy call on the free path"); },
     other: (provider, key): Model => ({ ask: async (a) => { calls.push({ base: provider.base_url, key, model: a.model }); return { text: scenarioReply, costUsd: 0 }; } }),
+    // Every preset's suggested models, plus two of OpenRouter's: never a real network call from a test.
+    listModels: async (base, key) => { listed.push({ base, key }); return { ok: true, models: LISTED }; },
     async run(cmd, args, stdin) {
       ran.push({ args, stdin });
       if (args.includes(RAW)) return readFileSync(join(dir, decodeURIComponent(args.at(-1)!.split("/contents/")[1].split("?")[0])), "utf8");
@@ -242,8 +246,11 @@ function setupIo(dir: string, answers: Record<string, string>, secret = "free-ke
       return "o/r\n";
     },
   };
-  return { io, ran, said, asked, calls };
+  return { io, ran, said, asked, calls, listed };
 }
+const LISTED = [
+  ...new Set(PRESETS.flatMap((p) => (p.models ? Object.values(p.models) : []))),
+].map((id) => ({ id, free: false })).concat([{ id: "vendor/paid-model", free: false }, { id: "z-ai/glm-5:free", free: true }, { id: "vendor/other:free", free: true }]);
 
 test("init offers free providers to a team with no key, and a free-tier key gets no prices, a call cap and pacing", async () => {
   const dir = setupRepo();
@@ -257,7 +264,7 @@ test("init offers free providers to a team with no key, and a free-tier key gets
   assert.equal(asked.some((q) => q.startsWith("Price of")), false);
   const goal = parseGoal(readFileSync(join(dir, "synthe.json"), "utf8"));
   assert.deepEqual(goal.models, gemini.models);
-  assert.deepEqual(goal.provider, { kind: "openai-compatible", base_url: gemini.baseUrl, prices: { [gemini.models.runner]: { input: 0, output: 0 } }, max_requests_per_minute: gemini.maxRequestsPerMinute });
+  assert.deepEqual(goal.provider, { kind: "openai-compatible", base_url: gemini.baseUrl, prices: { "gemini-4-hydrogen": { input: 0, output: 0 } }, max_requests_per_minute: gemini.maxRequestsPerMinute, reasoning_effort: "low" });
   assert.deepEqual(goal.budget, { max_usd: 3, max_calls: FREE_MAX_CALLS });
   assert.ok(said.some((s) => s.includes(`So Synthe stops a run after ${FREE_MAX_CALLS} model calls (budget.max_calls in synthe.json), enough for a few rounds, in case the key turns out to be on a paid plan.`)));
   assert.ok(calls.length > 1 && calls.every((c) => c.base === gemini.baseUrl && c.key === "free-key"));
@@ -270,7 +277,7 @@ test("a paid key from a preset gives real prices and no cap; Enter keeps the eve
   const dir = setupRepo();
   const groq = PRESETS.find((p) => p.id === "groq")!;
   const answers: Record<string, string> = { "Type a number, or press Enter": "2", "free tier": "n" };
-  for (const m of new Set(Object.values(groq.models))) { answers[`Price of ${m} per million input`] = "0.5"; answers[`Price of ${m} per million output`] = "1"; }
+  for (const m of new Set(Object.values(groq.models!))) { answers[`Price of ${m} per million input`] = "0.5"; answers[`Price of ${m} per million output`] = "1"; }
   const paid = setupIo(dir, answers);
   assert.equal(await init(paid.io, dir, undefined, "", {}), true);
   const goal = parseGoal(readFileSync(join(dir, "synthe.json"), "utf8"));
@@ -316,7 +323,123 @@ test("key offers the free providers too, rewrites synthe.json here and saves SYN
   const goal = parseGoal(readFileSync(join(dir, "synthe.json"), "utf8"));
   assert.equal(goal.provider?.kind === "openai-compatible" && goal.provider.base_url, groq.baseUrl);
   assert.equal(goal.budget.max_calls, FREE_MAX_CALLS);
-  assert.deepEqual(calls, [{ base: groq.baseUrl, key: "free-key", model: groq.models.runner }]);
+  assert.deepEqual(calls, [{ base: groq.baseUrl, key: "free-key", model: groq.models!.runner }]);
   assert.deepEqual(ran.filter((r) => r.args[0] === "secret").map((r) => [r.args[2], r.stdin]), [["SYNTHE_API_KEY", "free-key"]]);
   assert.match(said.at(-1)!, /^Saved synthe\.json with Groq\. Rounds use it once you push it: git commit -m "Synthe: use Groq" synthe\.json && git push$/);
+});
+
+test("the Gemini preset sends reasoning_effort, so thinking can't spend a short call's tokens; other goals send none", async () => {
+  reset();
+  await openAiCompatibleModel({ baseUrl: baseUrl(), apiKey: "k", reasoningEffort: "low" }).ask(ask);
+  await openAiCompatibleModel({ baseUrl: baseUrl(), apiKey: "k" }).ask(ask);
+  assert.deepEqual(bodies.map((b) => b.reasoning_effort), ["low", undefined]);
+  const gemini = PRESETS.find((p) => p.id === "gemini")!;
+  assert.equal(gemini.reasoningEffort, "low");
+  assert.equal(gemini.signup, "https://aistudio.google.com/app/apikey");
+  assert.ok(Object.values(gemini.models!).every((m) => m === "gemini-4-hydrogen"));
+  assert.equal(PRESETS.find((p) => p.id === "openrouter")!.models, null, "no hardcoded free model");
+  assert.throws(() => parseGoal(other({ budget: { max_usd: 3, max_calls: 5 }, provider: { kind: "openai-compatible", base_url: "https://api.example.com/v1", reasoning_effort: "max" } })), /reasoning_effort must be one of none, minimal, low, medium, high/);
+});
+
+// A stand-in for a provider's GET /models, OpenRouter-shaped (pricing as strings) and Gemini-shaped ("models/" ids).
+const listing = { status: 200, body: {} as unknown, seen: [] as { url: string; auth?: string }[] };
+const models = createServer((req, res) => {
+  listing.seen.push({ url: req.url!, auth: req.headers.authorization });
+  res.statusCode = listing.status;
+  res.setHeader("content-type", "application/json");
+  res.end(JSON.stringify(listing.body));
+});
+before(async () => { await new Promise<void>((r) => models.listen(0, "127.0.0.1", r)); });
+after(() => { models.close(); });
+const modelsUrl = () => `http://127.0.0.1:${(models.address() as { port: number }).port}/api/v1`;
+const OPENROUTER_LIST = { data: [
+  { id: "vendor/paid-model", pricing: { prompt: "0.000001", completion: "0.000002" } },
+  { id: "z-ai/glm-5:free", pricing: { prompt: "0", completion: "0" } },
+  { id: "vendor/half-free", pricing: { prompt: "0", completion: "0.000002" } },
+  { id: "vendor/other:free", pricing: { prompt: 0, completion: 0 } },
+  { id: "vendor/no-pricing" },
+] };
+
+test("listModels reads a provider's model list with the key in a header, marks the free ones, and tells a missing route apart", async () => {
+  listing.status = 200; listing.body = OPENROUTER_LIST; listing.seen.length = 0;
+  const list = await listModels(`${modelsUrl()}/`, "list-key");
+  assert.deepEqual(list, { ok: true, models: [
+    { id: "vendor/paid-model", free: false }, { id: "z-ai/glm-5:free", free: true }, { id: "vendor/half-free", free: false },
+    { id: "vendor/other:free", free: true }, { id: "vendor/no-pricing", free: false },
+  ] });
+  assert.deepEqual(listing.seen, [{ url: "/api/v1/models", auth: "Bearer list-key" }]);
+  listing.body = { object: "list", data: [{ id: "models/gemini-4-hydrogen", object: "model" }] };
+  assert.deepEqual(await listModels(modelsUrl(), "k"), { ok: true, models: [{ id: "gemini-4-hydrogen", free: false }] });
+  listing.status = 404; listing.body = { error: "not found" };
+  assert.deepEqual(await listModels(modelsUrl(), "k"), { ok: false, missing: true, why: "it has no /models route" });
+  listing.status = 401;
+  assert.deepEqual(await listModels(modelsUrl(), "k"), { ok: false, missing: false, why: "it answered 401" });
+  const down = await listModels("http://127.0.0.1:9/v1", "secret-key-123");
+  assert.ok(!down.ok && !down.missing && !down.why.includes("secret-key-123"));
+});
+
+test("OpenRouter offers only the models its list prices at 0, the first as the default, through the real list call", async () => {
+  listing.status = 200; listing.body = OPENROUTER_LIST; listing.seen.length = 0;
+  const dir = setupRepo();
+  const { io, said, asked, calls } = setupIo(dir, { "Type a number, or press Enter": "3", "free tier": "y" });
+  io.listModels = (_base, key) => listModels(modelsUrl(), key);
+  assert.equal(await init(io, dir, undefined, "", {}), true);
+  assert.ok(said.includes("Free models on OpenRouter (free models) right now: z-ai/glm-5:free, vendor/other:free."));
+  assert.ok(asked.includes("Press Enter to use z-ai/glm-5:free for every role, or type another model id: "));
+  const goal = parseGoal(readFileSync(join(dir, "synthe.json"), "utf8"));
+  assert.deepEqual(goal.models, { writer: "z-ai/glm-5:free", runner: "z-ai/glm-5:free", judge: "z-ai/glm-5:free", checker: "z-ai/glm-5:free" });
+  assert.equal(goal.budget.max_calls, FREE_MAX_CALLS);
+  assert.deepEqual(listing.seen.map((s) => s.auth), ["Bearer free-key"]);
+  assert.ok(calls.every((c) => c.model === "z-ai/glm-5:free"));
+  // A typed model must be in the list too.
+  const dir2 = setupRepo();
+  const typed = setupIo(dir2, { "Type a number, or press Enter": "3", "free tier": "y", "for every role, or type another": "vendor/other:free" });
+  typed.io.listModels = (_base, key) => listModels(modelsUrl(), key);
+  assert.equal(await init(typed.io, dir2, undefined, "", {}), true);
+  assert.equal(parseGoal(readFileSync(join(dir2, "synthe.json"), "utf8")).models.runner, "vendor/other:free");
+});
+
+test("when the free list can't be read, OpenRouter asks for a model id; a provider with no /models route warns and goes on", async () => {
+  listing.status = 500; listing.body = {};
+  const dir = setupRepo();
+  const failed = setupIo(dir, { "Type a number, or press Enter": "3", "free tier": "y", "Type the id of the model to use on OpenRouter": "some/model:free" });
+  failed.io.listModels = (_base, key) => listModels(modelsUrl(), key);
+  assert.equal(await init(failed.io, dir, undefined, "", {}), true);
+  assert.ok(failed.said.includes("Synthe couldn't read OpenRouter (free models)'s model list (it answered 500), so it can't check the model names before saving them."));
+  assert.equal(parseGoal(readFileSync(join(dir, "synthe.json"), "utf8")).models.runner, "some/model:free");
+  listing.status = 404;
+  const dir2 = setupRepo();
+  const missing = setupIo(dir2, { "Type a number, or press Enter": "1", "free tier": "y" });
+  missing.io.listModels = (_base, key) => listModels(modelsUrl(), key);
+  assert.equal(await init(missing.io, dir2, undefined, "", {}), true);
+  assert.ok(missing.said.some((s) => s.includes("model list (it has no /models route)")));
+  assert.equal(parseGoal(readFileSync(join(dir2, "synthe.json"), "utf8")).models.runner, "gemini-4-hydrogen");
+});
+
+test("a preset model the provider doesn't list is never saved: setup names it, offers listed ones, and asks again", async () => {
+  const gemini = PRESETS.find((p) => p.id === "gemini")!;
+  const list = { ok: true as const, models: [{ id: "gemini-3.5-flash-lite", free: false }, { id: "gemini-4-pro", free: false }] };
+  const dir = setupRepo();
+  const fixed = setupIo(dir, { "Type a number, or press Enter": "1", "free tier": "y", "to use instead of gemini-4-hydrogen": "models/gemini-3.5-flash-lite" });
+  fixed.io.listModels = async () => list;
+  assert.equal(await init(fixed.io, dir, undefined, "", {}), true);
+  assert.ok(fixed.said.includes("gemini-4-hydrogen isn't in Google Gemini's model list, so Synthe won't save it. Some it lists: gemini-3.5-flash-lite, gemini-4-pro."));
+  const goal = parseGoal(readFileSync(join(dir, "synthe.json"), "utf8"));
+  assert.deepEqual(goal.models, { writer: "gemini-3.5-flash-lite", runner: "gemini-3.5-flash-lite", judge: "gemini-3.5-flash-lite", checker: "gemini-3.5-flash-lite" });
+  assert.ok(fixed.calls.every((c) => c.model === "gemini-3.5-flash-lite" && c.base === gemini.baseUrl));
+  // Three unlisted answers: setup stops with nothing written and no model call.
+  const dir2 = setupRepo();
+  const stuck = setupIo(dir2, { "Type a number, or press Enter": "1", "free tier": "y", "to use instead of": "made-up-model" });
+  stuck.io.listModels = async () => list;
+  assert.equal(await init(stuck.io, dir2, undefined, "", {}), false);
+  assert.equal(stuck.asked.filter((q) => q.includes("to use instead of")).length, 3);
+  assert.equal(existsSync(join(dir2, "synthe.json")), false);
+  assert.equal(stuck.calls.length, 0);
+  assert.equal(stuck.ran.some((r) => r.args[0] === "secret"), false);
+  // An agent is told which model is missing and what the provider lists, instead of guessing.
+  const dir3 = setupRepo();
+  const agentIo = setupIo(dir3, {});
+  agentIo.io.listModels = async () => list;
+  await assert.rejects(init(agentIo.io, dir3, undefined, "", { SYNTHE_API_KEY: "k" }, agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Be right", "--mode", "auto", "--preset", "gemini", "--free"])),
+    /--model \(gemini-4-hydrogen isn't in Google Gemini's model list\. Some it lists: gemini-3\.5-flash-lite, gemini-4-pro\.\) is missing or invalid/);
 });

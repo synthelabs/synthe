@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } 
 import { join } from "node:path";
 import { ATTACKS_FILE, DEFAULTS, GOAL_FILE, MAX_ATTACKS, MAX_CHECKS, parseAttacks, parseGoal, parseScenarios, type Attack, type Goal, type ModelPrice, type OtherProvider, type PromptLocation, type Scenario, baseUrlProblem, unpricedModels } from "../core/goal.ts";
 import { FREE_MAX_CALLS, PRESETS, presetById, type Preset } from "../model/presets.ts";
+import { listModels, type ListedModel, type ModelList } from "../model/openai-compatible.ts";
 import { findPrompts } from "../core/prompt.ts";
 import { MAX_PROMPT_CHARS, promptPathProblem, redactSecrets, sha256 } from "../core/safety.ts";
 import { ISSUE_TITLE } from "../loop/report.ts";
@@ -35,6 +36,8 @@ export interface Io {
   model(apiKey: string): Model;
   // A key for an OpenAI-compatible provider. Tests pass a fake; the CLI uses the real client.
   other?(provider: OtherProvider, apiKey: string): Model;
+  // A provider's GET /models list, for checking a preset's model ids. Tests pass a fake.
+  listModels?(baseUrl: string, apiKey: string): Promise<ModelList>;
   proxy?(eventCode: string, teamCode?: string): Model;
   template(): string;
   sleep(ms: number): Promise<void>;
@@ -392,13 +395,14 @@ const modelName = (text: string) => /^[^\s]{1,200}$/.test(text);
 export async function chooseModels(io: Pick<Io, "ask" | "say">, host: string, found: { model: string; path: string } | null, agent?: AgentOptions, preset?: Preset): Promise<Goal["models"] | null> {
   if (agent) {
     if (agent.model) return { writer: agent.model, runner: agent.model, judge: agent.model, checker: agent.model };
-    if (preset) return preset.models;
+    if (preset?.models) return preset.models;
     askPerson(`--model (the model the agent uses on ${host}${found ? `; its code names ${found.model} in ${found.path}` : ""})`);
   }
   let runner = "";
-  if (preset) {
-    if (found) io.say(`Your agent's code names the model ${found.model} (${found.path}). On ${preset.name}, Synthe suggests ${preset.models.runner}; type another model if ${preset.name} serves the one your agent uses.`);
-    runner = (await io.ask(`Press Enter to use ${preset.models.runner} as your agent's model, or type another: `)).trim() || preset.models.runner;
+  const suggested = preset?.models;
+  if (preset && suggested) {
+    if (found) io.say(`Your agent's code names the model ${found.model} (${found.path}). On ${preset.name}, Synthe suggests ${suggested.runner}; type another model if ${preset.name} serves the one your agent uses.`);
+    runner = (await io.ask(`Press Enter to use ${suggested.runner} as your agent's model, or type another: `)).trim() || suggested.runner;
   } else if (found) {
     io.say(`Your agent's code names the model ${found.model} (${found.path}). Synthe plays your agent on the model it runs on, so its tests match what your users get.`);
     const typed = (await io.ask(`Press Enter to use ${found.model} as your agent's model, or type the model it uses: `)).trim();
@@ -413,7 +417,7 @@ export async function chooseModels(io: Pick<Io, "ask" | "say">, host: string, fo
     const typed = (await io.ask(question)).trim();
     return modelName(typed) ? typed : fallback;
   };
-  const writerDefault = preset?.models.writer ?? runner, judgeDefault = preset?.models.judge ?? runner;
+  const writerDefault = suggested?.writer ?? runner, judgeDefault = suggested?.judge ?? runner;
   const writer = await pick(`Model that writes Synthe's prompt edits (press Enter for ${writerDefault}): `, writerDefault);
   const judge = await pick(`Model that judges replies and marks your checks (press Enter for ${judgeDefault}): `, judgeDefault);
   return { writer, runner, judge, checker: judge };
@@ -495,9 +499,9 @@ export async function checkOther(io: Pick<Io, "say" | "other">, other: OtherSetu
   }
 }
 
-export function otherSetup(baseUrl: string, models: Goal["models"], costs: Costs): OtherSetup {
+export function otherSetup(baseUrl: string, models: Goal["models"], costs: Costs, preset?: Preset): OtherSetup {
   return {
-    provider: { kind: "openai-compatible", base_url: baseUrl, prices: costs.prices, ...(costs.maxRequestsPerMinute ? { max_requests_per_minute: costs.maxRequestsPerMinute } : {}) },
+    provider: { kind: "openai-compatible", base_url: baseUrl, prices: costs.prices, ...(costs.maxRequestsPerMinute ? { max_requests_per_minute: costs.maxRequestsPerMinute } : {}), ...(preset?.reasoningEffort ? { reasoning_effort: preset.reasoningEffort } : {}) },
     models, ...(costs.maxCalls ? { maxCalls: costs.maxCalls } : {}),
   };
 }
@@ -507,12 +511,66 @@ async function setUpOther(io: Io, baseUrl: string, key: string, files: { path: s
   const host = providerHost({ kind: "openai-compatible", base_url: baseUrl });
   const code = agentCode(files, location);
   const named = code ? modelsInCode(code.text)[0] : undefined;
-  const models = await chooseModels(io, host, code && named ? { model: named, path: code.path } : null, agent, preset);
-  if (!models) { io.say("Synthe needs your agent's model name. Nothing in your repo was changed; run `npx synthe init` again when you have it."); return null; }
+  const models = await pickModels(io, baseUrl, key, code && named ? { model: named, path: code.path } : null, agent, preset);
+  if (!models) { io.say("Synthe needs a model name the provider serves. Nothing in your repo was changed; run `npx synthe init` again when you have it."); return null; }
   const costs = await askCosts(io, host, models, agent, preset);
   if (!costs) { io.say("Synthe needs a price for each model. Nothing in your repo was changed; run `npx synthe init` again when you have them."); return null; }
-  const other = otherSetup(baseUrl, models, costs);
+  const other = otherSetup(baseUrl, models, costs, preset);
   return (await checkOther(io, other, key, "Nothing in your repo was changed.")) ? other : null;
+}
+
+const ROLES = ["writer", "runner", "judge", "checker"] as const;
+const everyRole = (m: string): Goal["models"] => ({ writer: m, runner: m, judge: m, checker: m });
+
+// The models for another provider. With a preset they are checked against the provider's own list (GET /models), with
+// the key, before anything is saved: a renamed or retired model is caught here instead of failing every round. A
+// provider with no list (404), or a list that can't be read, gets a warning and setup goes on.
+export async function pickModels(io: Pick<Io, "ask" | "say" | "listModels">, baseUrl: string, key: string, found: { model: string; path: string } | null, agent?: AgentOptions, preset?: Preset): Promise<Goal["models"] | null> {
+  const host = providerHost({ kind: "openai-compatible", base_url: baseUrl });
+  const list = preset ? await (io.listModels ?? listModels)(baseUrl, key) : null;
+  if (preset && list && !list.ok) io.say(`Synthe couldn't read ${preset.name}'s model list (${list.why}), so it can't check the model names before saving them.`);
+  const listed = list?.ok ? list.models : null;
+  const models = preset && !preset.models ? await chooseFree(io, preset, listed, agent) : await chooseModels(io, host, found, agent, preset);
+  if (!models || !preset || !listed) return models;
+  return onlyListed(io, preset, models, listed, agent);
+}
+
+// OpenRouter's free models change often, so they come from its list: the ones priced at 0, the first as the default.
+async function chooseFree(io: Pick<Io, "ask" | "say">, preset: Preset, listed: ListedModel[] | null, agent?: AgentOptions): Promise<Goal["models"] | null> {
+  const free = (listed ?? []).filter((m) => m.free).map((m) => m.id);
+  if (agent) {
+    if (agent.model) return everyRole(agent.model);
+    if (free[0]) return everyRole(free[0]);
+    askPerson(`--model (Synthe couldn't list ${preset.name}'s free models; ask the person which model id to use)`);
+  }
+  let chosen = "";
+  if (free.length) {
+    io.say(`Free models on ${preset.name} right now: ${free.slice(0, 5).join(", ")}${free.length > 5 ? ", and more" : ""}.`);
+    chosen = (await io.ask(`Press Enter to use ${free[0]} for every role, or type another model id: `)).trim() || free[0];
+  }
+  for (let i = 0; i < 3 && !modelName(chosen); i++) chosen = (await io.ask(`Type the id of the model to use on ${preset.name}, as its model list shows it: `)).trim();
+  return modelName(chosen) ? everyRole(chosen) : null;
+}
+
+// A model the provider doesn't list is never saved: the person picks one it does, or setup stops.
+async function onlyListed(io: Pick<Io, "ask" | "say">, preset: Preset, models: Goal["models"], listed: ListedModel[], agent?: AgentOptions): Promise<Goal["models"] | null> {
+  const ids = new Set(listed.map((m) => m.id));
+  const next = { ...models };
+  for (const m of new Set(Object.values(models))) {
+    if (ids.has(m)) continue;
+    const some = (preset.models ? listed : listed.filter((x) => x.free)).slice(0, 5).map((x) => x.id);
+    const offer = some.length ? ` Some it lists: ${some.join(", ")}.` : "";
+    if (agent) askPerson(`--model (${m} isn't in ${preset.name}'s model list.${offer})`);
+    io.say(`${m} isn't in ${preset.name}'s model list, so Synthe won't save it.${offer}`);
+    let typed = "";
+    for (let i = 0; i < 3 && !ids.has(typed); i++) {
+      typed = (await io.ask(`Type a model id ${preset.name} lists, to use instead of ${m}: `)).trim().replace(/^models\//, "");
+      if (typed && !ids.has(typed)) io.say(`${typed} isn't in the list either.`);
+    }
+    if (!ids.has(typed)) return null;
+    for (const role of ROLES) if (next[role] === m) next[role] = typed;
+  }
+  return next;
 }
 
 // The visible free path: before asking for a key, a team with none in its environment can pick a provider with a free

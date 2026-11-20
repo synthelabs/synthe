@@ -101,7 +101,7 @@ export function ownKeyBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
 
 // The team's own key, sent to the provider synthe.json names and nowhere else.
 export function providerModel(provider: Provider | undefined, apiKey: string): Model {
-  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices, maxRequestsPerMinute: provider.max_requests_per_minute });
+  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices, maxRequestsPerMinute: provider.max_requests_per_minute, reasoningEffort: provider.reasoning_effort });
   return anthropicModel(apiKey);
 }
 

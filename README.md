@@ -96,7 +96,7 @@ The result in `synthe.json`:
 
 ### Free option
 
-No key? `npx synthe init` and `npx synthe key` offer providers with a free tier: Google Gemini, Groq and OpenRouter (its free models), or any other OpenAI-compatible URL. Pick one, get a key from the page setup shows, and paste it. Setup fills in the provider's address and suggests a model for each role; you can type others.
+No key? `npx synthe init` and `npx synthe key` offer providers with a free tier: Google Gemini, Groq and OpenRouter (its free models), or any other OpenAI-compatible URL. Pick one, get a key from the page setup shows, and paste it. Setup fills in the provider's address and suggests a model for each role; you can type others. For OpenRouter it offers the models its list shows as free. Every model is checked against the provider's own model list before it is saved, so a renamed or retired model is caught at setup.
 
 - Free tiers have limits, and the provider sets them. When they run out, Synthe stops cleanly: the round doesn't count, nothing in your repo changes, and the next scheduled run tries again. On your computer, run the command again later.
 - A free key can be on a paid plan without you noticing, so Synthe never treats a missing or zero price as safe. When you say the key is on a free tier, setup records no prices and sets `budget.max_calls`, the most model calls a run may make; the run stops when it reaches it. Raise it in `synthe.json` to go further. Any goal with a missing or zero price must have `budget.max_calls`, or Synthe refuses it. `npx synthe improve` stops at the same cap.

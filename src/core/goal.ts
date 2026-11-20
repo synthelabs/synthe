@@ -11,7 +11,10 @@ export interface ModelPrice { input: number; output: number }
 export type Provider =
   | { kind: "anthropic" }
   // max_requests_per_minute: Synthe spaces its requests to stay under it and sends fewer at once (free tiers).
-  | { kind: "openai-compatible"; base_url: string; prices?: Record<string, ModelPrice>; max_requests_per_minute?: number };
+  // reasoning_effort: sent with every request, for models that think by default (Gemini through a preset).
+  | { kind: "openai-compatible"; base_url: string; prices?: Record<string, ModelPrice>; max_requests_per_minute?: number; reasoning_effort?: ReasoningEffort };
+export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 export type OtherProvider = Extract<Provider, { kind: "openai-compatible" }>;
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
@@ -164,6 +167,7 @@ export function parseGoal(text: string): Goal {
       if (missing.length) bad(`an openai-compatible provider needs every model named in "models": ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} missing. Synthe's defaults are Claude models.`);
       const rpm = p.max_requests_per_minute;
       if (rpm !== undefined && !(typeof rpm === "number" && Number.isFinite(rpm) && rpm > 0)) bad("provider.max_requests_per_minute must be a number above 0");
+      if (p.reasoning_effort !== undefined && !REASONING_EFFORTS.includes(p.reasoning_effort)) bad(`provider.reasoning_effort must be one of ${REASONING_EFFORTS.join(", ")}`);
       // An unknown or zero price never counts as safe: only a call cap can stop such a run.
       const unpriced = unpricedModels(g.models, p);
       if (unpriced.length && g.budget.max_calls === undefined) bad(`${unpriced.join(", ")} ${unpriced.length === 1 ? "has" : "have"} no price, or a price of 0, in provider.prices, so budget.max_usd can't stop the run. Set budget.max_calls (the most model calls a run may make, for example 500), or add real prices: { "input": USD, "output": USD } per million tokens.`);
