@@ -80,12 +80,7 @@ test("batches stay under the proxy's limit and arrive in order; the last one is 
   assert.ok(proxy.batches.slice(0, -1).every((b) => b.body.final === false));
 });
 
-test("a dead, hanging or refusing proxy never slows or fails the run, and sends stop after two failures", async (t) => {
-  // The send timeout and the close wait are unref'd on purpose, so a hanging proxy never holds the CLI open. In a
-  // test that leaves nothing holding the event loop, and newer Node test runners end the file mid-test. This timer
-  // only keeps the loop alive; the timings asserted below are unchanged.
-  const keepAlive = setInterval(() => {}, 1000);
-  t.after(() => clearInterval(keepAlive));
+test("a dead, hanging or refusing proxy never slows or fails the run, and sends stop after two failures", async () => {
   for (const mode of ["down", "hang", "refuse"] as const) {
     const proxy = fakeProxy(mode), r = record(proxy), started = Date.now();
     for (let n = 1; n <= 5; n++) { r.event("say", { text: `round ${n}` }); r.flush(); }
