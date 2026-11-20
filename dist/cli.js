@@ -36722,30 +36722,6 @@ function shorterProblem(before, after) {
   return null;
 }
 var shorterAngle = (prompt) => `Make the prompt shorter without making replies worse: delete or tighten one instruction that is redundant, repeats another, or isn't needed by any of the situations below. Use deletions or shorter wording only, add nothing new, and remove at least ${minShorterBy(prompt)} characters in total.`;
-function undoEdits(prompt, state) {
-  const once = (t) => t !== "" && prompt.indexOf(t) !== -1 && prompt.indexOf(t) === prompt.lastIndexOf(t);
-  return state.rounds.flatMap((r) => {
-    if (r.outcome !== "merged" || !r.edits?.length) return [];
-    const back = [];
-    for (const e of [...r.edits].reverse()) {
-      if (typeof e?.find !== "string" || typeof e?.replace !== "string") return [];
-      if (e.find === "") {
-        const added = e.replace.trim();
-        const find = once(`
-
-${added}`) ? `
-
-${added}` : added;
-        if (!once(find)) return [];
-        back.push({ find, replace: "" });
-      } else {
-        if (!once(e.replace)) return [];
-        back.push({ find: e.replace, replace: e.find });
-      }
-    }
-    return [{ round: r.round, ...r.title ? { title: r.title } : {}, edits: back }];
-  });
-}
 function shorterFields(c, baseline2) {
   return c.kind === "shorter" ? { kind: "shorter", chars: { before: size(baseline2), after: size(c.text) } } : {};
 }
@@ -36855,11 +36831,7 @@ The prompt lives inside a source-code string, so never use backslashes, ${goal.p
   const shorter = shorterRound(goal, state);
   const known = `${goal.objective}
 ${goal.policy ?? ""}`;
-  const undo2 = shorter ? undoEdits(prompt, state).flatMap((u) => {
-    const applied = applyEdits(prompt, u.edits, known);
-    return "problem" in applied || shorterProblem(prompt, applied.text) || tried.has(candidateFingerprint(applied.text)) ? [] : [{ ...u, text: applied.text }];
-  })[0] : void 0;
-  const angles = !shorter ? ANGLES : undo2 ? ANGLES.slice(0, 1) : [ANGLES[0], shorterAngle(prompt)];
+  const angles = shorter ? [ANGLES[0], shorterAngle(prompt)] : ANGLES;
   const results = await pool(angles, angles.length, async (angle) => askJson(model, {
     model: goal.models.writer,
     maxTokens: 3e3,
@@ -36905,17 +36877,6 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
       ...isShorter ? { kind: "shorter" } : {}
     });
   });
-  if (undo2) {
-    tried.add(candidateFingerprint(undo2.text));
-    candidates.push({
-      id: "candidate-2",
-      kind: "shorter",
-      text: undo2.text,
-      edits: undo2.edits,
-      summary: `Takes out the change merged in round ${undo2.round}${undo2.title ? ` ("${undo2.title}")` : ""}, to see if the prompt does as well without it.`,
-      title: `undo round ${undo2.round}${undo2.title ? `: ${undo2.title}` : ""}`.slice(0, 60)
-    });
-  }
   return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
 }
 var clip = (t, n = 300) => (t === void 0 ? "(none)" : t.length > n ? `${t.slice(0, n)}...` : t).replaceAll("\n", " / ");

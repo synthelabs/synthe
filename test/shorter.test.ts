@@ -11,7 +11,7 @@ import { sha256 } from "../src/core/safety.ts";
 import { runWrite } from "../src/loop/write.ts";
 import { runScore } from "../src/loop/score.ts";
 import { runDecide } from "../src/loop/decide.ts";
-import { minShorterBy, shorterFields, shorterProblem, undoEdits } from "../src/loop/shorter.ts";
+import { minShorterBy, shorterFields, shorterProblem } from "../src/loop/shorter.ts";
 import type { Ask, Model } from "../src/model/client.ts";
 import { goal, MemoryRepo, rows, scored, trainRows, heldRows } from "./helpers.ts";
 
@@ -228,22 +228,17 @@ test("a not-shorter proposal from the deletion slot can merge on the usual super
   assert.doesNotMatch(v.action === "merge" ? v.plain : "", /no measured loss/);
 });
 
-test("an earlier merged change still in the prompt is taken back out, oldest first, without a writer call", async () => {
+test("an earlier merged change is never taken back out: the deletion slot always comes from the writer", async () => {
+  // That change passed the superiority test; a weaker test shouldn't spend a slot trying to remove it.
   const appended = { round: 1, at: "t", outcome: "merged" as const, reasons: [], costUsd: 0, title: "greet customers", edits: [{ find: "", replace: GREETING.trim() }] };
-  const replaced = { round: 2, at: "t", outcome: "merged" as const, reasons: [], costUsd: 0, edits: [{ find: "Be kind.", replace: "Be kind." }] };
   const prompt = `Be kind.\n\nAnswer the question.\n\n${GREETING.trim()}\n`;
-  assert.deepEqual(undoEdits(prompt, stalled({ rounds: [appended, replaced] })).map((u) => u.round), [1, 2]);
   const w = writer({ find: "Be kind.\n\n", replace: "" });
   const out = await runWrite(on(), stalled({ rounds: [appended] }), prompt, scenarios, w.model);
-  assert.equal(w.seen.length, 1);
-  const undo = out.candidates.find((c) => c.id === "candidate-2")!;
-  assert.equal(undo.kind, "shorter");
-  assert.equal(undo.text, "Be kind.\n\nAnswer the question.\n");
-  assert.match(undo.summary!, /Takes out the change merged in round 1 \("greet customers"\)/);
-  // Edited since, so its text isn't there word for word: nothing to take back, and the writer gets the slot.
-  assert.deepEqual(undoEdits(prompt.replace("warmly", "kindly"), stalled({ rounds: [appended] })), []);
-  // Reverted or never merged: not taken back.
-  assert.deepEqual(undoEdits(prompt, stalled({ rounds: [{ ...appended, outcome: "skipped" }] })), []);
+  assert.equal(w.seen.length, 2);
+  assert.match(w.seen[1].user, /This attempt: Make the prompt shorter/);
+  assert.deepEqual(out.candidates.map((c) => [c.id, c.kind]), [["candidate-1", undefined], ["candidate-2", "shorter"]]);
+  assert.equal(out.candidates[1].text, prompt.replace("Be kind.\n\n", ""));
+  assert.ok(out.candidates.every((c) => c.text.includes(GREETING.trim())));
 });
 
 test("the score step marks the shorter candidate and sends it to the hidden cases only when nothing better passed", async () => {

@@ -4,7 +4,7 @@ import { sumCosts } from "../core/cost.ts";
 import { promptPathProblem, sha256 } from "../core/safety.ts";
 import { candidateFingerprint, candidateScope, validateCandidateMemory } from "../core/candidate-history.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
-import { shorterAngle, shorterProblem, shorterRound, undoEdits } from "./shorter.ts";
+import { shorterAngle, shorterProblem, shorterRound } from "./shorter.ts";
 
 // kind "shorter": a deletion, judged by whether it is no worse rather than better (src/loop/shorter.ts).
 export interface Candidate { id: string; text: string; summary?: string; title?: string; edits?: Edit[]; kind?: "shorter" }
@@ -128,15 +128,12 @@ export async function runWrite(goal: Goal, state: State, prompt: string, scenari
   const checks = goal.checks?.length ? `\nThe team measures a good reply with these checks; a change wins by making replies pass more of them:\n${goal.checks.map((c) => `- ${c}`).join("\n")}` : "";
   const quoteRule = goal.prompt.kind === "inline"
     ? `\nThe prompt lives inside a source-code string, so never use backslashes, ${goal.prompt.delimiter} or \${ in it.` : "";
-  // A shorter round gives the second slot to a deletion: an earlier merged change taken back out when one still can
-  // be and hasn't been tried, which needs no writer call, or else the writer asked to remove something.
+  // A shorter round asks the writer to fill the second slot with a deletion. Taking out an earlier merged change is
+  // deliberately not a source: that change passed the superiority test, and a weaker test shouldn't spend a slot trying
+  // to remove it (in the bench every such try was refused, better in 0 and worse in 13 to 15, and cost a real gain).
   const shorter = shorterRound(goal, state);
   const known = `${goal.objective}\n${goal.policy ?? ""}`;
-  const undo = shorter ? undoEdits(prompt, state).flatMap((u) => {
-    const applied = applyEdits(prompt, u.edits, known);
-    return "problem" in applied || shorterProblem(prompt, applied.text) || tried.has(candidateFingerprint(applied.text)) ? [] : [{ ...u, text: applied.text }];
-  })[0] : undefined;
-  const angles = !shorter ? ANGLES : undo ? ANGLES.slice(0, 1) : [ANGLES[0], shorterAngle(prompt)];
+  const angles = shorter ? [ANGLES[0], shorterAngle(prompt)] : ANGLES;
   const results = await pool(angles, angles.length, async (angle) => askJson<{ edits: Edit[]; summary: string; title?: string }>(model, {
     model: goal.models.writer, maxTokens: 3000, schema: SCHEMA,
     user: `You improve the system prompt of an AI agent by making small, exact edits.
@@ -176,12 +173,6 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
     candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : undefined,
       title: typeof r.value.title === "string" && r.value.title.trim() ? r.value.title.trim().replace(/\.$/, "").slice(0, 60) : undefined, edits: r.value.edits, ...(isShorter ? { kind: "shorter" as const } : {}) });
   });
-  if (undo) {
-    tried.add(candidateFingerprint(undo.text));
-    candidates.push({ id: "candidate-2", kind: "shorter", text: undo.text, edits: undo.edits,
-      summary: `Takes out the change merged in round ${undo.round}${undo.title ? ` ("${undo.title}")` : ""}, to see if the prompt does as well without it.`,
-      title: `undo round ${undo.round}${undo.title ? `: ${undo.title}` : ""}`.slice(0, 60) });
-  }
   return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
 }
 
