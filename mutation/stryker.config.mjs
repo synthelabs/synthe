@@ -18,13 +18,15 @@ const set = process.env.MUTATION_SET === "existing" ? "existing" : "with-lean";
 const skip = new Set((process.env.MUTATION_SKIP ?? "").split(",").filter(Boolean));
 
 // Only test files that import a mutated file, directly or through other modules, so the first full run (which
-// records coverage) doesn't spend minutes on unrelated end-to-end tests. `import type` and `export type` lines are
-// left out: Node erases them, so a test reached only through one never loads the mutated file.
+// records coverage) doesn't spend minutes on unrelated end-to-end tests. Type-only `import type ... from "..."` and
+// `export type ... from "..."` statements are left out: Node erases them, so a test reached only through one never
+// loads the mutated file. The match is one statement that ends in `from "..."`, so it never swallows a value import.
+const TYPE_ONLY = /^(?:import|export)\s+type\s+(?!from\b)(?:(?!^\s*(?:import|export)\b)[^;])*?\bfrom\s*["'][^"']*["']/gm;
 const files = [
   ...readdirSync("src", { recursive: true }).filter((f) => f.endsWith(".ts")).map((f) => `src/${f}`),
   ...readdirSync("test").filter((f) => f.endsWith(".ts")).map((f) => `test/${f}`),
 ];
-const imports = Object.fromEntries(files.map((f) => [f, [...readFileSync(f, "utf8").replace(/^(?:import|export)\s+type\s[^;]*;/gm, "").matchAll(/(?:from|import)\s*\(?\s*["'](\.[^"']+)["']/g)]
+const imports = Object.fromEntries(files.map((f) => [f, [...readFileSync(f, "utf8").replace(TYPE_ONLY, "").matchAll(/(?:from|import)\s*\(?\s*["'](\.[^"']+)["']/g)]
   .map((m) => normalize(join(dirname(f), m[1])).replace(/\.js$/, ".ts"))]));
 const reaches = (f, seen = new Set()) => { if (seen.has(f)) return seen; seen.add(f); for (const d of imports[f] ?? []) reaches(d, seen); return seen; };
 const testFiles = files.filter((f) => f.endsWith(".test.ts") && !skip.has(f) && MUTATE.some((m) => reaches(f).has(m)))

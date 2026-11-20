@@ -20,7 +20,9 @@ How it stays fast (StrykerJS with its TAP runner):
   mutant then runs only those, and stops at the first failure.
 - **Incremental.** `mutation/reports/incremental-*.json` keeps the last results; a later run re-tests only mutants
   whose code or covering tests changed. CI caches it between runs: every push to `main` runs the job and saves the
-  cache, and a pull request restores the newest one from its own branch or from `main`.
+  cache, and a pull request restores the newest one from its own branch or from `main`, but only one saved with the
+  same hash of everything else the tests depend on (other source, test helpers, the Lean spec, dependencies, this
+  config). Stryker itself only compares the mutated files and the test files, so any other change starts from nothing.
 
 The first full run always runs every selected test file, one after another, even with an incremental report. It is
 limited to 15 minutes (`dryRunTimeoutMinutes`); on CI it took 3m54s to 4m55s in November 2026, about three times
