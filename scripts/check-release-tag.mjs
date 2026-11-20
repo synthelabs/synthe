@@ -1,6 +1,6 @@
-// Runs before `npm publish`. Event setups write `uses: synthelabs/synthe@v<version>` into each team's workflow
-// (CRIMSON_ACTION in src/cli/init.ts), so a package published before its tag exists installs workflows that
-// GitHub cannot resolve: no receipt, no round, nothing on the organizer dashboard. 1.8.0 shipped that way.
+// Runs before `npm publish`. The README, the agent guide and the setup docs pin `github:synthelabs/synthe#v<version>`
+// (PIN_FILES), so a package published before its tag exists sends people to a tag GitHub cannot resolve.
+// 1.8.0 shipped that way.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

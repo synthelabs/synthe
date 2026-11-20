@@ -5,7 +5,7 @@ import { guideSource, PIN_FILES, pinProblems, setPins } from "../scripts/version
 
 const { version, scripts } = JSON.parse(readFileSync("package.json", "utf8"));
 
-// 1.8.x shipped while the guide and the hackathon kit still installed 1.7.5.
+// 1.8.x shipped while the guide still installed 1.7.5.
 test("every setup pin in the repo names this package's version", () => {
   const files = Object.fromEntries([...PIN_FILES, "src/cli/guide.ts"].map((file) => [file, readFileSync(file, "utf8")]));
   assert.deepEqual(pinProblems(version, files), []);

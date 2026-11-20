@@ -17,21 +17,21 @@ let denyKey = false;
 let dispatches = 0;
 let dispatchStatus = 204;
 let failStateWrite = false;
-let proxyRefusal = 0;
+let creditRefusal = 0;
 // Credit refusals are held until this many requests are waiting (or 2s pass), so a step that sends its calls in
 // parallel has all of them counted before the first refusal makes it exit. Without this, a slow runner can cut off
 // the second request after the first refusal, and the count is 1 (seen once in CI).
 let refusalHold = 0;
 const heldRefusals: (() => void)[] = [];
-const proxyMessage = "This team's event credit is used up. Run `npx synthe key`.";
+// Anthropic's own words when an account has no credit left, and what Synthe tells the team about it.
+const creditMessage = "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.";
+const creditAdvice = "Your Anthropic key has no credit left. Run `npx synthe key` to replace it.";
 const requestHeaders: any[] = [];
-let proxyTokens = 0;
+let oidcRequests = 0;
 
 const github = createServer((req, res) => {
-  if (req.url?.startsWith("/oidc?") && req.method === "GET") {
-    assert.equal(new URL(req.url, "http://local").searchParams.get("audience"), "synthe-proxy");
-    return res.end(JSON.stringify({ value: `proxy-${++proxyTokens}` }));
-  }
+  // Write and score no longer ask for an OIDC token; this only counts any that would.
+  if (req.url?.startsWith("/oidc?") && req.method === "GET") { oidcRequests++; return res.end(JSON.stringify({ value: "oidc-token" })); }
   // Synthe only calls /repos/...; other local tools sometimes probe new ports with a bare GET /.
   if (!req.url?.startsWith("/repos/")) { res.statusCode = 404; return res.end(); }
   let raw = "";
@@ -80,10 +80,10 @@ const anthropic = createServer((req, res) => {
   req.on("end", () => {
     // Only the SDK's POSTs are Anthropic calls. Other local tools sometimes probe new ports with a bare GET.
     if (req.method !== "POST") { res.statusCode = 404; return res.end(); }
-    if (!["/v1/messages", "/api/claude/v1/messages"].includes(req.url!)) { res.statusCode = 404; return res.end(); }
+    if (req.url !== "/v1/messages") { res.statusCode = 404; return res.end(); }
     requestHeaders.push(req.headers);
-    if (proxyRefusal) {
-      const refuse = () => { res.statusCode = proxyRefusal; res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ type: "error", error: { type: "synthe_credit", message: proxyMessage } })); };
+    if (creditRefusal) {
+      const refuse = () => { res.statusCode = creditRefusal; res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: creditMessage } })); };
       if (heldRefusals.length + 1 < refusalHold) {
         heldRefusals.push(refuse);
         setTimeout(() => { const i = heldRefusals.indexOf(refuse); if (i >= 0) heldRefusals.splice(i, 1)[0](); }, 2000);
@@ -157,9 +157,9 @@ const reset = () => {
   dispatches = 0;
   dispatchStatus = 204;
   failStateWrite = false;
-  proxyRefusal = 0;
+  creditRefusal = 0;
   refusalHold = 0;
-  proxyTokens = 0;
+  oidcRequests = 0;
   requestHeaders.length = 0;
   files.set("main:prompt.md", readFileSync(join(dir, "prompt.md"), "utf8"));
   files.set("main:synthe.json", readFileSync(join(dir, "synthe.json"), "utf8"));
@@ -412,57 +412,61 @@ test("merging Synthe's setup pull request starts round 1; closing it, a fork's, 
   assert.equal(await go(setup(true)), false, "a setup branch merged again later doesn't start an extra round");
 });
 
-const proxyEnv = () => ({ "INPUT_ANTHROPIC-API-KEY": "", "INPUT_EVENT-CODE": "crimson", SYNTHE_PROXY_URL: `http://127.0.0.1:${port(anthropic)}/api/claude`, ACTIONS_ID_TOKEN_REQUEST_URL: `http://127.0.0.1:${port(github)}/oidc?`, ACTIONS_ID_TOKEN_REQUEST_TOKEN: "github-token" });
+const ownKeyEnv = () => ({ "INPUT_ANTHROPIC-API-KEY": "", SYNTHE_ANTHROPIC_KEY: "sk-ant-action-env-key", ACTIONS_ID_TOKEN_REQUEST_URL: `http://127.0.0.1:${port(github)}/oidc?`, ACTIONS_ID_TOKEN_REQUEST_TOKEN: "github-token" });
 
-test("the real Action routes event calls through OIDC proxy, but an own input key wins", async () => {
+test("the real Action sends write and score calls with the own key, the input key first, and never asks for OIDC", async () => {
   reset();
   for (const name of ["write", "score"]) {
-    const result = await step(name, undefined, undefined, proxyEnv());
+    const result = await step(name, undefined, undefined, ownKeyEnv());
     assert.equal(result.code, 0, result.log);
   }
   assert.ok(requestHeaders.length > 2);
-  assert.equal(proxyTokens, requestHeaders.length);
-  assert.ok(requestHeaders.every((headers) => headers["x-synthe-event"] === "crimson" && headers.authorization?.startsWith("Bearer proxy-") && !headers["x-synthe-install"]));
+  assert.ok(requestHeaders.every((headers) => headers.authorization === "Bearer sk-ant-action-env-key" && !Object.keys(headers).some((h) => h.startsWith("x-synthe"))));
+  assert.equal(oidcRequests, 0, "write and score need no id-token permission");
   reset();
-  const own = await step("write", undefined, undefined, { ...proxyEnv(), "INPUT_ANTHROPIC-API-KEY": "own-key" });
+  const own = await step("write", undefined, undefined, { ...ownKeyEnv(), "INPUT_ANTHROPIC-API-KEY": "own-key" });
   assert.equal(own.code, 0, own.log);
-  assert.equal(proxyTokens, 0);
-  assert.ok(requestHeaders.every((headers) => headers.authorization === "Bearer own-key" && !headers["x-synthe-event"]));
-});
-
-test("Action credit refusals reach the log and report verbatim and stop every later dispatch", async () => {
-  for (const code of [402, 403]) {
-    reset();
-    proxyRefusal = code;
-    refusalHold = 2;
-    const written = await step("write", undefined, undefined, proxyEnv());
-    assert.equal(written.code, 1);
-    assert.ok(written.log.includes(proxyMessage));
-    const error = JSON.parse(readFileSync(join(dir, ".synthe-out/error.json"), "utf8"));
-    assert.deepEqual(error, { step: "write", kind: "credit", message: proxyMessage });
-    assert.equal(requestHeaders.length, 2, "two parallel writer calls, without retries");
-    const decided = await step("decide");
-    assert.equal(decided.code, 0, decided.log);
-    const state = JSON.parse(files.get("synthe/state:state.json")!);
-    assert.equal(state.stopped, "credit");
-    assert.equal(state.chainReady, false);
-    assert.equal(dispatches, 0);
-    assert.ok(issues.at(-1)!.includes(proxyMessage));
-    const stopped = await step("write", undefined, undefined, proxyEnv());
-    assert.equal(stopped.code, 0, stopped.log);
-    assert.equal(requestHeaders.length, 2);
-  }
-});
-
-test("event mode refuses a goal naming another model before model requests", async () => {
+  assert.ok(requestHeaders.length > 0 && requestHeaders.every((headers) => headers.authorization === "Bearer own-key"));
   reset();
-  const goal = JSON.parse(readFileSync(join(dir, "synthe.json"), "utf8"));
-  goal.models = { runner: "claude-other" };
-  writeFileSync(join(dir, "synthe.json"), JSON.stringify(goal));
-  const result = await step("write", undefined, undefined, proxyEnv());
-  assert.equal(result.code, 1);
-  assert.match(result.log, /your goal names claude-other/);
+  const none = await step("write", undefined, undefined, { ...ownKeyEnv(), SYNTHE_ANTHROPIC_KEY: "" });
+  assert.equal(none.code, 1);
+  assert.ok(none.log.includes("npx synthe key"), none.log);
   assert.equal(requestHeaders.length, 0);
+});
+
+test("an own key out of credit fails the write step without retries, and decide passes Synthe's advice to the report", async () => {
+  reset();
+  creditRefusal = 400;
+  refusalHold = 2;
+  const written = await step("write", undefined, undefined, ownKeyEnv());
+  assert.equal(written.code, 1);
+  assert.ok(written.log.includes(creditAdvice), written.log);
+  const error = JSON.parse(readFileSync(join(dir, ".synthe-out/error.json"), "utf8"));
+  assert.deepEqual(error, { step: "write", kind: "key", message: creditAdvice });
+  assert.equal(requestHeaders.length, 2, "two parallel writer calls, without retries");
+  const decided = await step("decide");
+  assert.equal(decided.code, 0, decided.log);
+  const state = JSON.parse(files.get("synthe/state:state.json")!);
+  assert.equal(state.rounds.at(-1).outcome, "failed");
+  assert.equal(state.rounds.at(-1).failure, "key");
+  assert.equal(dispatches, 0);
+  assert.ok(issues.at(-1)!.includes("Your Anthropic key has no credit left. Run `npx synthe key` to replace your Anthropic key."), issues.at(-1)!);
+});
+
+// Workflows from older versions still call these steps. They must succeed without touching anything, so a round goes on.
+test("steps from older workflows exit 0, say they are no longer used, and touch nothing", async () => {
+  for (const name of ["cancel", "receipt-start", "receipt-finish"]) {
+    reset();
+    const before = JSON.stringify([...files]);
+    const result = await step(name, undefined, undefined, { "INPUT_ANTHROPIC-API-KEY": "", "INPUT_GITHUB-TOKEN": "" });
+    assert.equal(result.code, 0, result.log);
+    assert.equal(result.log.trim(), `The ${name} step is no longer used. Run \`npx synthe upgrade\` to remove it from your workflow.`);
+    assert.equal(JSON.stringify([...files]), before);
+    assert.equal(requestHeaders.length, 0);
+    assert.equal(dispatches, 0);
+    assert.equal(issues.length, 0);
+    assert.equal(existsSync(join(dir, ".synthe-out")), false);
+  }
 });
 
 test("the npx bundle includes guide, help commands, and one-line agent errors with closed stdin", async () => {
@@ -481,10 +485,10 @@ test("the npx bundle includes guide, help commands, and one-line agent errors wi
   assert.equal(result.error.trim(), "--prompt is missing or invalid. Ask the person; don't guess.");
 });
 
-test("local try and calibrate print credit refusals, exit nonzero and leave every repo file unchanged", async () => {
+test("local try and calibrate print an own key's credit refusal, exit nonzero and leave every repo file unchanged", async () => {
   for (const command of ["try", "calibrate"]) {
     reset();
-    proxyRefusal = 403;
+    creditRefusal = 400;
     const goal = JSON.parse(readFileSync(join(dir, "synthe.json"), "utf8"));
     goal.checks = ["Answers the question"];
     writeFileSync(join(dir, "synthe.json"), JSON.stringify(goal));
@@ -492,21 +496,22 @@ test("local try and calibrate print credit refusals, exit nonzero and leave ever
     const promptBefore = readFileSync(join(dir, "prompt.md"), "utf8");
     const goalBefore = readFileSync(join(dir, "synthe.json"), "utf8");
     const result = await new Promise<{ code: number; output: string }>((done) => {
-      const child = spawn("node", [resolve("dist/cli.js"), command], { cwd: dir, stdio: ["ignore", "pipe", "pipe"], env: { PATH: process.env.PATH, SYNTHE_EVENT_CODE: "crimson", SYNTHE_PROXY_URL: proxyEnv().SYNTHE_PROXY_URL } });
+      const child = spawn("node", [resolve("dist/cli.js"), command], { cwd: dir, stdio: ["ignore", "pipe", "pipe"], env: { PATH: process.env.PATH, SYNTHE_ANTHROPIC_KEY: "sk-ant-local-test-key", SYNTHE_ANTHROPIC_BASE_URL: `http://127.0.0.1:${port(anthropic)}` } });
       let output = "";
       child.stdout.on("data", (chunk) => { output += chunk; });
       child.stderr.on("data", (chunk) => { output += chunk; });
       child.on("close", (code) => done({ code: code!, output }));
     });
     assert.equal(result.code, 1);
-    assert.ok(result.output.includes(proxyMessage));
-    assert.ok(result.output.includes("Credential: Crimson Hacks event credit. SYNTHE_TEAM_CODE isn't set"), "local commands say which credential they use");
+    assert.ok(result.output.includes(creditAdvice), result.output);
+    assert.ok(result.output.includes("Credential: your own key from SYNTHE_ANTHROPIC_KEY, charged to that Anthropic account."), "local commands say which credential they use");
+    assert.ok(!result.output.includes("sk-ant-local-test-key"), "the key is never printed");
     // Local try holds its history lock in the ignored .synthe-local/ folder; a refused call leaves it empty.
     assert.deepEqual(readdirSync(dir, { recursive: true }).map(String).filter((path) => path !== ".synthe-local").sort(), before.filter((path) => path !== ".synthe-local"));
     if (existsSync(join(dir, ".synthe-local"))) assert.deepEqual(readdirSync(join(dir, ".synthe-local")), []);
     assert.equal(readFileSync(join(dir, "prompt.md"), "utf8"), promptBefore);
     assert.equal(readFileSync(join(dir, "synthe.json"), "utf8"), goalBefore);
-    assert.ok(requestHeaders.every((headers) => headers["x-synthe-event"] === "crimson" && headers["x-synthe-install"] && !headers.authorization));
+    assert.ok(requestHeaders.length > 0 && requestHeaders.every((headers) => headers.authorization === "Bearer sk-ant-local-test-key" && !Object.keys(headers).some((h) => h.startsWith("x-synthe"))));
   }
 });
 

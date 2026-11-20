@@ -19,13 +19,8 @@ const TESTS = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) 
 const allMutations = [
   ["round state loses a concurrent own-key budget", GITHUB, 'saved.ownKeyFromUsd !== undefined', 'false'],
   ["conflicting state writes never retry", GITHUB, 'if (result.status === 409 && attempt < RETRIES) continue;', ''],
-  ["event: own key loses to credit", "src/model/client.ts", 'if (key?.trim()) return anthropicModel(key.trim());', 'if (false) return anthropicModel(key.trim());'],
-  ["event: credit is treated as busy", "src/loop/failure.ts", 'kind: "credit", message: e.message', 'kind: "busy", message: e.message'],
-  ["event: credit requests are retried", "src/model/client.ts", 'refusedHeaders.set("x-should-retry", "false");', 'refusedHeaders.set("x-should-retry", "true");'],
-  ["event: credit does not stop the chain", DECIDE, 'state.stopped = "credit";', 'state.stopped = null;'],
-  ["event: agent mode prompts", "src/cli/init.ts", 'if (!agent && (await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)', 'if ((await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)'],
-  ["event: codes are mistaken for keys", "src/cli/init.ts", 'const event = !key.startsWith("sk-ant-");', 'const event = key.startsWith("sk-ant-");'],
-  ["event: budget is not four dollars", "src/cli/init.ts", 'if (event) goal.budget = { max_usd: EVENT_BUDGET_USD };', 'if (event) goal.budget = { max_usd: 3 };'],
+  ["own key is never used", "src/model/client.ts", 'if (key?.trim()) return anthropicModel(key.trim());', 'if (false) return anthropicModel(key.trim());'],
+  ["agent mode prompts", "src/cli/init.ts", 'if (!agent && (await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)', 'if ((await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)'],
   ["history accepts unvalidated text", "src/core/candidate-history.ts", 'Object.keys(entry).sort().join(",") !== "fingerprint,scope"', 'false'],
   ["history ignores the goal", "src/core/candidate-history.ts", 'JSON.stringify([goal, prompt])', 'JSON.stringify([prompt])'],
   ["history ignores the current prompt", "src/core/candidate-history.ts", 'JSON.stringify([goal, prompt])', 'JSON.stringify([goal])'],
@@ -45,8 +40,6 @@ const allMutations = [
   ["DO_NOT_TRACK is ignored", "src/cli/init.ts", '["1", "true"].includes(env.DO_NOT_TRACK?.toLowerCase() ?? "")', 'false'],
   ["numbers-only sends text", SHARE, 'if (goal.share !== "detail" && goal.share !== "full") return payload;', 'if (goal.share === "none") return payload;'],
   ["init records no notice version", "src/cli/init.ts", "goal.share_notice = SHARE_NOTICE_VERSION;", ""],
-  ["full sends prompt after the cutoff", SHARE, 'now.getTime() < Date.parse(FULL_SHARE_UNTIL)', 'true'],
-  ["detail sends the prompt", SHARE, 'goal.share === "full" && now.getTime()', 'true && now.getTime()'],
   ["example input dropped", SHARE, '        input: limited(record.example.input, 2000),\n', ''],
   ["a share failure fails the round", SHARE, 'return `Sharing skipped: ${error instanceof Error && error.message === "timed out" ? "request timed out" : "request failed"}.`;', "throw error;"],
   ["a cancelled run still decides", WORKFLOW, "if: ${{ !cancelled() && needs.write.result", "if: ${{ always() && needs.write.result"],
@@ -138,7 +131,6 @@ const allMutations = [
   ["key takes ANTHROPIC_API_KEY without a terminal", "src/cli/key.ts", "if (!own && !terminal) {", "if (!own && !app && !terminal) {"],
   ["a failed confirm's local files block a retry", "src/cli/init.ts", "      (await io.run(\"gh\", [\"api\", `repos/${slug}/contents/${path}", "      existsSync(join(root, path)) || (await io.run(\"gh\", [\"api\", `repos/${slug}/contents/${path}"],
   ["budget stop keeps offering a fresh key budget", "src/loop/report.ts", "state.ownKeyFromUsd === undefined ? \"Run `npx synthe key`", "true ? \"Run `npx synthe key`"],
-  ["proxy sign-in failure reads as a bad key", "src/loop/report.ts", "end.plain === PROXY_AUTH_MESSAGE ? ", "false ? "],
   ["migrate's score drop threshold is inverted", "src/cli/migrate.ts", "if (judgeDrop > MAX_DROP)", "if (judgeDrop < MAX_DROP)"],
   ["migrate doesn't report cost", "src/cli/migrate.ts", "lines.push(...costSection(costBefore, costAfter));", ""],
   ["a guard drop of exactly the margin blocks the merge", RULE, "> goal.merge_rule.guard_margin", ">= goal.merge_rule.guard_margin"],
@@ -187,17 +179,6 @@ const allMutations = [
   ["decide forgets the round's check failure counts", DECIDE, "for (const check of row.failedChecks ?? []) failed[check] = (failed[check] ?? 0) + 1;", ""],
   ["attack subset test inverted", RULE, "const newAttacks = mine.filter((id) => !baselineFailed.has(id));", "const newAttacks = mine.filter((id) => baselineFailed.has(id));"],
   ["an unknown attack result passes", RULE, "if (baseFailed === null || !Array.isArray(mine)) {", "if (false) {"],
-  ["crimson: chained rounds send no finish", "src/core/receipts.ts", 'const own = step === "receipt-finish" && env.GITHUB_EVENT_NAME !== "workflow_run";\n  if (own && now() >= OWN_FINISH_ENDS) return false;', 'const own = step === "receipt-finish" && env.GITHUB_EVENT_NAME !== "workflow_run";\n  if (own) return false;'],
-  ["crimson: own finish sends any conclusion", "src/core/receipts.ts", 'if (own && !OWN_CONCLUSIONS.has(options.conclusion ?? "")) {', 'if (false) {'],
-  ["crimson: own finish never expires", "src/core/receipts.ts", 'if (own && now() >= OWN_FINISH_ENDS) return false;', ''],
-  ["crimson: own finish claims a run ID", "src/core/receipts.ts", 'own ? { kind: "finish", conclusion: options.conclusion! }', 'own ? { kind: "finish", run_id: "1", attempt: "1", conclusion: options.conclusion! }'],
-  ["crimson: action drops the conclusion", "src/action.ts", ', { conclusion: input("conclusion") });', ');'],
-  ["crimson: finish job can fail the round", "src/cli/workflows.ts", "    continue-on-error: true\n    permissions: { id-token: write }", "    permissions: { id-token: write }"],
-  ["crimson: finish job skipped after a failure", "src/cli/workflows.ts", "if: \\${{ always() && needs.write.result != 'skipped' }}", "if: \\${{ needs.write.result != 'skipped' }}"],
-  ["crimson: failure reported as success", "src/cli/workflows.ts", "contains(needs.*.result, 'failure') && 'failure' || 'success'", "'success'"],
-  ["crimson: standard workflow gets a finish job", "src/cli/workflows.ts", '.replace("  # __CRIMSON_FINISH__\\n", enabled ? finishJob : "");', '.replace("  # __CRIMSON_FINISH__\\n", finishJob);'],
-  ["a step exits before its events are sent", "src/core/events.ts", "  const child = worker;\n  if (!child) return;\n  let timer", "  const child = worker;\n  if (child) return;\n  let timer"],
-  ["a silent events server holds a step open", "src/core/events.ts", "await Promise.race([sent, new Promise<void>((done) => { timer = setTimeout(done, timeoutMs); })]);", "await sent;"],
   ["attacks leaked into the writer input", SCORE, "const train = scenarios.filter((s) => s.split === \"train\");\n  const holdout", "const train = [...scenarios, ...attacks.map((a) => ({ id: a.id, input: a.input, expected: a.must, split: \"train\" as const }))].filter((s) => s.split === \"train\");\n  const holdout"],
   ["improve: a change that breaks a passing test can still win", "src/improve/verdict.ts", '  if (broken) return result(false, broken, "tests");\n', ''],
   ["improve: unnamed failing tests pass as clean", "src/improve/verdict.ts", 'if (candidate.failing === null || baseline.failing === null) return', 'if (false) return'],
@@ -233,8 +214,14 @@ const nameFilter = process.env.MUTATION_MATCH ? new RegExp(process.env.MUTATION_
 const mutations = allMutations.filter(([name, file]) => (selectedFiles.length === 0 || selectedFiles.includes(file)) && (!nameFilter || nameFilter.test(name)));
 if (!mutations.length) throw new Error("No mutations match the requested files");
 console.log(`Checking ${mutations.length} mutations${selectedFiles.length ? ` in ${selectedFiles.join(", ")}` : ""}`);
-const baseline = spawnSync("node", ["--test", ...TESTS], { stdio: "inherit", timeout: 60000 });
+// Time limits: MUTATION_TIMEOUT_MS when set. Otherwise the unmutated run gets 30 minutes, and each mutation gets three
+// times what that run took (never less than 60 s), so the limit grows with the suite instead of cutting it off.
+const fixedLimit = Number(process.env.MUTATION_TIMEOUT_MS) > 0 ? Number(process.env.MUTATION_TIMEOUT_MS) : null;
+const baselineStart = Date.now();
+const baseline = spawnSync("node", ["--test", ...TESTS], { stdio: "inherit", timeout: fixedLimit ?? 30 * 60_000 });
 if (baseline.status !== 0) throw new Error("Unmutated tests must pass before checking mutations");
+const limit = fixedLimit ?? Math.max(60_000, 3 * (Date.now() - baselineStart));
+console.log(`Each mutation may run for ${Math.round(limit / 1000)} s (set MUTATION_TIMEOUT_MS to change it)`);
 
 // Every mutated file as it was before the run. Restoring each mutation from its own copy isn't enough on its own: a
 // second run at the same time could restore a copy the first had mutated, leaving a break in the source. This check
@@ -249,7 +236,7 @@ for (const [name, file, from, to] of mutations) {
   process.once("SIGINT", restore);
   try {
     writeFileSync(file, original.replace(from, to));
-    const { status } = spawnSync(process.execPath, [...process.execArgv, "--test", ...TESTS], { stdio: "ignore", timeout: 60000 });
+    const { status } = spawnSync(process.execPath, [...process.execArgv, "--test", ...TESTS], { stdio: "ignore", timeout: limit });
     if (status === 0 || status === null) survived++;
     console.log(`${status === null ? "TIMED OUT" : status === 0 ? "SURVIVED " : "killed   "} ${name}`);
   } finally {

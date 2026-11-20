@@ -2,9 +2,9 @@
 
 Synthe is an open-source tool that improves an AI agent's system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team's "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.
 
-You are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.
+You are talking to a person who may never have used a terminal. Use plain words. Do the steps in order.
 
-Most teams set this up at the Synthe workshop, an hour or two into the hackathon, with their agent only partly built. That is fine: Synthe improves the prompt as it is now, and the team keeps building while it runs.
+Many teams set this up with their agent only partly built. That is fine: Synthe improves the prompt as it is now, and the team keeps building while it runs.
 
 ## Rules
 
@@ -20,7 +20,7 @@ Most teams set this up at the Synthe workshop, an hour or two into the hackathon
 
 First find out whether the app sends a system prompt to an AI model: a `.md` or `.txt` prompt file, or a prompt string passed to a model call. Look before you ask.
 
-- **No AI prompt, or the person wants a code change measured by a number** (tests passing, bundle size, build time, or a command of theirs): use **improve mode**. Go to section 9 and skip sections 1 to 8. Synthe itself proposes and measures the code changes, so it needs the person's event code and team code, or their own Anthropic key (section 9, step 1). Without either, section 9 has a fallback where you make the change.
+- **No AI prompt, or the person wants a code change measured by a number** (tests passing, bundle size, build time, or a command of theirs): use **improve mode**. Go to section 9 and skip sections 1 to 8. Synthe itself proposes and measures the code changes, so it needs the person's own Anthropic key (section 9, step 1). Without one, section 9 has a fallback where you make the change.
 - **The app has a prompt and the person wants that prompt improved:** continue with section 1.
 - **The person asks for the enterprise pilot, or wants a prompt change judged by a production metric from their own telemetry:** go to section 10. Do not start it on your own: it needs a signed-off metric and data the team exports.
 
@@ -46,16 +46,16 @@ It must print `ADMIN`. Setup saves repo secrets, which only admins can do. If it
 
 ## 2. Credit
 
-1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the Synthe table. Enrolled teams need both codes for workflow tracking, even if they use their own Anthropic key. A setup outside the event can use its own Anthropic key alone.
-2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person's own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):
+1. Ask the person for their own Anthropic key.
+2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person's own terminal may not reach you. Put the key at the front of each Synthe command instead (steps 5 and 7):
 
 ```
-SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent ...
+SYNTHE_ANTHROPIC_KEY=<key> npx --yes github:synthelabs/synthe#v1.10.0 init --agent ...
 ```
 
-3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.
+3. The key is a real secret. Tell the person it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write the key to a file. Never commit it.
 
-Agent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app's key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.
+Agent setup uses only `SYNTHE_ANTHROPIC_KEY`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app's key is never silently used by an agent. Show the printed credential and budget so they know whose credit will be used.
 
 ## 3. Find the system prompt
 
@@ -76,10 +76,8 @@ Agent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SY
 Run this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.
 
 ```
-SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"
+SYNTHE_ANTHROPIC_KEY=<key> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"
 ```
-
-To use an own key during Crimson, add `SYNTHE_ANTHROPIC_KEY=<key>` alongside both event codes, here and in step 7. Outside Crimson, use the own key alone.
 
 Use `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.
 
@@ -87,7 +85,7 @@ Use `--mode auto` or `--mode review` as the person chose. Leave out `--message` 
 
 Show the full output as written, not a summary. It has three parts:
 
-1. The credential and budget, the sharing notice, and the Crimson workflow notice for enrolled teams. Show the notices as information. They need no answer. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. Separate research-sharing settings control the prompt, test cases, and other research data.
+1. The credential and budget, and the sharing notice. Show the notice as information. It needs no answer.
 2. The numbered proposed checks.
 3. Example replies, each with Synthe's pass or fail mark.
 
@@ -104,13 +102,13 @@ Follow the `NEXT:` line with the tagged command in step 7. Do not start other wo
 Run this with one `--check` per check the person kept, using their final wording:
 
 ```
-SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --confirm --check "<final sentence>" --check "<final sentence>"
+SYNTHE_ANTHROPIC_KEY=<key> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --confirm --check "<final sentence>" --check "<final sentence>"
 ```
 
 If the person accepted every proposed check as it is, run this instead:
 
 ```
-SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --confirm --keep-checks
+SYNTHE_ANTHROPIC_KEY=<key> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --confirm --keep-checks
 ```
 
 Setup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don't confirm twice.
@@ -139,11 +137,11 @@ npx synthe key
   - `status` shows how things are going.
   - `changes` shows what Synthe changed in the latest rounds and how the prompt's score moved.
   - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.
-  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.
+  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the key stops working or runs out of credit, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing.
 
 ## 9. Improve mode (no AI prompt needed)
 
-`npx synthe improve` is a loop. Synthe itself proposes one code change per round, through the event proxy or the person's own key. It measures each change in a throwaway checkout, next to the current code, the same way. It keeps a change only when it beats the best so far by more than the run-to-run noise, still wins when measured a second time, and the regression check still passes. With a tests-passing metric, a change that breaks a test that passed before is never kept, even when more tests pass overall. Each kept change builds on the one before. At the end it opens ONE pull request titled like `Synthe: valid signups 3 → 12`, with a table of every round. The person's working tree is never touched.
+`npx synthe improve` is a loop. Synthe itself proposes one code change per round, with the person's own key. It measures each change in a throwaway checkout, next to the current code, the same way. It keeps a change only when it beats the best so far by more than the run-to-run noise, still wins when measured a second time, and the regression check still passes. With a tests-passing metric, a change that breaks a test that passed before is never kept, even when more tests pass overall. Each kept change builds on the one before. At the end it opens ONE pull request titled like `Synthe: valid signups 3 → 12`, with a table of every round. The person's working tree is never touched.
 
 It usually takes 5 to 20 minutes, depending on how long the metric and the check take, and stops sooner when nothing wins. A round usually costs a few cents of model time (more on a big repo, because Synthe sends up to about 60,000 characters of code). The default limits are 6 rounds and $1.50 of model cost, whichever comes first.
 
@@ -152,14 +150,14 @@ It usually takes 5 to 20 minutes, depending on how long the metric and the check
 - Never guess the goal, the metric, the check or the mode. Ask the person.
 - In the loop you do not write the code change. Synthe does. Do not edit code, tests, the metric command, `package.json`, lockfiles, `.github/` or `.synthe/` in this repo while it runs, and do not commit or switch branches. Synthe refuses its own changes to tests, the metric, its data, dependencies, config and CI.
 - Never use `ANTHROPIC_API_KEY`. It is usually the app's own key, and Synthe ignores it here.
-- Never write an event code, team code or key to a file, and never commit one.
+- Never write a key to a file, and never commit one.
 - Do not interrupt a running `improve`: no Ctrl-C, no timeout shorter than 30 minutes, no second Synthe command in the same repo. If it was interrupted anyway, see step 5.
 - Show the person Synthe's output as written: every number, and the reason when a change is not kept. Do not summarize it instead.
 - If a command fails or stops, show the person the exact message and do what it says. Do not retry more than once without asking.
 
 ### Steps
 
-1. **Credit.** Ask for the Crimson Hacks event code from the QR card and the team code from the Synthe table, or the person's own Anthropic key. Put them at the front of the command, because each command may run in a fresh shell (see section 2 for the same rules). Own key: `SYNTHE_ANTHROPIC_KEY=<key>` alone; tell the person it will show in this chat. If the person has neither codes nor a key, skip to "Without a credential" below.
+1. **Credit.** Ask for the person's own Anthropic key. Put it at the front of the command as `SYNTHE_ANTHROPIC_KEY=<key>`, because each command may run in a fresh shell (see section 2 for the same rules); tell the person it will show in this chat. If the person has no key, skip to "Without a credential" below.
 2. **Commit and sync first.** `git status` must be clean: Synthe measures committed code. The current branch must be pushed and equal to its copy on GitHub; if not, push or `git pull`. Synthe opens its pull request against the branch you are on, or the default branch.
 3. **See what this repo can measure:**
 
@@ -177,7 +175,7 @@ It usually takes 5 to 20 minutes, depending on how long the metric and the check
 4. **Run it**, with their answers and the credit at the front:
 
    ```
-   SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest improve --agent --goal "<sentence>" --metric <id> --guard "<check command>" --mode auto|review
+   SYNTHE_ANTHROPIC_KEY=<key> npx synthe@latest improve --agent --goal "<sentence>" --metric <id> --guard "<check command>" --mode auto|review
    ```
 
    - `<id>` is one of `test-pass`, `pytest`, `bundle-size`, `build-time`, `custom`.
@@ -199,7 +197,7 @@ To undo: close the pull request before merging. After merging, `git revert` the 
 
 ### Without a credential: you make the change
 
-Use this when the person has no event code, team code or key. Nothing is sent to a model. You make ONE small change to product code, and Synthe proves with numbers whether it improved the metric. Do steps 2 and 3 above first, then:
+Use this when the person has no key. Nothing is sent to a model. You make ONE small change to product code, and Synthe proves with numbers whether it improved the metric. Do steps 2 and 3 above first, then:
 
 1. Measure the current code with their answers (`--handoff` takes the same options as step 4, except `--rounds`, `--budget` and `--lessons`):
 
