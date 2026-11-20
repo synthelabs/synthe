@@ -81,13 +81,6 @@ test("batches stay under the proxy's limit and arrive in order; the last one is 
 });
 
 test("a dead, hanging or refusing proxy never slows or fails the run, and sends stop after two failures", async () => {
-  // The hanging fake only settles on AbortSignal.timeout and close() waits on an unref'd timer; a real fetch holds a
-  // socket open meanwhile. Nothing here does, so Node would end the test early. This timer stands in for the socket.
-  const alive = setInterval(() => undefined, 1000);
-  try { await deadHangingRefusing(); } finally { clearInterval(alive); }
-});
-
-async function deadHangingRefusing() {
   for (const mode of ["down", "hang", "refuse"] as const) {
     const proxy = fakeProxy(mode), r = record(proxy), started = Date.now();
     for (let n = 1; n <= 5; n++) { r.event("say", { text: `round ${n}` }); r.flush(); }
@@ -100,7 +93,7 @@ async function deadHangingRefusing() {
     else assert.ok(took < 500 && !r.dead && proxy.calls() === 6, `refuse: ${took} ms, ${proxy.calls()} calls`);
     if (mode !== "hang") assert.ok(r.sent.length >= 5);
   }
-}
+});
 
 test("a timed-out send is not retried; a failed connection is retried exactly once", async () => {
   let calls = 0;
