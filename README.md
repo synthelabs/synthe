@@ -88,11 +88,21 @@ The result in `synthe.json`:
 
 - No `provider` means Anthropic, exactly as before. Existing goal files need no change.
 - `base_url` must be `https://`, or `http://` only for a server on your machine (`localhost`, `127.0.0.1`, `[::1]`). Your key is sent to that URL and nowhere else: Synthe never reads `OPENAI_BASE_URL`, `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` for it.
-- `prices` are US dollars per million tokens, from your provider's pricing page. Without a price, Synthe uses the cost the provider reports in its reply (`usage.cost`, as OpenRouter sends) when there is one; otherwise the cost is unknown, which stops budgets, merges and `improve`.
+- `prices` are US dollars per million tokens, from your provider's pricing page. A model with no price, or a price of 0, needs `budget.max_calls` (see [Free option](#free-option)). Without a price, Synthe uses the cost the provider reports in its reply (`usage.cost`, as OpenRouter sends) when there is one; otherwise the cost is unknown, which stops merges and `improve`.
 - A local server that needs no key still needs something in `SYNTHE_API_KEY`; any word will do.
 - If the provider refuses JSON schemas, Synthe asks for JSON in the message instead.
 - Event credit only covers Claude models. Repos set up before `SYNTHE_API_KEY` existed run `npx synthe upgrade` once so the workflow passes it; workflows that pass only `SYNTHE_ANTHROPIC_KEY` keep working with Anthropic.
 - Agent setup takes `--base-url URL --model NAME --price INPUT/OUTPUT` (for example `--price 0.40/1.60`) and reads the key only from `SYNTHE_API_KEY`.
+
+### Free option
+
+No key? `npx synthe init` and `npx synthe key` offer providers with a free tier: Google Gemini, Groq and OpenRouter (its free models), or any other OpenAI-compatible URL. Pick one, get a key from the page setup shows, and paste it. Setup fills in the provider's address and suggests a model for each role; you can type others.
+
+- Free tiers have limits, and the provider sets them. When they run out, Synthe stops cleanly: the round doesn't count, nothing in your repo changes, and the next scheduled run tries again. On your computer, run the command again later.
+- A free key can be on a paid plan without you noticing, so Synthe never treats a missing or zero price as safe. When you say the key is on a free tier, setup records no prices and sets `budget.max_calls`, the most model calls a run may make; the run stops when it reaches it. Raise it in `synthe.json` to go further. Any goal with a missing or zero price must have `budget.max_calls`, or Synthe refuses it. `npx synthe improve` stops at the same cap.
+- Setup also sets `provider.max_requests_per_minute`, so Synthe spaces its requests out and sends fewer at once. Rounds take longer this way.
+- A paid key removes the free limits. Save it with `npx synthe key`; to stop runs by dollars instead of calls, put its real prices in `provider.prices` and remove `budget.max_calls`.
+- Agent setup: `--preset gemini`, `--preset groq` or `--preset openrouter`, with `--free` for a free-tier key (or `--price` for a paid one).
 
 ## What it adds to your repo
 

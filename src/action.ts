@@ -16,6 +16,7 @@ import { explainWrite, runWrite } from "./loop/write.ts";
 import { explainCompose, withComposed } from "./loop/compose.ts";
 import { captureCancel, captureFailure, flushEvents, observeRoundStep, startEventsWorker } from "./core/events.ts";
 import { deliverReceipt } from "./core/receipts.ts";
+import { cleanStop, countCalls, type CleanStop } from "./core/calls.ts";
 
 const OUT = ".synthe-out";
 // Only the hourly backup uses this gate. A queued chain round starts immediately.
@@ -43,8 +44,12 @@ async function stillWaiting(repo: Repo, branch: string): Promise<boolean> {
 function actionKey(provider: Provider | undefined): string | undefined {
   const generic = (input("api-key") || process.env.SYNTHE_API_KEY)?.trim();
   if (provider?.kind === "openai-compatible") return generic || undefined;
-  return generic || (input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() || undefined;
+  // A SYNTHE_API_KEY that isn't an Anthropic key belongs to another provider: synthe.json may not name it yet.
+  return (generic?.startsWith("sk-ant-") ? generic : undefined) || (input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() || undefined;
 }
+
+// The write or score step's model, counting its calls for budget.max_calls. Set once the step has its model.
+let counter: ReturnType<typeof countCalls> | null = null;
 
 async function main() {
   const step = input("step");
@@ -64,6 +69,10 @@ async function main() {
     const written = load<any>("candidates.json");
     const scored = load<any>("scores.json");
     const costUsd = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
+    const error = load<Failure & { calls?: number }>("error.json");
+    // Calls the write and score steps made, a failed step's included: budget.max_calls counts every one.
+    const calls = [written?.calls, scored?.calls, error?.calls].reduce((n: number, c) => n + (typeof c === "number" ? c : 0), 0);
+    const stopped: CleanStop | null = scored?.stopped ?? written?.stopped ?? null;
     const goal = parseGoal(goalText);
     const fullNow = new Date();
     const fullActive = fullShareActive(goal, fullNow);
@@ -73,8 +82,8 @@ async function main() {
     const scenarios = startPrompt !== null ? await repo.readFile(goal.scenarios, branch) : null;
     const calibrationText = await repo.readFile(".synthe/calibration.json", branch);
     const calibration = calibrationText === null ? null : calibrationReadings(calibrationText);
-    const record = await observeRoundStep("decide", { candidates: written?.candidates }, () => runDecide(goal, repo, { candidates: withComposed(written?.candidates, scored?.compose), scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error: load<Failure>("error.json"), calibration, caches: { attack: scored?.attackCache ?? null, score: scored?.scoreCache ?? null } }));
-    console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
+    const record = await observeRoundStep("decide", { candidates: written?.candidates }, () => runDecide(goal, repo, { candidates: withComposed(written?.candidates, scored?.compose), scores: scored?.scores ?? null, costUsd, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText), error, calls, stopped, calibration, caches: { attack: scored?.attackCache ?? null, score: scored?.scoreCache ?? null } }));
+    console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : stopped ? stopped.message : "Stopped; nothing to do.");
     const state = await repo.readState();
     if (record && state.chainReady && state.round === record.round && state.round < goal.merge_rule.max_rounds && !state.stopped && !state.proposal && !state.pending) {
       try {
@@ -131,7 +140,7 @@ async function main() {
   }
   // Decide makes the same check on the same commit and saves it; this job only needs to know whether to run.
   if (existsSync(goal.scenarios)) resumeIfScenariosChanged(state, sha256(readFileSync(goal.scenarios, "utf8")));
-  const stop = stopReason(state, goal.merge_rule.max_rounds, goal.merge_rule.stall_rounds, goal.budget.max_usd);
+  const stop = stopReason(state, goal.merge_rule.max_rounds, goal.merge_rule.stall_rounds, goal.budget.max_usd, goal.budget.max_calls);
   if (stop) {
     console.log(`Stopped: ${stop}`);
     // A decide step that died partway still needs its own cleanup and a final report, even when the run is over.
@@ -153,23 +162,55 @@ async function main() {
   const key = actionKey(goal.provider);
   const eventCode = input("event-code") || process.env.SYNTHE_EVENT_CODE;
   if (!key && eventCode && goal.provider?.kind !== "openai-compatible") eventModels(goal.models);
-  const model = configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE, goal.provider);
+  const maxCalls = goal.budget.max_calls;
+  // State only learns this round's calls at decide, so scoring also subtracts what the write step just made.
+  const writeCalls = step === "score" ? Number(load<{ calls?: number }>("candidates.json")?.calls ?? 0) : 0;
+  counter = countCalls(configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE, goal.provider), maxCalls === undefined ? Infinity : maxCalls - (state.calls ?? 0) - writeCalls, maxCalls);
+  const model = counter.model;
+  const steps = counter;
+  // A free limit used up, or the run's call cap reached: the step ends cleanly and hands the stop to decide, which
+  // keeps the round's state intact. The job doesn't fail, so nothing looks broken in the Actions tab.
+  const stopCleanly = (step: string, e: unknown, file: string) => {
+    const stop = cleanStop(step, e);
+    if (!stop) throw e;
+    console.log(stop.message);
+    save(file, { candidates: [], scores: null, costUsd: steps.costUsd(), calls: steps.calls(), stopped: stop });
+  };
 
   if (step === "write") {
-    const written = await observeRoundStep("write", { prompt }, () => runWrite(goal, state, prompt, scenarios, model));
+    let written;
+    try {
+      written = await observeRoundStep("write", { prompt }, () => runWrite(goal, state, prompt, scenarios, model));
+    } catch (e) {
+      stopCleanly("write", e, "candidates.json");
+      // "true" so the score job runs and carries the stop to decide, the only job that writes state.
+      setOutput("go", "true");
+      return;
+    }
     console.log(`Wrote ${written.candidates.length} candidates for ${written.costUsd === null ? "an unknown cost" : `$${written.costUsd.toFixed(4)}`}`);
     for (const line of explainWrite(written)) console.log(line);
-    save("candidates.json", written);
+    save("candidates.json", { ...written, calls: counter.calls() });
     setOutput("go", "true");
   } else if (step === "score") {
     const written = load<any>("candidates.json");
     if (!written) throw new Error("candidates are missing");
+    if (written.stopped) {
+      console.log(written.stopped.message);
+      save("scores.json", { scores: null, costUsd: 0, calls: 0, stopped: written.stopped });
+      return;
+    }
     const last = state.lastMerge;
     const prior = last && !last.reverted && last.mergedHash === sha256(prompt) ? last.priorPrompt : null;
     // The frozen attack set, when the repo has one. It is loaded here, in the score step, so attack text can
     // never reach the write step or the writer.
     const attacks: Attack[] = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync(ATTACKS_FILE, "utf8")) : [];
-    const scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null, state.scoreCache ?? null));
+    let scored;
+    try {
+      scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null, state.scoreCache ?? null));
+    } catch (e) {
+      stopCleanly("score", e, "scores.json");
+      return;
+    }
     // The current prompt's fresh attack results and score ride in scores.json to the decide step, which keeps them
     // in state: this job's token can only read, so writing state here always failed (HTTP 403).
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
@@ -177,7 +218,7 @@ async function main() {
     for (const line of explainScores(scored.scores, scenarios)) console.log(line);
     const { confirmed, dismissed, failed, excusedConfirmed } = scored.checks;
     if (confirmed + dismissed + failed + excusedConfirmed > 0) console.log(`guardrail re-checks: new breaks ${confirmed} confirmed, ${dismissed} dismissed, ${failed} failed (a failed check still blocks); ${excusedConfirmed} confirmed as already broken by the current prompt`);
-    save("scores.json", scored);
+    save("scores.json", { ...scored, calls: counter.calls() });
   } else {
     throw new Error(`unknown step: ${step}`);
   }
@@ -195,7 +236,7 @@ if (!startEventsWorker()) main().then(() => flushEvents(), async (e) => {
   if (step === "write" || step === "score") {
     try {
       const failure = failureOf(step, e);
-      save("error.json", failure);
+      save("error.json", { ...failure, calls: counter?.calls() ?? 0 });
       console.error(failure.message);
       // Shown at the top of the run's page, in words, instead of only a stack trace in the log.
       console.log(`::error title=Synthe::${failure.message.replace(/\r?\n/g, " ")}`);

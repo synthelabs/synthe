@@ -13,8 +13,11 @@ export interface OpenAiCompatibleOptions {
   baseUrl: string;
   apiKey: string;
   prices?: Record<string, ModelPrice>;
-  // Tests shorten the waits between retries; the real client waits as the server asks.
+  // provider.max_requests_per_minute: requests are spaced to stay under it, and at most PACED_AT_ONCE are in flight.
+  maxRequestsPerMinute?: number;
+  // Tests shorten the waits and move the clock; the real client waits as the server asks.
   sleep?: (ms: number) => Promise<void>;
+  now?: () => number;
 }
 
 // A refused or failed request, with what modelProblem needs to say what to do. The key is never in the message.
@@ -23,17 +26,24 @@ export class ProviderError extends Error {
   host: string;
   model: string;
   loopback: boolean;
-  quota: boolean; // out of credit or over a spending limit: waiting won't help
-  constructor(message: string, a: { status: number | null; host: string; model: string; loopback: boolean; quota?: boolean }) {
+  credit: boolean; // out of credit or over a spending limit: a person has to act
+  exhausted: boolean; // the free limit is used up for now: the next scheduled run tries again
+  constructor(message: string, a: { status: number | null; host: string; model: string; loopback: boolean; credit?: boolean; exhausted?: boolean }) {
     super(message);
-    this.status = a.status; this.host = a.host; this.model = a.model; this.loopback = a.loopback; this.quota = a.quota ?? false;
+    this.status = a.status; this.host = a.host; this.model = a.model; this.loopback = a.loopback; this.credit = a.credit ?? false; this.exhausted = a.exhausted ?? false;
   }
 }
 
 const MAX_RETRIES = 4; // as the Anthropic SDK's client is set up in anthropicModel
 const TIMEOUT_MS = 10 * 60_000; // the Anthropic SDK's default
 const MAX_WAIT_MS = 60_000;
-const QUOTA = /insufficient_quota|exceeded your current quota|credit balance|out of credits?|spend(ing)? limit|billing/i;
+// Out of paid credit: only a person can fix it. Kept narrow, because free tiers' rate-limit messages also talk about
+// quotas and billing plans.
+const CREDIT = /insufficient_quota|credit balance|out of credits?|insufficient (funds|balance)|spend(ing)? limit reached|payment required/i;
+// A daily allowance used up: retrying within the minute can't help, so it isn't retried.
+const DAILY = /per[\s_-]?day|daily|requests_per_day|PerDay/i;
+// Paced requests in flight at once: a free tier counts requests per minute, and several at once only collide.
+const PACED_AT_ONCE = 2;
 
 // Seconds or an HTTP date, as the standard says, or retry-after-ms as OpenAI sends. Null when absent or unreadable.
 export function retryAfterMs(headers: Headers, now = Date.now()): number | null {
@@ -67,6 +77,24 @@ export function openAiCompatibleModel(o: OpenAiCompatibleOptions): Model {
   const host = url.host;
   const loopback = isLoopback(url);
   const sleep = o.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const now = o.now ?? Date.now;
+  const gap = o.maxRequestsPerMinute ? 60_000 / o.maxRequestsPerMinute : 0;
+  let nextAt = 0;
+  // Each request, retries included, starts at least `gap` after the one before.
+  const pace = async () => {
+    if (!gap) return;
+    const t = now(), at = Math.max(t, nextAt);
+    nextAt = at + gap;
+    if (at > t) await sleep(at - t);
+  };
+  let active = 0;
+  const waiting: (() => void)[] = [];
+  const slot = async (): Promise<() => void> => {
+    if (!gap) return () => {};
+    while (active >= PACED_AT_ONCE) await new Promise<void>((resolve) => waiting.push(resolve));
+    active++;
+    return () => { active--; waiting.shift()?.(); };
+  };
   const hide = (text: string) => (o.apiKey ? text.split(o.apiKey).join("[your key]") : text);
   // Learned once per model, so a server that refuses a field costs one extra request per run, not one per call.
   const noSchema = new Set<string>();
@@ -75,6 +103,7 @@ export function openAiCompatibleModel(o: OpenAiCompatibleOptions): Model {
   async function post(model: string, body: Record<string, unknown>): Promise<{ status: number; json: any; text: string }> {
     for (let attempt = 0; ; attempt++) {
       let response: Response;
+      await pace();
       try {
         response = await fetch(url, {
           method: "POST",
@@ -87,12 +116,12 @@ export function openAiCompatibleModel(o: OpenAiCompatibleOptions): Model {
         if (attempt < MAX_RETRIES) { await sleep(backoffMs(attempt)); continue; }
         throw new ProviderError(`Couldn't reach ${host}: ${hide(error instanceof Error ? error.message : String(error))}`, { status: null, host, model, loopback });
       }
-      // Hidden before parsing, so no error message built from the body can repeat the key.
-      const text = hide(await response.text());
+      const text = await response.text();
       let json: any = null;
       try { json = JSON.parse(text); } catch { /* not JSON: kept as text for the error */ }
-      const quota = QUOTA.test(text);
-      const retryable = (response.status === 429 && !quota) || response.status === 408 || response.status >= 500;
+      const credit = CREDIT.test(text) || response.status === 402;
+      const daily = response.status === 429 && DAILY.test(text);
+      const retryable = (response.status === 429 && !credit && !daily) || response.status === 408 || response.status >= 500;
       if (retryable && attempt < MAX_RETRIES) {
         await sleep(retryAfterMs(response.headers) ?? backoffMs(attempt));
         continue;
@@ -107,53 +136,61 @@ export function openAiCompatibleModel(o: OpenAiCompatibleOptions): Model {
   };
 
   return {
-    async ask({ model, system, user, maxTokens, schema, allowCutOff }) {
-      let jsonInPrompt = Boolean(schema) && noSchema.has(model);
-      let tokensField = completionTokens.has(model) ? "max_completion_tokens" : "max_tokens";
-      let retriedTokens = false, retriedSchema = false;
-      for (;;) {
-        const body: Record<string, unknown> = {
-          model,
-          messages: [...(system === undefined ? [] : [{ role: "system", content: system }]), { role: "user", content: schema && jsonInPrompt ? `${user}${JSON_ONLY(schema)}` : user }],
-          [tokensField]: maxTokens,
-          ...(schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}),
-        };
-        const r = await post(model, body);
-        if (r.status === 400) {
-          const why = said(r);
-          // Newer OpenAI models take max_completion_tokens and refuse max_tokens, and say so.
-          if (!retriedTokens && tokensField === "max_tokens" && /max_completion_tokens/.test(why)) {
-            retriedTokens = true; tokensField = "max_completion_tokens"; completionTokens.add(model);
-            continue;
-          }
-          if (schema && !jsonInPrompt && !retriedSchema) {
-            retriedSchema = true; jsonInPrompt = true; noSchema.add(model);
-            continue;
-          }
-        }
-        if (r.status < 200 || r.status >= 300) {
-          throw new ProviderError(`${host} answered ${r.status}: ${said(r)}`, { status: r.status, host, model, loopback, quota: QUOTA.test(r.text) });
-        }
-        const choice = r.json?.choices?.[0];
-        const content = textOf(choice?.message?.content);
-        const refused = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim().length > 0;
-        const reason: string | null = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
-        const raw = refused ? null : content;
-        const text = raw !== null && jsonInPrompt ? unfence(raw) : raw;
-        const finished = reason === "stop" && text !== null && text.length > 0;
-        const cutOff = allowCutOff === true && reason === "length" && text !== null && text.length > 0;
-        const usage = r.json?.usage;
-        const input = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
-        const output = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
-        // The team's prices first; else what the provider says it charged (OpenRouter sends usage.cost); else unknown.
-        const price = o.prices?.[model];
-        const costUsd = price ? pricedCost(price, input, output)
-          : typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
-        return {
-          text: finished || cutOff ? text : null, costUsd, ...(cutOff ? { truncated: true } : {}),
-          ...(input !== null && output !== null ? { usage: { input, output } } : {}), stopReason: refused ? "refusal" : reason,
-        };
-      }
+    async ask(a) {
+      const done = await slot();
+      try { return await askOnce(a); } finally { done(); }
     },
   };
+
+  async function askOnce({ model, system, user, maxTokens, schema, allowCutOff }: Parameters<Model["ask"]>[0]): ReturnType<Model["ask"]> {
+    let jsonInPrompt = Boolean(schema) && noSchema.has(model);
+    let tokensField = completionTokens.has(model) ? "max_completion_tokens" : "max_tokens";
+    let retriedTokens = false, retriedSchema = false;
+    for (;;) {
+      const body: Record<string, unknown> = {
+        model,
+        messages: [...(system === undefined ? [] : [{ role: "system", content: system }]), { role: "user", content: schema && jsonInPrompt ? `${user}${JSON_ONLY(schema)}` : user }],
+        [tokensField]: maxTokens,
+        ...(schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}),
+      };
+      const r = await post(model, body);
+      if (r.status === 400) {
+        const why = said(r);
+        // Newer OpenAI models take max_completion_tokens and refuse max_tokens, and say so.
+        if (!retriedTokens && tokensField === "max_tokens" && /max_completion_tokens/.test(why)) {
+          retriedTokens = true; tokensField = "max_completion_tokens"; completionTokens.add(model);
+          continue;
+        }
+        if (schema && !jsonInPrompt && !retriedSchema) {
+          retriedSchema = true; jsonInPrompt = true; noSchema.add(model);
+          continue;
+        }
+      }
+      if (r.status < 200 || r.status >= 300) {
+        const credit = CREDIT.test(r.text) || r.status === 402;
+        // Only an error is hidden: some servers repeat the key in it. A reply's own text is left as it is.
+        // A 429 still there after every retry, or one that names a daily allowance, is a free limit used up for now.
+        throw new ProviderError(`${host} answered ${r.status}: ${hide(said(r))}`, { status: r.status, host, model, loopback, credit, exhausted: r.status === 429 && !credit });
+      }
+      const choice = r.json?.choices?.[0];
+      const content = textOf(choice?.message?.content);
+      const refused = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim().length > 0;
+      const reason: string | null = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
+      const raw = refused ? null : content;
+      const text = raw !== null && jsonInPrompt ? unfence(raw) : raw;
+      const finished = reason === "stop" && text !== null && text.length > 0;
+      const cutOff = allowCutOff === true && reason === "length" && text !== null && text.length > 0;
+      const usage = r.json?.usage;
+      const input = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
+      const output = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
+      // The team's prices first; else what the provider says it charged (OpenRouter sends usage.cost); else unknown.
+      const price = o.prices?.[model];
+      const costUsd = price ? pricedCost(price, input, output)
+        : typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
+      return {
+        text: finished || cutOff ? text : null, costUsd, ...(cutOff ? { truncated: true } : {}),
+        ...(input !== null && output !== null ? { usage: { input, output } } : {}), stopReason: refused ? "refusal" : reason,
+      };
+    }
+  }
 }

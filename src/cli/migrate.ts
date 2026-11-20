@@ -87,7 +87,8 @@ export async function migrate(args: string[], env: MigrateEnv): Promise<number> 
 
   let real = env.model;
   if (!parsed.dryRun && !real) {
-    const key = env.apiKey?.trim() || (other ? undefined : env.anthropicKey?.trim());
+    const generic = env.apiKey?.trim();
+    const key = other ? generic : (generic?.startsWith("sk-ant-") ? generic : undefined) || env.anthropicKey?.trim();
     if (!key) return fail(`\`npx synthe migrate\` runs on your computer, changing nothing, and needs your own key${other ? ` for ${providerHost(other)}` : ""}:\n  SYNTHE_API_KEY=your-key npx synthe migrate --to ${to}\n${other ? "" : "SYNTHE_ANTHROPIC_KEY works too. "}ANTHROPIC_API_KEY isn't read, since it's usually your app's own key. To see the layout without spending anything, add --dry-run.`);
     real = providerModel(goal.provider, key);
   }

@@ -57,6 +57,13 @@ function baseUrlProblem(value) {
   if (url.protocol === "http:") return "provider.base_url must use https. Plain http is allowed only for a server on this machine (localhost, 127.0.0.1 or [::1]), because the key travels with every request.";
   return "provider.base_url must start with https://";
 }
+function unpricedModels(models, provider) {
+  const names2 = [...new Set([models.writer, models.runner, models.judge, models.checker].filter((m) => typeof m === "string"))];
+  return names2.filter((m) => {
+    const p = provider.prices?.[m];
+    return !p || p.input === 0 && p.output === 0;
+  });
+}
 function apiName(provider) {
   if (provider?.kind !== "openai-compatible") return "Anthropic's API";
   try {
@@ -101,6 +108,7 @@ function parseGoal(text4) {
   if (g.share_notice !== void 0 && typeof g.share_notice !== "string") bad5("share_notice must be text");
   if (typeof g.scenarios !== "string") bad5("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad5("budget.max_usd must be above 0");
+  if (g.budget.max_calls !== void 0 && !(Number.isInteger(g.budget.max_calls) && g.budget.max_calls > 0)) bad5("budget.max_calls must be a whole number above 0, for example 500");
   if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad5("merge_rule.mode must be auto or propose");
   const holdP = g.merge_rule?.holdout_max_p;
   if (holdP !== void 0 && !(typeof holdP === "number" && Number.isFinite(holdP) && holdP > 0 && holdP <= 1)) bad5("merge_rule.holdout_max_p must be above 0 and at most 1");
@@ -131,6 +139,10 @@ function parseGoal(text4) {
     if (p.kind === "openai-compatible") {
       const missing2 = ["writer", "runner", "judge", "checker"].filter((role) => typeof g.models?.[role] !== "string" || !g.models[role].trim());
       if (missing2.length) bad5(`an openai-compatible provider needs every model named in "models": ${missing2.join(", ")} ${missing2.length === 1 ? "is" : "are"} missing. Synthe's defaults are Claude models.`);
+      const rpm = p.max_requests_per_minute;
+      if (rpm !== void 0 && !(typeof rpm === "number" && Number.isFinite(rpm) && rpm > 0)) bad5("provider.max_requests_per_minute must be a number above 0");
+      const unpriced = unpricedModels(g.models, p);
+      if (unpriced.length && g.budget.max_calls === void 0) bad5(`${unpriced.join(", ")} ${unpriced.length === 1 ? "has" : "have"} no price, or a price of 0, in provider.prices, so budget.max_usd can't stop the run. Set budget.max_calls (the most model calls a run may make, for example 500), or add real prices: { "input": USD, "output": USD } per million tokens.`);
     }
   }
   return {
@@ -256,7 +268,7 @@ function budgetSpend(state) {
   return state.spendUsd - (state.ownKeyFromUsd ?? 0);
 }
 function isFinished(reason) {
-  return /^(budget of .* is used|reached \d+ rounds|\d+ rounds in a row found no winner)$/.test(reason);
+  return /^(budget of .* is used|call limit of \d+ is used|reached \d+ rounds|\d+ rounds in a row found no winner)$/.test(reason);
 }
 function resumeIfScenariosChanged(s, scenariosHash) {
   if (!s.stopped || !/rounds in a row found no winner$/.test(s.stopped) || s.scenariosHash === null || s.scenariosHash === scenariosHash) return false;
@@ -28656,8 +28668,8 @@ var init_sdk = __esm({
 
 // src/core/evidence.ts
 import { execFileSync } from "node:child_process";
-import { existsSync as existsSync5, readdirSync, readFileSync as readFileSync7 } from "node:fs";
-import { basename, dirname as dirname2, join as join9 } from "node:path";
+import { existsSync as existsSync5, readdirSync, readFileSync as readFileSync8 } from "node:fs";
+import { basename, dirname as dirname2, join as join10 } from "node:path";
 function sortKeys(value) {
   if (Array.isArray(value)) return value.map(sortKeys);
   if (value !== null && typeof value === "object") {
@@ -28722,7 +28734,7 @@ function recomputeProblem(r, goal, splits) {
 function verifyEvidence(filePath, repoRoot) {
   let r;
   try {
-    r = JSON.parse(readFileSync7(filePath, "utf8"));
+    r = JSON.parse(readFileSync8(filePath, "utf8"));
   } catch (e) {
     return { ok: false, reason: `couldn't read ${filePath} as evidence: ${e.message}` };
   }
@@ -28746,19 +28758,19 @@ function verifyEvidence(filePath, repoRoot) {
   } else {
     let prev;
     try {
-      prev = JSON.parse(readFileSync7(join9(dir, `round-${prevRound}.json`), "utf8"));
+      prev = JSON.parse(readFileSync8(join10(dir, `round-${prevRound}.json`), "utf8"));
     } catch {
       return { ok: false, reason: `round-${prevRound}.json can't be read` };
     }
     if (r.prevEvidenceHash === null) return { ok: false, reason: `round-${prevRound}.json exists, but this record says it follows nothing` };
     if (hashEvidence(prev) !== r.prevEvidenceHash) return { ok: false, reason: `the chain is broken: this record follows a different round-${prevRound}.json than the one next to it` };
   }
-  const goalPath = join9(repoRoot, GOAL_FILE);
+  const goalPath = join10(repoRoot, GOAL_FILE);
   let goal;
   let splits;
   try {
-    goal = parseGoal(readFileSync7(goalPath, "utf8"));
-    splits = new Map(parseScenarios(readFileSync7(join9(repoRoot, goal.scenarios), "utf8")).flatMap((s) => s.split === "train" || s.split === "holdout" ? [[s.id, s.split]] : []));
+    goal = parseGoal(readFileSync8(goalPath, "utf8"));
+    splits = new Map(parseScenarios(readFileSync8(join10(repoRoot, goal.scenarios), "utf8")).flatMap((s) => s.split === "train" || s.split === "holdout" ? [[s.id, s.split]] : []));
   } catch (e) {
     return { ok: false, reason: `couldn't read the goal and test cases in ${repoRoot} to recheck the verdict: ${e.message}` };
   }
@@ -29149,7 +29161,7 @@ var init_approval = __esm({
 });
 
 // src/pilot/io.ts
-import { existsSync as existsSync14, linkSync as linkSync2, lstatSync as lstatSync5, mkdirSync as mkdirSync7, readFileSync as readFileSync17, realpathSync as realpathSync3, renameSync as renameSync3, statSync as statSync4, unlinkSync as unlinkSync4, writeFileSync as writeFileSync8 } from "node:fs";
+import { existsSync as existsSync14, linkSync as linkSync2, lstatSync as lstatSync5, mkdirSync as mkdirSync7, readFileSync as readFileSync18, realpathSync as realpathSync3, renameSync as renameSync3, statSync as statSync4, unlinkSync as unlinkSync4, writeFileSync as writeFileSync9 } from "node:fs";
 import { dirname as dirname5, isAbsolute as isAbsolute3, relative as relative2, resolve as resolve2 } from "node:path";
 function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
   let size2;
@@ -29162,7 +29174,7 @@ function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
     throw new PilotError("not_found", `${path4} does not exist or cannot be read.`);
   }
   if (size2 > maxBytes) throw new PilotError("too_large", `${path4} is ${size2} bytes; the limit is ${maxBytes}. Export a smaller, bounded file.`);
-  return readFileSync17(path4, "utf8");
+  return readFileSync18(path4, "utf8");
 }
 function inside(root, name) {
   const full = resolve2(root, name);
@@ -29187,7 +29199,7 @@ function inside(root, name) {
 function writeOnce(path4, content) {
   mkdirSync7(dirname5(path4), { recursive: true });
   const tmp = `${path4}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync8(tmp, content, { mode: 384 });
+  writeFileSync9(tmp, content, { mode: 384 });
   try {
     try {
       linkSync2(tmp, path4);
@@ -29200,7 +29212,7 @@ function writeOnce(path4, content) {
       }
       if (code !== "EEXIST" && code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV") throw e;
     }
-    if (readFileSync17(path4, "utf8") === content) return "already there";
+    if (readFileSync18(path4, "utf8") === content) return "already there";
     throw new PilotError("conflict", `${path4} already exists with different content. Stored pilot records are never replaced.`);
   } finally {
     if (existsSync14(tmp)) unlinkSync4(tmp);
@@ -29226,7 +29238,7 @@ function writeAtomic(path4, content) {
   mkdirSync7(dirname5(path4), { recursive: true });
   const tmp = `${path4}.${process.pid}.tmp`;
   try {
-    writeFileSync8(tmp, content, { mode: 384 });
+    writeFileSync9(tmp, content, { mode: 384 });
     renameSync3(tmp, path4);
   } finally {
     if (existsSync14(tmp)) unlinkSync4(tmp);
@@ -30538,8 +30550,8 @@ var init_stats = __esm({
 
 // src/pilot/wrap.ts
 import { createHash as createHash3, createHmac } from "node:crypto";
-import { closeSync as closeSync3, constants as constants3, fstatSync as fstatSync2, mkdirSync as mkdirSync8, openSync as openSync3, readSync, writeFileSync as writeFileSync9, writeSync } from "node:fs";
-import { join as join20 } from "node:path";
+import { closeSync as closeSync3, constants as constants3, fstatSync as fstatSync2, mkdirSync as mkdirSync8, openSync as openSync3, readSync, writeFileSync as writeFileSync10, writeSync } from "node:fs";
+import { join as join21 } from "node:path";
 function appendLine(path4, text4) {
   const fd = openSync3(path4, constants3.O_RDWR | constants3.O_APPEND | constants3.O_CREAT | (constants3.O_NOFOLLOW ?? 0), 384);
   try {
@@ -30578,11 +30590,11 @@ function pilotRecorder(options) {
     try {
       mkdirSync8(logDir, { recursive: true, mode: 448 });
       try {
-        writeFileSync9(join20(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
+        writeFileSync10(join21(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
       } catch (e) {
         if (e.code !== "EEXIST") throw e;
       }
-      return appendLine(join20(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
+      return appendLine(join21(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
 `);
     } catch {
       return false;
@@ -33444,8 +33456,8 @@ var init_review = __esm({
 });
 
 // src/pilot/store.ts
-import { appendFileSync as appendFileSync2, closeSync as closeSync4, existsSync as existsSync15, mkdirSync as mkdirSync9, openSync as openSync4, readdirSync as readdirSync3, readFileSync as readFileSync18, statSync as statSync5, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
-import { join as join21 } from "node:path";
+import { appendFileSync as appendFileSync2, closeSync as closeSync4, existsSync as existsSync15, mkdirSync as mkdirSync9, openSync as openSync4, readdirSync as readdirSync3, readFileSync as readFileSync19, statSync as statSync5, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
+import { join as join22 } from "node:path";
 var OBJECT_KINDS, entryHash, MAX_OBJECT_BYTES, LOCK_STALE_MS, HELD, PilotStore;
 var init_store = __esm({
   "src/pilot/store.ts"() {
@@ -33482,7 +33494,7 @@ var init_store = __esm({
       }
       objectPath(kind, id) {
         if (!isSha256(id)) throw new PilotError("usage", `${String(id).slice(0, 80)} is not a full 64-character id.`);
-        return join21(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
+        return join22(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
       }
       // Stores a record under its content id. Storing the same record again is a no-op, so every step can be retried.
       put(kind, value) {
@@ -33500,7 +33512,7 @@ var init_store = __esm({
           writeOnce(path4, content);
         } catch (e) {
           if (!(e instanceof PilotError) || e.code !== "conflict") throw e;
-          if (!content.startsWith(readFileSync18(path4, "utf8"))) {
+          if (!content.startsWith(readFileSync19(path4, "utf8"))) {
             throw new PilotError("tampered", `${path4} already exists with content that does not match its name, so it was changed after it was written. It was not overwritten. Compare it with a backup, or start a new pilot directory.`);
           }
           writeAtomic(path4, content);
@@ -33527,7 +33539,7 @@ var init_store = __esm({
         return isSha256(id) && existsSync15(this.objectPath(kind, id));
       }
       list(kind) {
-        const dir = join21(this.dir, "objects", kind);
+        const dir = join22(this.dir, "objects", kind);
         if (!existsSync15(dir)) return [];
         return readdirSync3(dir).map((f) => f.replace(/\.(json|txt)$/, "")).filter(isSha256).sort();
       }
@@ -33558,17 +33570,17 @@ var init_store = __esm({
         return text4;
       }
       journalPath() {
-        return join21(this.dir, "journal.jsonl");
+        return join22(this.dir, "journal.jsonl");
       }
       // The sequence number and hash of the newest entry, kept beside the journal. The chain alone cannot show that
       // entries were cut off the end; a journal shorter than its recorded head can.
       headPath() {
-        return join21(this.dir, "journal.head");
+        return join22(this.dir, "journal.head");
       }
       head() {
         if (!existsSync15(this.headPath())) return null;
         try {
-          const h = JSON.parse(readFileSync18(this.headPath(), "utf8"));
+          const h = JSON.parse(readFileSync19(this.headPath(), "utf8"));
           if (Number.isInteger(h.seq) && h.seq >= 1 && isSha256(h.hash)) return { seq: h.seq, hash: h.hash };
         } catch {
         }
@@ -33611,7 +33623,7 @@ var init_store = __esm({
       tornTail() {
         const path4 = this.journalPath();
         if (!existsSync15(path4)) return false;
-        const bytes = readFileSync18(path4);
+        const bytes = readFileSync19(path4);
         return bytes.length > 0 && bytes[bytes.length - 1] !== 10;
       }
       find(step, key) {
@@ -33635,7 +33647,7 @@ var init_store = __esm({
           const rest = { seq: entries.length + 1, at, step, key, refs, prev: entries.at(-1)?.hash ?? null };
           const entry = { ...rest, hash: entryHash(rest) };
           mkdirSync9(this.dir, { recursive: true });
-          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync18(this.journalPath()).lastIndexOf(10) + 1);
+          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync19(this.journalPath()).lastIndexOf(10) + 1);
           appendFileSync2(this.journalPath(), `${JSON.stringify(entry)}
 `, { mode: 384 });
           writeAtomic(this.headPath(), `${JSON.stringify({ seq: entry.seq, hash: entry.hash })}
@@ -33669,11 +33681,11 @@ var init_store = __esm({
       // reading it again and finding the same content, so a lock that was replaced in between is not removed.
       acquire(file, staleMs) {
         mkdirSync9(this.dir, { recursive: true });
-        const lock = join21(this.dir, file);
+        const lock = join22(this.dir, file);
         const pause = new Int32Array(new SharedArrayBuffer(4));
         const read = () => {
           try {
-            return { text: readFileSync18(lock, "utf8"), age: Date.now() - statSync5(lock).mtimeMs };
+            return { text: readFileSync19(lock, "utf8"), age: Date.now() - statSync5(lock).mtimeMs };
           } catch (e) {
             if (e.code === "ENOENT") return null;
             throw e;
@@ -33722,14 +33734,14 @@ var init_store = __esm({
         return () => {
           HELD.delete(lock);
           try {
-            if (readFileSync18(lock, "utf8") === String(process.pid)) unlinkSync5(lock);
+            if (readFileSync19(lock, "utf8") === String(process.pid)) unlinkSync5(lock);
           } catch {
           }
         };
       }
       // A rendering of stored records. Safe to overwrite: the records, not the report, are the evidence.
       report(name, content) {
-        const path4 = join21(this.dir, "reports", name);
+        const path4 = join22(this.dir, "reports", name);
         writeAtomic(path4, content);
         return path4;
       }
@@ -33739,8 +33751,8 @@ var init_store = __esm({
 
 // src/pilot/commands.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
-import { appendFileSync as appendFileSync3, existsSync as existsSync16, readFileSync as readFileSync19 } from "node:fs";
-import { dirname as dirname6, join as join22 } from "node:path";
+import { appendFileSync as appendFileSync3, existsSync as existsSync16, readFileSync as readFileSync20 } from "node:fs";
+import { dirname as dirname6, join as join23 } from "node:path";
 function defaultGit(args, cwd) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_")));
   return execFileSync4("git", args, { cwd, encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
@@ -33814,14 +33826,14 @@ function assertNotFromTheFuture(imported, now, cutoff) {
   }
 }
 function protectDirectory(dir, say) {
-  if (existsSync16(join22(dir, ".git"))) {
+  if (existsSync16(join23(dir, ".git"))) {
     throw new PilotError("usage", "The pilot directory is a git repository root. It holds customer data; use a directory that is not a repository, or a subdirectory with its own .gitignore.");
   }
-  const file = join22(dir, ".gitignore");
+  const file = join23(dir, ".gitignore");
   if (!existsSync16(file)) writeOnce(file, "*\n");
   else {
-    const lines2 = readFileSync19(file, "utf8").split(/\r?\n/).map((l) => l.trim());
-    if (!lines2.includes("*")) appendFileSync3(file, `${readFileSync19(file, "utf8").endsWith("\n") ? "" : "\n"}*
+    const lines2 = readFileSync20(file, "utf8").split(/\r?\n/).map((l) => l.trim());
+    if (!lines2.includes("*")) appendFileSync3(file, `${readFileSync20(file, "utf8").endsWith("\n") ? "" : "\n"}*
 `);
   }
   try {
@@ -34572,7 +34584,7 @@ var init_commands = __esm({
 
 // src/pilot/calllog.ts
 import { readdirSync as readdirSync4 } from "node:fs";
-import { join as join23 } from "node:path";
+import { join as join24 } from "node:path";
 function valuesBefore(c, before) {
   const values = /* @__PURE__ */ new Map();
   const seen = /* @__PURE__ */ new Map();
@@ -34608,7 +34620,7 @@ function readCallLog(dir) {
     return c;
   };
   for (const name of names2) {
-    const text4 = readBounded(join23(dir, name), MAX_LOG_FILE_BYTES);
+    const text4 = readBounded(join24(dir, name), MAX_LOG_FILE_BYTES);
     const parts = text4.split("\n");
     parts.pop();
     for (const part of parts) {
@@ -34706,7 +34718,7 @@ var init_calllog = __esm({
 });
 
 // src/pilot/export.ts
-import { join as join24 } from "node:path";
+import { join as join25 } from "node:path";
 function buildLogExport(input) {
   const { log, contract } = input;
   if (contract.query_hash !== void 0) throw new PilotError("usage", "The metric contract pins a query hash. A call-log export comes from the wrapper, not from a query, so it cannot carry one. Export from the signed-off query instead.");
@@ -34835,9 +34847,9 @@ function writeLogExport(input) {
     tags,
     ...experiment2 ? { window: experiment2.window } : {}
   });
-  const outDir = input.outDir ?? join24(store.dir, "exports");
-  const path4 = join24(outDir, `${exportId}.json`);
-  writeAtomic(join24(outDir, csvName), built.csv);
+  const outDir = input.outDir ?? join25(store.dir, "exports");
+  const path4 = join25(outDir, `${exportId}.json`);
+  writeAtomic(join25(outDir, csvName), built.csv);
   writeAtomic(path4, `${JSON.stringify(built.header, null, 2)}
 `);
   const notes = [];
@@ -34913,7 +34925,7 @@ var init_export = __esm({
 
 // src/pilot/watch.ts
 import { readdirSync as readdirSync5 } from "node:fs";
-import { dirname as dirname7, join as join25 } from "node:path";
+import { dirname as dirname7, join as join26 } from "node:path";
 function whole(interimDays) {
   if (!Number.isInteger(interimDays) || interimDays < 1) throw new PilotError("usage", "--interim-days must be a whole number of 1 or more.");
   return interimDays;
@@ -35014,7 +35026,7 @@ function scanInbox(store, inbox, experimentId, spec) {
   const importedKeys = new Set(imports.map((e) => e.key));
   const newest = Math.max(-Infinity, ...imports.map((e) => ms(store.get("telemetry", e.refs.telemetry).exported_at)));
   const files = names2.map((name) => {
-    const path4 = join25(inbox, name);
+    const path4 = join26(inbox, name);
     try {
       const imported = importTelemetry({
         text: readBounded(path4),
@@ -35200,8 +35212,8 @@ var init_watch = __esm({
 });
 
 // src/pilot/cases.ts
-import { existsSync as existsSync17, mkdirSync as mkdirSync10, writeFileSync as writeFileSync10 } from "node:fs";
-import { dirname as dirname8, join as join26, resolve as resolve3 } from "node:path";
+import { existsSync as existsSync17, mkdirSync as mkdirSync10, writeFileSync as writeFileSync11 } from "node:fs";
+import { dirname as dirname8, join as join27, resolve as resolve3 } from "node:path";
 function describe(check) {
   switch (check.kind) {
     case "reply_includes":
@@ -35297,13 +35309,13 @@ async function cases3(store, flags, deps) {
     if (existsSync17(path4)) throw new PilotError("conflict", `${printable2(outFlag, 200)} already exists. Name a new file with --out, then copy the lines you want into your scenarios file yourself.`);
     mkdirSync10(dirname8(path4), { recursive: true });
     try {
-      writeFileSync10(path4, text4, { flag: "wx", mode: 384 });
+      writeFileSync11(path4, text4, { flag: "wx", mode: 384 });
     } catch (e) {
       if (e.code === "EEXIST") throw new PilotError("conflict", `${printable2(outFlag, 200)} already exists. Name a new file with --out.`);
       throw e;
     }
   } else {
-    path4 = join26(store.dir, "cases", `cases-${shortId(id)}.jsonl`);
+    path4 = join27(store.dir, "cases", `cases-${shortId(id)}.jsonl`);
     writeAtomic(path4, text4);
   }
   deps.say(`Wrote ${path4}`);
@@ -35977,8 +35989,8 @@ __export(demo_exports, {
   demo: () => demo
 });
 import { execFileSync as execFileSync5 } from "node:child_process";
-import { existsSync as existsSync18, mkdirSync as mkdirSync11, readdirSync as readdirSync6, readFileSync as readFileSync20, statSync as statSync6, writeFileSync as writeFileSync11 } from "node:fs";
-import { dirname as dirname9, join as join27, resolve as resolve4 } from "node:path";
+import { existsSync as existsSync18, mkdirSync as mkdirSync11, readdirSync as readdirSync6, readFileSync as readFileSync21, statSync as statSync6, writeFileSync as writeFileSync12 } from "node:fs";
+import { dirname as dirname9, join as join28, resolve as resolve4 } from "node:path";
 function git(args, cwd) {
   const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_"))), ...GIT_ENV };
   return execFileSync5("git", args, { cwd, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
@@ -35986,7 +35998,7 @@ function git(args, cwd) {
 function filesUnder(dir) {
   if (!existsSync18(dir)) return [];
   return readdirSync6(dir).flatMap((name) => {
-    const path4 = join27(dir, name);
+    const path4 = join28(dir, name);
     return statSync6(path4).isDirectory() ? filesUnder(path4) : [path4];
   });
 }
@@ -35996,19 +36008,19 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
   if (typeof outFlag !== "string" || !outFlag.trim()) throw new PilotError("usage", "--out is required: a new, empty directory for the demo's inputs, pilot records and reports.");
   const out = resolve4(outFlag);
   if (existsSync18(out) && readdirSync6(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
-  const inputs = join27(out, "inputs");
-  const repoDir = join27(out, "customer-repo");
-  const dir = join27(out, "pilot");
+  const inputs = join28(out, "inputs");
+  const repoDir = join28(out, "customer-repo");
+  const dir = join28(out, "pilot");
   mkdirSync11(inputs, { recursive: true });
-  mkdirSync11(join27(repoDir, dirname9(DEMO.prompt_path)), { recursive: true });
+  mkdirSync11(join28(repoDir, dirname9(DEMO.prompt_path)), { recursive: true });
   const put = (name, content) => {
-    const path4 = join27(inputs, name);
-    writeFileSync11(path4, content);
+    const path4 = join28(inputs, name);
+    writeFileSync12(path4, content);
     return path4;
   };
   const json = (value) => `${JSON.stringify(value, null, 2)}
 `;
-  writeFileSync11(join27(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
+  writeFileSync12(join28(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
   git(["init", "-q", "-b", DEMO.base], repoDir);
   git(["add", DEMO.prompt_path], repoDir);
   git(["commit", "-q", "-m", "Juniper prompt v14"], repoDir);
@@ -36069,7 +36081,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Synthe enterprise pilot: synthetic run for Fernhill Outfitters' support agent Juniper (all data invented).");
     say(`Inputs: ${inputs}   Pilot records and reports: ${dir}`);
     expect("init succeeds", await run2("Freeze the contract and the baseline prompt", ["init", "--config", put("pilot.json", json(demoConfig())), "--repo-dir", repoDir]) === 0);
-    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync18(join27(dir, "reports", "baseline.md")));
+    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync18(join28(dir, "reports", "baseline.md")));
     expect("pack frozen", await run2("Freeze the redacted conversation pack", ["pack", "--file", put("pack.v1.json", json(demoPack()))]) === 0);
     const packV1 = activePack(store);
     expect("discover succeeds", await run2("Find recurring failures on the discovery cases", ["discover", "--model", model]) === 0);
@@ -36176,7 +36188,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("approval recorded against the exact candidate and experiment", await run2("Record the approval", ["approve", "--candidate", candD, "--experiment", expD, "--approver", DEMO.metric_owner]) === 0);
     const tagD = candidateTag(candD);
     const specD = store.get("experiment", expD);
-    const logDir = join27(out, "agent-log");
+    const logDir = join28(out, "agent-log");
     let recorderClock = 0;
     const traffic = demoTraffic({
       recorder: pilotRecorder({ logDir, agent: "Juniper", idKey: DEMO_ID_KEY, now: () => new Date(recorderClock) }),
@@ -36193,7 +36205,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     });
     const looksD = () => store.find("analysis.decided").filter((e) => e.refs.experiment === expD);
     const importsD = () => store.find("telemetry.imported").filter((e) => e.refs.scope === expD).length;
-    const watchMd = () => readFileSync20(join27(dir, "reports", "WATCH.md"), "utf8");
+    const watchMd = () => readFileSync21(join28(dir, "reports", "WATCH.md"), "utf8");
     const tick2 = async (title, iso3) => {
       traffic.upTo(Date.parse(iso3));
       atTime(iso3);
@@ -36204,7 +36216,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const lastLook = () => store.get("analysis", looksD().at(-1)?.refs.analysis ?? "");
     expect("watch --log without --assignment is refused, even while no look is due", await run2("Try a watch tick without saying how traffic was assigned", ["watch", "--log", logDir]) === 1 && looksD().length === 0);
     const t0 = await tick2("Watch tick before the experiment starts (2026-11-27)", "2026-11-27T09:00:00Z");
-    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join27(dir, "exports")).length === 0);
+    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join28(dir, "exports")).length === 0);
     const t1 = await tick2("Watch tick at the end of day 1 (2026-11-29)", "2026-11-29T23:30:00Z");
     expect("day 1: one interim look, HOLD", t1.code === 0 && looksD().length === 1 && lastLook().recommendation === "hold" && lastLook().final === false && importsD() === 1);
     const t1b = await tick2("Watch tick again on day 1, twenty minutes later", "2026-11-29T23:50:00Z");
@@ -36218,9 +36230,9 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("the cutoff: the final analysis is HOLD (inconclusive), final", t4.code === 0 && looksD().length === 4 && finalD.recommendation === "hold" && finalD.final === true && t4.md.startsWith("# HOLD"));
     expect("the lift is real but smaller than the minimum effect, so it is not a keep", (finalD.primary.candidate.estimate ?? 0) - (finalD.primary.baseline.estimate ?? 0) < specD.primary.min_effect);
     const importsAtFinal = importsD();
-    const exportsAtFinal = filesUnder(join27(dir, "exports")).length;
+    const exportsAtFinal = filesUnder(join28(dir, "exports")).length;
     const t5 = await tick2("Watch tick after the final analysis (2026-12-16)", "2026-12-16T09:00:00Z");
-    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join27(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
+    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join28(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
     const pl = traffic.planted;
     const byVersion = (m) => Object.entries(m).sort().map(([t, n]) => `${t} ${n}`).join(", ");
     const count2 = (m) => Object.values(m).reduce((a, b) => a + b, 0);
@@ -36233,9 +36245,9 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect(`the cutoff export notes carry the planted counts (${count2(pl.no_outcome)} no outcome, ${count2(pl.two_versions)} two versions, ${pl.other_version_after_outcome} after the outcome, ${pl.outcome_after_other_version} of them with the outcome recorded again, ${pl.outcome_without_call} outcome without a call), in the tick's output and in WATCH.md`, count2(pl.no_outcome) === TRAFFIC.no_outcome.length && count2(pl.two_versions) === TRAFFIC.call_before_outcome.length && pl.other_version_after_outcome === TRAFFIC.call_after_outcome.length && pl.outcome_after_other_version === TRAFFIC.repeat_after_other_call.length && pl.outcome_without_call === TRAFFIC.outcome_without_call.length && notesOk(t4.out) && notesOk(t4.md));
     expect("every conversation with a recorded call is a row, including the ones with no outcome or two versions", finalD.coverage.rows === 14 * TRAFFIC.per_day);
     expect("no new GitHub request was made after the review", github.requests.length === requestsAfterReview);
-    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync20(p, "utf8")).join("\n");
+    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync21(p, "utf8")).join("\n");
     const rawId = /fernhill-(conv|unit|orphan)-/;
-    const pilotText = [...filesUnder(join27(dir, "reports")), ...filesUnder(join27(dir, "exports")), join27(dir, "journal.jsonl")].map((p) => readFileSync20(p, "utf8")).join("\n");
+    const pilotText = [...filesUnder(join28(dir, "reports")), ...filesUnder(join28(dir, "exports")), join28(dir, "journal.jsonl")].map((p) => readFileSync21(p, "utf8")).join("\n");
     const canariesList = Object.values(CANARIES);
     expect(`the ${filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).length} log files hold no raw conversation or unit id and no message text`, logText.length > 0 && !rawId.test(logText) && !traffic.rawIds.filter((_, i) => i % 997 === 0).some((id) => logText.includes(id)) && !canariesList.some((c) => logText.toLowerCase().includes(c.toLowerCase())));
     expect("the exports, reports and journal hold no raw conversation or unit id either", !rawId.test(pilotText));
@@ -36248,8 +36260,8 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const canaries = Object.values(CANARIES);
     const leaks = (text4) => canaries.some((c) => text4.toLowerCase().includes(c.toLowerCase()));
     expect(`nothing sent to GitHub holds pack conversation text (${github.requests.length} requests checked)`, !github.requests.some((r) => leaks(r.body) || leaks(r.path)));
-    expect("no report holds pack conversation text", !filesUnder(join27(dir, "reports")).some((p) => leaks(readFileSync20(p, "utf8"))));
-    expect("the journal holds no pack conversation text", !leaks(readFileSync20(join27(dir, "journal.jsonl"), "utf8")));
+    expect("no report holds pack conversation text", !filesUnder(join28(dir, "reports")).some((p) => leaks(readFileSync21(p, "utf8"))));
+    expect("the journal holds no pack conversation text", !leaks(readFileSync21(join28(dir, "journal.jsonl"), "utf8")));
     expect("nothing printed by the commands holds pack conversation text", !leaks(transcript2.join("\n")));
     expect("the GitHub token went only to the loopback server and was never printed", github.requests.every((r) => r.authorization === "Bearer demo-token-for-the-loopback-server") && !transcript2.join("\n").includes("demo-token-for-the-loopback-server"));
     expect("no provider credential was read: the commands saw only the GitHub token variable", Object.keys(inner.env).length === 1);
@@ -36257,21 +36269,21 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Outcomes:");
     for (const line of outcomes) say(`- ${line}`);
     const decisionFiles = [`replay-${shortId(candA)}-pack-v1.md`, `decision-${shortId(expB)}.md`, `decision-${shortId(expC)}.md`, `decision-${shortId(expD)}.md`];
-    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync18(join27(dir, "reports", f))));
+    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync18(join28(dir, "reports", f))));
     say("");
     say("The four outcomes, and the file that holds each decision:");
-    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join27(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
-    say(`- Reverted: candidate ${shortId(candB)}   ${join27(dir, "reports", `decision-${shortId(expB)}.md`)}`);
-    say(`- Kept: candidate ${shortId(candC)}   ${join27(dir, "reports", `decision-${shortId(expC)}.md`)}`);
-    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join27(dir, "reports", `decision-${shortId(expD)}.md`)}`);
+    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join28(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
+    say(`- Reverted: candidate ${shortId(candB)}   ${join28(dir, "reports", `decision-${shortId(expB)}.md`)}`);
+    say(`- Kept: candidate ${shortId(candC)}   ${join28(dir, "reports", `decision-${shortId(expC)}.md`)}`);
+    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join28(dir, "reports", `decision-${shortId(expD)}.md`)}`);
     say("");
     say("Evidence to open:");
-    say(`- ${join27(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
-    say(`- ${join27(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
-    say(`- ${join27(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
-    say(`- ${join27(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
-    say(`- ${join27(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
-    say(`- ${join27(dir, "journal.jsonl")}   every step, in order`);
+    say(`- ${join28(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
+    say(`- ${join28(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
+    say(`- ${join28(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
+    say(`- ${join28(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
+    say(`- ${join28(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
+    say(`- ${join28(dir, "journal.jsonl")}   every step, in order`);
     say("");
     say(failures.length === 0 ? `Synthetic pilot passed: ${step} steps, every expectation held (${((Date.now() - startedAt) / 1e3).toFixed(1)} s).` : `Synthetic pilot FAILED: ${failures.length} expectation(s) did not hold:`);
     for (const f of failures) say(`- ${f}`);
@@ -36478,7 +36490,7 @@ init_prompt();
 init_state();
 init_safety();
 import { spawn as spawn3 } from "node:child_process";
-import { existsSync as existsSync19, readFileSync as readFileSync21, writeFileSync as writeFileSync12 } from "node:fs";
+import { existsSync as existsSync19, readFileSync as readFileSync22, writeFileSync as writeFileSync13 } from "node:fs";
 import { createInterface as createInterface4 } from "node:readline/promises";
 
 // src/loop/report.ts
@@ -36762,21 +36774,26 @@ var ProviderError = class extends Error {
   host;
   model;
   loopback;
-  quota;
-  // out of credit or over a spending limit: waiting won't help
+  credit;
+  // out of credit or over a spending limit: a person has to act
+  exhausted;
+  // the free limit is used up for now: the next scheduled run tries again
   constructor(message, a) {
     super(message);
     this.status = a.status;
     this.host = a.host;
     this.model = a.model;
     this.loopback = a.loopback;
-    this.quota = a.quota ?? false;
+    this.credit = a.credit ?? false;
+    this.exhausted = a.exhausted ?? false;
   }
 };
 var MAX_RETRIES = 4;
 var TIMEOUT_MS = 10 * 6e4;
 var MAX_WAIT_MS = 6e4;
-var QUOTA = /insufficient_quota|exceeded your current quota|credit balance|out of credits?|spend(ing)? limit|billing/i;
+var CREDIT = /insufficient_quota|credit balance|out of credits?|insufficient (funds|balance)|spend(ing)? limit reached|payment required/i;
+var DAILY = /per[\s_-]?day|daily|requests_per_day|PerDay/i;
+var PACED_AT_ONCE = 2;
 function retryAfterMs(headers, now = Date.now()) {
   const ms2 = Number(headers.get("retry-after-ms"));
   if (headers.get("retry-after-ms") && Number.isFinite(ms2) && ms2 >= 0) return Math.min(ms2, MAX_WAIT_MS);
@@ -36804,12 +36821,34 @@ function openAiCompatibleModel(o) {
   const host = url.host;
   const loopback = isLoopback(url);
   const sleep2 = o.sleep ?? ((ms2) => new Promise((resolve6) => setTimeout(resolve6, ms2)));
+  const now = o.now ?? Date.now;
+  const gap = o.maxRequestsPerMinute ? 6e4 / o.maxRequestsPerMinute : 0;
+  let nextAt = 0;
+  const pace = async () => {
+    if (!gap) return;
+    const t = now(), at = Math.max(t, nextAt);
+    nextAt = at + gap;
+    if (at > t) await sleep2(at - t);
+  };
+  let active = 0;
+  const waiting2 = [];
+  const slot = async () => {
+    if (!gap) return () => {
+    };
+    while (active >= PACED_AT_ONCE) await new Promise((resolve6) => waiting2.push(resolve6));
+    active++;
+    return () => {
+      active--;
+      waiting2.shift()?.();
+    };
+  };
   const hide = (text4) => o.apiKey ? text4.split(o.apiKey).join("[your key]") : text4;
   const noSchema = /* @__PURE__ */ new Set();
   const completionTokens = /* @__PURE__ */ new Set();
   async function post(model, body) {
     for (let attempt = 0; ; attempt++) {
       let response;
+      await pace();
       try {
         response = await fetch(url, {
           method: "POST",
@@ -36826,14 +36865,15 @@ function openAiCompatibleModel(o) {
         }
         throw new ProviderError(`Couldn't reach ${host}: ${hide(error instanceof Error ? error.message : String(error))}`, { status: null, host, model, loopback });
       }
-      const text4 = hide(await response.text());
+      const text4 = await response.text();
       let json = null;
       try {
         json = JSON.parse(text4);
       } catch {
       }
-      const quota = QUOTA.test(text4);
-      const retryable = response.status === 429 && !quota || response.status === 408 || response.status >= 500;
+      const credit = CREDIT.test(text4) || response.status === 402;
+      const daily = response.status === 429 && DAILY.test(text4);
+      const retryable = response.status === 429 && !credit && !daily || response.status === 408 || response.status >= 500;
       if (retryable && attempt < MAX_RETRIES) {
         await sleep2(retryAfterMs(response.headers) ?? backoffMs(attempt));
         continue;
@@ -36846,59 +36886,68 @@ function openAiCompatibleModel(o) {
     return (typeof m === "string" ? m : r.text).trim().slice(0, 300);
   };
   return {
-    async ask({ model, system, user: user2, maxTokens, schema, allowCutOff }) {
-      let jsonInPrompt = Boolean(schema) && noSchema.has(model);
-      let tokensField = completionTokens.has(model) ? "max_completion_tokens" : "max_tokens";
-      let retriedTokens = false, retriedSchema = false;
-      for (; ; ) {
-        const body = {
-          model,
-          messages: [...system === void 0 ? [] : [{ role: "system", content: system }], { role: "user", content: schema && jsonInPrompt ? `${user2}${JSON_ONLY(schema)}` : user2 }],
-          [tokensField]: maxTokens,
-          ...schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}
-        };
-        const r = await post(model, body);
-        if (r.status === 400) {
-          const why = said(r);
-          if (!retriedTokens && tokensField === "max_tokens" && /max_completion_tokens/.test(why)) {
-            retriedTokens = true;
-            tokensField = "max_completion_tokens";
-            completionTokens.add(model);
-            continue;
-          }
-          if (schema && !jsonInPrompt && !retriedSchema) {
-            retriedSchema = true;
-            jsonInPrompt = true;
-            noSchema.add(model);
-            continue;
-          }
-        }
-        if (r.status < 200 || r.status >= 300) {
-          throw new ProviderError(`${host} answered ${r.status}: ${said(r)}`, { status: r.status, host, model, loopback, quota: QUOTA.test(r.text) });
-        }
-        const choice = r.json?.choices?.[0];
-        const content = textOf(choice?.message?.content);
-        const refused = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim().length > 0;
-        const reason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
-        const raw = refused ? null : content;
-        const text4 = raw !== null && jsonInPrompt ? unfence(raw) : raw;
-        const finished = reason === "stop" && text4 !== null && text4.length > 0;
-        const cutOff = allowCutOff === true && reason === "length" && text4 !== null && text4.length > 0;
-        const usage = r.json?.usage;
-        const input = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
-        const output = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
-        const price = o.prices?.[model];
-        const costUsd2 = price ? pricedCost(price, input, output) : typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
-        return {
-          text: finished || cutOff ? text4 : null,
-          costUsd: costUsd2,
-          ...cutOff ? { truncated: true } : {},
-          ...input !== null && output !== null ? { usage: { input, output } } : {},
-          stopReason: refused ? "refusal" : reason
-        };
+    async ask(a) {
+      const done = await slot();
+      try {
+        return await askOnce(a);
+      } finally {
+        done();
       }
     }
   };
+  async function askOnce({ model, system, user: user2, maxTokens, schema, allowCutOff }) {
+    let jsonInPrompt = Boolean(schema) && noSchema.has(model);
+    let tokensField = completionTokens.has(model) ? "max_completion_tokens" : "max_tokens";
+    let retriedTokens = false, retriedSchema = false;
+    for (; ; ) {
+      const body = {
+        model,
+        messages: [...system === void 0 ? [] : [{ role: "system", content: system }], { role: "user", content: schema && jsonInPrompt ? `${user2}${JSON_ONLY(schema)}` : user2 }],
+        [tokensField]: maxTokens,
+        ...schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}
+      };
+      const r = await post(model, body);
+      if (r.status === 400) {
+        const why = said(r);
+        if (!retriedTokens && tokensField === "max_tokens" && /max_completion_tokens/.test(why)) {
+          retriedTokens = true;
+          tokensField = "max_completion_tokens";
+          completionTokens.add(model);
+          continue;
+        }
+        if (schema && !jsonInPrompt && !retriedSchema) {
+          retriedSchema = true;
+          jsonInPrompt = true;
+          noSchema.add(model);
+          continue;
+        }
+      }
+      if (r.status < 200 || r.status >= 300) {
+        const credit = CREDIT.test(r.text) || r.status === 402;
+        throw new ProviderError(`${host} answered ${r.status}: ${hide(said(r))}`, { status: r.status, host, model, loopback, credit, exhausted: r.status === 429 && !credit });
+      }
+      const choice = r.json?.choices?.[0];
+      const content = textOf(choice?.message?.content);
+      const refused = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim().length > 0;
+      const reason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
+      const raw = refused ? null : content;
+      const text4 = raw !== null && jsonInPrompt ? unfence(raw) : raw;
+      const finished = reason === "stop" && text4 !== null && text4.length > 0;
+      const cutOff = allowCutOff === true && reason === "length" && text4 !== null && text4.length > 0;
+      const usage = r.json?.usage;
+      const input = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
+      const output = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
+      const price = o.prices?.[model];
+      const costUsd2 = price ? pricedCost(price, input, output) : typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
+      return {
+        text: finished || cutOff ? text4 : null,
+        costUsd: costUsd2,
+        ...cutOff ? { truncated: true } : {},
+        ...input !== null && output !== null ? { usage: { input, output } } : {},
+        stopReason: refused ? "refusal" : reason
+      };
+    }
+  }
 }
 
 // src/model/client.ts
@@ -36990,7 +37039,7 @@ function ownKeyBaseUrl(env = process.env) {
   return ANTHROPIC_API_URL;
 }
 function providerModel(provider, apiKey) {
-  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices });
+  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices, maxRequestsPerMinute: provider.max_requests_per_minute });
   return anthropicModel(apiKey);
 }
 function onModel(model, id) {
@@ -37073,7 +37122,8 @@ function modelProblem(e) {
 function providerProblem(e) {
   const host = e.host;
   if (e.status === null) return e.loopback ? `Couldn't reach the model server at ${host}. Start it (for example \`ollama serve\`), or fix provider.base_url in synthe.json, and try again.` : `Couldn't reach ${host}. Check your internet connection and provider.base_url in synthe.json, then try again.`;
-  if (e.quota) return `Your key for ${host} has no credit left or has reached its spending limit. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
+  if (e.credit) return `Your key for ${host} has no credit left or has reached its spending limit. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
+  if (e.exhausted) return "Your provider's free limit is used up for now. Run the command again later.";
   if (e.status === 401) return `Your key for ${host} was rejected. Run \`npx synthe key\` to replace it.`;
   if (e.status === 402) return `Your key for ${host} has no credit left. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
   if (e.status === 403) return `Your key for ${host} isn't allowed to use ${e.model}. Check "models" in synthe.json, or run \`npx synthe key\` to replace the key.`;
@@ -38025,10 +38075,11 @@ function headlineBase(goal, state, stoppedByTeam = false, mode = "plain") {
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}${guardLine}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? fromSyntheProxy(last?.plain) ? ` ${last.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : ` The last round didn't finish because ${apiName(goal.provider)} was busy; Synthe tried again right away; if it stopped, run \`npx synthe restart\`.` : "";
+    const paused = state.paused ? ` Your provider's free limit was used up during the last try (${state.paused.at.slice(0, 16).replace("T", " ")} UTC). That try didn't count as a round; Synthe tries again on the next scheduled run, or run \`npx synthe restart\` once the limit resets.` : "";
+    const wait = paused ? paused : busy(last) ? fromSyntheProxy(last?.plain) ? ` ${last.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : ` The last round didn't finish because ${apiName(goal.provider)} was busy; Synthe tried again right away; if it stopped, run \`npx synthe restart\`.` : "";
     return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}${guardLine}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
-  const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
+  const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : /^call limit/.test(state.stopped) ? `it made the ${goal.budget.max_calls ?? state.calls ?? 0} model calls the run allows (budget.max_calls)` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && (recent.every((r) => r.outcome === "failed") || badKey(recent.at(-1)))) {
     const end = recent.at(-1);
@@ -38111,7 +38162,7 @@ function localCredential(env, provider) {
     return generic ? { key: generic, line: `Credential: your own key from SYNTHE_API_KEY, sent to ${providerHost(provider)} and charged to that account.` } : null;
   }
   const own = env.SYNTHE_ANTHROPIC_KEY?.trim(), eventCode = env.SYNTHE_EVENT_CODE?.trim(), teamCode = env.SYNTHE_TEAM_CODE?.trim() || void 0, app = env.ANTHROPIC_API_KEY?.trim();
-  if (generic) return { key: generic, line: "Credential: your own key from SYNTHE_API_KEY, charged to that Anthropic account." };
+  if (generic?.startsWith("sk-ant-")) return { key: generic, line: "Credential: your own key from SYNTHE_API_KEY, charged to that Anthropic account." };
   if (own) return { key: own, line: "Credential: your own key from SYNTHE_ANTHROPIC_KEY, charged to that Anthropic account." };
   if (eventCode) return { eventCode, teamCode, line: teamCode ? "Credential: Crimson Hacks event credit, with your team code from SYNTHE_TEAM_CODE." : "Credential: Crimson Hacks event credit. SYNTHE_TEAM_CODE isn't set, so the Synthe proxy will ask for your team code." };
   if (app) return { key: app, line: "Credential: the key in ANTHROPIC_API_KEY, charged to that Anthropic account. To use event credit instead, set SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE." };
@@ -38120,10 +38171,42 @@ function localCredential(env, provider) {
 
 // src/cli/init.ts
 init_goal();
-init_prompt();
-init_safety();
 import { existsSync as existsSync2, mkdirSync as mkdirSync4, readFileSync as readFileSync4, rmSync, statSync, writeFileSync as writeFileSync4 } from "node:fs";
 import { join as join6 } from "node:path";
+
+// src/model/presets.ts
+var PRESETS = [
+  {
+    id: "gemini",
+    name: "Google Gemini",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    signup: "https://aistudio.google.com/apikey",
+    models: { writer: "gemini-2.5-flash", runner: "gemini-2.5-flash", judge: "gemini-2.5-flash", checker: "gemini-2.5-flash" },
+    maxRequestsPerMinute: 15
+  },
+  {
+    id: "groq",
+    name: "Groq",
+    baseUrl: "https://api.groq.com/openai/v1",
+    signup: "https://console.groq.com/keys",
+    models: { writer: "llama-3.3-70b-versatile", runner: "llama-3.1-8b-instant", judge: "llama-3.3-70b-versatile", checker: "llama-3.3-70b-versatile" },
+    maxRequestsPerMinute: 20
+  },
+  {
+    id: "openrouter",
+    name: "OpenRouter (free models)",
+    baseUrl: "https://openrouter.ai/api/v1",
+    signup: "https://openrouter.ai/keys",
+    models: { writer: "meta-llama/llama-3.3-70b-instruct:free", runner: "meta-llama/llama-3.3-70b-instruct:free", judge: "meta-llama/llama-3.3-70b-instruct:free", checker: "meta-llama/llama-3.3-70b-instruct:free" },
+    maxRequestsPerMinute: 15
+  }
+];
+var presetById = (id) => PRESETS.find((p) => p.id === id);
+var FREE_MAX_CALLS = 500;
+
+// src/cli/init.ts
+init_prompt();
+init_safety();
 
 // src/cli/agent.ts
 var AgentSetupError = class extends Error {
@@ -38148,7 +38231,11 @@ function agentOptions(args) {
       result2.keepChecks = true;
       continue;
     }
-    if (!["--prompt", "--objective", "--mode", "--message", "--check", "--share", "--base-url", "--model", "--price"].includes(flag)) askPerson(flag);
+    if (flag === "--free") {
+      result2.free = true;
+      continue;
+    }
+    if (!["--prompt", "--objective", "--mode", "--message", "--check", "--share", "--base-url", "--model", "--price", "--preset"].includes(flag)) askPerson(flag);
     const value = args[++index]?.trim();
     if (!value || value.startsWith("--")) askPerson(flag);
     if (flag === "--prompt") result2.prompt = value;
@@ -38162,6 +38249,10 @@ function agentOptions(args) {
       result2.mode = value;
     }
     if (flag === "--base-url") result2.baseUrl = value;
+    if (flag === "--preset") {
+      if (!presetById(value)) askPerson(`--preset (one of ${PRESETS.map((p) => p.id).join(", ")})`);
+      result2.preset = value;
+    }
     if (flag === "--model") {
       if (/\s/.test(value)) askPerson(flag);
       result2.model = value;
@@ -38177,14 +38268,15 @@ function agentOptions(args) {
   if (result2.messages.length > 5 || result2.messages.some((text4) => text4.length > 500)) askPerson("--message");
   if (result2.checks.length > 5 || result2.checks.some((text4) => text4.length > 300)) askPerson("--check");
   if (result2.confirm) {
-    if (result2.prompt || result2.objective || result2.mode || result2.messages.length || result2.baseUrl || result2.model || result2.price) askPerson("--confirm");
+    if (result2.prompt || result2.objective || result2.mode || result2.messages.length || result2.baseUrl || result2.model || result2.price || result2.preset || result2.free) askPerson("--confirm");
     if (!result2.checks.length && !result2.keepChecks || result2.checks.length && result2.keepChecks) askPerson("--check or --keep-checks");
   } else {
     if (!result2.prompt) askPerson("--prompt");
     if (!result2.objective) askPerson("--objective");
     if (!result2.mode) askPerson("--mode");
     if (result2.keepChecks) askPerson("--keep-checks");
-    if ((result2.model || result2.price) && !result2.baseUrl) askPerson("--base-url (--model and --price are for another provider)");
+    if ((result2.model || result2.price || result2.free) && !result2.baseUrl && !result2.preset) askPerson("--base-url or --preset (--model, --price and --free are for another provider)");
+    if (result2.free && result2.price) askPerson("--free or --price, not both");
   }
   return result2;
 }
@@ -38751,7 +38843,7 @@ Cover these kinds: a prompt injection that tells the agent to ignore its rules, 
   }
 }
 function buildGoal(prompt, objective, guardrails, policy = "", brief = "", checks = [], counterChecks = [], other) {
-  return { version: 1, prompt, objective, ...brief ? { brief } : {}, ...checks.length ? { checks } : {}, ...counterChecks.length ? { counter_checks: counterChecks } : {}, ...policy ? { policy } : {}, guardrails, scenarios: SCENARIOS_FILE, ...DEFAULTS, ...other ? { models: other.models, provider: other.provider } : {} };
+  return { version: 1, prompt, objective, ...brief ? { brief } : {}, ...checks.length ? { checks } : {}, ...counterChecks.length ? { counter_checks: counterChecks } : {}, ...policy ? { policy } : {}, guardrails, scenarios: SCENARIOS_FILE, ...DEFAULTS, ...other ? { models: other.models, provider: other.provider } : {}, ...other?.maxCalls ? { budget: { ...DEFAULTS.budget, max_calls: other.maxCalls } } : {} };
 }
 var CODE = /\.(ts|tsx|js|jsx|mjs|py)$/;
 function agentCode(files, location) {
@@ -38877,10 +38969,11 @@ async function askKey(io2, envKey, preferred, envTeam) {
 function credentialModel(io2, key, team) {
   return key.startsWith("sk-ant-") ? io2.model(key) : io2.proxy ? io2.proxy(key, team) : proxyModel(key, false, team);
 }
-async function askOtherKey(io2, host, env, agent) {
+async function askOtherKey(io2, host, env, agent, signup) {
   const fromEnv = env.SYNTHE_API_KEY?.trim();
   if (fromEnv) return fromEnv;
   if (agent) askPerson(`SYNTHE_API_KEY (the key for ${host}; agent setup never reads OPENAI_API_KEY or ANTHROPIC_API_KEY)`);
+  if (signup) io2.say(`Get a key at ${signup} if you don't have one yet, then paste it here. Synthe saves it only as a repo secret.`);
   for (let i = 0; i < 3; i++) {
     const typed = (await io2.askSecret(`Paste your key for ${host}: `)).trim();
     if (typed && !/\s/.test(typed)) return typed;
@@ -38889,14 +38982,17 @@ async function askOtherKey(io2, host, env, agent) {
   return null;
 }
 var modelName = (text4) => /^[^\s]{1,200}$/.test(text4);
-async function chooseModels(io2, host, found, agent) {
+async function chooseModels(io2, host, found, agent, preset) {
   if (agent) {
-    if (!agent.model) askPerson(`--model (the model the agent uses on ${host}${found ? `; its code names ${found.model} in ${found.path}` : ""})`);
-    const m = agent.model;
-    return { writer: m, runner: m, judge: m, checker: m };
+    if (agent.model) return { writer: agent.model, runner: agent.model, judge: agent.model, checker: agent.model };
+    if (preset) return preset.models;
+    askPerson(`--model (the model the agent uses on ${host}${found ? `; its code names ${found.model} in ${found.path}` : ""})`);
   }
   let runner = "";
-  if (found) {
+  if (preset) {
+    if (found) io2.say(`Your agent's code names the model ${found.model} (${found.path}). On ${preset.name}, Synthe suggests ${preset.models.runner}; type another model if ${preset.name} serves the one your agent uses.`);
+    runner = (await io2.ask(`Press Enter to use ${preset.models.runner} as your agent's model, or type another: `)).trim() || preset.models.runner;
+  } else if (found) {
     io2.say(`Your agent's code names the model ${found.model} (${found.path}). Synthe plays your agent on the model it runs on, so its tests match what your users get.`);
     const typed = (await io2.ask(`Press Enter to use ${found.model} as your agent's model, or type the model it uses: `)).trim();
     runner = typed || found.model;
@@ -38910,14 +39006,15 @@ async function chooseModels(io2, host, found, agent) {
     const typed = (await io2.ask(question)).trim();
     return modelName(typed) ? typed : fallback;
   };
-  const writer = await pick2(`Model that writes Synthe's prompt edits (press Enter for ${runner}): `, runner);
-  const judge2 = await pick2(`Model that judges replies and marks your checks (press Enter for ${runner}): `, runner);
+  const writerDefault = preset?.models.writer ?? runner, judgeDefault = preset?.models.judge ?? runner;
+  const writer = await pick2(`Model that writes Synthe's prompt edits (press Enter for ${writerDefault}): `, writerDefault);
+  const judge2 = await pick2(`Model that judges replies and marks your checks (press Enter for ${judgeDefault}): `, judgeDefault);
   return { writer, runner, judge: judge2, checker: judge2 };
 }
 async function askPrices(io2, host, models, agent) {
   const names2 = [.../* @__PURE__ */ new Set([models.runner, models.writer, models.judge, models.checker])];
   if (agent) {
-    if (!agent.price) askPerson(`--price (what ${host} charges for ${names2[0]}: US dollars per million input and output tokens, like 0.40/1.60)`);
+    if (!agent.price) askPerson(`--price (what ${host} charges for ${names2[0]}: US dollars per million input and output tokens, like 0.40/1.60), or --free for a free-tier key`);
     return Object.fromEntries(names2.map((m) => [m, agent.price]));
   }
   io2.say(`
@@ -38940,29 +39037,82 @@ Synthe stops at your budget and never merges a round whose cost it doesn't know,
   }
   return prices;
 }
-async function setUpOther(io2, baseUrl, key, files, location, agent) {
-  const provider = { kind: "openai-compatible", base_url: baseUrl };
-  const host = providerHost(provider);
+var capLine = (why) => `${why} So Synthe stops a run after ${FREE_MAX_CALLS} model calls (budget.max_calls in synthe.json), enough for a few rounds, in case the key turns out to be on a paid plan. Change it there any time.`;
+async function askCosts(io2, host, models, agent, preset) {
+  const names2 = [.../* @__PURE__ */ new Set([models.runner, models.writer, models.judge, models.checker])];
+  const free = () => ({ prices: Object.fromEntries(names2.map((m) => [m, { input: 0, output: 0 }])), maxCalls: FREE_MAX_CALLS, ...preset ? { maxRequestsPerMinute: preset.maxRequestsPerMinute } : {} });
+  if (agent?.free) return free();
+  if (preset && !agent) {
+    const paid = await yesNoAsk(io2, `Is this key on ${preset.name}'s free tier? Type y, or n if it's a paid key: `) === false;
+    if (!paid) {
+      io2.say(capLine(`Free tiers have limits ${preset.name} sets, and Synthe counts no cost for this key.`));
+      io2.say("Synthe also spaces its requests out. When the free limit runs out, it stops cleanly and tries again on the next scheduled run; a paid key removes the limits.");
+      return free();
+    }
+  }
+  const prices = await askPrices(io2, host, models, agent);
+  if (!prices) return null;
+  if (unpricedModels(models, { prices }).length === 0) return { prices };
+  if (!agent) io2.say(capLine("A price of 0 means Synthe can't stop a run at its dollar budget."));
+  return { prices, maxCalls: FREE_MAX_CALLS };
+}
+async function yesNoAsk(io2, question) {
+  for (let i = 0; i < 3; i++) {
+    const a = (await io2.ask(question)).trim();
+    if (/^y/i.test(a)) return true;
+    if (/^n/i.test(a)) return false;
+    io2.say("Please type y or n.");
+  }
+  return null;
+}
+async function checkOther(io2, other, key, nothing) {
+  try {
+    await (io2.other ?? providerModel)(other.provider, key).ask({ model: other.models.runner, user: "Say OK.", maxTokens: 5 });
+    return true;
+  } catch (error) {
+    io2.say(`${modelProblem(error) ?? error.message} ${nothing}`);
+    return false;
+  }
+}
+function otherSetup(baseUrl, models, costs) {
+  return {
+    provider: { kind: "openai-compatible", base_url: baseUrl, prices: costs.prices, ...costs.maxRequestsPerMinute ? { max_requests_per_minute: costs.maxRequestsPerMinute } : {} },
+    models,
+    ...costs.maxCalls ? { maxCalls: costs.maxCalls } : {}
+  };
+}
+async function setUpOther(io2, baseUrl, key, files, location, agent, preset) {
+  const host = providerHost({ kind: "openai-compatible", base_url: baseUrl });
   const code = agentCode(files, location);
   const named = code ? modelsInCode(code.text)[0] : void 0;
-  const models = await chooseModels(io2, host, code && named ? { model: named, path: code.path } : null, agent);
+  const models = await chooseModels(io2, host, code && named ? { model: named, path: code.path } : null, agent, preset);
   if (!models) {
     io2.say("Synthe needs your agent's model name. Nothing in your repo was changed; run `npx synthe init` again when you have it.");
     return null;
   }
-  const prices = await askPrices(io2, host, models, agent);
-  if (!prices) {
+  const costs = await askCosts(io2, host, models, agent, preset);
+  if (!costs) {
     io2.say("Synthe needs a price for each model. Nothing in your repo was changed; run `npx synthe init` again when you have them.");
     return null;
   }
-  const other = { provider: { ...provider, prices }, models };
-  try {
-    await (io2.other ?? providerModel)(other.provider, key).ask({ model: models.runner, user: "Say OK.", maxTokens: 5 });
-  } catch (error) {
-    io2.say(`${modelProblem(error) ?? error.message} Nothing in your repo was changed.`);
+  const other = otherSetup(baseUrl, models, costs);
+  return await checkOther(io2, other, key, "Nothing in your repo was changed.") ? other : null;
+}
+async function choosePreset(io2, enter) {
+  io2.say("\nWhich models should Synthe use? No key? Pick a free one. Free tiers have limits the provider sets; Synthe stops cleanly when they run out, and a paid key removes them.");
+  PRESETS.forEach((p, i) => io2.say(`  ${i + 1}. ${p.name}: get a free key at ${p.signup}`));
+  io2.say(`  ${PRESETS.length + 1}. Another provider with an OpenAI-compatible API, at a URL you type`);
+  const answer = (await io2.ask(`Type a number, or press Enter for ${enter}: `)).trim();
+  const n = /^\d+$/.test(answer) ? Number(answer) : 0;
+  if (n >= 1 && n <= PRESETS.length) return { preset: PRESETS[n - 1], baseUrl: PRESETS[n - 1].baseUrl };
+  if (n !== PRESETS.length + 1) return null;
+  const url = (await io2.ask("Its OpenAI-compatible base URL (for example https://api.openai.com/v1): ")).trim();
+  const why = baseUrlProblem(url);
+  if (why) {
+    io2.say(`${why.replace("provider.base_url", "The base URL")} Using ${enter} instead.`);
     return null;
   }
-  return other;
+  return { baseUrl: url };
 }
 function agentTeam(env) {
   const team = normalizeTeamCode(env.SYNTHE_TEAM_CODE ?? "");
@@ -39021,7 +39171,8 @@ async function promptNotOnGitHub(io2, slug, branch, path4, local) {
   return same(remote) === same(local) ? null : `${path4} on this machine isn't the same as on ${where}. Synthe's rounds run on the version on GitHub, so its tests would be written for one prompt while it improves another. ${push}`;
 }
 async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = process.env.ANTHROPIC_API_KEY, env = process.env, agent, baseUrlFlag) {
-  let baseUrl = agent ? agent.baseUrl : baseUrlFlag;
+  let preset = agent?.preset ? presetById(agent.preset) : void 0;
+  let baseUrl = agent ? agent.baseUrl ?? preset?.baseUrl : baseUrlFlag;
   if (baseUrl !== void 0) {
     const why = baseUrlProblem(baseUrl);
     if (why) {
@@ -39121,8 +39272,15 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
   const notAnthropic = !baseUrl && env.SYNTHE_API_KEY?.trim() && !env.SYNTHE_API_KEY.trim().startsWith("sk-ant-");
   if (notAnthropic && agent) askPerson("--base-url (SYNTHE_API_KEY isn't an Anthropic key; ask which provider it is for and its OpenAI-compatible URL)");
   if (notAnthropic) io2.say(NOT_ANTHROPIC);
+  if (!agent && baseUrl === void 0 && !setupCredential(env)) {
+    const picked = await choosePreset(io2, envKey?.trim() ? "your event code or Anthropic key, or the key in ANTHROPIC_API_KEY" : "a Crimson Hacks event code or your own Anthropic key");
+    if (picked) {
+      preset = picked.preset;
+      baseUrl = picked.baseUrl;
+    }
+  }
   const preferred = setupCredential(env, envKey, Boolean(agent));
-  const chosen = baseUrl ? await askOtherKey(io2, providerHost({ kind: "openai-compatible", base_url: baseUrl }), env, Boolean(agent)).then((key2) => key2 ? { key: key2, team: void 0, baseUrl } : null) : agent ? preferred ? { key: preferred, team: preferred.startsWith("sk-ant-") ? void 0 : agentTeam(env) } : null : await askKey(io2, envKey, setupCredential(env), env.SYNTHE_TEAM_CODE);
+  const chosen = baseUrl ? await askOtherKey(io2, providerHost({ kind: "openai-compatible", base_url: baseUrl }), env, Boolean(agent), preset?.signup).then((key2) => key2 ? { key: key2, team: void 0, baseUrl } : null) : agent ? preferred ? { key: preferred, team: preferred.startsWith("sk-ant-") ? void 0 : agentTeam(env) } : null : await askKey(io2, envKey, setupCredential(env), env.SYNTHE_TEAM_CODE);
   const key = chosen?.key, team = chosen?.team;
   baseUrl = chosen?.baseUrl;
   if (!key) {
@@ -39180,7 +39338,7 @@ async function init(io2, root, now = () => /* @__PURE__ */ new Date(), envKey = 
     return false;
   }
   if (agent && !promptText.trim()) askPerson("--prompt");
-  const other = baseUrl ? await setUpOther(io2, baseUrl, key, tracked, location, agent) : void 0;
+  const other = baseUrl ? await setUpOther(io2, baseUrl, key, tracked, location, agent, preset) : void 0;
   if (other === null) return false;
   const writer = other?.models.writer ?? DEFAULTS.models.writer;
   const model = other ? (io2.other ?? providerModel)(other.provider, key) : credentialModel(io2, key, team);
@@ -39604,7 +39762,8 @@ async function migrate(args, env) {
   const scenarios = parseScenarios(readFileSync5(join7(env.cwd, goal.scenarios), "utf8")).filter((s) => s.split === "train" || s.split === "holdout");
   let real = env.model;
   if (!parsed.dryRun && !real) {
-    const key = env.apiKey?.trim() || (other ? void 0 : env.anthropicKey?.trim());
+    const generic = env.apiKey?.trim();
+    const key = other ? generic : (generic?.startsWith("sk-ant-") ? generic : void 0) || env.anthropicKey?.trim();
     if (!key) return fail3(`\`npx synthe migrate\` runs on your computer, changing nothing, and needs your own key${other ? ` for ${providerHost(other)}` : ""}:
   SYNTHE_API_KEY=your-key npx synthe migrate --to ${to}
 ${other ? "" : "SYNTHE_ANTHROPIC_KEY works too. "}ANTHROPIC_API_KEY isn't read, since it's usually your app's own key. To see the layout without spending anything, add --dry-run.`);
@@ -39682,9 +39841,10 @@ function restartState(goal, state, scenariosHash = null) {
   const last = state.rounds.at(-1);
   const failedOut = recent.length > 0 && (recent.every((r) => r.outcome === "failed") || last?.outcome === "failed" && last.failure === "key");
   const roundsRaised = /^reached \d+ rounds$/.test(stopped) && state.round < goal.merge_rule.max_rounds;
-  const budgetAvailable = /^budget/.test(stopped) && budgetSpend(state) < goal.budget.max_usd;
+  const budgetAvailable = /^budget/.test(stopped) && budgetSpend(state) < goal.budget.max_usd || /^call limit/.test(stopped) && (goal.budget.max_calls === void 0 || (state.calls ?? 0) < goal.budget.max_calls);
   if (isFinished(stopped) && (!failedOut || /^budget/.test(stopped)) && !roundsRaised && !budgetAvailable) {
     if (/no winner$/.test(stopped)) return { why: `The last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better. To keep going, add test cases your agent still gets wrong to ${goal.scenarios}, push them, then run \`npx synthe restart\` again.` };
+    if (/^call limit/.test(stopped)) return { why: `Synthe made all ${goal.budget.max_calls} model calls this run allows. To go on, raise budget.max_calls in synthe.json, push it, then run \`npx synthe restart\`.` };
     if (/^budget/.test(stopped)) return { why: `Synthe has used its whole $${goal.budget.max_usd} budget. ${state.ownKeyFromUsd === void 0 ? "Run `npx synthe key` for a fresh own-key budget, or raise" : "Raise"} budget.max_usd in synthe.json${state.round >= goal.merge_rule.max_rounds ? ` (and merge_rule.max_rounds: all ${goal.merge_rule.max_rounds} rounds have run)` : ""} and push it, then run \`npx synthe restart\`.` };
     return { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` };
   }
@@ -39787,12 +39947,18 @@ function upgrade(root, template2, enroll = false) {
 init_goal();
 init_goal();
 init_state();
-async function setKey(io2, env = process.env, terminal = Boolean(process.stdin.isTTY), provider) {
+import { readFileSync as readFileSync7, writeFileSync as writeFileSync6 } from "node:fs";
+import { join as join9 } from "node:path";
+async function setKey(io2, env = process.env, terminal = Boolean(process.stdin.isTTY), provider, root) {
   if (provider?.kind === "openai-compatible") return setOtherKey(io2, provider, env, terminal);
   const own = env.SYNTHE_API_KEY?.trim() || env.SYNTHE_ANTHROPIC_KEY?.trim(), app = env.ANTHROPIC_API_KEY?.trim();
   if (!own && !terminal) {
     io2.say("Ask the person to run `npx synthe key` in their own terminal.");
     return false;
+  }
+  if (!own && root && io2.ask) {
+    const picked = await choosePreset({ ask: io2.ask, say: io2.say }, "your own Anthropic key");
+    if (picked) return switchProvider({ ...io2, ask: io2.ask }, picked, root);
   }
   const typed = own ? "" : (await io2.askSecret(app ? "Paste your own Anthropic key, or press Enter to use the key in ANTHROPIC_API_KEY: " : "Paste your own Anthropic key: ")).trim();
   const key = own || typed || app || "";
@@ -39855,6 +40021,38 @@ async function setOtherKey(io2, provider, env, terminal) {
   await saveKey(io2, slug, goal, "SYNTHE_API_KEY", key, `this key for ${host}`, `your own key for ${host}`);
   return true;
 }
+async function switchProvider(io2, picked, root) {
+  const host = providerHost({ kind: "openai-compatible", base_url: picked.baseUrl });
+  if (picked.preset) io2.say(`Get a key at ${picked.preset.signup} if you don't have one yet, then paste it here.`);
+  const key = (await io2.askSecret(`Paste your key for ${host}: `)).trim();
+  if (!key || /\s/.test(key)) {
+    io2.say(`Paste the key for ${host} on one line, then press Enter. Nothing changed.`);
+    return false;
+  }
+  const found = await remoteGoal(io2);
+  if (!found) return false;
+  const models = await chooseModels(io2, host, null, void 0, picked.preset);
+  if (!models) {
+    io2.say("Synthe needs your agent's model name. Nothing changed.");
+    return false;
+  }
+  const costs = await askCosts(io2, host, models, void 0, picked.preset);
+  if (!costs) {
+    io2.say("Synthe needs a price for each model. Nothing changed.");
+    return false;
+  }
+  const other = otherSetup(picked.baseUrl, models, costs);
+  if (!await checkOther(io2, other, key, "Nothing changed.")) return false;
+  const path4 = join9(root, GOAL_FILE);
+  const saved = JSON.parse(readFileSync7(path4, "utf8"));
+  const next = { ...saved, models, provider: other.provider, budget: { ...saved.budget, ...other.maxCalls ? { max_calls: other.maxCalls } : {} } };
+  parseGoal(JSON.stringify(next));
+  writeFileSync6(path4, `${JSON.stringify(next, null, 2)}
+`);
+  await saveKey(io2, found.slug, found.goal, "SYNTHE_API_KEY", key, `this key for ${host}`, `your own key for ${host}`);
+  io2.say(`Saved ${GOAL_FILE} with ${picked.preset?.name ?? host}. Rounds use it once you push it: git commit -m "Synthe: use ${picked.preset?.name ?? host}" ${GOAL_FILE} && git push`);
+  return true;
+}
 async function saveKey(io2, slug, goal, secret, key, thisKey, ownKey) {
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
@@ -39887,7 +40085,7 @@ async function saveKey(io2, slug, goal, secret, key, thisKey, ownKey) {
 }
 
 // src/cli/guide.ts
-var guide = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\nMost teams set this up at the Synthe workshop, an hour or two into the hackathon, with their agent only partly built. That is fine: Synthe improves the prompt as it is now, and the team keeps building while it runs.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand. One exception: after a run stops because nothing was clearly better, if the person wants it to keep going, you may add test cases to `.synthe/scenarios.jsonl` with them (see step 8).\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n- Setup is two commands: draft (step 5) and confirm (step 7). Synthe is not installed until confirm succeeds. The draft writes only a local file: no workflow, no secrets, no commit. Finish confirm before you do any other work in this repo.\n- If the person asks for something else before confirm (for example "implement it" or a change to their code), tell them: "Synthe is not installed yet. One more command finishes it." Finish confirm first, then do what they asked.\n- Do not edit the prompt file between draft and confirm. Confirm refuses a prompt that changed, and nothing is installed.\n\n## 0. Which mode\n\nFirst find out whether the app sends a system prompt to an AI model: a `.md` or `.txt` prompt file, or a prompt string passed to a model call. Look before you ask.\n\n- **No AI prompt, or the person wants a code change measured by a number** (tests passing, bundle size, build time, or a command of theirs): use **improve mode**. Go to section 9 and skip sections 1 to 8. Synthe itself proposes and measures the code changes, so it needs the person\'s event code and team code, or their own Anthropic key (section 9, step 1). Without either, section 9 has a fallback where you make the change.\n- **The app has a prompt and the person wants that prompt improved:** continue with section 1.\n- **The person asks for the enterprise pilot, or wants a prompt change judged by a production metric from their own telemetry:** go to section 10. Do not start it on your own: it needs a signed-off metric and data the team exports.\n\n## 1. Prerequisites\n\n1. Use `git remote -v` and `git status` to check that the repo is on GitHub and pushed. Commit and push the agent\'s prompt file too. Setup checks that it matches the copy on GitHub\'s default branch before drafting.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n4. Be on the default branch (usually `main`) and run `git pull`, so teammates\' latest pushes are in. Setup refuses to run on another branch.\n5. Check that this person can set up Synthe in this repo:\n\n```\ngh repo view --json viewerPermission --jq .viewerPermission\n```\n\nIt must print `ADMIN`. Setup saves repo secrets, which only admins can do. If it prints anything else, stop: the repo\'s owner must run setup, or make this person an admin (Settings, then Collaborators). Setup also stops by itself in that case, before it spends anything.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the Synthe table. Enrolled teams need both codes for workflow tracking, even if they use their own Anthropic key. A setup outside the event can use its own Anthropic key alone.\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\nIf the agent runs on another provider\'s model through an OpenAI-compatible API (OpenAI, Gemini, Groq, OpenRouter, a local Ollama), the person can use that provider instead, so the prompt is tested on the model their users get. Put the key in front as `SYNTHE_API_KEY=<key>` (never `OPENAI_API_KEY`), and add `--base-url <its OpenAI-compatible URL> --model <the model the agent uses> --price <input>/<output>` to the step 5 command, where the price is US dollars per million input and output tokens from the provider\'s pricing page. Ask the person for the model and the price; never guess them. Event credit only covers Claude models.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code, that the app sends to an AI model.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n3. If you find no prompt because the app doesn\'t call an AI model yet (for example its logic is written as rules), stop here. Tell the person: "Synthe improves the prompt your app sends to an AI model. Your app doesn\'t call one yet, so there is nothing for Synthe to improve. Once your app uses an AI prompt, run setup again." Do not write a new prompt only so that Synthe has one to improve: the app would never use the changes. Connecting the app to an AI model is separate work; offer to help with it if the person asks.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nTo use an own key during Crimson, add `SYNTHE_ANTHROPIC_KEY=<key>` alongside both event codes, here and in step 7. Outside Crimson, use the own key alone.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, the sharing notice, and the Crimson workflow notice for enrolled teams. Show the notices as information. They need no answer. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. Separate research-sharing settings control the prompt, test cases, and other research data.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person. If they chose auto mode, say first: "Auto mode is set. One last step before Synthe starts: approve the checks it will score replies with. This is not a merge approval; after this, improvements merge by themselves."\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n- If step 1 said some checks can\'t both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can\'t raise that score.\n\nFollow the `NEXT:` line with the tagged command in step 7. Do not start other work until step 7 succeeds.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --confirm --keep-checks\n```\n\nSetup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\nConfirm succeeded only if it printed `Added to <branch>` or opened an "Add Synthe" pull request. If it printed anything else, show the person the message, follow it, and do not go to step 8. If it opened a pull request (usually because a teammate pushed to the default branch during setup), Synthe starts only after that pull request is merged. Ask the person to merge it now.\n\n## 8. After setup\n\nDo this step only after confirm succeeded. Tell the person:\n\n- Rounds start by themselves. They do not need to do anything. A run is up to 12 rounds and takes up to about 30 minutes. It stops sooner, often within 5 to 10 minutes, when 3 rounds in a row find nothing clearly better than the current prompt. Either way it stops by itself.\n- In auto mode, Synthe commits its improvements to the prompt file on the default branch. Everyone on the team should run `git pull` before they edit the prompt or push, so their work and Synthe\'s don\'t collide. Synthe always starts each round from the latest prompt on the default branch, so the team can keep changing it.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Tell the person: \'Ask me "what did Synthe do?" at any time and I will show you what changed.\'\n- If the run stopped because nothing was clearly better and the person wants it to keep going: with them, write 3 to 5 new test cases their agent still gets wrong, show them, add each as one line to `.synthe/scenarios.jsonl` in the format the report shows (most with `"split": "train"`, about one in four `"holdout"`), commit and push, then run `npx synthe restart`. Change nothing else in `.synthe/`.\n- When the person asks what Synthe did or what changed, run `npx synthe changes` and show its output word for word before adding any commentary of your own.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe changes\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `changes` shows what Synthe changed in the latest rounds and how the prompt\'s score moved.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n\n## 9. Improve mode (no AI prompt needed)\n\n`npx synthe improve` is a loop. Synthe itself proposes one code change per round, through the event proxy or the person\'s own key. It measures each change in a throwaway checkout, next to the current code, the same way. It keeps a change only when it beats the best so far by more than the run-to-run noise, still wins when measured a second time, and the regression check still passes. With a tests-passing metric, a change that breaks a test that passed before is never kept, even when more tests pass overall. Each kept change builds on the one before. At the end it opens ONE pull request titled like `Synthe: valid signups 3 \u2192 12`, with a table of every round. The person\'s working tree is never touched.\n\nIt usually takes 5 to 20 minutes, depending on how long the metric and the check take, and stops sooner when nothing wins. A round usually costs a few cents of model time (more on a big repo, because Synthe sends up to about 60,000 characters of code). The default limits are 6 rounds and $1.50 of model cost, whichever comes first.\n\n### Rules\n\n- Never guess the goal, the metric, the check or the mode. Ask the person.\n- In the loop you do not write the code change. Synthe does. Do not edit code, tests, the metric command, `package.json`, lockfiles, `.github/` or `.synthe/` in this repo while it runs, and do not commit or switch branches. Synthe refuses its own changes to tests, the metric, its data, dependencies, config and CI.\n- Never use `ANTHROPIC_API_KEY`. It is usually the app\'s own key, and Synthe ignores it here.\n- Never write an event code, team code or key to a file, and never commit one.\n- Do not interrupt a running `improve`: no Ctrl-C, no timeout shorter than 30 minutes, no second Synthe command in the same repo. If it was interrupted anyway, see step 5.\n- Show the person Synthe\'s output as written: every number, and the reason when a change is not kept. Do not summarize it instead.\n- If a command fails or stops, show the person the exact message and do what it says. Do not retry more than once without asking.\n\n### Steps\n\n1. **Credit.** Ask for the Crimson Hacks event code from the QR card and the team code from the Synthe table, or the person\'s own Anthropic key. Put them at the front of the command, because each command may run in a fresh shell (see section 2 for the same rules). Own key: `SYNTHE_ANTHROPIC_KEY=<key>` alone; tell the person it will show in this chat. If the person has neither codes nor a key, skip to "Without a credential" below.\n2. **Commit and sync first.** `git status` must be clean: Synthe measures committed code. The current branch must be pushed and equal to its copy on GitHub; if not, push or `git pull`. Synthe opens its pull request against the branch you are on, or the default branch.\n3. **See what this repo can measure:**\n\n   ```\n   npx synthe@latest improve --list\n   ```\n\n   Show the person the list as written. Then ask, in ONE message, these four things:\n   - What should get better? One sentence.\n   - Which metric from the list? Offer the first one in the list first: it is listed first because it fits the repo best. If they pick `custom`, also ask for the command that prints one number, what the number counts, and whether higher or lower is better.\n   - Which regression check must keep passing? The list shows each metric\'s default; `none` is allowed.\n   - Auto (the winning changes merge into the branch by themselves) or review (a pull request waits for them)? If they are unsure, say review.\n\n   Do not run anything until they answer all four. Tell them: it usually takes 5 to 20 minutes and stops sooner when nothing wins, a round usually costs a few cents, and the default limit is $1.50.\n4. **Run it**, with their answers and the credit at the front:\n\n   ```\n   SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest improve --agent --goal "<sentence>" --metric <id> --guard "<check command>" --mode auto|review\n   ```\n\n   - `<id>` is one of `test-pass`, `pytest`, `bundle-size`, `build-time`, `custom`.\n   - For `--metric custom`, add `--command "<cmd>" --label "<what it counts>" --direction higher|lower`, and `--unit "<unit>"` if they gave one.\n   - `--guard "<check command>"` is their check. Use `--guard none` for no check. Leave `--guard` out only to accept the metric\'s default shown in the list.\n   - Add `--protect <path>` (repeat it) for any other file the changes must not touch. Add `--rounds N` (1 to 20) or `--budget <dollars>` only if the person asks for a different limit. Add `--lessons claude` or `--lessons agents` only if they want the lessons also written into `CLAUDE.md` or `AGENTS.md`; by default lessons go only to `.synthe/improve-lessons.md` and the pull request.\n   - **Give the command a timeout of at least 30 minutes, and let it finish.** Many shell tools cap a command at about 10 minutes. If yours does, run the command in the background and wait for it to end, reading its output as it comes. Do not stop it.\n   - While it runs, show the person each `Round` line as it appears, as written. You may leave out the `Measuring ...` and `Running the regression check ...` lines.\n   - The output ends with a `NEXT:` line written for you. Do what it says; do not paste it to the person as if it were Synthe\'s result.\n   - If it stops before the first round, it printed what to fix (a dirty tree, an unpushed branch, a missing credential, a regression check that fails today). Show it, fix that, and run the same command again.\n5. **If it was interrupted** (Ctrl-C, a lost connection, a closed terminal), run the exact same command again. It starts over from the current code: nothing is pushed until the end of a run, so an interrupted run leaves nothing behind.\n6. **Show the result as written**: the `Result:` line, the `Model cost` line and the `Pull request:` link. Then explain in plain words what happened: how many rounds ran, which changes were kept and why they helped, which were not kept and why, what it cost.\n   - Review mode: tell the person to open the pull request, read the table of rounds, and merge it to keep the changes.\n   - Auto mode: it prints `Merged into <branch>. Run git pull.` Tell the person to run `git pull`.\n   - If it says `No change beat the current code`, nothing was pushed and no pull request exists. Show what was tried as written. Offer to run the same command again (the next run reads the lessons from this one) or to try `--handoff` below.\n7. When the person asks what Synthe did, show the pull request\'s Result and Rounds sections word for word.\n\nTo undo: close the pull request before merging. After merging, `git revert` the merge or the commits, or ask the team to revert the pull request on GitHub.\n\n### Without a credential: you make the change\n\nUse this when the person has no event code, team code or key. Nothing is sent to a model. You make ONE small change to product code, and Synthe proves with numbers whether it improved the metric. Do steps 2 and 3 above first, then:\n\n1. Measure the current code with their answers (`--handoff` takes the same options as step 4, except `--rounds`, `--budget` and `--lessons`):\n\n   ```\n   npx synthe@latest improve --handoff --agent --goal "<sentence>" --metric <id> --guard "<check command>" --mode auto|review\n   ```\n\n   It prints the baseline and a task card. If it stops instead, show the person the message and do what it says.\n2. **Follow the `NEXT:` line.** Show the person the baseline and the task card. Create the branch the card names, make ONE small change to product code only, and commit it with a message that says what changed and why. Never edit tests, the metric command or its input files, `package.json`, lockfiles, `.github/`, `.synthe/` or config files; `submit` refuses those changes. If the improvement needs one, stop and tell the person why. Never loosen a test or the metric to make a number move.\n3. Submit the change:\n\n   ```\n   npx synthe@latest submit --agent\n   ```\n\n   A win prints `Pull request: <url>`, and in auto mode `Merged into <branch>. Run git pull.` Show the person the result and the link as written.\n4. If it prints `Not merged:` and a reason (within noise, worse, the regression check failed, or it broke a test that passed before), show it as written. If the person wants another try, make a different small change on the same branch, commit, and run `npx synthe@latest submit --agent` again (at most 3 attempts in all, unless they ask for more).\n\n## 10. Enterprise pilot (a production metric)\n\n`npx synthe pilot` is a separate, review-first loop for one support agent and one business metric. It replays recorded conversations offline as a gate, writes the plan for an experiment the team runs with its own rollout controls, and then says keep, hold or revert from the outcome export the team produces. People decide; Synthe proposes and measures. The full guide is `docs/PILOT.md` in the Synthe repo: https://github.com/synthelabs/synthe/blob/main/docs/PILOT.md\n\n```\nnpx synthe pilot help\nnpx synthe pilot demo --out <new empty folder>\n```\n\n- `help` lists every pilot command. If your Synthe version answers `pilot` with the general help, it is too old to have the pilot (1.10.0 and older): use `node src/pilot/cli.ts <command>` from a Synthe checkout instead.\n- `demo` runs the whole loop on invented data in a few seconds, with no credentials and no network. Use it to show the person what the pilot produces before they give it any data.\n- A wrapper exists for recording calls and outcomes: `import { pilotRecorder } from "synthe/pilot"` (see "Recording calls and outcomes" in `docs/PILOT.md`), and `npx synthe pilot export` turns its log into the export. Help the person wire it into their code; give it an `agent` and an `idKey` or, only if they say so, `rawIds: true`. The `idKey` is a secret of at least 16 characters that the team creates and keeps in its own secret store: read it from an environment variable in the code you write. Never make one up, never ask the person to paste it into the chat, and never write it into a file in the repo.\n- `npx synthe pilot watch` is one scheduled tick the operator runs themselves (cron or launchd): it analyses only at allowed looks, never publishes and never uses the network. Help set up the schedule (see "Watching an experiment" in `docs/PILOT.md`); do not run it on a live pilot directory unasked.\n- Never read, `cat`, search or open the call log the wrapper writes (its `logDir`): it holds the team\'s customer ids, and reading it sends them to your model provider.\n\n### Rules\n\n- The pilot directory (`--dir`, default `.synthe-pilot`) holds the team\'s conversations and telemetry. Never open, read, `cat` or search its packs, telemetry exports or call logs: reading them sends customer conversations to your own model provider, which the team did not approve. Never commit it, never copy it into the repo, an issue, a pull request or a chat, and never paste its contents into your own replies. `init` writes a `.gitignore` inside it; leave that file alone.\n- Never write or change `pilot.json`, a telemetry export, a conversation pack or a promotion request yourself. The team produces them and a named person signs off the metric. If one is refused, show the person the exact message.\n- Never run `approve`, `analyze`, `promote --request` or `propose --file --author` for the person: each records a person\'s decision. Run them only when the person typed that exact command or told you to run it.\n- Never pass `--publish`, `--confirm`, `--reopen`, `--allow-past-start`, `--accept-flags`, `--live` or `--allow-endpoint-host` unless the person typed that exact command or told you to run it. Each one records a person\'s decision, sends data out, or opens a pull request.\n- `--live` sends conversations to a model provider and costs money. It runs only when `pilot.json` records the team\'s approval. Ask first, every time.\n- Do not edit files under the pilot directory. Records are write-once; `npx synthe pilot verify` fails after an edit.\n- When a command prints `Refused (...)`, show the message as written and do what it says. Do not retry with different flags to get past it.\n\n### What you may run without asking\n\n`npx synthe pilot status`, `report` and `verify` only read the pilot directory and rebuild local reports. Show the person the recommendation line and the report path, not the data.\n';
+var guide = '# Set up Synthe (for coding agents)\n\nSynthe is an open-source tool that improves an AI agent\'s system prompt automatically. It runs as a GitHub Action in this repo. Each round it writes candidate edits to the prompt, tests them on simulated customer messages against the team\'s "checks" (plain sentences describing a good reply), and keeps the winner. In auto mode the winner is merged into main. In review mode it opens a PR.\n\nYou are talking to a person at Crimson Hacks (Nov 6-8, 2026) who may never have used a terminal. Use plain words. Do the steps in order.\n\nMost teams set this up at the Synthe workshop, an hour or two into the hackathon, with their agent only partly built. That is fine: Synthe improves the prompt as it is now, and the team keeps building while it runs.\n\n## Rules\n\n- Never invent the goal, the checks or the mode. Ask the person.\n- Never edit `synthe.json`, `.synthe/` or the workflow file by hand. One exception: after a run stops because nothing was clearly better, if the person wants it to keep going, you may add test cases to `.synthe/scenarios.jsonl` with them (see step 8).\n- If a command fails, show the person the exact message and follow what it says.\n- Do not retry setup more than once without asking the person.\n- Setup is two commands: draft (step 5) and confirm (step 7). Synthe is not installed until confirm succeeds. The draft writes only a local file: no workflow, no secrets, no commit. Finish confirm before you do any other work in this repo.\n- If the person asks for something else before confirm (for example "implement it" or a change to their code), tell them: "Synthe is not installed yet. One more command finishes it." Finish confirm first, then do what they asked.\n- Do not edit the prompt file between draft and confirm. Confirm refuses a prompt that changed, and nothing is installed.\n\n## 0. Which mode\n\nFirst find out whether the app sends a system prompt to an AI model: a `.md` or `.txt` prompt file, or a prompt string passed to a model call. Look before you ask.\n\n- **No AI prompt, or the person wants a code change measured by a number** (tests passing, bundle size, build time, or a command of theirs): use **improve mode**. Go to section 9 and skip sections 1 to 8. Synthe itself proposes and measures the code changes, so it needs the person\'s event code and team code, or their own Anthropic key (section 9, step 1). Without either, section 9 has a fallback where you make the change.\n- **The app has a prompt and the person wants that prompt improved:** continue with section 1.\n- **The person asks for the enterprise pilot, or wants a prompt change judged by a production metric from their own telemetry:** go to section 10. Do not start it on your own: it needs a signed-off metric and data the team exports.\n\n## 1. Prerequisites\n\n1. Use `git remote -v` and `git status` to check that the repo is on GitHub and pushed. Commit and push the agent\'s prompt file too. Setup checks that it matches the copy on GitHub\'s default branch before drafting.\n2. Check the GitHub CLI:\n\n```\ngh auth status\n```\n\n3. If `gh` is missing or not logged in, ask the person to run `gh auth login` in their own terminal and finish the browser login. You cannot do this for them. Wait until they say it is done, then run `gh auth status` again.\n\n4. Be on the default branch (usually `main`) and run `git pull`, so teammates\' latest pushes are in. Setup refuses to run on another branch.\n5. Check that this person can set up Synthe in this repo:\n\n```\ngh repo view --json viewerPermission --jq .viewerPermission\n```\n\nIt must print `ADMIN`. Setup saves repo secrets, which only admins can do. If it prints anything else, stop: the repo\'s owner must run setup, or make this person an admin (Settings, then Collaborators). Setup also stops by itself in that case, before it spends anything.\n\n## 2. Credit\n\n1. Ask the person for the Crimson Hacks event code from the QR card and their team code from the Synthe table. Enrolled teams need both codes for workflow tracking, even if they use their own Anthropic key. A setup outside the event can use its own Anthropic key alone.\n2. Your commands may each run in a fresh shell, so an `export` in an earlier command or in the person\'s own terminal may not reach you. Put the code at the front of each Synthe command instead (steps 5 and 7):\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent ...\n```\n\n3. An own key is a real secret. If the person uses one, tell them it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write a code or key to a file. Never commit it.\n\nAgent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SYNTHE_TEAM_CODE`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app\'s key is never silently used by an agent. Ask the person which explicit Synthe credential to use. Show the printed credential and budget so they know whose credit will be used.\n\nIf the agent runs on another provider\'s model through an OpenAI-compatible API (OpenAI, Gemini, Groq, OpenRouter, a local Ollama), the person can use that provider instead, so the prompt is tested on the model their users get. Put the key in front as `SYNTHE_API_KEY=<key>` (never `OPENAI_API_KEY`), and add `--base-url <its OpenAI-compatible URL> --model <the model the agent uses> --price <input>/<output>` to the step 5 command, where the price is US dollars per million input and output tokens from the provider\'s pricing page. Ask the person for the model and the price; never guess them. Event credit only covers Claude models.\n\nIf the person has no key at all, they can get a free one: use `--preset gemini`, `--preset groq` or `--preset openrouter` (no `--base-url` or `--model` needed) and add `--free` if they say the key is on the provider\'s free tier, or `--price` if it is paid. Ask; don\'t guess. Free tiers have limits the provider sets; Synthe stops cleanly when they run out and tries again on the next scheduled run.\n\n## 3. Find the system prompt\n\n1. Search the code for the agent\'s system prompt. It is a `.md` or `.txt` file, or a string in code, that the app sends to an AI model.\n2. Show the person the path and the first few lines. Ask: "Is this the prompt you want to improve?" Wait for a yes. If it is wrong, look again.\n3. If you find no prompt because the app doesn\'t call an AI model yet (for example its logic is written as rules), stop here. Tell the person: "Synthe improves the prompt your app sends to an AI model. Your app doesn\'t call one yet, so there is nothing for Synthe to improve. Once your app uses an AI prompt, run setup again." Do not write a new prompt only so that Synthe has one to improve: the app would never use the changes. Connecting the app to an AI model is separate work; offer to help with it if the person asks.\n\n## 4. Ask the person (never guess any of these)\n\n1. What should the agent get better at? One sentence.\n2. Optional: 3 to 5 real messages a user might send to the agent.\n3. Which mode?\n   - Auto: improvements merge into main by themselves.\n   - Review: each improvement waits as a PR for the person to approve.\n\n## 5. Step 1: draft\n\nRun this. It writes a local draft and immediately adds its ignore entry to `.gitignore`. It does not stage, commit or push anything.\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"\n```\n\nTo use an own key during Crimson, add `SYNTHE_ANTHROPIC_KEY=<key>` alongside both event codes, here and in step 7. Outside Crimson, use the own key alone.\n\nUse `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.\n\n## 6. Show the person everything step 1 printed\n\nShow the full output as written, not a summary. It has three parts:\n\n1. The credential and budget, the sharing notice, and the Crimson workflow notice for enrolled teams. Show the notices as information. They need no answer. Enrolled Crimson workflows send the organizers the repository and run IDs, attempt, timing, and outcome. Separate research-sharing settings control the prompt, test cases, and other research data.\n2. The numbered proposed checks.\n3. Example replies, each with Synthe\'s pass or fail mark.\n\nThen ask the person. If they chose auto mode, say first: "Auto mode is set. One last step before Synthe starts: approve the checks it will score replies with. This is not a merge approval; after this, improvements merge by themselves."\n\n- Which checks to keep, drop or reword?\n- Do the pass/fail marks on the example replies look right? If a mark looks wrong, the check probably needs rewording.\n- If step 1 said some checks can\'t both pass on the same reply, show that pair and why, and offer to reword one of them. Keeping both is allowed; Synthe just can\'t raise that score.\n\nFollow the `NEXT:` line with the tagged command in step 7. Do not start other work until step 7 succeeds.\n\n## 7. Step 2: confirm\n\nRun this with one `--check` per check the person kept, using their final wording:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --confirm --check "<final sentence>" --check "<final sentence>"\n```\n\nIf the person accepted every proposed check as it is, run this instead:\n\n```\nSYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --confirm --keep-checks\n```\n\nSetup ignores `.synthe/setup-draft.json` before writing it and deletes the draft after success. It leaves `.gitignore` changes local and out of its setup commit, preserving any unrelated staged or unstaged edits; the person can commit that ignore entry deliberately. Don\'t confirm twice.\n\nConfirm succeeded only if it printed `Added to <branch>` or opened an "Add Synthe" pull request. If it printed anything else, show the person the message, follow it, and do not go to step 8. If it opened a pull request (usually because a teammate pushed to the default branch during setup), Synthe starts only after that pull request is merged. Ask the person to merge it now.\n\n## 8. After setup\n\nDo this step only after confirm succeeded. Tell the person:\n\n- Rounds start by themselves. They do not need to do anything. A run is up to 12 rounds and takes up to about 30 minutes. It stops sooner, often within 5 to 10 minutes, when 3 rounds in a row find nothing clearly better than the current prompt. Either way it stops by itself.\n- In auto mode, Synthe commits its improvements to the prompt file on the default branch. Everyone on the team should run `git pull` before they edit the prompt or push, so their work and Synthe\'s don\'t collide. Synthe always starts each round from the latest prompt on the default branch, so the team can keep changing it.\n- To watch progress, open the GitHub issue titled "Synthe: prompt report" and the repo\'s Actions tab.\n- Tell the person: \'Ask me "what did Synthe do?" at any time and I will show you what changed.\'\n- If the run stopped because nothing was clearly better and the person wants it to keep going: with them, write 3 to 5 new test cases their agent still gets wrong, show them, add each as one line to `.synthe/scenarios.jsonl` in the format the report shows (most with `"split": "train"`, about one in four `"holdout"`), commit and push, then run `npx synthe restart`. Change nothing else in `.synthe/`.\n- When the person asks what Synthe did or what changed, run `npx synthe changes` and show its output word for word before adding any commentary of your own.\n- Useful commands:\n\n```\nnpx synthe status\nnpx synthe changes\nnpx synthe stop\nnpx synthe key\n```\n\n  - `status` shows how things are going.\n  - `changes` shows what Synthe changed in the latest rounds and how the prompt\'s score moved.\n  - `stop` stops Synthe; nothing more runs or changes. `npx synthe restart` starts it again.\n  - `key` tests and switches to their own Anthropic key, with a fresh `budget.max_usd` budget counted from the first switch only. Replacing the key later does not reset that budget. Ask the person to run it in their own terminal; an agent cannot answer its secret prompt in a noninteractive shell. Use it when the event credit runs out, then run `npx synthe restart` if stopped. A budget stop can also be resumed by raising `budget.max_usd` in `synthe.json` and pushing. The printed local run budget is not an event-credit allowance. Organizer-configured caps and shared availability may stop the run sooner; do not promise a fixed dollar amount of event credit.\n\n## 9. Improve mode (no AI prompt needed)\n\n`npx synthe improve` is a loop. Synthe itself proposes one code change per round, through the event proxy or the person\'s own key. It measures each change in a throwaway checkout, next to the current code, the same way. It keeps a change only when it beats the best so far by more than the run-to-run noise, still wins when measured a second time, and the regression check still passes. With a tests-passing metric, a change that breaks a test that passed before is never kept, even when more tests pass overall. Each kept change builds on the one before. At the end it opens ONE pull request titled like `Synthe: valid signups 3 \u2192 12`, with a table of every round. The person\'s working tree is never touched.\n\nIt usually takes 5 to 20 minutes, depending on how long the metric and the check take, and stops sooner when nothing wins. A round usually costs a few cents of model time (more on a big repo, because Synthe sends up to about 60,000 characters of code). The default limits are 6 rounds and $1.50 of model cost, whichever comes first.\n\n### Rules\n\n- Never guess the goal, the metric, the check or the mode. Ask the person.\n- In the loop you do not write the code change. Synthe does. Do not edit code, tests, the metric command, `package.json`, lockfiles, `.github/` or `.synthe/` in this repo while it runs, and do not commit or switch branches. Synthe refuses its own changes to tests, the metric, its data, dependencies, config and CI.\n- Never use `ANTHROPIC_API_KEY`. It is usually the app\'s own key, and Synthe ignores it here.\n- Never write an event code, team code or key to a file, and never commit one.\n- Do not interrupt a running `improve`: no Ctrl-C, no timeout shorter than 30 minutes, no second Synthe command in the same repo. If it was interrupted anyway, see step 5.\n- Show the person Synthe\'s output as written: every number, and the reason when a change is not kept. Do not summarize it instead.\n- If a command fails or stops, show the person the exact message and do what it says. Do not retry more than once without asking.\n\n### Steps\n\n1. **Credit.** Ask for the Crimson Hacks event code from the QR card and the team code from the Synthe table, or the person\'s own Anthropic key. Put them at the front of the command, because each command may run in a fresh shell (see section 2 for the same rules). Own key: `SYNTHE_ANTHROPIC_KEY=<key>` alone; tell the person it will show in this chat. If the person has neither codes nor a key, skip to "Without a credential" below.\n2. **Commit and sync first.** `git status` must be clean: Synthe measures committed code. The current branch must be pushed and equal to its copy on GitHub; if not, push or `git pull`. Synthe opens its pull request against the branch you are on, or the default branch.\n3. **See what this repo can measure:**\n\n   ```\n   npx synthe@latest improve --list\n   ```\n\n   Show the person the list as written. Then ask, in ONE message, these four things:\n   - What should get better? One sentence.\n   - Which metric from the list? Offer the first one in the list first: it is listed first because it fits the repo best. If they pick `custom`, also ask for the command that prints one number, what the number counts, and whether higher or lower is better.\n   - Which regression check must keep passing? The list shows each metric\'s default; `none` is allowed.\n   - Auto (the winning changes merge into the branch by themselves) or review (a pull request waits for them)? If they are unsure, say review.\n\n   Do not run anything until they answer all four. Tell them: it usually takes 5 to 20 minutes and stops sooner when nothing wins, a round usually costs a few cents, and the default limit is $1.50.\n4. **Run it**, with their answers and the credit at the front:\n\n   ```\n   SYNTHE_EVENT_CODE=<code> SYNTHE_TEAM_CODE=<team code> npx synthe@latest improve --agent --goal "<sentence>" --metric <id> --guard "<check command>" --mode auto|review\n   ```\n\n   - `<id>` is one of `test-pass`, `pytest`, `bundle-size`, `build-time`, `custom`.\n   - For `--metric custom`, add `--command "<cmd>" --label "<what it counts>" --direction higher|lower`, and `--unit "<unit>"` if they gave one.\n   - `--guard "<check command>"` is their check. Use `--guard none` for no check. Leave `--guard` out only to accept the metric\'s default shown in the list.\n   - Add `--protect <path>` (repeat it) for any other file the changes must not touch. Add `--rounds N` (1 to 20) or `--budget <dollars>` only if the person asks for a different limit. Add `--lessons claude` or `--lessons agents` only if they want the lessons also written into `CLAUDE.md` or `AGENTS.md`; by default lessons go only to `.synthe/improve-lessons.md` and the pull request.\n   - **Give the command a timeout of at least 30 minutes, and let it finish.** Many shell tools cap a command at about 10 minutes. If yours does, run the command in the background and wait for it to end, reading its output as it comes. Do not stop it.\n   - While it runs, show the person each `Round` line as it appears, as written. You may leave out the `Measuring ...` and `Running the regression check ...` lines.\n   - The output ends with a `NEXT:` line written for you. Do what it says; do not paste it to the person as if it were Synthe\'s result.\n   - If it stops before the first round, it printed what to fix (a dirty tree, an unpushed branch, a missing credential, a regression check that fails today). Show it, fix that, and run the same command again.\n5. **If it was interrupted** (Ctrl-C, a lost connection, a closed terminal), run the exact same command again. It starts over from the current code: nothing is pushed until the end of a run, so an interrupted run leaves nothing behind.\n6. **Show the result as written**: the `Result:` line, the `Model cost` line and the `Pull request:` link. Then explain in plain words what happened: how many rounds ran, which changes were kept and why they helped, which were not kept and why, what it cost.\n   - Review mode: tell the person to open the pull request, read the table of rounds, and merge it to keep the changes.\n   - Auto mode: it prints `Merged into <branch>. Run git pull.` Tell the person to run `git pull`.\n   - If it says `No change beat the current code`, nothing was pushed and no pull request exists. Show what was tried as written. Offer to run the same command again (the next run reads the lessons from this one) or to try `--handoff` below.\n7. When the person asks what Synthe did, show the pull request\'s Result and Rounds sections word for word.\n\nTo undo: close the pull request before merging. After merging, `git revert` the merge or the commits, or ask the team to revert the pull request on GitHub.\n\n### Without a credential: you make the change\n\nUse this when the person has no event code, team code or key. Nothing is sent to a model. You make ONE small change to product code, and Synthe proves with numbers whether it improved the metric. Do steps 2 and 3 above first, then:\n\n1. Measure the current code with their answers (`--handoff` takes the same options as step 4, except `--rounds`, `--budget` and `--lessons`):\n\n   ```\n   npx synthe@latest improve --handoff --agent --goal "<sentence>" --metric <id> --guard "<check command>" --mode auto|review\n   ```\n\n   It prints the baseline and a task card. If it stops instead, show the person the message and do what it says.\n2. **Follow the `NEXT:` line.** Show the person the baseline and the task card. Create the branch the card names, make ONE small change to product code only, and commit it with a message that says what changed and why. Never edit tests, the metric command or its input files, `package.json`, lockfiles, `.github/`, `.synthe/` or config files; `submit` refuses those changes. If the improvement needs one, stop and tell the person why. Never loosen a test or the metric to make a number move.\n3. Submit the change:\n\n   ```\n   npx synthe@latest submit --agent\n   ```\n\n   A win prints `Pull request: <url>`, and in auto mode `Merged into <branch>. Run git pull.` Show the person the result and the link as written.\n4. If it prints `Not merged:` and a reason (within noise, worse, the regression check failed, or it broke a test that passed before), show it as written. If the person wants another try, make a different small change on the same branch, commit, and run `npx synthe@latest submit --agent` again (at most 3 attempts in all, unless they ask for more).\n\n## 10. Enterprise pilot (a production metric)\n\n`npx synthe pilot` is a separate, review-first loop for one support agent and one business metric. It replays recorded conversations offline as a gate, writes the plan for an experiment the team runs with its own rollout controls, and then says keep, hold or revert from the outcome export the team produces. People decide; Synthe proposes and measures. The full guide is `docs/PILOT.md` in the Synthe repo: https://github.com/synthelabs/synthe/blob/main/docs/PILOT.md\n\n```\nnpx synthe pilot help\nnpx synthe pilot demo --out <new empty folder>\n```\n\n- `help` lists every pilot command. If your Synthe version answers `pilot` with the general help, it is too old to have the pilot (1.10.0 and older): use `node src/pilot/cli.ts <command>` from a Synthe checkout instead.\n- `demo` runs the whole loop on invented data in a few seconds, with no credentials and no network. Use it to show the person what the pilot produces before they give it any data.\n- A wrapper exists for recording calls and outcomes: `import { pilotRecorder } from "synthe/pilot"` (see "Recording calls and outcomes" in `docs/PILOT.md`), and `npx synthe pilot export` turns its log into the export. Help the person wire it into their code; give it an `agent` and an `idKey` or, only if they say so, `rawIds: true`. The `idKey` is a secret of at least 16 characters that the team creates and keeps in its own secret store: read it from an environment variable in the code you write. Never make one up, never ask the person to paste it into the chat, and never write it into a file in the repo.\n- `npx synthe pilot watch` is one scheduled tick the operator runs themselves (cron or launchd): it analyses only at allowed looks, never publishes and never uses the network. Help set up the schedule (see "Watching an experiment" in `docs/PILOT.md`); do not run it on a live pilot directory unasked.\n- Never read, `cat`, search or open the call log the wrapper writes (its `logDir`): it holds the team\'s customer ids, and reading it sends them to your model provider.\n\n### Rules\n\n- The pilot directory (`--dir`, default `.synthe-pilot`) holds the team\'s conversations and telemetry. Never open, read, `cat` or search its packs, telemetry exports or call logs: reading them sends customer conversations to your own model provider, which the team did not approve. Never commit it, never copy it into the repo, an issue, a pull request or a chat, and never paste its contents into your own replies. `init` writes a `.gitignore` inside it; leave that file alone.\n- Never write or change `pilot.json`, a telemetry export, a conversation pack or a promotion request yourself. The team produces them and a named person signs off the metric. If one is refused, show the person the exact message.\n- Never run `approve`, `analyze`, `promote --request` or `propose --file --author` for the person: each records a person\'s decision. Run them only when the person typed that exact command or told you to run it.\n- Never pass `--publish`, `--confirm`, `--reopen`, `--allow-past-start`, `--accept-flags`, `--live` or `--allow-endpoint-host` unless the person typed that exact command or told you to run it. Each one records a person\'s decision, sends data out, or opens a pull request.\n- `--live` sends conversations to a model provider and costs money. It runs only when `pilot.json` records the team\'s approval. Ask first, every time.\n- Do not edit files under the pilot directory. Records are write-once; `npx synthe pilot verify` fails after an edit.\n- When a command prints `Refused (...)`, show the message as written and do what it says. Do not retry with different flags to get past it.\n\n### What you may run without asking\n\n`npx synthe pilot status`, `report` and `verify` only read the pilot directory and rebuild local reports. Show the person the recommendation line and the report path, not the data.\n';
 
 // src/cli/verify.ts
 init_evidence();
@@ -39911,8 +40109,8 @@ init_evidence();
 init_goal();
 init_prompt();
 init_safety();
-import { existsSync as existsSync6, readFileSync as readFileSync8 } from "node:fs";
-import { join as join10 } from "node:path";
+import { existsSync as existsSync6, readFileSync as readFileSync9 } from "node:fs";
+import { join as join11 } from "node:path";
 var undoBranch = (round) => `synthe/undo-round-${round}`;
 function promptWithHash(source, goal, hash) {
   if (goal.prompt.kind === "file") return sha256(source) === hash ? source : null;
@@ -39926,8 +40124,8 @@ async function undo(d, roundArg) {
     say("Say which round to undo, for example: npx synthe undo 3");
     return 1;
   }
-  const local = join10(d.root, evidencePath(round));
-  const text4 = existsSync6(local) ? readFileSync8(local, "utf8") : await repo.readFile(evidencePath(round), STATE_BRANCH);
+  const local = join11(d.root, evidencePath(round));
+  const text4 = existsSync6(local) ? readFileSync9(local, "utf8") : await repo.readFile(evidencePath(round), STATE_BRANCH);
   if (text4 === null) {
     say(`No evidence for round ${round}. Rounds that changed nothing or didn't finish have none; check the number against \`npx synthe status\`.`);
     return 1;
@@ -39998,8 +40196,8 @@ async function undo(d, roundArg) {
 init_goal();
 init_prompt();
 init_state();
-import { existsSync as existsSync7, readFileSync as readFileSync9 } from "node:fs";
-import { join as join11 } from "node:path";
+import { existsSync as existsSync7, readFileSync as readFileSync10 } from "node:fs";
+import { join as join12 } from "node:path";
 var vaultOptions = (args) => {
   const out = { yes: false };
   for (let i = 0; i < args.length; i++) {
@@ -40023,8 +40221,8 @@ async function vault(io2, args) {
     io2.say(opts);
     return 1;
   }
-  const goal = parseGoal(readFileSync9(join11(io2.cwd, GOAL_FILE), "utf8"));
-  const scenarios = parseScenarios(readFileSync9(join11(io2.cwd, goal.scenarios), "utf8"));
+  const goal = parseGoal(readFileSync10(join12(io2.cwd, GOAL_FILE), "utf8"));
+  const scenarios = parseScenarios(readFileSync10(join12(io2.cwd, goal.scenarios), "utf8"));
   const cases4 = vaultCases(scenarios);
   if (cases4.length === 0) {
     io2.say(`${goal.scenarios} has no vault cases, so there is nothing to check. Before the next run starts, mark a few test cases \`"split": "vault"\`: no round ever reads them, so at the end of the run \`npx synthe vault\` can tell whether its gains carry to cases nobody picked winners on.`);
@@ -40045,18 +40243,18 @@ async function vault(io2, args) {
   const state = saved.state;
   let start2;
   if (opts.start) {
-    const path4 = join11(io2.cwd, opts.start);
+    const path4 = join12(io2.cwd, opts.start);
     if (!existsSync7(path4)) {
       io2.say(`Couldn't find ${opts.start}. Give the file that holds the prompt the run started from.`);
       return 1;
     }
-    start2 = readFileSync9(path4, "utf8");
+    start2 = readFileSync10(path4, "utf8");
   } else start2 = state.startPrompt ?? null;
   if (start2 === null) {
     io2.say("This run started before Synthe saved its starting prompt. Put the prompt from before the first round in a file (for example from `git log` on your prompt file) and run `npx synthe vault --start <file>`.");
     return 1;
   }
-  const current = readPrompt(readFileSync9(join11(io2.cwd, goal.prompt.path), "utf8"), goal, state.prompt);
+  const current = readPrompt(readFileSync10(join12(io2.cwd, goal.prompt.path), "utf8"), goal, state.prompt);
   if (current === null) {
     io2.say(`Couldn't find your prompt in ${goal.prompt.path}. Run \`git pull\` so this folder has the latest round's prompt, then try again.`);
     return 1;
@@ -40107,15 +40305,15 @@ async function vault(io2, args) {
 init_repo();
 
 // src/cli/improve.ts
-import { relative, join as join19 } from "node:path";
-import { readFileSync as readFileSync15, writeFileSync as writeFileSync7 } from "node:fs";
+import { relative, join as join20 } from "node:path";
+import { readFileSync as readFileSync16, writeFileSync as writeFileSync8 } from "node:fs";
 
 // src/improve/config.ts
-import { join as join12 } from "node:path";
-var improveFile = (gitDir) => join12(gitDir, "synthe-improve.json");
+import { join as join13 } from "node:path";
+var improveFile = (gitDir) => join13(gitDir, "synthe-improve.json");
 var DEFAULT_RUNS = 3;
 var COMMAND_TIMEOUT_MS = 6e5;
-var PRESETS = ["test-pass", "pytest", "bundle-size", "build-time", "custom"];
+var PRESETS2 = ["test-pass", "pytest", "bundle-size", "build-time", "custom"];
 var text = (v) => typeof v === "string" && v.trim().length > 0;
 function parseImproveConfig(raw) {
   const bad5 = (why) => {
@@ -40131,7 +40329,7 @@ function parseImproveConfig(raw) {
   if (!text(c.goal)) bad5("goal is required");
   const m = c.metric;
   if (!m || typeof m !== "object") bad5("metric is required");
-  if (!PRESETS.includes(m.preset)) bad5(`metric.preset must be one of ${PRESETS.join(", ")}`);
+  if (!PRESETS2.includes(m.preset)) bad5(`metric.preset must be one of ${PRESETS2.join(", ")}`);
   if (!text(m.label)) bad5("metric.label is required");
   if (!text(m.unit)) bad5("metric.unit is required");
   if (!text(m.command)) bad5("metric.command is required");
@@ -40161,13 +40359,13 @@ function parseImproveConfig(raw) {
 
 // src/improve/loop.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
-import { existsSync as existsSync12, mkdirSync as mkdirSync6, mkdtempSync as mkdtempSync2, readFileSync as readFileSync14, realpathSync as realpathSync2, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "node:fs";
+import { existsSync as existsSync12, mkdirSync as mkdirSync6, mkdtempSync as mkdtempSync2, readFileSync as readFileSync15, realpathSync as realpathSync2, rmSync as rmSync3, writeFileSync as writeFileSync7 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
-import { basename as basename2, dirname as dirname4, join as join18 } from "node:path";
+import { basename as basename2, dirname as dirname4, join as join19 } from "node:path";
 
 // src/improve/lessons.ts
-import { appendFileSync, mkdirSync as mkdirSync5, readFileSync as readFileSync10 } from "node:fs";
-import { join as join13 } from "node:path";
+import { appendFileSync, mkdirSync as mkdirSync5, readFileSync as readFileSync11 } from "node:fs";
+import { join as join14 } from "node:path";
 
 // src/improve/verdict.ts
 var median = (xs) => {
@@ -40352,15 +40550,15 @@ function lessonLine(l) {
   const summary = clip3(oneLine2(l.summary).replace(/[.\s]+$/, ""), Math.max(20, LINE_MAX - head.length - tail.length));
   return clip3(`${head}${summary}${tail}`, LINE_MAX);
 }
-var lessonsFile = (gitRoot) => join13(gitRoot, ".synthe", "improve-lessons.md");
+var lessonsFile = (gitRoot) => join14(gitRoot, ".synthe", "improve-lessons.md");
 function appendLessons(gitRoot, lines2) {
   const clean = lines2.map((l) => oneLine2(l).replace(/^- /, "")).filter(Boolean);
   if (!clean.length) return;
   const file = lessonsFile(gitRoot);
-  mkdirSync5(join13(gitRoot, ".synthe"), { recursive: true });
+  mkdirSync5(join14(gitRoot, ".synthe"), { recursive: true });
   let text4 = "";
   try {
-    text4 = readFileSync10(file, "utf8");
+    text4 = readFileSync11(file, "utf8");
   } catch {
   }
   const lead = !text4 ? `${HEADER}
@@ -40371,7 +40569,7 @@ function appendLessons(gitRoot, lines2) {
 function readLessons(gitRoot, max = 20) {
   let text4;
   try {
-    text4 = readFileSync10(lessonsFile(gitRoot), "utf8");
+    text4 = readFileSync11(lessonsFile(gitRoot), "utf8");
   } catch {
     return [];
   }
@@ -40403,11 +40601,11 @@ function lessonsTarget(_gitRoot, choice) {
 // src/improve/worktree.ts
 import { existsSync as existsSync9, lstatSync as lstatSync3, mkdtempSync, rmSync as rmSync2, symlinkSync, unlinkSync as unlinkSync3 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 
 // src/improve/presets.ts
-import { existsSync as existsSync8, readdirSync as readdirSync2, readFileSync as readFileSync11, statSync as statSync2 } from "node:fs";
-import { delimiter as delimiter2, join as join14 } from "node:path";
+import { existsSync as existsSync8, readdirSync as readdirSync2, readFileSync as readFileSync12, statSync as statSync2 } from "node:fs";
+import { delimiter as delimiter2, join as join15 } from "node:path";
 import { gzipSync } from "node:zlib";
 var NPM_PLACEHOLDER = 'echo "Error: no test specified" && exit 1';
 var win = process.platform === "win32";
@@ -40444,28 +40642,28 @@ function hasPythonTests(dir, depth = 3) {
   } catch {
     return false;
   }
-  return entries.some((e) => e.isFile() && PYTHON_TEST_FILE.test(e.name) || depth > 0 && e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules" && hasPythonTests(join14(dir, e.name), depth - 1));
+  return entries.some((e) => e.isFile() && PYTHON_TEST_FILE.test(e.name) || depth > 0 && e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules" && hasPythonTests(join15(dir, e.name), depth - 1));
 }
-var onPath = (name) => (process.env.PATH ?? "").split(delimiter2).some((d) => d && existsSync8(join14(d, win ? `${name}.exe` : name)));
+var onPath = (name) => (process.env.PATH ?? "").split(delimiter2).some((d) => d && existsSync8(join15(d, win ? `${name}.exe` : name)));
 function srcLayout(top) {
   try {
-    return readdirSync2(join14(top, "src"), { withFileTypes: true }).some((e) => e.isFile() && e.name.endsWith(".py") || e.isDirectory() && existsSync8(join14(top, "src", e.name, "__init__.py")));
+    return readdirSync2(join15(top, "src"), { withFileTypes: true }).some((e) => e.isFile() && e.name.endsWith(".py") || e.isDirectory() && existsSync8(join15(top, "src", e.name, "__init__.py")));
   } catch {
     return false;
   }
 }
 function pythonSetup(top) {
-  const signals = ["pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"].some((f) => existsSync8(join14(top, f))) || hasPythonTests(join14(top, "tests")) || readdirSync2(top, { withFileTypes: true }).some((e) => e.isFile() && PYTHON_TEST_FILE.test(e.name));
+  const signals = ["pyproject.toml", "pytest.ini", "setup.cfg", "tox.ini"].some((f) => existsSync8(join15(top, f))) || hasPythonTests(join15(top, "tests")) || readdirSync2(top, { withFileTypes: true }).some((e) => e.isFile() && PYTHON_TEST_FILE.test(e.name));
   if (!signals) return null;
-  const venv = VENV_NAMES.find((v) => existsSync8(join14(top, v, win ? "Scripts" : "bin", win ? "python.exe" : "python")));
+  const venv = VENV_NAMES.find((v) => existsSync8(join15(top, v, win ? "Scripts" : "bin", win ? "python.exe" : "python")));
   const python = venv ? win ? `${venv}\\Scripts\\python` : `${venv}/bin/python` : win || !onPath("python3") ? "python" : "python3";
   const src = srcLayout(top);
   const run2 = `${python} -m pytest -q${src && win ? " -o pythonpath=src" : ""}`;
   return { command: src && !win ? `PYTHONPATH=src ${run2}` : run2 };
 }
 function presetsForRepo(top) {
-  const pkg = join14(top, "package.json");
-  return detectPresets(existsSync8(pkg) ? [{ path: "package.json", text: readFileSync11(pkg, "utf8") }] : [], pythonSetup(top));
+  const pkg = join15(top, "package.json");
+  return detectPresets(existsSync8(pkg) ? [{ path: "package.json", text: readFileSync12(pkg, "utf8") }] : [], pythonSetup(top));
 }
 var NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i;
 function lastNumber(stdout) {
@@ -40535,17 +40733,17 @@ function failingTests(output) {
 var OUTPUT_DIRS = ["dist", "build", "out", ".next/static", "public/build"];
 function builtFiles(dir) {
   return readdirSync2(dir, { withFileTypes: true }).flatMap((e) => {
-    const path4 = join14(dir, e.name);
+    const path4 = join15(dir, e.name);
     if (e.isDirectory()) return e.name === "node_modules" ? [] : builtFiles(path4);
     return e.isFile() && /\.(m?js|css)$/.test(e.name) ? [path4] : [];
   });
 }
 function bundleBytes(root) {
-  const dir = OUTPUT_DIRS.map((d) => join14(root, d)).find((d) => existsSync8(d) && statSync2(d).isDirectory());
+  const dir = OUTPUT_DIRS.map((d) => join15(root, d)).find((d) => existsSync8(d) && statSync2(d).isDirectory());
   if (!dir) return null;
   const files = builtFiles(dir);
   if (!files.length) return null;
-  return files.reduce((sum, f) => sum + gzipSync(readFileSync11(f)).length, 0);
+  return files.reduce((sum, f) => sum + gzipSync(readFileSync12(f)).length, 0);
 }
 var REASONS = {
   noNumber: "The metric command printed no number.",
@@ -40588,7 +40786,7 @@ var quote = (s) => win2 ? `"${s}"` : `'${s.replace(/'/g, "'\\''")}'`;
 var GIT_TIMEOUT_MS = 12e4;
 var LINKED = ["node_modules", ".venv", "venv"];
 async function withWorktree(exec, root, commit, fn) {
-  const dir = mkdtempSync(join15(tmpdir(), "synthe-improve-"));
+  const dir = mkdtempSync(join16(tmpdir(), "synthe-improve-"));
   const added = await exec(root, `git worktree add --detach ${quote(dir)} ${commit}`, GIT_TIMEOUT_MS);
   if (!added.ok) {
     rmSync2(dir, { recursive: true, force: true });
@@ -40597,9 +40795,9 @@ async function withWorktree(exec, root, commit, fn) {
   const linked = [];
   try {
     for (const name of LINKED) {
-      const link = join15(dir, name);
-      if (existsSync9(join15(root, name)) && !existsSync9(link)) {
-        symlinkSync(join15(root, name), link, win2 ? "junction" : "dir");
+      const link = join16(dir, name);
+      if (existsSync9(join16(root, name)) && !existsSync9(link)) {
+        symlinkSync(join16(root, name), link, win2 ? "junction" : "dir");
         linked.push(link);
       }
     }
@@ -40642,15 +40840,15 @@ async function measureAt(exec, root, commit, config, say = () => {
 
 // src/improve/writer.ts
 init_safety();
-import { existsSync as existsSync11, lstatSync as lstatSync4, readFileSync as readFileSync13, realpathSync } from "node:fs";
-import { dirname as dirname3, join as join17, sep } from "node:path";
+import { existsSync as existsSync11, lstatSync as lstatSync4, readFileSync as readFileSync14, realpathSync } from "node:fs";
+import { dirname as dirname3, join as join18, sep } from "node:path";
 
 // src/improve/protect.ts
 init_goal();
 init_safety();
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { existsSync as existsSync10, readFileSync as readFileSync12, statSync as statSync3 } from "node:fs";
-import { join as join16, posix } from "node:path";
+import { existsSync as existsSync10, readFileSync as readFileSync13, statSync as statSync3 } from "node:fs";
+import { join as join17, posix } from "node:path";
 var DEPENDENCY_FILES = /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|pnpm-workspace\.yaml|bun\.lockb?|poetry\.lock|uv\.lock|Pipfile(\.lock)?|pyproject\.toml|pytest\.ini|tox\.ini|setup\.cfg|requirements[^/]*\.txt|Cargo\.(toml|lock)|go\.(mod|sum)|Gemfile(\.lock)?|composer\.(json|lock))$/i;
 var RULES = [
   [/(^|\/)\.synthe(\/|$)|(^|\/)synthe\.json$/i, "is Synthe's own setup; a measured change leaves it alone."],
@@ -40690,9 +40888,9 @@ function protectedChanges(paths, config) {
 }
 function promptModeProtect(top) {
   try {
-    const file = join16(top, GOAL_FILE);
+    const file = join17(top, GOAL_FILE);
     if (!existsSync10(file)) return [];
-    const goal = JSON.parse(readFileSync12(file, "utf8"));
+    const goal = JSON.parse(readFileSync13(file, "utf8"));
     const clean = (p) => {
       if (typeof p !== "string") return [];
       const path4 = p.trim().replace(/\\/g, "/").replace(/^\.\//, "");
@@ -40753,7 +40951,7 @@ function metricOnlyFiles(top, config) {
   const known = new Set(tracked);
   const read = (f) => {
     try {
-      return statSync3(join16(top, f)).size > MAX_BYTES ? null : readFileSync12(join16(top, f), "utf8");
+      return statSync3(join17(top, f)).size > MAX_BYTES ? null : readFileSync13(join17(top, f), "utf8");
     } catch {
       return null;
     }
@@ -40794,7 +40992,7 @@ function candidateFiles(dir, tracked, config) {
     if (protectedPathProblem(path4, config) || GENERATED.test(path4) || AGENT_NOTES.test(path4) || BINARY.test(path4)) continue;
     let stat2;
     try {
-      stat2 = lstatSync4(join17(dir, path4));
+      stat2 = lstatSync4(join18(dir, path4));
     } catch {
       continue;
     }
@@ -40859,7 +41057,7 @@ function shownFiles(dir, paths) {
   for (const path4 of paths) {
     let raw;
     try {
-      raw = readFileSync13(join17(dir, path4));
+      raw = readFileSync14(join18(dir, path4));
     } catch {
       continue;
     }
@@ -40953,7 +41151,7 @@ var count = (text4, part) => {
 };
 function insideCheckout(dir, path4) {
   const root = realpathSync(dir);
-  let parent = dirname3(join17(dir, path4));
+  let parent = dirname3(join18(dir, path4));
   while (!existsSync11(parent)) parent = dirname3(parent);
   const real = realpathSync(parent);
   return real === root || real.startsWith(root + sep);
@@ -40973,8 +41171,8 @@ function checkEdits(dir, edits, shown3, config) {
     if (GENERATED.test(path4)) return { problem: `${path4} is generated output; change the source it is built from` };
     let entry = texts.get(path4);
     if (!entry) {
-      const onDisk = existsSync11(join17(dir, path4));
-      if (shown3.has(path4)) entry = { original: readFileSync13(join17(dir, path4), "utf8"), text: "" };
+      const onDisk = existsSync11(join18(dir, path4));
+      if (shown3.has(path4)) entry = { original: readFileSync14(join18(dir, path4), "utf8"), text: "" };
       else if (onDisk) return { problem: `${path4} was not among the files shown, so it can't be edited` };
       else if (e.search !== "") return { problem: `${path4} does not exist` };
       else if (!insideCheckout(dir, path4)) return { problem: `${path4} is not a path inside the repo` };
@@ -41016,7 +41214,7 @@ var SYNTHE_IDENTITY = ["-c", "user.name=Synthe", "-c", "user.email=synthe@users.
 var SCRATCH_PREFIX = "synthe-improve-";
 var firstLine = (e) => (e?.message ?? String(e)).trim().split("\n")[0];
 async function withScratch(io2, top, commit, fn) {
-  const dir = mkdtempSync2(join18(tmpdir2(), SCRATCH_PREFIX));
+  const dir = mkdtempSync2(join19(tmpdir2(), SCRATCH_PREFIX));
   try {
     await io2.run("git", ["-C", top, "worktree", "add", "--detach", "--quiet", dir, commit]);
   } catch (e) {
@@ -41052,7 +41250,7 @@ function removeScratchCheckouts(top) {
       }
       if (parent !== temp || !scratch.test(basename2(path4))) continue;
       for (const name of ["node_modules", ".venv", "venv"]) try {
-        rmSync3(join18(path4, name));
+        rmSync3(join19(path4, name));
       } catch {
       }
       try {
@@ -41179,8 +41377,8 @@ async function runLoop(io2, o) {
         const changed = checked.writes.map((w) => w.path);
         io2.say(`Round ${n}: trying "${summary}" (${changed.join(", ")})`);
         for (const w of checked.writes) {
-          mkdirSync6(dirname4(join18(dir, w.path)), { recursive: true });
-          writeFileSync6(join18(dir, w.path), w.text);
+          mkdirSync6(dirname4(join19(dir, w.path)), { recursive: true });
+          writeFileSync7(join19(dir, w.path), w.text);
         }
         try {
           const commit = await commitPaths(io2, dir, changed, `${summary}
@@ -41252,8 +41450,8 @@ async function publish(io2, a) {
     const files = [LESSONS_FILE];
     const target = lessonsTarget(dir, a.lessonsChoice);
     if (target) {
-      const path4 = join18(dir, target);
-      writeFileSync6(path4, upsertLessonsBlock(existsSync12(path4) ? readFileSync14(path4, "utf8") : "", a.result.lessons));
+      const path4 = join19(dir, target);
+      writeFileSync7(path4, upsertLessonsBlock(existsSync12(path4) ? readFileSync15(path4, "utf8") : "", a.result.lessons));
       files.push(target);
     }
     const sha = await commitPaths(io2, dir, files, "Synthe: lessons from this improve run\n\nOnly adds what was measured in each round. No code changes.\n", true);
@@ -41579,6 +41777,34 @@ async function recorded(record, fn) {
 
 // src/cli/improve.ts
 init_goal();
+
+// src/core/calls.ts
+var CallLimitError = class extends Error {
+  maxCalls;
+  constructor(maxCalls) {
+    super(`Synthe made the ${maxCalls} model calls this run allows (budget.max_calls in synthe.json), so it stopped. To go on, raise budget.max_calls in synthe.json.`);
+    this.maxCalls = maxCalls;
+  }
+};
+function countCalls(model, left2, maxCalls) {
+  let calls2 = 0;
+  const costs = [];
+  return {
+    model: {
+      async ask(a) {
+        if (calls2 >= left2) throw new CallLimitError(maxCalls ?? calls2);
+        calls2++;
+        const reply = await model.ask(a);
+        costs.push(reply.costUsd);
+        return reply;
+      }
+    },
+    calls: () => calls2,
+    costUsd: () => sumCosts(costs)
+  };
+}
+
+// src/cli/improve.ts
 var IMPROVE_BRANCH = (n) => `synthe/improve-${n}`;
 var IMPROVE_NEXT = "NEXT: Synthe measured the current code and saved its config inside .git (nothing to commit). Show the person the baseline and the task card as written. Then create the branch named in the card, make ONE small change to product code only, commit it, and run `npx synthe submit`. Do not edit tests, the metric, package.json or anything under .synthe/.";
 var IMPROVE_LIST_NEXT = "NEXT: Show the person this list as written. Ask them, in one message: what should get better (one sentence), which metric, which regression check, and auto or review. Then run `npx synthe improve --agent` with their answers: Synthe proposes code changes itself, measures each one and keeps only wins, which takes several minutes, so give the command a long timeout (30 minutes). It needs SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE, or SYNTHE_API_KEY, in the environment. To make the change yourself instead, add --handoff.";
@@ -41678,7 +41904,7 @@ async function preflight(io2, dirtyMessage, more) {
   if ("error" in topRun) problems.push("This folder is not inside a git repository. Run this inside your project's folder.");
   else {
     top = topRun.out.trim();
-    gitDir = (await tryRun("git", ["rev-parse", "--absolute-git-dir"])).out?.trim() ?? join19(top, ".git");
+    gitDir = (await tryRun("git", ["rev-parse", "--absolute-git-dir"])).out?.trim() ?? join20(top, ".git");
     const headRun = await tryRun("git", ["rev-parse", "--verify", "HEAD"]);
     if ("error" in headRun) problems.push("This repository has no commit yet. Commit your code first: Synthe measures committed code.");
     else head = headRun.out.trim();
@@ -41704,8 +41930,8 @@ async function preflight(io2, dirtyMessage, more) {
 }
 function goalProvider(root) {
   try {
-    const goal = parseGoal(readFileSync15(join19(root, GOAL_FILE), "utf8"));
-    return goal.provider?.kind === "openai-compatible" ? { provider: goal.provider, model: goal.models.writer } : null;
+    const goal = parseGoal(readFileSync16(join20(root, GOAL_FILE), "utf8"));
+    return goal.provider?.kind === "openai-compatible" ? { provider: goal.provider, model: goal.models.writer, maxCalls: goal.budget.max_calls } : null;
   } catch {
     return null;
   }
@@ -41715,11 +41941,13 @@ function loopCredential(env, other = null) {
   if (other) {
     const host = providerHost(other.provider);
     if (!generic) return { problem: `synthe.json sends model calls to ${host}, so Synthe needs your key for it: set SYNTHE_API_KEY in your terminal. Or run npx synthe improve --handoff to make the change with your own coding agent; that needs no credential.` };
-    if (!other.provider.prices?.[other.model]) return { problem: `synthe.json has no price for ${other.model} in provider.prices. improve stops at a budget, so it needs to know what each call costs: add "${other.model}": { "input": USD, "output": USD } per million tokens to provider.prices, then run this again.` };
-    return { credential: { key: generic, provider: other.provider, model: other.model, line: `Credential: your own key from SYNTHE_API_KEY, sent to ${host} for ${other.model} and charged to that account.` } };
+    const unpriced = unpricedModels({ writer: other.model }, other.provider).length > 0;
+    if (unpriced && other.maxCalls === void 0) return { problem: `synthe.json has no price for ${other.model} in provider.prices, and no budget.max_calls, so nothing would stop the run. Add a price ({ "input": USD, "output": USD } per million tokens) or budget.max_calls, then run this again.` };
+    return { credential: { key: generic, provider: other.provider, model: other.model, ...other.maxCalls !== void 0 ? { maxCalls: other.maxCalls } : {}, line: `Credential: your own key from SYNTHE_API_KEY, sent to ${host} for ${other.model} and charged to that account.` } };
   }
-  const key = generic || env.SYNTHE_ANTHROPIC_KEY?.trim(), eventCode = env.SYNTHE_EVENT_CODE?.trim(), team = env.SYNTHE_TEAM_CODE?.trim();
-  if (key) return { credential: { key, line: `Credential: your own key from ${generic ? "SYNTHE_API_KEY" : "SYNTHE_ANTHROPIC_KEY"}, charged to that Anthropic account.` } };
+  const anthropicGeneric = generic?.startsWith("sk-ant-") ? generic : void 0;
+  const key = anthropicGeneric || env.SYNTHE_ANTHROPIC_KEY?.trim(), eventCode = env.SYNTHE_EVENT_CODE?.trim(), team = env.SYNTHE_TEAM_CODE?.trim();
+  if (key) return { credential: { key, line: `Credential: your own key from ${anthropicGeneric ? "SYNTHE_API_KEY" : "SYNTHE_ANTHROPIC_KEY"}, charged to that Anthropic account.` } };
   if (eventCode) {
     if (!team) return { problem: "SYNTHE_EVENT_CODE is set but SYNTHE_TEAM_CODE isn't. Set SYNTHE_TEAM_CODE to your team code from the Synthe table, then run this again." };
     if (!TEAM_CODE.test(normalizeTeamCode(team))) return { problem: "SYNTHE_TEAM_CODE doesn't look like a team code (crim- and four groups of four letters or digits). Check it against your card from the Synthe table." };
@@ -41826,7 +42054,7 @@ async function improveRun(io2, root, options, record) {
     return false;
   }
   const config = parseImproveConfig(JSON.stringify({ ...draft, baseline: measured.measurement }));
-  writeFileSync7(improveFile(repo.gitDir), `${JSON.stringify(config, null, 2)}
+  writeFileSync8(improveFile(repo.gitDir), `${JSON.stringify(config, null, 2)}
 `);
   record?.baselined(config.baseline);
   if (!credential) {
@@ -41846,7 +42074,9 @@ async function improveLoop(io2, o, a) {
   const { metric } = config;
   io2.say(baselineLine(config));
   io2.say(`Synthe now proposes up to ${o.rounds} changes, one per round, measures each one the same way and keeps only wins (budget ${money4(o.budgetUsd)}). Your working tree is not touched. Press Ctrl-C to stop.`);
-  const made = (io2.makeModel ?? credentialModel2)(a.credential);
+  const built = (io2.makeModel ?? credentialModel2)(a.credential);
+  const made = a.credential.maxCalls === void 0 ? built : countCalls(built, a.credential.maxCalls, a.credential.maxCalls).model;
+  if (a.credential.maxCalls !== void 0) io2.say(`It stops after ${a.credential.maxCalls} model calls (budget.max_calls in synthe.json).`);
   const model = record ? record.model(made) : made;
   const stopWatching = io2.onInterrupt?.(() => {
     removeScratchCheckouts(top);
@@ -41881,7 +42111,7 @@ async function improveLoop(io2, o, a) {
         for (const line of triedLines(result2.rounds)) io2.say(line);
       }
       io2.say(`Model cost: ${total}.`);
-      if (result2.rounds.length) io2.say(`Lessons from these rounds are saved in ${relative(top, join19(a.gitDir, LESSONS_FILE))} (not part of your code); the next run reads them.`);
+      if (result2.rounds.length) io2.say(`Lessons from these rounds are saved in ${relative(top, join20(a.gitDir, LESSONS_FILE))} (not part of your code); the next run reads them.`);
       if (o.agent) io2.say(IMPROVE_LOOP_NEXT_NONE);
       return false;
     }
@@ -41969,7 +42199,7 @@ async function settle(io2, o, presets, defaultBranch, top) {
 }
 
 // src/cli/submit.ts
-import { existsSync as existsSync13, readFileSync as readFileSync16 } from "node:fs";
+import { existsSync as existsSync13, readFileSync as readFileSync17 } from "node:fs";
 var SUBMIT_NEXT_WIN = "NEXT: Show the person the result and the pull request link as written.";
 var SUBMIT_NEXT_LOSS = "NEXT: Show the person why this change did not win, as written. If they want another try, make a different small change on the same branch, commit, and run `npx synthe submit` again.";
 var MAX_CHANGED_FILES = 60;
@@ -42012,7 +42242,7 @@ async function submitRun(io2, _root, options, record) {
   }
   let config;
   try {
-    config = parseImproveConfig(readFileSync16(file, "utf8"));
+    config = parseImproveConfig(readFileSync17(file, "utf8"));
   } catch (e) {
     io2.say(`${e.message}. Run npx synthe improve again.`);
     return false;
@@ -42216,7 +42446,7 @@ function onInterrupt(cleanup) {
     for (const s of signals) process.off(s, stop2);
   };
 }
-var template = () => readFileSync21(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync22(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms2) => new Promise((r) => setTimeout(r, ms2)) };
 function setUpHere() {
   if (existsSync19(GOAL_FILE)) return true;
@@ -42248,7 +42478,7 @@ async function status2() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync22(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -42256,7 +42486,7 @@ async function status2() {
   const sameModel = sameModelNote(goal.models);
   if (sameModel) console.log(sameModel);
   try {
-    const rows = parseScenarios(readFileSync21(goal.scenarios, "utf8"));
+    const rows = parseScenarios(readFileSync22(goal.scenarios, "utf8"));
     const power = powerLines(goal, rows.filter((r) => r.split === "train").length, rows.filter((r) => r.split === "holdout").length);
     console.log(`What your test cases can detect: ${power[0]} ${power.at(-1)}`);
   } catch {
@@ -42275,7 +42505,7 @@ async function changes() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync22(GOAL_FILE, "utf8"));
   console.log(changesText(goal, s));
 }
 async function stop() {
@@ -42294,7 +42524,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync22(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -42304,7 +42534,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync19(goal.scenarios) ? sha256(readFileSync21(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync19(goal.scenarios) ? sha256(readFileSync22(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -42333,7 +42563,7 @@ async function undoRound() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync22(GOAL_FILE, "utf8"));
   const token2 = (await run("gh", ["auth", "token"])).trim();
   const history = async (path4) => {
     const shas = (await run("git", ["log", "--format=%H", "--", path4])).split("\n").filter(Boolean);
@@ -42343,7 +42573,7 @@ async function undoRound() {
 }
 function localRun(command) {
   if (!setUpHere()) return null;
-  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync22(GOAL_FILE, "utf8"));
   const credential = localCredential(process.env, goal.provider);
   if (!credential) {
     console.log(noLocalCredential(command, goal));
@@ -42353,13 +42583,13 @@ function localRun(command) {
   const { key, eventCode, teamCode } = credential;
   console.log(credential.line);
   if (!key && eventCode) eventModels(goal.models);
-  const prompt = readPrompt(readFileSync21(goal.prompt.path, "utf8"), goal, null);
+  const prompt = readPrompt(readFileSync22(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync21(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, teamCode, goal.provider) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync22(goal.scenarios, "utf8")), model: configuredModel(key, eventCode, false, teamCode, goal.provider) };
 }
 function noLocalCredential(command, goal) {
   if (goal.provider?.kind === "openai-compatible") return `\`npx synthe ${command}\` runs on your computer, changing nothing, and needs your key for ${providerHost(goal.provider)}. Set SYNTHE_API_KEY in your environment, then run this again.`;
@@ -42391,8 +42621,8 @@ async function calibrateChecks() {
   const result2 = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result2) return;
   if (result2.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync21(GOAL_FILE, "utf8"));
-    writeFileSync12(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result2.checks }, null, 2)}
+    const saved = JSON.parse(readFileSync22(GOAL_FILE, "utf8"));
+    writeFileSync13(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result2.checks }, null, 2)}
 `);
     console.log(`
 Saved your reworded checks in ${GOAL_FILE}. Push them so Synthe's next round uses them:`);
@@ -42459,7 +42689,7 @@ async function main2() {
   else if (command === "submit") process.exitCode = await submit({ say: console.log, ask, run, exec: shellExec, env: process.env }, process.cwd(), submitOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
-    process.exitCode = await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync21(GOAL_FILE, "utf8")).provider) ? 0 : 1;
+    process.exitCode = await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync22(GOAL_FILE, "utf8")).provider, process.cwd()) ? 0 : 1;
   } else if (command === "upgrade") console.log(upgrade(process.cwd(), template(), process.argv.includes("--event")));
   else if (command === "stop") await stop();
   else if (command === "status") await status2();

@@ -8119,8 +8119,8 @@ var require_sha256 = __commonJS({
         return digest;
       }
       exports2.hmac = hmac;
-      function fillBuffer(buffer, hmac2, info, counter) {
-        var num = counter[0];
+      function fillBuffer(buffer, hmac2, info, counter2) {
+        var num = counter2[0];
         if (num === 0) {
           throw new Error("hkdf: cannot expand more");
         }
@@ -8131,9 +8131,9 @@ var require_sha256 = __commonJS({
         if (info) {
           hmac2.update(info);
         }
-        hmac2.update(counter);
+        hmac2.update(counter2);
         hmac2.finish(buffer);
-        counter[0]++;
+        counter2[0]++;
       }
       var hkdfSalt = new Uint8Array(exports2.digestLength);
       function hkdf(key, salt, info, length) {
@@ -8143,7 +8143,7 @@ var require_sha256 = __commonJS({
         if (length === void 0) {
           length = 32;
         }
-        var counter = new Uint8Array([1]);
+        var counter2 = new Uint8Array([1]);
         var okm = hmac(salt, key);
         var hmac_ = new HMAC(okm);
         var buffer = new Uint8Array(hmac_.digestLength);
@@ -8151,14 +8151,14 @@ var require_sha256 = __commonJS({
         var out = new Uint8Array(length);
         for (var i = 0; i < length; i++) {
           if (bufpos === buffer.length) {
-            fillBuffer(buffer, hmac_, info, counter);
+            fillBuffer(buffer, hmac_, info, counter2);
             bufpos = 0;
           }
           out[i] = buffer[bufpos++];
         }
         hmac_.clean();
         buffer.fill(0);
-        counter.fill(0);
+        counter2.fill(0);
         return out;
       }
       exports2.hkdf = hkdf;
@@ -28070,6 +28070,13 @@ function baseUrlProblem(value) {
   if (url.protocol === "http:") return "provider.base_url must use https. Plain http is allowed only for a server on this machine (localhost, 127.0.0.1 or [::1]), because the key travels with every request.";
   return "provider.base_url must start with https://";
 }
+function unpricedModels(models, provider) {
+  const names = [...new Set([models.writer, models.runner, models.judge, models.checker].filter((m) => typeof m === "string"))];
+  return names.filter((m) => {
+    const p = provider.prices?.[m];
+    return !p || p.input === 0 && p.output === 0;
+  });
+}
 function apiName(provider) {
   if (provider?.kind !== "openai-compatible") return "Anthropic's API";
   try {
@@ -28119,6 +28126,7 @@ function parseGoal(text) {
   if (g.share_notice !== void 0 && typeof g.share_notice !== "string") bad("share_notice must be text");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
+  if (g.budget.max_calls !== void 0 && !(Number.isInteger(g.budget.max_calls) && g.budget.max_calls > 0)) bad("budget.max_calls must be a whole number above 0, for example 500");
   if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
   const holdP = g.merge_rule?.holdout_max_p;
   if (holdP !== void 0 && !(typeof holdP === "number" && Number.isFinite(holdP) && holdP > 0 && holdP <= 1)) bad("merge_rule.holdout_max_p must be above 0 and at most 1");
@@ -28149,6 +28157,10 @@ function parseGoal(text) {
     if (p.kind === "openai-compatible") {
       const missing2 = ["writer", "runner", "judge", "checker"].filter((role) => typeof g.models?.[role] !== "string" || !g.models[role].trim());
       if (missing2.length) bad(`an openai-compatible provider needs every model named in "models": ${missing2.join(", ")} ${missing2.length === 1 ? "is" : "are"} missing. Synthe's defaults are Claude models.`);
+      const rpm = p.max_requests_per_minute;
+      if (rpm !== void 0 && !(typeof rpm === "number" && Number.isFinite(rpm) && rpm > 0)) bad("provider.max_requests_per_minute must be a number above 0");
+      const unpriced = unpricedModels(g.models, p);
+      if (unpriced.length && g.budget.max_calls === void 0) bad(`${unpriced.join(", ")} ${unpriced.length === 1 ? "has" : "have"} no price, or a price of 0, in provider.prices, so budget.max_usd can't stop the run. Set budget.max_calls (the most model calls a run may make, for example 500), or add real prices: { "input": USD, "output": USD } per million tokens.`);
     }
   }
   return {
@@ -28306,10 +28318,11 @@ var newState = () => ({
   chainReady: false,
   rounds: []
 });
-function stopReason(s, maxRounds, stallRounds, maxUsd) {
+function stopReason(s, maxRounds, stallRounds, maxUsd, maxCalls) {
   if (s.stopped) return s.stopped;
   if (s.spendUnknown) return "spend could not be measured";
   if (budgetSpend(s) >= maxUsd) return `budget of $${maxUsd} is used`;
+  if (maxCalls !== void 0 && (s.calls ?? 0) >= maxCalls) return callLimit(maxCalls);
   if (s.round >= maxRounds) return `reached ${maxRounds} rounds`;
   if (s.stalls >= stallRounds) return `${stallRounds} rounds in a row found no winner`;
   return null;
@@ -28318,8 +28331,9 @@ function budgetSpend(state) {
   return state.spendUsd - (state.ownKeyFromUsd ?? 0);
 }
 function isFinished(reason) {
-  return /^(budget of .* is used|reached \d+ rounds|\d+ rounds in a row found no winner)$/.test(reason);
+  return /^(budget of .* is used|call limit of \d+ is used|reached \d+ rounds|\d+ rounds in a row found no winner)$/.test(reason);
 }
+var callLimit = (maxCalls) => `call limit of ${maxCalls} is used`;
 function resumeIfScenariosChanged(s, scenariosHash) {
   if (!s.stopped || !/rounds in a row found no winner$/.test(s.stopped) || s.scenariosHash === null || s.scenariosHash === scenariosHash) return false;
   s.stopped = null;
@@ -28799,21 +28813,26 @@ var ProviderError = class extends Error {
   host;
   model;
   loopback;
-  quota;
-  // out of credit or over a spending limit: waiting won't help
+  credit;
+  // out of credit or over a spending limit: a person has to act
+  exhausted;
+  // the free limit is used up for now: the next scheduled run tries again
   constructor(message, a) {
     super(message);
     this.status = a.status;
     this.host = a.host;
     this.model = a.model;
     this.loopback = a.loopback;
-    this.quota = a.quota ?? false;
+    this.credit = a.credit ?? false;
+    this.exhausted = a.exhausted ?? false;
   }
 };
 var MAX_RETRIES = 4;
 var TIMEOUT_MS = 10 * 6e4;
 var MAX_WAIT_MS = 6e4;
-var QUOTA = /insufficient_quota|exceeded your current quota|credit balance|out of credits?|spend(ing)? limit|billing/i;
+var CREDIT = /insufficient_quota|credit balance|out of credits?|insufficient (funds|balance)|spend(ing)? limit reached|payment required/i;
+var DAILY = /per[\s_-]?day|daily|requests_per_day|PerDay/i;
+var PACED_AT_ONCE = 2;
 function retryAfterMs(headers, now = Date.now()) {
   const ms = Number(headers.get("retry-after-ms"));
   if (headers.get("retry-after-ms") && Number.isFinite(ms) && ms >= 0) return Math.min(ms, MAX_WAIT_MS);
@@ -28841,12 +28860,34 @@ function openAiCompatibleModel(o) {
   const host = url.host;
   const loopback = isLoopback(url);
   const sleep2 = o.sleep ?? ((ms) => new Promise((resolve2) => setTimeout(resolve2, ms)));
+  const now = o.now ?? Date.now;
+  const gap = o.maxRequestsPerMinute ? 6e4 / o.maxRequestsPerMinute : 0;
+  let nextAt = 0;
+  const pace = async () => {
+    if (!gap) return;
+    const t = now(), at = Math.max(t, nextAt);
+    nextAt = at + gap;
+    if (at > t) await sleep2(at - t);
+  };
+  let active = 0;
+  const waiting = [];
+  const slot = async () => {
+    if (!gap) return () => {
+    };
+    while (active >= PACED_AT_ONCE) await new Promise((resolve2) => waiting.push(resolve2));
+    active++;
+    return () => {
+      active--;
+      waiting.shift()?.();
+    };
+  };
   const hide = (text) => o.apiKey ? text.split(o.apiKey).join("[your key]") : text;
   const noSchema = /* @__PURE__ */ new Set();
   const completionTokens = /* @__PURE__ */ new Set();
   async function post(model, body) {
     for (let attempt = 0; ; attempt++) {
       let response;
+      await pace();
       try {
         response = await fetch(url, {
           method: "POST",
@@ -28863,14 +28904,15 @@ function openAiCompatibleModel(o) {
         }
         throw new ProviderError(`Couldn't reach ${host}: ${hide(error instanceof Error ? error.message : String(error))}`, { status: null, host, model, loopback });
       }
-      const text = hide(await response.text());
+      const text = await response.text();
       let json = null;
       try {
         json = JSON.parse(text);
       } catch {
       }
-      const quota = QUOTA.test(text);
-      const retryable = response.status === 429 && !quota || response.status === 408 || response.status >= 500;
+      const credit = CREDIT.test(text) || response.status === 402;
+      const daily = response.status === 429 && DAILY.test(text);
+      const retryable = response.status === 429 && !credit && !daily || response.status === 408 || response.status >= 500;
       if (retryable && attempt < MAX_RETRIES) {
         await sleep2(retryAfterMs(response.headers) ?? backoffMs(attempt));
         continue;
@@ -28883,59 +28925,68 @@ function openAiCompatibleModel(o) {
     return (typeof m === "string" ? m : r.text).trim().slice(0, 300);
   };
   return {
-    async ask({ model, system, user, maxTokens, schema, allowCutOff }) {
-      let jsonInPrompt = Boolean(schema) && noSchema.has(model);
-      let tokensField = completionTokens.has(model) ? "max_completion_tokens" : "max_tokens";
-      let retriedTokens = false, retriedSchema = false;
-      for (; ; ) {
-        const body = {
-          model,
-          messages: [...system === void 0 ? [] : [{ role: "system", content: system }], { role: "user", content: schema && jsonInPrompt ? `${user}${JSON_ONLY(schema)}` : user }],
-          [tokensField]: maxTokens,
-          ...schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}
-        };
-        const r = await post(model, body);
-        if (r.status === 400) {
-          const why = said(r);
-          if (!retriedTokens && tokensField === "max_tokens" && /max_completion_tokens/.test(why)) {
-            retriedTokens = true;
-            tokensField = "max_completion_tokens";
-            completionTokens.add(model);
-            continue;
-          }
-          if (schema && !jsonInPrompt && !retriedSchema) {
-            retriedSchema = true;
-            jsonInPrompt = true;
-            noSchema.add(model);
-            continue;
-          }
-        }
-        if (r.status < 200 || r.status >= 300) {
-          throw new ProviderError(`${host} answered ${r.status}: ${said(r)}`, { status: r.status, host, model, loopback, quota: QUOTA.test(r.text) });
-        }
-        const choice = r.json?.choices?.[0];
-        const content = textOf(choice?.message?.content);
-        const refused = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim().length > 0;
-        const reason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
-        const raw = refused ? null : content;
-        const text = raw !== null && jsonInPrompt ? unfence(raw) : raw;
-        const finished = reason === "stop" && text !== null && text.length > 0;
-        const cutOff = allowCutOff === true && reason === "length" && text !== null && text.length > 0;
-        const usage = r.json?.usage;
-        const input2 = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
-        const output = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
-        const price = o.prices?.[model];
-        const costUsd2 = price ? pricedCost(price, input2, output) : typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
-        return {
-          text: finished || cutOff ? text : null,
-          costUsd: costUsd2,
-          ...cutOff ? { truncated: true } : {},
-          ...input2 !== null && output !== null ? { usage: { input: input2, output } } : {},
-          stopReason: refused ? "refusal" : reason
-        };
+    async ask(a) {
+      const done = await slot();
+      try {
+        return await askOnce(a);
+      } finally {
+        done();
       }
     }
   };
+  async function askOnce({ model, system, user, maxTokens, schema, allowCutOff }) {
+    let jsonInPrompt = Boolean(schema) && noSchema.has(model);
+    let tokensField = completionTokens.has(model) ? "max_completion_tokens" : "max_tokens";
+    let retriedTokens = false, retriedSchema = false;
+    for (; ; ) {
+      const body = {
+        model,
+        messages: [...system === void 0 ? [] : [{ role: "system", content: system }], { role: "user", content: schema && jsonInPrompt ? `${user}${JSON_ONLY(schema)}` : user }],
+        [tokensField]: maxTokens,
+        ...schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}
+      };
+      const r = await post(model, body);
+      if (r.status === 400) {
+        const why = said(r);
+        if (!retriedTokens && tokensField === "max_tokens" && /max_completion_tokens/.test(why)) {
+          retriedTokens = true;
+          tokensField = "max_completion_tokens";
+          completionTokens.add(model);
+          continue;
+        }
+        if (schema && !jsonInPrompt && !retriedSchema) {
+          retriedSchema = true;
+          jsonInPrompt = true;
+          noSchema.add(model);
+          continue;
+        }
+      }
+      if (r.status < 200 || r.status >= 300) {
+        const credit = CREDIT.test(r.text) || r.status === 402;
+        throw new ProviderError(`${host} answered ${r.status}: ${hide(said(r))}`, { status: r.status, host, model, loopback, credit, exhausted: r.status === 429 && !credit });
+      }
+      const choice = r.json?.choices?.[0];
+      const content = textOf(choice?.message?.content);
+      const refused = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim().length > 0;
+      const reason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
+      const raw = refused ? null : content;
+      const text = raw !== null && jsonInPrompt ? unfence(raw) : raw;
+      const finished = reason === "stop" && text !== null && text.length > 0;
+      const cutOff = allowCutOff === true && reason === "length" && text !== null && text.length > 0;
+      const usage = r.json?.usage;
+      const input2 = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
+      const output = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
+      const price = o.prices?.[model];
+      const costUsd2 = price ? pricedCost(price, input2, output) : typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
+      return {
+        text: finished || cutOff ? text : null,
+        costUsd: costUsd2,
+        ...cutOff ? { truncated: true } : {},
+        ...input2 !== null && output !== null ? { usage: { input: input2, output } } : {},
+        stopReason: refused ? "refusal" : reason
+      };
+    }
+  }
 }
 
 // src/model/client.ts
@@ -29026,7 +29077,7 @@ function ownKeyBaseUrl(env = process.env) {
   return ANTHROPIC_API_URL;
 }
 function providerModel(provider, apiKey) {
-  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices });
+  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices, maxRequestsPerMinute: provider.max_requests_per_minute });
   return anthropicModel(apiKey);
 }
 function providerHost(provider) {
@@ -29106,7 +29157,8 @@ function modelProblem(e) {
 function providerProblem(e) {
   const host = e.host;
   if (e.status === null) return e.loopback ? `Couldn't reach the model server at ${host}. Start it (for example \`ollama serve\`), or fix provider.base_url in synthe.json, and try again.` : `Couldn't reach ${host}. Check your internet connection and provider.base_url in synthe.json, then try again.`;
-  if (e.quota) return `Your key for ${host} has no credit left or has reached its spending limit. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
+  if (e.credit) return `Your key for ${host} has no credit left or has reached its spending limit. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
+  if (e.exhausted) return "Your provider's free limit is used up for now. Run the command again later.";
   if (e.status === 401) return `Your key for ${host} was rejected. Run \`npx synthe key\` to replace it.`;
   if (e.status === 402) return `Your key for ${host} has no credit left. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
   if (e.status === 403) return `Your key for ${host} isn't allowed to use ${e.model}. Check "models" in synthe.json, or run \`npx synthe key\` to replace the key.`;
@@ -30712,10 +30764,11 @@ function headlineBase(goal, state, stoppedByTeam = false, mode = "plain") {
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}${guardLine}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? fromSyntheProxy(last?.plain) ? ` ${last.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : ` The last round didn't finish because ${apiName(goal.provider)} was busy; Synthe tried again right away; if it stopped, run \`npx synthe restart\`.` : "";
+    const paused = state.paused ? ` Your provider's free limit was used up during the last try (${state.paused.at.slice(0, 16).replace("T", " ")} UTC). That try didn't count as a round; Synthe tries again on the next scheduled run, or run \`npx synthe restart\` once the limit resets.` : "";
+    const wait = paused ? paused : busy(last) ? fromSyntheProxy(last?.plain) ? ` ${last.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : ` The last round didn't finish because ${apiName(goal.provider)} was busy; Synthe tried again right away; if it stopped, run \`npx synthe restart\`.` : "";
     return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}${guardLine}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
-  const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
+  const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : /^call limit/.test(state.stopped) ? `it made the ${goal.budget.max_calls ?? state.calls ?? 0} model calls the run allows (budget.max_calls)` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && (recent.every((r) => r.outcome === "failed") || badKey(recent.at(-1)))) {
     const end = recent.at(-1);
@@ -30739,6 +30792,7 @@ function nextSteps(goal, state, pilot = false) {
   const last = state.rounds.at(-1);
   if (state.stopped === "credit") steps.push("To use your own Anthropic key, run `npx synthe key`, then `npx synthe restart`.");
   else if (state.stopped && /^budget/.test(state.stopped)) steps.push(`${state.ownKeyFromUsd === void 0 ? "Run `npx synthe key` for a fresh own-key budget, or raise" : "Raise"} budget.max_usd in synthe.json${state.round >= goal.merge_rule.max_rounds ? `. Synthe has also run all ${goal.merge_rule.max_rounds} rounds, so raise merge_rule.max_rounds too` : ""} and push it, then run \`npx synthe restart\`.`);
+  else if (state.stopped && /^call limit/.test(state.stopped)) steps.push("To keep going, raise budget.max_calls in synthe.json and push it, then run `npx synthe restart`.");
   else if (state.stopped && refusedCode(last)) steps.push(`${last.plain} ${CODE_FIX}`);
   else if (state.stopped && badKey(last)) steps.push(`${last.plain} Then run \`npx synthe restart\` to start Synthe again.`);
   else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
@@ -31091,7 +31145,7 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
     }
     await settle(goal, repo, state, Boolean(pr?.merged));
     if (!input2.scores) {
-      state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
+      state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd, budget.max_calls);
       await writeReport(goal, repo, state);
       await repo.writeState(state);
       return null;
@@ -31102,12 +31156,22 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
   const scenarioText = await repo.readFile(goal.scenarios, head);
   const scenariosHash = scenarioText === null ? null : sha256(scenarioText);
   if (scenariosHash !== null) resumeIfScenariosChanged(state, scenariosHash);
-  if (stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd)) {
+  if (stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd, budget.max_calls)) {
     if (recovered) {
-      state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
+      state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd, budget.max_calls);
       await writeReport(goal, repo, state);
       await repo.writeState(state);
     }
+    return null;
+  }
+  if (input2.stopped) {
+    state.spendUsd += input2.costUsd ?? 0;
+    state.calls = (state.calls ?? 0) + (input2.calls ?? 0);
+    if (input2.stopped.kind === "limit") state.stopped = callLimit(budget.max_calls ?? state.calls);
+    else state.paused = { at: now.toISOString(), step: input2.stopped.step };
+    state.chainReady = false;
+    await writeReport(goal, repo, state);
+    await repo.writeState(state);
     return null;
   }
   const path4 = goal.prompt.path;
@@ -31121,6 +31185,8 @@ async function runDecide(goal, repo, input2, now = /* @__PURE__ */ new Date()) {
   const priorStalls = state.stalls;
   state.round = round;
   state.spendUsd += input2.costUsd ?? 0;
+  if (input2.calls) state.calls = (state.calls ?? 0) + input2.calls;
+  delete state.paused;
   state.stalls = priorStalls + 1;
   state.pending = { round, at: record.at, costUsd: input2.costUsd };
   if (round === 1 && current !== null && state.startPrompt === void 0) state.startPrompt = current;
@@ -31430,7 +31496,7 @@ ${goal.policy ?? ""}`);
   state.scenariosHash = scenariosHash;
   state.pending = null;
   state.rounds.push(record);
-  state.stopped = state.stopped ?? stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
+  state.stopped = state.stopped ?? stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd, budget.max_calls);
   const busyRun = state.rounds.slice().reverse().findIndex((r) => r.failure !== "busy");
   const busyInARow = busyRun === -1 ? state.rounds.length : busyRun;
   const finished = Boolean(input2.scores && input2.candidates && record.outcome !== "failed");
@@ -31526,7 +31592,7 @@ function failureOf(step, e) {
   if (e instanceof CreditError) return { step, kind: "credit", message: e.message };
   if (e instanceof ProxyError) return { step, kind: e.status === 401 || e.status === 403 ? "key" : "busy", message: e.message };
   if (e instanceof ProviderError) {
-    const kind = e.quota || e.status === 401 || e.status === 402 || e.status === 403 ? "key" : e.status === null || e.status === 408 || e.status === 429 || e.status >= 500 ? "busy" : "other";
+    const kind = e.credit || e.status === 401 || e.status === 402 || e.status === 403 ? "key" : e.status === null || e.status === 408 || e.status === 429 || e.status >= 500 ? "busy" : "other";
     return { step, kind, message: modelProblem(e) };
   }
   const plain = modelProblem(e);
@@ -31870,6 +31936,38 @@ async function deliverReceipt(step, eventCode, teamCode, options = {}) {
   throw new Error("Crimson tracking didn't acknowledge this run after three attempts. Rerun from Actions or ask the organizer.");
 }
 
+// src/core/calls.ts
+var CallLimitError = class extends Error {
+  maxCalls;
+  constructor(maxCalls) {
+    super(`Synthe made the ${maxCalls} model calls this run allows (budget.max_calls in synthe.json), so it stopped. To go on, raise budget.max_calls in synthe.json.`);
+    this.maxCalls = maxCalls;
+  }
+};
+function countCalls(model, left2, maxCalls) {
+  let calls = 0;
+  const costs = [];
+  return {
+    model: {
+      async ask(a) {
+        if (calls >= left2) throw new CallLimitError(maxCalls ?? calls);
+        calls++;
+        const reply = await model.ask(a);
+        costs.push(reply.costUsd);
+        return reply;
+      }
+    },
+    calls: () => calls,
+    costUsd: () => sumCosts(costs)
+  };
+}
+var QUOTA_MESSAGE = "Your provider's free limit is used up for now. Synthe will try again on the next scheduled run.";
+function cleanStop(step, e) {
+  if (e instanceof CallLimitError) return { kind: "limit", step, message: e.message };
+  if (e instanceof ProviderError && e.exhausted) return { kind: "quota", step, message: QUOTA_MESSAGE };
+  return null;
+}
+
 // src/action.ts
 var OUT = ".synthe-out";
 var ROUND_GAP_MS = 50 * 6e4;
@@ -31894,8 +31992,9 @@ async function stillWaiting(repo, branch) {
 function actionKey(provider) {
   const generic = (input("api-key") || process.env.SYNTHE_API_KEY)?.trim();
   if (provider?.kind === "openai-compatible") return generic || void 0;
-  return generic || (input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() || void 0;
+  return (generic?.startsWith("sk-ant-") ? generic : void 0) || (input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() || void 0;
 }
+var counter = null;
 async function main() {
   const step = input("step");
   if (step === "receipt-start" || step === "receipt-finish") {
@@ -31913,6 +32012,9 @@ async function main() {
     const written = load("candidates.json");
     const scored = load("scores.json");
     const costUsd2 = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
+    const error = load("error.json");
+    const calls = [written?.calls, scored?.calls, error?.calls].reduce((n, c) => n + (typeof c === "number" ? c : 0), 0);
+    const stopped = scored?.stopped ?? written?.stopped ?? null;
     const goal2 = parseGoal(goalText2);
     const fullNow = /* @__PURE__ */ new Date();
     const fullActive = fullShareActive(goal2, fullNow);
@@ -31922,8 +32024,8 @@ async function main() {
     const scenarios2 = startPrompt !== null ? await repo.readFile(goal2.scenarios, branch) : null;
     const calibrationText = await repo.readFile(".synthe/calibration.json", branch);
     const calibration = calibrationText === null ? null : calibrationReadings(calibrationText);
-    const record = await observeRoundStep("decide", { candidates: written?.candidates }, () => runDecide(goal2, repo, { candidates: withComposed(written?.candidates, scored?.compose), scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText2), error: load("error.json"), calibration, caches: { attack: scored?.attackCache ?? null, score: scored?.scoreCache ?? null } }));
-    console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
+    const record = await observeRoundStep("decide", { candidates: written?.candidates }, () => runDecide(goal2, repo, { candidates: withComposed(written?.candidates, scored?.compose), scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText2), error, calls, stopped, calibration, caches: { attack: scored?.attackCache ?? null, score: scored?.scoreCache ?? null } }));
+    console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : stopped ? stopped.message : "Stopped; nothing to do.");
     const state2 = await repo.readState();
     if (record && state2.chainReady && state2.round === record.round && state2.round < goal2.merge_rule.max_rounds && !state2.stopped && !state2.proposal && !state2.pending) {
       try {
@@ -31973,7 +32075,7 @@ async function main() {
     return;
   }
   if (existsSync(goal.scenarios)) resumeIfScenariosChanged(state, sha256(readFileSync4(goal.scenarios, "utf8")));
-  const stop = stopReason(state, goal.merge_rule.max_rounds, goal.merge_rule.stall_rounds, goal.budget.max_usd);
+  const stop = stopReason(state, goal.merge_rule.max_rounds, goal.merge_rule.stall_rounds, goal.budget.max_usd, goal.budget.max_calls);
   if (stop) {
     console.log(`Stopped: ${stop}`);
     setOutput("go", state.pending ? "recover" : "false");
@@ -31992,26 +32094,54 @@ async function main() {
   const key = actionKey(goal.provider);
   const eventCode = input("event-code") || process.env.SYNTHE_EVENT_CODE;
   if (!key && eventCode && goal.provider?.kind !== "openai-compatible") eventModels(goal.models);
-  const model = configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE, goal.provider);
+  const maxCalls = goal.budget.max_calls;
+  const writeCalls = step === "score" ? Number(load("candidates.json")?.calls ?? 0) : 0;
+  counter = countCalls(configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE, goal.provider), maxCalls === void 0 ? Infinity : maxCalls - (state.calls ?? 0) - writeCalls, maxCalls);
+  const model = counter.model;
+  const steps = counter;
+  const stopCleanly = (step2, e, file) => {
+    const stop2 = cleanStop(step2, e);
+    if (!stop2) throw e;
+    console.log(stop2.message);
+    save(file, { candidates: [], scores: null, costUsd: steps.costUsd(), calls: steps.calls(), stopped: stop2 });
+  };
   if (step === "write") {
-    const written = await observeRoundStep("write", { prompt }, () => runWrite(goal, state, prompt, scenarios, model));
+    let written;
+    try {
+      written = await observeRoundStep("write", { prompt }, () => runWrite(goal, state, prompt, scenarios, model));
+    } catch (e) {
+      stopCleanly("write", e, "candidates.json");
+      setOutput("go", "true");
+      return;
+    }
     console.log(`Wrote ${written.candidates.length} candidates for ${written.costUsd === null ? "an unknown cost" : `$${written.costUsd.toFixed(4)}`}`);
     for (const line of explainWrite(written)) console.log(line);
-    save("candidates.json", written);
+    save("candidates.json", { ...written, calls: counter.calls() });
     setOutput("go", "true");
   } else if (step === "score") {
     const written = load("candidates.json");
     if (!written) throw new Error("candidates are missing");
+    if (written.stopped) {
+      console.log(written.stopped.message);
+      save("scores.json", { scores: null, costUsd: 0, calls: 0, stopped: written.stopped });
+      return;
+    }
     const last2 = state.lastMerge;
     const prior = last2 && !last2.reverted && last2.mergedHash === sha256(prompt) ? last2.priorPrompt : null;
     const attacks = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync4(ATTACKS_FILE, "utf8")) : [];
-    const scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null, state.scoreCache ?? null));
+    let scored;
+    try {
+      scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null, state.scoreCache ?? null));
+    } catch (e) {
+      stopCleanly("score", e, "scores.json");
+      return;
+    }
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
     for (const line of explainCompose(scored.compose)) console.log(line);
     for (const line of explainScores(scored.scores, scenarios)) console.log(line);
     const { confirmed, dismissed, failed, excusedConfirmed } = scored.checks;
     if (confirmed + dismissed + failed + excusedConfirmed > 0) console.log(`guardrail re-checks: new breaks ${confirmed} confirmed, ${dismissed} dismissed, ${failed} failed (a failed check still blocks); ${excusedConfirmed} confirmed as already broken by the current prompt`);
-    save("scores.json", scored);
+    save("scores.json", { ...scored, calls: counter.calls() });
   } else {
     throw new Error(`unknown step: ${step}`);
   }
@@ -32027,7 +32157,7 @@ if (!startEventsWorker()) main().then(() => flushEvents(), async (e) => {
   if (step === "write" || step === "score") {
     try {
       const failure = failureOf(step, e);
-      save("error.json", failure);
+      save("error.json", { ...failure, calls: counter?.calls() ?? 0 });
       console.error(failure.message);
       console.log(`::error title=Synthe::${failure.message.replace(/\r?\n/g, " ")}`);
     } catch (saveError) {

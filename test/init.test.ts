@@ -165,7 +165,8 @@ test("the credential comes first, and no clear merge answer means review mode", 
   const { io, said } = fakeIo(dir, [], { "automatically?": "maybe" });
   const order: string[] = [];
   const ask = io.ask, secret = io.askSecret;
-  io.ask = async (q) => { order.push(q.includes("automatically") ? "merge" : "goal"); return ask(q); };
+  // The free-provider menu is part of choosing the credential.
+  io.ask = async (q) => { order.push(q.includes("automatically") ? "merge" : q.startsWith("Type a number, or press Enter") ? "key" : "goal"); return ask(q); };
   io.askSecret = async (q) => { order.push("key"); return secret(q); };
   await init(io, dir);
   assert.deepEqual(order.filter((x, i) => order.indexOf(x) === i), ["key", "goal", "merge"]);

@@ -101,7 +101,7 @@ export function ownKeyBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
 
 // The team's own key, sent to the provider synthe.json names and nowhere else.
 export function providerModel(provider: Provider | undefined, apiKey: string): Model {
-  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices });
+  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices, maxRequestsPerMinute: provider.max_requests_per_minute });
   return anthropicModel(apiKey);
 }
 
@@ -192,7 +192,9 @@ function providerProblem(e: ProviderError): string {
   if (e.status === null) return e.loopback
     ? `Couldn't reach the model server at ${host}. Start it (for example \`ollama serve\`), or fix provider.base_url in synthe.json, and try again.`
     : `Couldn't reach ${host}. Check your internet connection and provider.base_url in synthe.json, then try again.`;
-  if (e.quota) return `Your key for ${host} has no credit left or has reached its spending limit. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
+  if (e.credit) return `Your key for ${host} has no credit left or has reached its spending limit. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
+  // On this computer; the workflow's report says the next scheduled run tries again (QUOTA_MESSAGE).
+  if (e.exhausted) return "Your provider's free limit is used up for now. Run the command again later.";
   if (e.status === 401) return `Your key for ${host} was rejected. Run \`npx synthe key\` to replace it.`;
   if (e.status === 402) return `Your key for ${host} has no credit left. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
   if (e.status === 403) return `Your key for ${host} isn't allowed to use ${e.model}. Check "models" in synthe.json, or run \`npx synthe key\` to replace the key.`;

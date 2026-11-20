@@ -10,7 +10,8 @@ export type Delimiter = "`" | '"' | "'" | '"""';
 export interface ModelPrice { input: number; output: number }
 export type Provider =
   | { kind: "anthropic" }
-  | { kind: "openai-compatible"; base_url: string; prices?: Record<string, ModelPrice> };
+  // max_requests_per_minute: Synthe spaces its requests to stay under it and sends fewer at once (free tiers).
+  | { kind: "openai-compatible"; base_url: string; prices?: Record<string, ModelPrice>; max_requests_per_minute?: number };
 export type OtherProvider = Extract<Provider, { kind: "openai-compatible" }>;
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
@@ -28,6 +29,12 @@ export function baseUrlProblem(value: unknown): string | null {
   if (url.protocol === "http:" && isLoopback(url)) return null;
   if (url.protocol === "http:") return "provider.base_url must use https. Plain http is allowed only for a server on this machine (localhost, 127.0.0.1 or [::1]), because the key travels with every request.";
   return "provider.base_url must start with https://";
+}
+
+// The models a goal names whose cost Synthe can't count on: no price, or a price of 0 for both input and output.
+export function unpricedModels(models: Partial<Goal["models"]>, provider: { prices?: Record<string, ModelPrice> }): string[] {
+  const names = [...new Set([models.writer, models.runner, models.judge, models.checker].filter((m): m is string => typeof m === "string"))];
+  return names.filter((m) => { const p = provider.prices?.[m]; return !p || (p.input === 0 && p.output === 0); });
 }
 
 // How reports name where model calls go: Anthropic, as always, or the host in provider.base_url.
@@ -76,7 +83,9 @@ export interface Goal {
     // Off by default. When on, rounds after a stall try one deletion, merged if it is no worse (src/loop/shorter.ts).
     allow_shorter?: boolean;
   };
-  budget: { max_usd: number };
+  // max_calls: a hard stop after this many model calls in a run, counted across every step. Required when a model's
+  // price is unknown or zero, since a free key can be on a paid plan and then max_usd would never stop anything.
+  budget: { max_usd: number; max_calls?: number };
   // Compose (prototype, off by default): after scoring, write one more candidate from how this round's candidates
   // behaved differently, and judge it by the same merge rule. See src/loop/compose.ts.
   compose?: boolean;
@@ -124,6 +133,7 @@ export function parseGoal(text: string): Goal {
   if (g.share_notice !== undefined && typeof g.share_notice !== "string") bad("share_notice must be text");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
+  if (g.budget.max_calls !== undefined && !(Number.isInteger(g.budget.max_calls) && g.budget.max_calls > 0)) bad("budget.max_calls must be a whole number above 0, for example 500");
   if (g.merge_rule?.mode !== undefined && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
   const holdP = g.merge_rule?.holdout_max_p;
   if (holdP !== undefined && !(typeof holdP === "number" && Number.isFinite(holdP) && holdP > 0 && holdP <= 1)) bad("merge_rule.holdout_max_p must be above 0 and at most 1");
@@ -152,6 +162,11 @@ export function parseGoal(text: string): Goal {
     if (p.kind === "openai-compatible") {
       const missing = (["writer", "runner", "judge", "checker"] as const).filter((role) => typeof g.models?.[role] !== "string" || !g.models[role].trim());
       if (missing.length) bad(`an openai-compatible provider needs every model named in "models": ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} missing. Synthe's defaults are Claude models.`);
+      const rpm = p.max_requests_per_minute;
+      if (rpm !== undefined && !(typeof rpm === "number" && Number.isFinite(rpm) && rpm > 0)) bad("provider.max_requests_per_minute must be a number above 0");
+      // An unknown or zero price never counts as safe: only a call cap can stop such a run.
+      const unpriced = unpricedModels(g.models, p);
+      if (unpriced.length && g.budget.max_calls === undefined) bad(`${unpriced.join(", ")} ${unpriced.length === 1 ? "has" : "have"} no price, or a price of 0, in provider.prices, so budget.max_usd can't stop the run. Set budget.max_calls (the most model calls a run may make, for example 500), or add real prices: { "input": USD, "output": USD } per million tokens.`);
     }
   }
   return {

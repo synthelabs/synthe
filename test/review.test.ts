@@ -184,13 +184,14 @@ test("review: interactive bad codes retry before asking any setup questions", as
   io.askSecret = async (question) => teamPrompt(question) ? (teamAsks++, TEAM) : ++attempts === 1 ? "mistyped" : "crimson";
   const proxy = io.proxy!;
   io.proxy = (key) => key === "mistyped" ? { ask: async (request) => { assert.deepEqual(request, cheap); throw new CreditError("That event code is wrong."); } } : proxy(key);
-  io.ask = async (question) => { assert.equal(attempts, 2); return ask(question); };
+  // Only the free-provider menu, part of choosing the credential, comes before the code is accepted.
+  io.ask = async (question) => { if (!question.startsWith("Type a number, or press Enter")) assert.equal(attempts, 2); return ask(question); };
   assert.equal(await init(io, root, undefined, "", {}), true);
   assert.ok(said.includes("That event code is wrong."));
   assert.equal(teamAsks, 1, "a typed team code is reused when only the event code was wrong");
   assert.ok(calls.every((call) => call.key === "crimson"));
   const failed = setup(context);
-  failed.io.ask = async () => { throw new Error("Setup questions must wait"); };
+  failed.io.ask = async (question) => { if (question.startsWith("Type a number, or press Enter")) return ""; throw new Error("Setup questions must wait"); };
   failed.io.askSecret = async (question) => teamPrompt(question) ? TEAM : "wrong";
   let failures = 0;
   failed.io.proxy = () => ({ ask: async () => { failures++; throw new CreditError("Wrong code"); } });

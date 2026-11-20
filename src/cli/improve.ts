@@ -11,7 +11,8 @@ import { baselineLine, loopPrBody, loopPrTitle, money, movement, quantity, taskC
 import { measureAt } from "../improve/worktree.ts";
 import { EDIT_MODEL } from "../improve/writer.ts";
 import { anthropicModel, normalizeTeamCode, onModel, providerHost, providerModel, proxyModel, TEAM_CODE, type Model } from "../model/client.ts";
-import { GOAL_FILE, parseGoal, type OtherProvider } from "../core/goal.ts";
+import { GOAL_FILE, parseGoal, unpricedModels, type OtherProvider } from "../core/goal.ts";
+import { countCalls } from "../core/calls.ts";
 
 // env, makeModel and onInterrupt are only used by the loop; main.ts passes the real ones, tests pass fakes. fetcher is
 // what the run record sends with (tests point it at a fake).
@@ -148,30 +149,34 @@ export async function preflight(io: ImproveIo, dirtyMessage: string, more?: (fou
 }
 
 // provider and model: another provider from synthe.json, and the model all of the loop's calls go to there.
-export interface LoopCredential { key?: string; eventCode?: string; teamCode?: string; line: string; provider?: OtherProvider; model?: string }
+// maxCalls: budget.max_calls from synthe.json, the same hard cap a workflow run has, here per improve run.
+export interface LoopCredential { key?: string; eventCode?: string; teamCode?: string; line: string; provider?: OtherProvider; model?: string; maxCalls?: number }
 
 // The provider in synthe.json, when this repo has one that names another provider. improve needs no synthe.json, so
 // a missing or unreadable one means Anthropic, as before.
-export function goalProvider(root: string): { provider: OtherProvider; model: string } | null {
+export function goalProvider(root: string): { provider: OtherProvider; model: string; maxCalls?: number } | null {
   try {
     const goal = parseGoal(readFileSync(join(root, GOAL_FILE), "utf8"));
-    return goal.provider?.kind === "openai-compatible" ? { provider: goal.provider, model: goal.models.writer } : null;
+    return goal.provider?.kind === "openai-compatible" ? { provider: goal.provider, model: goal.models.writer, maxCalls: goal.budget.max_calls } : null;
   } catch { return null; }
 }
 
 // Which credential the loop spends, chosen only from Synthe's own variables. Unlike `try`, it never falls back to
 // ANTHROPIC_API_KEY: that is usually the app's own key, and the loop makes several calls per round. OPENAI_API_KEY
 // and the like are never read either.
-export function loopCredential(env: Partial<Record<string, string>>, other: { provider: OtherProvider; model: string } | null = null): { credential: LoopCredential } | { problem: string } {
+export function loopCredential(env: Partial<Record<string, string>>, other: { provider: OtherProvider; model: string; maxCalls?: number } | null = null): { credential: LoopCredential } | { problem: string } {
   const generic = env.SYNTHE_API_KEY?.trim();
   if (other) {
     const host = providerHost(other.provider);
     if (!generic) return { problem: `synthe.json sends model calls to ${host}, so Synthe needs your key for it: set SYNTHE_API_KEY in your terminal. Or run npx synthe improve --handoff to make the change with your own coding agent; that needs no credential.` };
-    if (!other.provider.prices?.[other.model]) return { problem: `synthe.json has no price for ${other.model} in provider.prices. improve stops at a budget, so it needs to know what each call costs: add "${other.model}": { "input": USD, "output": USD } per million tokens to provider.prices, then run this again.` };
-    return { credential: { key: generic, provider: other.provider, model: other.model, line: `Credential: your own key from SYNTHE_API_KEY, sent to ${host} for ${other.model} and charged to that account.` } };
+    // parseGoal already refuses an unknown or zero price without budget.max_calls; this guards a goal built elsewhere.
+    const unpriced = unpricedModels({ writer: other.model }, other.provider).length > 0;
+    if (unpriced && other.maxCalls === undefined) return { problem: `synthe.json has no price for ${other.model} in provider.prices, and no budget.max_calls, so nothing would stop the run. Add a price ({ "input": USD, "output": USD } per million tokens) or budget.max_calls, then run this again.` };
+    return { credential: { key: generic, provider: other.provider, model: other.model, ...(other.maxCalls !== undefined ? { maxCalls: other.maxCalls } : {}), line: `Credential: your own key from SYNTHE_API_KEY, sent to ${host} for ${other.model} and charged to that account.` } };
   }
-  const key = generic || env.SYNTHE_ANTHROPIC_KEY?.trim(), eventCode = env.SYNTHE_EVENT_CODE?.trim(), team = env.SYNTHE_TEAM_CODE?.trim();
-  if (key) return { credential: { key, line: `Credential: your own key from ${generic ? "SYNTHE_API_KEY" : "SYNTHE_ANTHROPIC_KEY"}, charged to that Anthropic account.` } };
+  const anthropicGeneric = generic?.startsWith("sk-ant-") ? generic : undefined;
+  const key = anthropicGeneric || env.SYNTHE_ANTHROPIC_KEY?.trim(), eventCode = env.SYNTHE_EVENT_CODE?.trim(), team = env.SYNTHE_TEAM_CODE?.trim();
+  if (key) return { credential: { key, line: `Credential: your own key from ${anthropicGeneric ? "SYNTHE_API_KEY" : "SYNTHE_ANTHROPIC_KEY"}, charged to that Anthropic account.` } };
   if (eventCode) {
     if (!team) return { problem: "SYNTHE_EVENT_CODE is set but SYNTHE_TEAM_CODE isn't. Set SYNTHE_TEAM_CODE to your team code from the Synthe table, then run this again." };
     if (!TEAM_CODE.test(normalizeTeamCode(team))) return { problem: "SYNTHE_TEAM_CODE doesn't look like a team code (crim- and four groups of four letters or digits). Check it against your card from the Synthe table." };
@@ -313,7 +318,10 @@ async function improveLoop(io: ImproveIo, o: ImproveOptions, a: { top: string; g
   const { metric } = config;
   io.say(baselineLine(config));
   io.say(`Synthe now proposes up to ${o.rounds} changes, one per round, measures each one the same way and keeps only wins (budget ${money(o.budgetUsd)}). Your working tree is not touched. Press Ctrl-C to stop.`);
-  const made = (io.makeModel ?? credentialModel)(a.credential);
+  const built = (io.makeModel ?? credentialModel)(a.credential);
+  // The call that would pass budget.max_calls is refused; the loop keeps what already won and stops, as on lost credit.
+  const made = a.credential.maxCalls === undefined ? built : countCalls(built, a.credential.maxCalls, a.credential.maxCalls).model;
+  if (a.credential.maxCalls !== undefined) io.say(`It stops after ${a.credential.maxCalls} model calls (budget.max_calls in synthe.json).`);
   const model = record ? record.model(made) : made;
   const stopWatching = io.onInterrupt?.(() => { removeScratchCheckouts(top); return record?.interrupt(); });
   const hooks = record ? {

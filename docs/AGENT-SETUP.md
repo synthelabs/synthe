@@ -59,6 +59,8 @@ Agent setup uses `SYNTHE_ANTHROPIC_KEY` first, then `SYNTHE_EVENT_CODE` with `SY
 
 If the agent runs on another provider's model through an OpenAI-compatible API (OpenAI, Gemini, Groq, OpenRouter, a local Ollama), the person can use that provider instead, so the prompt is tested on the model their users get. Put the key in front as `SYNTHE_API_KEY=<key>` (never `OPENAI_API_KEY`), and add `--base-url <its OpenAI-compatible URL> --model <the model the agent uses> --price <input>/<output>` to the step 5 command, where the price is US dollars per million input and output tokens from the provider's pricing page. Ask the person for the model and the price; never guess them. Event credit only covers Claude models.
 
+If the person has no key at all, they can get a free one: use `--preset gemini`, `--preset groq` or `--preset openrouter` (no `--base-url` or `--model` needed) and add `--free` if they say the key is on the provider's free tier, or `--price` if it is paid. Ask; don't guess. Free tiers have limits the provider sets; Synthe stops cleanly when they run out and tries again on the next scheduled run.
+
 ## 3. Find the system prompt
 
 1. Search the code for the agent's system prompt. It is a `.md` or `.txt` file, or a string in code, that the app sends to an AI model.

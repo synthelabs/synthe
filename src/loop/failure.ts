@@ -15,7 +15,7 @@ export function failureOf(step: string, e: unknown): Failure {
   // Another provider's refusal: only a key, credit or permission problem needs a person; a wrong model name or URL
   // isn't "busy" either, since the hourly backup would only fail the same way.
   if (e instanceof ProviderError) {
-    const kind: FailureKind = e.quota || e.status === 401 || e.status === 402 || e.status === 403 ? "key" : e.status === null || e.status === 408 || e.status === 429 || e.status >= 500 ? "busy" : "other";
+    const kind: FailureKind = e.credit || e.status === 401 || e.status === 402 || e.status === 403 ? "key" : e.status === null || e.status === 408 || e.status === 429 || e.status >= 500 ? "busy" : "other";
     return { step, kind, message: modelProblem(e)! };
   }
   const plain = modelProblem(e);

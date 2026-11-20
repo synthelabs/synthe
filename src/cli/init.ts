@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ATTACKS_FILE, DEFAULTS, GOAL_FILE, MAX_ATTACKS, MAX_CHECKS, parseAttacks, parseGoal, parseScenarios, type Attack, type Goal, type ModelPrice, type OtherProvider, type PromptLocation, type Scenario, baseUrlProblem } from "../core/goal.ts";
+import { ATTACKS_FILE, DEFAULTS, GOAL_FILE, MAX_ATTACKS, MAX_CHECKS, parseAttacks, parseGoal, parseScenarios, type Attack, type Goal, type ModelPrice, type OtherProvider, type PromptLocation, type Scenario, baseUrlProblem, unpricedModels } from "../core/goal.ts";
+import { FREE_MAX_CALLS, PRESETS, presetById, type Preset } from "../model/presets.ts";
 import { findPrompts } from "../core/prompt.ts";
 import { MAX_PROMPT_CHARS, promptPathProblem, redactSecrets, sha256 } from "../core/safety.ts";
 import { ISSUE_TITLE } from "../loop/report.ts";
@@ -40,7 +41,8 @@ export interface Io {
 }
 
 // Another provider, chosen at setup: where the key goes, the model for each role and what each costs.
-export interface OtherSetup { provider: OtherProvider; models: Goal["models"] }
+// maxCalls: budget.max_calls, set whenever a price is 0 or missing.
+export interface OtherSetup { provider: OtherProvider; models: Goal["models"]; maxCalls?: number }
 
 const SCENARIO_SCHEMA = {
   type: "object",
@@ -225,7 +227,7 @@ Cover these kinds: a prompt injection that tells the agent to ignore its rules, 
 
 export function buildGoal(prompt: PromptLocation, objective: string, guardrails: string[], policy = "", brief = "", checks: string[] = [], counterChecks: string[] = [], other?: OtherSetup): Goal {
   // other: absent for Anthropic, so the goal file is exactly what it always was.
-  return { version: 1, prompt, objective, ...(brief ? { brief } : {}), ...(checks.length ? { checks } : {}), ...(counterChecks.length ? { counter_checks: counterChecks } : {}), ...(policy ? { policy } : {}), guardrails, scenarios: SCENARIOS_FILE, ...DEFAULTS, ...(other ? { models: other.models, provider: other.provider } : {}) };
+  return { version: 1, prompt, objective, ...(brief ? { brief } : {}), ...(checks.length ? { checks } : {}), ...(counterChecks.length ? { counter_checks: counterChecks } : {}), ...(policy ? { policy } : {}), guardrails, scenarios: SCENARIOS_FILE, ...DEFAULTS, ...(other ? { models: other.models, provider: other.provider } : {}), ...(other?.maxCalls ? { budget: { ...DEFAULTS.budget, max_calls: other.maxCalls } } : {}) };
 }
 
 const CODE = /\.(ts|tsx|js|jsx|mjs|py)$/;
@@ -369,10 +371,11 @@ function credentialModel(io: Io, key: string, team?: string): Model {
 
 // The key for another provider: SYNTHE_API_KEY, or pasted. OPENAI_API_KEY and the like are never read, since they
 // are usually the app's own; agent setup reads only SYNTHE_API_KEY.
-async function askOtherKey(io: Io, host: string, env: Partial<Record<string, string>>, agent: boolean): Promise<string | null> {
+async function askOtherKey(io: Io, host: string, env: Partial<Record<string, string>>, agent: boolean, signup?: string): Promise<string | null> {
   const fromEnv = env.SYNTHE_API_KEY?.trim();
   if (fromEnv) return fromEnv;
   if (agent) askPerson(`SYNTHE_API_KEY (the key for ${host}; agent setup never reads OPENAI_API_KEY or ANTHROPIC_API_KEY)`);
+  if (signup) io.say(`Get a key at ${signup} if you don't have one yet, then paste it here. Synthe saves it only as a repo secret.`);
   for (let i = 0; i < 3; i++) {
     const typed = (await io.askSecret(`Paste your key for ${host}: `)).trim();
     if (typed && !/\s/.test(typed)) return typed;
@@ -384,15 +387,19 @@ async function askOtherKey(io: Io, host: string, env: Partial<Record<string, str
 const modelName = (text: string) => /^[^\s]{1,200}$/.test(text);
 
 // The runner plays the team's agent, so it should be the model the agent really runs on: setup proposes the one its
-// code names. The writer, judge and checker default to the same model unless the team picks others.
-async function chooseModels(io: Io, host: string, found: { model: string; path: string } | null, agent?: AgentOptions): Promise<Goal["models"] | null> {
+// code names. The writer, judge and checker default to the same model unless the team picks others. A preset (a free
+// provider) suggests its own models instead, since the code may name another provider's.
+export async function chooseModels(io: Pick<Io, "ask" | "say">, host: string, found: { model: string; path: string } | null, agent?: AgentOptions, preset?: Preset): Promise<Goal["models"] | null> {
   if (agent) {
-    if (!agent.model) askPerson(`--model (the model the agent uses on ${host}${found ? `; its code names ${found.model} in ${found.path}` : ""})`);
-    const m = agent.model;
-    return { writer: m, runner: m, judge: m, checker: m };
+    if (agent.model) return { writer: agent.model, runner: agent.model, judge: agent.model, checker: agent.model };
+    if (preset) return preset.models;
+    askPerson(`--model (the model the agent uses on ${host}${found ? `; its code names ${found.model} in ${found.path}` : ""})`);
   }
   let runner = "";
-  if (found) {
+  if (preset) {
+    if (found) io.say(`Your agent's code names the model ${found.model} (${found.path}). On ${preset.name}, Synthe suggests ${preset.models.runner}; type another model if ${preset.name} serves the one your agent uses.`);
+    runner = (await io.ask(`Press Enter to use ${preset.models.runner} as your agent's model, or type another: `)).trim() || preset.models.runner;
+  } else if (found) {
     io.say(`Your agent's code names the model ${found.model} (${found.path}). Synthe plays your agent on the model it runs on, so its tests match what your users get.`);
     const typed = (await io.ask(`Press Enter to use ${found.model} as your agent's model, or type the model it uses: `)).trim();
     runner = typed || found.model;
@@ -406,17 +413,18 @@ async function chooseModels(io: Io, host: string, found: { model: string; path: 
     const typed = (await io.ask(question)).trim();
     return modelName(typed) ? typed : fallback;
   };
-  const writer = await pick(`Model that writes Synthe's prompt edits (press Enter for ${runner}): `, runner);
-  const judge = await pick(`Model that judges replies and marks your checks (press Enter for ${runner}): `, runner);
+  const writerDefault = preset?.models.writer ?? runner, judgeDefault = preset?.models.judge ?? runner;
+  const writer = await pick(`Model that writes Synthe's prompt edits (press Enter for ${writerDefault}): `, writerDefault);
+  const judge = await pick(`Model that judges replies and marks your checks (press Enter for ${judgeDefault}): `, judgeDefault);
   return { writer, runner, judge, checker: judge };
 }
 
 // Per million tokens, in US dollars, for every model a role uses. Synthe can't check another provider's current prices,
 // so the team gives them; without them every round's cost is unknown, which stops budgets and merges.
-async function askPrices(io: Io, host: string, models: Goal["models"], agent?: AgentOptions): Promise<Record<string, ModelPrice> | null> {
+async function askPrices(io: Pick<Io, "ask" | "say">, host: string, models: Goal["models"], agent?: AgentOptions): Promise<Record<string, ModelPrice> | null> {
   const names = [...new Set([models.runner, models.writer, models.judge, models.checker])];
   if (agent) {
-    if (!agent.price) askPerson(`--price (what ${host} charges for ${names[0]}: US dollars per million input and output tokens, like 0.40/1.60)`);
+    if (!agent.price) askPerson(`--price (what ${host} charges for ${names[0]}: US dollars per million input and output tokens, like 0.40/1.60), or --free for a free-tier key`);
     return Object.fromEntries(names.map((m) => [m, agent.price!]));
   }
   io.say(`\nSynthe stops at your budget and never merges a round whose cost it doesn't know, so it needs what ${host} charges for each model; it can't look up another provider's current prices. They're on your provider's pricing page, in US dollars per million tokens.`);
@@ -439,25 +447,88 @@ async function askPrices(io: Io, host: string, models: Goal["models"], agent?: A
   return prices;
 }
 
-// Models and prices for another provider, then one cheap call on the runner, so a wrong key, URL or model name stops
-// setup before anything is written. Null when setup can't go on; it has already said why.
-async function setUpOther(io: Io, baseUrl: string, key: string, files: { path: string; text: string }[], location: PromptLocation, agent?: AgentOptions): Promise<OtherSetup | null> {
-  const provider: OtherProvider = { kind: "openai-compatible", base_url: baseUrl };
-  const host = providerHost(provider);
+export interface Costs { prices: Record<string, ModelPrice>; maxCalls?: number; maxRequestsPerMinute?: number }
+
+const capLine = (why: string) => `${why} So Synthe stops a run after ${FREE_MAX_CALLS} model calls (budget.max_calls in synthe.json), enough for a few rounds, in case the key turns out to be on a paid plan. Change it there any time.`;
+
+// What the team pays: real prices, or for a free-tier key no cost at all, with a call cap and slow pacing instead. An
+// unknown or zero price is never treated as safe, so it always comes with the cap.
+export async function askCosts(io: Pick<Io, "ask" | "say">, host: string, models: Goal["models"], agent?: AgentOptions, preset?: Preset): Promise<Costs | null> {
+  const names = [...new Set([models.runner, models.writer, models.judge, models.checker])];
+  const free = (): Costs => ({ prices: Object.fromEntries(names.map((m) => [m, { input: 0, output: 0 }])), maxCalls: FREE_MAX_CALLS, ...(preset ? { maxRequestsPerMinute: preset.maxRequestsPerMinute } : {}) });
+  if (agent?.free) return free();
+  if (preset && !agent) {
+    // No clear answer counts as free: the cap is the safe side.
+    const paid = (await yesNoAsk(io, `Is this key on ${preset.name}'s free tier? Type y, or n if it's a paid key: `)) === false;
+    if (!paid) {
+      io.say(capLine(`Free tiers have limits ${preset.name} sets, and Synthe counts no cost for this key.`));
+      io.say("Synthe also spaces its requests out. When the free limit runs out, it stops cleanly and tries again on the next scheduled run; a paid key removes the limits.");
+      return free();
+    }
+  }
+  const prices = await askPrices(io, host, models, agent);
+  if (!prices) return null;
+  if (unpricedModels(models, { prices }).length === 0) return { prices };
+  if (!agent) io.say(capLine("A price of 0 means Synthe can't stop a run at its dollar budget."));
+  return { prices, maxCalls: FREE_MAX_CALLS };
+}
+
+// Asks until it gets a y or an n, three times at most. Null means no clear answer.
+async function yesNoAsk(io: Pick<Io, "ask" | "say">, question: string): Promise<boolean | null> {
+  for (let i = 0; i < 3; i++) {
+    const a = (await io.ask(question)).trim();
+    if (/^y/i.test(a)) return true;
+    if (/^n/i.test(a)) return false;
+    io.say("Please type y or n.");
+  }
+  return null;
+}
+
+// One cheap call on the runner, so a wrong key, URL or model name stops before anything is written.
+export async function checkOther(io: Pick<Io, "say" | "other">, other: OtherSetup, key: string, nothing: string): Promise<boolean> {
+  try {
+    await (io.other ?? providerModel)(other.provider, key).ask({ model: other.models.runner, user: "Say OK.", maxTokens: 5 });
+    return true;
+  } catch (error) {
+    io.say(`${modelProblem(error) ?? (error as Error).message} ${nothing}`);
+    return false;
+  }
+}
+
+export function otherSetup(baseUrl: string, models: Goal["models"], costs: Costs): OtherSetup {
+  return {
+    provider: { kind: "openai-compatible", base_url: baseUrl, prices: costs.prices, ...(costs.maxRequestsPerMinute ? { max_requests_per_minute: costs.maxRequestsPerMinute } : {}) },
+    models, ...(costs.maxCalls ? { maxCalls: costs.maxCalls } : {}),
+  };
+}
+
+// Models and prices for another provider, then the cheap call. Null when setup can't go on; it has already said why.
+async function setUpOther(io: Io, baseUrl: string, key: string, files: { path: string; text: string }[], location: PromptLocation, agent?: AgentOptions, preset?: Preset): Promise<OtherSetup | null> {
+  const host = providerHost({ kind: "openai-compatible", base_url: baseUrl });
   const code = agentCode(files, location);
   const named = code ? modelsInCode(code.text)[0] : undefined;
-  const models = await chooseModels(io, host, code && named ? { model: named, path: code.path } : null, agent);
+  const models = await chooseModels(io, host, code && named ? { model: named, path: code.path } : null, agent, preset);
   if (!models) { io.say("Synthe needs your agent's model name. Nothing in your repo was changed; run `npx synthe init` again when you have it."); return null; }
-  const prices = await askPrices(io, host, models, agent);
-  if (!prices) { io.say("Synthe needs a price for each model. Nothing in your repo was changed; run `npx synthe init` again when you have them."); return null; }
-  const other: OtherSetup = { provider: { ...provider, prices }, models };
-  try {
-    await (io.other ?? providerModel)(other.provider, key).ask({ model: models.runner, user: "Say OK.", maxTokens: 5 });
-  } catch (error) {
-    io.say(`${modelProblem(error) ?? (error as Error).message} Nothing in your repo was changed.`);
-    return null;
-  }
-  return other;
+  const costs = await askCosts(io, host, models, agent, preset);
+  if (!costs) { io.say("Synthe needs a price for each model. Nothing in your repo was changed; run `npx synthe init` again when you have them."); return null; }
+  const other = otherSetup(baseUrl, models, costs);
+  return (await checkOther(io, other, key, "Nothing in your repo was changed.")) ? other : null;
+}
+
+// The visible free path: before asking for a key, a team with none in its environment can pick a provider with a free
+// tier, or any OpenAI-compatible URL. Enter keeps the event code or Anthropic key, as before.
+export async function choosePreset(io: Pick<Io, "ask" | "say">, enter: string): Promise<{ preset?: Preset; baseUrl: string } | null> {
+  io.say("\nWhich models should Synthe use? No key? Pick a free one. Free tiers have limits the provider sets; Synthe stops cleanly when they run out, and a paid key removes them.");
+  PRESETS.forEach((p, i) => io.say(`  ${i + 1}. ${p.name}: get a free key at ${p.signup}`));
+  io.say(`  ${PRESETS.length + 1}. Another provider with an OpenAI-compatible API, at a URL you type`);
+  const answer = (await io.ask(`Type a number, or press Enter for ${enter}: `)).trim();
+  const n = /^\d+$/.test(answer) ? Number(answer) : 0;
+  if (n >= 1 && n <= PRESETS.length) return { preset: PRESETS[n - 1], baseUrl: PRESETS[n - 1].baseUrl };
+  if (n !== PRESETS.length + 1) return null;
+  const url = (await io.ask("Its OpenAI-compatible base URL (for example https://api.openai.com/v1): ")).trim();
+  const why = baseUrlProblem(url);
+  if (why) { io.say(`${why.replace("provider.base_url", "The base URL")} Using ${enter} instead.`); return null; }
+  return { baseUrl: url };
 }
 
 // Agent setup reads the team code only from SYNTHE_TEAM_CODE, the same way it reads the event code.
@@ -533,7 +604,8 @@ async function promptNotOnGitHub(io: Io, slug: string, branch: string, path: str
 
 export async function init(io: Io, root: string, now = () => new Date(), envKey = process.env.ANTHROPIC_API_KEY, env: Partial<Record<"DO_NOT_TRACK" | "SYNTHE_TELEMETRY" | "SYNTHE_EVENT_CODE" | "SYNTHE_ANTHROPIC_KEY" | "SYNTHE_API_KEY" | "SYNTHE_TEAM_CODE", string>> = process.env, agent?: AgentOptions, baseUrlFlag?: string) {
   // --base-url: another provider's OpenAI-compatible API. The person typed it, so it is where their key may go.
-  let baseUrl = agent ? agent.baseUrl : baseUrlFlag;
+  let preset = agent?.preset ? presetById(agent.preset) : undefined;
+  let baseUrl = agent ? agent.baseUrl ?? preset?.baseUrl : baseUrlFlag;
   if (baseUrl !== undefined) {
     const why = baseUrlProblem(baseUrl);
     if (why) { io.say(`${why.replace("provider.base_url", "--base-url")} Nothing changed.`); return false; }
@@ -616,8 +688,12 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   const notAnthropic = !baseUrl && env.SYNTHE_API_KEY?.trim() && !env.SYNTHE_API_KEY.trim().startsWith("sk-ant-");
   if (notAnthropic && agent) askPerson("--base-url (SYNTHE_API_KEY isn't an Anthropic key; ask which provider it is for and its OpenAI-compatible URL)");
   if (notAnthropic) io.say(NOT_ANTHROPIC);
+  if (!agent && baseUrl === undefined && !setupCredential(env)) {
+    const picked = await choosePreset(io, envKey?.trim() ? "your event code or Anthropic key, or the key in ANTHROPIC_API_KEY" : "a Crimson Hacks event code or your own Anthropic key");
+    if (picked) { preset = picked.preset; baseUrl = picked.baseUrl; }
+  }
   const preferred = setupCredential(env, envKey, Boolean(agent));
-  const chosen = baseUrl ? await askOtherKey(io, providerHost({ kind: "openai-compatible", base_url: baseUrl }), env, Boolean(agent)).then((key) => (key ? { key, team: undefined, baseUrl } : null))
+  const chosen = baseUrl ? await askOtherKey(io, providerHost({ kind: "openai-compatible", base_url: baseUrl }), env, Boolean(agent), preset?.signup).then((key) => (key ? { key, team: undefined, baseUrl } : null))
     : agent ? (preferred ? { key: preferred, team: preferred.startsWith("sk-ant-") ? undefined : agentTeam(env) } : null)
     : await askKey(io, envKey, setupCredential(env), env.SYNTHE_TEAM_CODE);
   const key = chosen?.key, team = chosen?.team;
@@ -667,7 +743,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     return false;
   }
   if (agent && !promptText.trim()) askPerson("--prompt");
-  const other = baseUrl ? await setUpOther(io, baseUrl, key, tracked, location, agent) : undefined;
+  const other = baseUrl ? await setUpOther(io, baseUrl, key, tracked, location, agent, preset) : undefined;
   if (other === null) return false;
   const writer = other?.models.writer ?? DEFAULTS.models.writer;
   const model = other ? (io.other ?? providerModel)(other.provider, key) : credentialModel(io, key, team);

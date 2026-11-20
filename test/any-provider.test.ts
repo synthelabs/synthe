@@ -133,12 +133,12 @@ test("429 and 5xx are retried with backoff, honouring retry-after; a rejected ke
   assert.equal(retryAfterMs(new Headers({ "retry-after-ms": "250" })), 250);
   assert.equal(retryAfterMs(new Headers({ "retry-after": new Date(Date.parse("2026-01-01T00:00:10Z")).toUTCString() }), Date.parse("2026-01-01T00:00:00Z")), 10_000);
   assert.equal(retryAfterMs(new Headers({ "retry-after": "86400" })), 60_000);
-  // Four retries, then the busy error, with a plain next step naming the host.
+  // A server error through four retries is busy, with a plain next step naming the host.
   reset();
-  for (let i = 0; i < 5; i++) fake.queue.push({ status: 429, body: { error: { message: "Rate limit" } } });
+  for (let i = 0; i < 5; i++) fake.queue.push({ status: 503, body: { error: { message: "Overloaded" } } });
   const busy = await model().ask(ask).catch((e) => e);
   assert.equal(fake.seen.length, 5);
-  assert.ok(busy instanceof ProviderError);
+  assert.ok(busy instanceof ProviderError && !busy.exhausted);
   const host = new URL(url(server)).host;
   assert.equal(modelProblem(busy), `${host} is busy or rate-limiting this key right now. Wait a few minutes and try again.`);
   assert.equal(failureOf("score", busy).kind, "busy");
@@ -231,8 +231,9 @@ test("parseGoal validates the provider: https, or http only on this machine, and
   const base = JSON.parse(readFileSync("examples/support-bot/synthe.json", "utf8"));
   const models = { writer: "w", runner: "r", judge: "j", checker: "c" };
   const goal = (provider: unknown, m: unknown = models) => JSON.stringify({ ...base, models: m, provider });
-  assert.deepEqual(parseGoal(goal({ kind: "openai-compatible", base_url: "https://api.openai.com/v1", prices: { r: { input: 0.4, output: 1.6 } } })).provider,
-    { kind: "openai-compatible", base_url: "https://api.openai.com/v1", prices: { r: { input: 0.4, output: 1.6 } } });
+  const all = { w: { input: 2, output: 8 }, r: { input: 0.4, output: 1.6 }, j: { input: 2, output: 8 }, c: { input: 2, output: 8 } };
+  assert.deepEqual(parseGoal(goal({ kind: "openai-compatible", base_url: "https://api.openai.com/v1", prices: all })).provider,
+    { kind: "openai-compatible", base_url: "https://api.openai.com/v1", prices: all });
   for (const local of ["http://localhost:11434/v1", "http://127.0.0.1:8000/v1", "http://[::1]:1234/v1"]) assert.equal(baseUrlProblem(local), null);
   assert.equal(parseGoal(goal({ kind: "anthropic" })).provider?.kind, "anthropic");
   for (const [provider, why] of [
@@ -400,7 +401,7 @@ test("agent setup with another provider takes --base-url, --model and --price, t
 
 test("key saves another provider's key as SYNTHE_API_KEY after a cheap call on the runner, reading no app key", async () => {
   const provider: OtherProvider = { kind: "openai-compatible", base_url: "https://api.example.com/v1", prices: { r: { input: 1, output: 2 } } };
-  const remote = JSON.stringify({ version: 1, prompt: { kind: "file", path: "prompt.md" }, objective: "Improve", guardrails: [], scenarios: "s.jsonl", budget: { max_usd: 3 }, models: { writer: "w", runner: "r", judge: "j", checker: "c" }, provider });
+  const remote = JSON.stringify({ version: 1, prompt: { kind: "file", path: "prompt.md" }, objective: "Improve", guardrails: [], scenarios: "s.jsonl", budget: { max_usd: 3, max_calls: 50 }, models: { writer: "w", runner: "r", judge: "j", checker: "c" }, provider });
   const ran: { args: string[]; stdin?: string }[] = [], said: string[] = [], calls: { key: string; model: string }[] = [];
   const io = {
     say: (t: string) => said.push(t),

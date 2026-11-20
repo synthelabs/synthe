@@ -111,13 +111,15 @@ function headlineBase(goal: Goal, state: State, stoppedByTeam = false, mode: Gai
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}${guardLine}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? fromSyntheProxy(last?.plain) ? ` ${last!.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : ` The last round didn't finish because ${apiName(goal.provider)} was busy; Synthe tried again right away; if it stopped, run \`npx synthe restart\`.` : "";
+    const paused = state.paused ? ` Your provider's free limit was used up during the last try (${state.paused.at.slice(0, 16).replace("T", " ")} UTC). That try didn't count as a round; Synthe tries again on the next scheduled run, or run \`npx synthe restart\` once the limit resets.` : "";
+    const wait = paused ? paused : busy(last) ? fromSyntheProxy(last?.plain) ? ` ${last!.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : ` The last round didn't finish because ${apiName(goal.provider)} was busy; Synthe tried again right away; if it stopped, run \`npx synthe restart\`.` : "";
     return merged > 0
       ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}${guardLine}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` }
       : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better`
-    : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
+    : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget`
+    : /^call limit/.test(state.stopped) ? `it made the ${goal.budget.max_calls ?? state.calls ?? 0} model calls the run allows (budget.max_calls)` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && (recent.every((r) => r.outcome === "failed") || badKey(recent.at(-1)))) {
     // Blame what really failed: the latest round's cause, not always the key's credit.
@@ -146,6 +148,7 @@ function nextSteps(goal: Goal, state: State, pilot = false): string[] {
   // Before the steps for starting again, which would only fail on the same key.
   if (state.stopped === "credit") steps.push("To use your own Anthropic key, run `npx synthe key`, then `npx synthe restart`.");
   else if (state.stopped && /^budget/.test(state.stopped)) steps.push(`${state.ownKeyFromUsd === undefined ? "Run `npx synthe key` for a fresh own-key budget, or raise" : "Raise"} budget.max_usd in synthe.json${state.round >= goal.merge_rule.max_rounds ? `. Synthe has also run all ${goal.merge_rule.max_rounds} rounds, so raise merge_rule.max_rounds too` : ""} and push it, then run \`npx synthe restart\`.`);
+  else if (state.stopped && /^call limit/.test(state.stopped)) steps.push("To keep going, raise budget.max_calls in synthe.json and push it, then run `npx synthe restart`.");
   else if (state.stopped && refusedCode(last)) steps.push(`${last!.plain} ${CODE_FIX}`);
   else if (state.stopped && badKey(last)) steps.push(`${last!.plain} Then run \`npx synthe restart\` to start Synthe again.`);
   else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");

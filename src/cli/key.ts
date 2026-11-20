@@ -1,18 +1,28 @@
 import { STATE_BRANCH } from "../core/goal.ts";
 import type { Io } from "./init.ts";
 import { anthropicModel, modelProblem, providerHost, providerModel } from "../model/client.ts";
-import { parseGoal, type Goal, type OtherProvider, type Provider } from "../core/goal.ts";
+import { GOAL_FILE, parseGoal, type Goal, type OtherProvider, type Provider } from "../core/goal.ts";
+import { askCosts, checkOther, chooseModels, choosePreset, otherSetup } from "./init.ts";
+import type { Preset } from "../model/presets.ts";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { newState, type State } from "../core/state.ts";
 
 // provider: from synthe.json on this computer. Another provider gets its own flow (setOtherKey); without one, this is
 // the Anthropic flow as it always was, with SYNTHE_API_KEY also accepted.
-export async function setKey(io: Pick<Io, "askSecret" | "run" | "say"> & Partial<Pick<Io, "model" | "other">>, env: NodeJS.ProcessEnv = process.env, terminal = Boolean(process.stdin.isTTY), provider?: Provider): Promise<boolean> {
+// root: the project folder, whose synthe.json a switch to a free provider rewrites (only offered when io can ask).
+export async function setKey(io: Pick<Io, "askSecret" | "run" | "say"> & Partial<Pick<Io, "model" | "other" | "ask">>, env: NodeJS.ProcessEnv = process.env, terminal = Boolean(process.stdin.isTTY), provider?: Provider, root?: string): Promise<boolean> {
   if (provider?.kind === "openai-compatible") return setOtherKey(io, provider, env, terminal);
   // ANTHROPIC_API_KEY is often the team's app key, so it is only used after a deliberate Enter, as in init.
   const own = env.SYNTHE_API_KEY?.trim() || env.SYNTHE_ANTHROPIC_KEY?.trim(), app = env.ANTHROPIC_API_KEY?.trim();
   if (!own && !terminal) {
     io.say("Ask the person to run `npx synthe key` in their own terminal.");
     return false;
+  }
+  // No key yet: a provider with a free tier is one choice away, as in init.
+  if (!own && root && io.ask) {
+    const picked = await choosePreset({ ask: io.ask, say: io.say }, "your own Anthropic key");
+    if (picked) return switchProvider({ ...io, ask: io.ask }, picked, root);
   }
   const typed = own ? "" : (await io.askSecret(app ? "Paste your own Anthropic key, or press Enter to use the key in ANTHROPIC_API_KEY: " : "Paste your own Anthropic key: ")).trim();
   const key = own || typed || app || "";
@@ -73,6 +83,32 @@ async function setOtherKey(io: Pick<Io, "askSecret" | "run" | "say"> & Partial<P
     return false;
   }
   await saveKey(io, slug, goal, "SYNTHE_API_KEY", key, `this key for ${host}`, `your own key for ${host}`);
+  return true;
+}
+
+// Switching an Anthropic or event-credit repo to another provider: the key, the models and their costs, one cheap call,
+// then synthe.json here is rewritten and the key saved as SYNTHE_API_KEY. Rounds keep their current credential until
+// the team pushes synthe.json: until then the workflow ignores a SYNTHE_API_KEY that isn't an Anthropic key.
+async function switchProvider(io: Pick<Io, "askSecret" | "run" | "say" | "ask"> & Partial<Pick<Io, "other">>, picked: { preset?: Preset; baseUrl: string }, root: string): Promise<boolean> {
+  const host = providerHost({ kind: "openai-compatible", base_url: picked.baseUrl });
+  if (picked.preset) io.say(`Get a key at ${picked.preset.signup} if you don't have one yet, then paste it here.`);
+  const key = (await io.askSecret(`Paste your key for ${host}: `)).trim();
+  if (!key || /\s/.test(key)) { io.say(`Paste the key for ${host} on one line, then press Enter. Nothing changed.`); return false; }
+  const found = await remoteGoal(io);
+  if (!found) return false;
+  const models = await chooseModels(io, host, null, undefined, picked.preset);
+  if (!models) { io.say("Synthe needs your agent's model name. Nothing changed."); return false; }
+  const costs = await askCosts(io, host, models, undefined, picked.preset);
+  if (!costs) { io.say("Synthe needs a price for each model. Nothing changed."); return false; }
+  const other = otherSetup(picked.baseUrl, models, costs);
+  if (!(await checkOther(io, other, key, "Nothing changed."))) return false;
+  const path = join(root, GOAL_FILE);
+  const saved = JSON.parse(readFileSync(path, "utf8"));
+  const next = { ...saved, models, provider: other.provider, budget: { ...saved.budget, ...(other.maxCalls ? { max_calls: other.maxCalls } : {}) } };
+  parseGoal(JSON.stringify(next));
+  writeFileSync(path, `${JSON.stringify(next, null, 2)}\n`);
+  await saveKey(io, found.slug, found.goal, "SYNTHE_API_KEY", key, `this key for ${host}`, `your own key for ${host}`);
+  io.say(`Saved ${GOAL_FILE} with ${picked.preset?.name ?? host}. Rounds use it once you push it: git commit -m "Synthe: use ${picked.preset?.name ?? host}" ${GOAL_FILE} && git push`);
   return true;
 }
 

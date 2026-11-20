@@ -337,7 +337,7 @@ async function main() {
   else if (command === "submit") process.exitCode = (await submit({ say: console.log, ask, run, exec: shellExec, env: process.env }, process.cwd(), submitOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
-    process.exitCode = (await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync(GOAL_FILE, "utf8")).provider)) ? 0 : 1;
+    process.exitCode = (await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync(GOAL_FILE, "utf8")).provider, process.cwd())) ? 0 : 1;
   }
   else if (command === "upgrade") console.log(upgrade(process.cwd(), template(), process.argv.includes("--event")));
   else if (command === "stop") await stop();

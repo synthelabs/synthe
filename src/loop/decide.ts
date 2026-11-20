@@ -5,12 +5,13 @@ import { holdoutScorePct, judgeRound, mean, type RoundScores, type ScoreRow } fr
 export { holdoutScorePct };
 import { readPrompt, writePrompt } from "../core/prompt.ts";
 import { candidateProblem, promptPathProblem, sha256 } from "../core/safety.ts";
-import { resumeIfScenariosChanged, stopReason, type Landing, type RoundRecord, type State } from "../core/state.ts";
+import { resumeIfScenariosChanged, stopReason, type Landing, type RoundRecord, type State, callLimit } from "../core/state.ts";
 import { Refusal, type MergeProblem, type Repo } from "../github/repo.ts";
 import { ISSUE_TITLE, exampleText, notTested, renderReport } from "./report.ts";
 import { displaySeries, renderDeltaBlock, renderScoreSvg, scoreSeries } from "./delta.ts";
 import type { Candidate } from "./write.ts";
 import type { Failure } from "./failure.ts";
+import type { CleanStop } from "../core/calls.ts";
 import { LOSS, TIE, WIN } from "./score.ts";
 import { candidateScope, rememberCandidates } from "../core/candidate-history.ts";
 import { fromSyntheProxy, PROXY_REFUSED } from "../core/share.ts";
@@ -21,6 +22,8 @@ import { combinedRounds, updatePool } from "./pool.ts";
 
 export const BUSY_RETRIES = 2;
 export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null; calibration?: { check: string; reading: string }[] | null;
+  // Model calls the write and score steps made (budget.max_calls), and a clean stop one of them ended with.
+  calls?: number; stopped?: CleanStop | null;
   // The score step's reusable results for the current prompt. Only this job may write state (the score job's token
   // can only read), so the score step hands them over in scores.json and they are kept here.
   caches?: { attack?: { key: string; failed: string[] | null } | null; score?: { key: string; pct: number | null } | null } }
@@ -239,7 +242,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     }
     await settle(goal, repo, state, Boolean(pr?.merged));
     if (!input.scores) {
-      state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
+      state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd, budget.max_calls);
       await writeReport(goal, repo, state);
       await repo.writeState(state);
       return null;
@@ -250,12 +253,25 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   const scenarioText = await repo.readFile(goal.scenarios, head);
   const scenariosHash = scenarioText === null ? null : sha256(scenarioText);
   if (scenariosHash !== null) resumeIfScenariosChanged(state, scenariosHash);
-  if (stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd)) {
+  if (stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd, budget.max_calls)) {
     if (recovered) {
-      state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
+      state.stopped = stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd, budget.max_calls);
       await writeReport(goal, repo, state);
       await repo.writeState(state);
     }
+    return null;
+  }
+
+  // A free limit used up, or the run's call cap reached, partway through: the round didn't finish, so it isn't counted
+  // as a round or a stall, and nothing in the repo changes. What it spent and the calls it made still count.
+  if (input.stopped) {
+    state.spendUsd += input.costUsd ?? 0;
+    state.calls = (state.calls ?? 0) + (input.calls ?? 0);
+    if (input.stopped.kind === "limit") state.stopped = callLimit(budget.max_calls ?? state.calls);
+    else state.paused = { at: now.toISOString(), step: input.stopped.step };
+    state.chainReady = false;
+    await writeReport(goal, repo, state);
+    await repo.writeState(state);
     return null;
   }
 
@@ -275,6 +291,8 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   const priorStalls = state.stalls;
   state.round = round;
   state.spendUsd += input.costUsd ?? 0;
+  if (input.calls) state.calls = (state.calls ?? 0) + input.calls;
+  delete state.paused;
   state.stalls = priorStalls + 1;
   state.pending = { round, at: record.at, costUsd: input.costUsd };
   // The prompt the run started from, kept for `npx synthe vault`, which compares the end of the run with it.
@@ -586,7 +604,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
   state.scenariosHash = scenariosHash;
   state.pending = null;
   state.rounds.push(record);
-  state.stopped = state.stopped ?? stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd);
+  state.stopped = state.stopped ?? stopReason(state, merge_rule.max_rounds, merge_rule.stall_rounds, budget.max_usd, budget.max_calls);
   // A busy API usually clears within minutes, and GitHub's hourly schedule can't be counted on to retry (it fired
   // once in 16 hours, and not at all for 10-minute crons, in Nov 2026), so a busy round queues one more try right
   // away, at most BUSY_RETRIES in a row. Every try is still a round, so max_rounds bounds this too.

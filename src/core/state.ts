@@ -60,6 +60,10 @@ export interface State {
   lastMerge: { pr: number; priorPrompt: string; mergedHash: string; reverted: boolean } | null;
   stalls: number;
   spendUsd: number;
+  // Model calls made in this run, across write and score (budget.max_calls). Absent in state written before it existed.
+  calls?: number;
+  // The provider's free limit ran out during a round: the round didn't count, and the next scheduled run tries again.
+  paused?: { at: string; step: string } | null;
   ownKeyFromUsd?: number;
   spendUnknown: boolean;
   stopped: string | null;
@@ -121,10 +125,11 @@ export const newState = (): State => ({
   round: 0, prompt: null, lastMerge: null, stalls: 0, spendUsd: 0, spendUnknown: false, stopped: null, issue: null, scenariosHash: null, lessons: null, pending: null, proposal: null, chainReady: false, rounds: [],
 });
 
-export function stopReason(s: State, maxRounds: number, stallRounds: number, maxUsd: number): string | null {
+export function stopReason(s: State, maxRounds: number, stallRounds: number, maxUsd: number, maxCalls?: number): string | null {
   if (s.stopped) return s.stopped;
   if (s.spendUnknown) return "spend could not be measured";
   if (budgetSpend(s) >= maxUsd) return `budget of $${maxUsd} is used`;
+  if (maxCalls !== undefined && (s.calls ?? 0) >= maxCalls) return callLimit(maxCalls);
   if (s.round >= maxRounds) return `reached ${maxRounds} rounds`;
   if (s.stalls >= stallRounds) return `${stallRounds} rounds in a row found no winner`;
   return null;
@@ -136,8 +141,10 @@ export function budgetSpend(state: State): number {
 
 // Running out of rounds, budget or ideas is a finished run. Anything else needs someone to act.
 export function isFinished(reason: string): boolean {
-  return /^(budget of .* is used|reached \d+ rounds|\d+ rounds in a row found no winner)$/.test(reason);
+  return /^(budget of .* is used|call limit of \d+ is used|reached \d+ rounds|\d+ rounds in a row found no winner)$/.test(reason);
 }
+
+export const callLimit = (maxCalls: number) => `call limit of ${maxCalls} is used`;
 
 // A run that stalled starts again when the scenarios change, so adding harder ones is all it takes to continue.
 export function resumeIfScenariosChanged(s: State, scenariosHash: string): boolean {
