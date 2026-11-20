@@ -75,7 +75,8 @@ export async function migrate(args: string[], env: MigrateEnv): Promise<number> 
 
   const prompt = readPrompt(readFileSync(join(env.cwd, goal.prompt.path), "utf8"), goal, null);
   if (prompt === null) return fail(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
-  const scenarios = parseScenarios(readFileSync(join(env.cwd, goal.scenarios), "utf8"));
+  // Vault cases are kept for `npx synthe vault` alone, so a model switch is never chosen on them either.
+  const scenarios = parseScenarios(readFileSync(join(env.cwd, goal.scenarios), "utf8")).filter((s) => s.split === "train" || s.split === "holdout");
 
   let real = env.model;
   if (!parsed.dryRun && !real) {

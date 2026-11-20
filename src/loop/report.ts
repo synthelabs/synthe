@@ -6,6 +6,7 @@ import { budgetSpend, isFinished, type RoundRecord, type State } from "../core/s
 import { FULL_SHARE_UNTIL, fromSyntheProxy, PROXY_AUTH_MESSAGE, PROXY_REFUSED } from "../core/share.ts";
 import { runLuckLines } from "../core/run-risk.ts";
 import { displaySeries, scoreSeries } from "./delta.ts";
+import { vaultLines } from "./vault.ts";
 
 export const ISSUE_TITLE = "Synthe: prompt report";
 
@@ -290,6 +291,10 @@ export function renderReport(goal: Goal, state: State, now: Date = new Date(), r
     ? "**Mode:** review. Each change waits in a pull request until you merge or close it."
     : "**Mode:** automatic. Changes are merged into your main branch as soon as they win.";
   const lines = [`## ${title}`, "", summary, "", mode, ""];
+  // Display only: the vault never merges or reverts anything.
+  const moved = scoreMovement(state);
+  const vault = vaultLines(state, (moved !== null && moved.last > moved.first) || state.rounds.some((r) => r.outcome === "merged"));
+  if (vault.length) lines.push(vault.join(" "), "");
   // The score chart, when rounds have been measured and the repo is known: the decide step keeps the
   // chart beside state.json on the state branch, and the round in the URL keeps a stale cached copy
   // from standing in for the new one. The round table below stays as the text fallback.

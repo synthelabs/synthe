@@ -101,7 +101,9 @@ export function parseGoal(text: string): Goal {
   };
 }
 
-export interface Scenario { id: string; input: string; expected: string; split: "train" | "holdout" }
+// vault: kept out of every round, so picking winners round after round can't slowly fit it the way it can fit the
+// held-back cases. Only `npx synthe vault` reads it, once a run is over. Optional.
+export interface Scenario { id: string; input: string; expected: string; split: "train" | "holdout" | "vault" }
 
 export function parseScenarios(text: string): Scenario[] {
   const file = ".synthe/scenarios.jsonl"; // named in every message, so a team knows which file to open
@@ -118,7 +120,7 @@ export function parseScenarios(text: string): Scenario[] {
       throw new Error(`${file} line ${line} isn't valid JSON: ${(e as Error).message}`);
     }
     const problems = ["id", "input", "expected"].filter((k) => !s?.[k]).map((k) => `"${k}" is missing`);
-    if (s?.split !== "train" && s?.split !== "holdout") problems.push(`"split" must be "train" or "holdout"`);
+    if (s?.split !== "train" && s?.split !== "holdout" && s?.split !== "vault") problems.push(`"split" must be "train", "holdout" or "vault"`);
     if (problems.length) throw new Error(`${file} line ${line} has a problem: ${problems.join("; ")}.`);
     // Paired comparisons match rows by id, so a repeated id would break scoring later with a vaguer error.
     if (lineOf.has(s.id)) throw new Error(`${file}: lines ${lineOf.get(s.id)} and ${line} both use the id "${s.id}"; give each test case its own id`);

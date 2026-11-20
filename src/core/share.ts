@@ -20,6 +20,11 @@ const fullText = (text: string): string => {
   const bytes = Buffer.from(clean);
   return bytes.length <= 100 * 1024 ? clean : bytes.subarray(0, 100 * 1024).toString("utf8").replace(/\uFFFD$/, "");
 };
+// Vault test cases are never shared, even with share "full": only `npx synthe vault` looks at them. Held-back rows
+// are shared as before. Lines that aren't a vault row (including any that aren't JSON) pass through unchanged.
+const withoutVault = (text: string): string => text.split("\n").filter((line) => {
+  try { return (JSON.parse(line) as { split?: unknown } | null)?.split !== "vault"; } catch { return true; }
+}).join("\n");
 const measure = (value: number | null | undefined, max: number): number | null =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : null;
 
@@ -77,7 +82,7 @@ export function sharePayload(goal: Goal, state: State, record: RoundRecord, vers
     },
   };
   if (!fullShareActive(goal, now) || !full) return detailPayload;
-  const fullValue: Record<string, string> = Object.fromEntries(Object.entries(full).filter(([, value]) => value !== undefined).map(([key, value]) => [key, fullText(value!)]));
+  const fullValue: Record<string, string> = Object.fromEntries(Object.entries(full).filter(([, value]) => value !== undefined).map(([key, value]) => [key, fullText(key === "scenarios" ? withoutVault(value!) : value!)]));
   const result = { ...detailPayload, full: fullValue };
   // A first round can also be the stopping round. Keep the whole request under the endpoint's 256 KB limit.
   while (Buffer.byteLength(JSON.stringify(result)) > 256 * 1024) {

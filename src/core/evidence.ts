@@ -269,7 +269,8 @@ export function verifyEvidence(filePath: string, repoRoot: string): VerifyResult
   let splits: Map<string, "train" | "holdout">;
   try {
     goal = parseGoal(readFileSync(goalPath, "utf8"));
-    splits = new Map(parseScenarios(readFileSync(join(repoRoot, goal.scenarios), "utf8")).map((s) => [s.id, s.split]));
+    // Rounds never score vault cases, so a record has none to recheck.
+    splits = new Map(parseScenarios(readFileSync(join(repoRoot, goal.scenarios), "utf8")).flatMap((s) => (s.split === "train" || s.split === "holdout" ? [[s.id, s.split] as const] : [])));
   } catch (e) {
     return { ok: false, reason: `couldn't read the goal and test cases in ${repoRoot} to recheck the verdict: ${(e as Error).message}` };
   }

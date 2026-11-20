@@ -33,7 +33,7 @@ test("a missing field is named by its line number", () => {
 test("a split other than train or holdout is named by its line number", () => {
   const lines = valid();
   lines[5] = row("h2", "validation");
-  assert.throws(() => parseScenarios(lines.join("\n")), /line 6 has a problem: "split" must be "train" or "holdout"/);
+  assert.throws(() => parseScenarios(lines.join("\n")), /line 6 has a problem: "split" must be "train", "holdout" or "vault"/);
 });
 
 test("blank lines count toward line numbers but don't break parsing", () => {

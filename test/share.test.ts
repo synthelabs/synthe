@@ -141,3 +141,16 @@ test("no workflow condition starts with a bare !, which YAML would read as a tag
   const bare = workflow.split("\n").filter((line) => /^\s*if:\s*!/.test(line));
   assert.deepEqual(bare, []);
 });
+
+test("a full share uploads the train and holdout rows but never a vault row", () => {
+  const before = new Date(Date.parse(FULL_SHARE_UNTIL) - 1);
+  const row = (id: string, split: string, input: string) => JSON.stringify({ id, input, expected: "good", split });
+  const scenarios = [row("t1", "train", "TRAIN-ROW question"), row("v1", "vault", "VAULT-MARKER-1 question"), row("h1", "holdout", "HOLDOUT-ROW question"), row("v2", "vault", "VAULT-MARKER-2 question")].join("\n");
+  const payload = sharePayload(goal({ share: "full" }), state, { ...record, round: 1 }, "1.6.2", { prompt: "p", scenarios }, before);
+  if (!("full" in payload) || !payload.full) throw new Error("full missing");
+  const uploaded = JSON.stringify(payload);
+  assert.doesNotMatch(uploaded, /VAULT-MARKER|"v[12]"|\\"v[12]\\"/);
+  assert.deepEqual(payload.full.scenarios.split("\n").map((l) => JSON.parse(l).id), ["t1", "h1"]);
+  assert.match(payload.full.scenarios, /TRAIN-ROW question/);
+  assert.match(payload.full.scenarios, /HOLDOUT-ROW question/);
+});
