@@ -60,6 +60,7 @@ All commands are `npx synthe pilot <command> --dir <pilot directory>` (from a ch
 | 3 | `approve --candidate <full id> --experiment <full id> --approver <name>` | Records a person's approval of exactly that candidate and experiment. `--reject` records a rejection. |
 | 4 | `analyze --experiment <id> --telemetry <export.json>` | Imports the outcome export and prints keep, hold or revert. Without `--telemetry` it recomputes from what is stored. |
 | 5 | `promote --list`, then `promote --request <request.json>` | Approved failures become regression cases in a new pack version. |
+| - | `cases --replay <replay id> [--out <file>]` | Optional, for teams that also run `npx synthe init`. Writes the current prompt's failures on discovery cases as `scenarios.jsonl` lines (`split` is always `train`) for a person to review. See below. |
 | any | `status`, `report`, `verify [--head <hash>]` | Where things stand; rebuild `reports/PILOT.md`; recheck every record and recompute every decision. |
 
 `--model` is `scripted:<file>` (a local rule file; sends nothing) or `--live` (see [Live model provider](#live-model-provider)). There is no default: a command that needs a model and is not told which one refuses.
@@ -483,6 +484,16 @@ An unexpected error prints only its kind, because an error message can quote the
 `promote --list` prints the failures a reviewer may approve: every check that failed in a stored replay on the active pack. The request names the approver, existing cases with the replay evidence, and any new redacted cases (for example from the experiment) with the experiment id.
 
 The result is a new pack version that names the old one as its parent. The old pack is not changed. A held-out case stays held out. `promote` is the only way to make a new version: the `pack` command refuses any pack once one is frozen, and a promotion that would put a held-out conversation in the discovery split, under its own id or as a copy, is refused. A copy is recognised by what the customer said, whatever its case, spacing or punctuation and whatever the agent's side says, when the customer said eight words or more. A shorter conversation is a copy only when every message is the same, because many customers write the same few words. The same rule applies when the first pack is frozen. A case that a promotion adds is held to a stricter rule: it is refused as a discovery case when four in five of the three-word runs of the customer's text (of the shorter of the two texts, and at least six runs) are a held-out conversation's. So a copy with a word added, or a sentence dropped, is refused; a different conversation that reads much like a held-out one must be added as held out. A copy rewritten beyond that cannot be recognised, and a held-out case is only known inside its own pilot directory: the approver must not add one from elsewhere.
+
+### Failures as Synthe test cases
+
+`cases --replay <replay id>` turns the current prompt's failures into candidate lines for `.synthe/scenarios.jsonl`, the test cases `npx synthe init` uses. It reads a stored replay and its pack, calls no model and no network, and writes one file: `<pilot directory>/cases/cases-<id>.jsonl`, or the new file `--out` names. It never adds to or replaces an existing file, so naming the team's scenarios file is refused; copy the lines you want in yourself.
+
+- One line per assistant turn where the baseline prompt failed a check (primary or guard) on a discovery case: `{"id", "input", "expected", "split": "train"}`. Held-out conversations are never used. The terminal shows counts and paths, not conversations.
+- `input` is the customer's message the failing turn answered. After the first turn, the earlier messages come first as a `Customer:` / `Agent:` transcript, with the oldest dropped past 4000 characters. Tool calls and tool results are not part of it, and the command says when a case came from a conversation that used tools.
+- `expected` is made from data already in the pack: the one-sentence description of each failed check from `check_catalog`, else a sentence made from the check's rule (for example `The reply mentions one of: "label"`). When neither exists the line says `TODO: describe what a good answer does`. Fill it in before use.
+- The pack was checked for personal data on import. The command checks every line again with the same rules and leaves out, and counts, any case that trips them.
+- The lines are customer conversations. The scenarios file is committed to the repo and read by Synthe's models, so confirm your export's approved uses cover that before copying a case in. The command prints what the pack was approved for.
 
 ## Checks
 

@@ -44,6 +44,9 @@ export interface Landing { branch: string; kind: "merge" | "revert"; text: strin
 
 export interface State {
   candidateHistory?: CandidateMemory[];
+  // Changes a person closed without merging (newest last, at most 10), with the last thing they wrote on the pull
+  // request when they wrote one. Set when the decide step settles the proposal, so the write step needs no GitHub calls.
+  closedProposals?: { pr: number; round: number; summary: string; comment?: string }[];
   round: number;
   prompt: string | null; // tracked inline prompt text
   lastMerge: { pr: number; priorPrompt: string; mergedHash: string; reverted: boolean } | null;
