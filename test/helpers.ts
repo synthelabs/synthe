@@ -77,9 +77,14 @@ export class MemoryRepo implements Repo {
     const pr = [...this.prs].reverse().find((p) => p.branch === branch);
     return pr ? { number: pr.number, open: !pr.closed && !pr.merged, merged: pr.merged } : null;
   }
-  comments = new Map<number, string>(); // the last human comment on each pull request
+  // Comments on each pull request, oldest first. Like GitHub, only a reviewer's (OWNER, MEMBER or COLLABORATOR) counts.
+  commentLog = new Map<number, { body: string; author_association: string }[]>();
+  comments = { set: (n: number, body: string, author_association = "MEMBER") => { this.commentLog.set(n, [...(this.commentLog.get(n) ?? []), { body, author_association }]); } };
   failComments = false;
-  async lastHumanComment(n: number) { if (this.failComments) throw new Error("GitHub GET comments: 500"); return this.comments.get(n) ?? null; }
+  async lastHumanComment(n: number) {
+    if (this.failComments) throw new Error("GitHub GET comments: 500");
+    return [...(this.commentLog.get(n) ?? [])].reverse().find((c) => ["OWNER", "MEMBER", "COLLABORATOR"].includes(c.author_association) && c.body.trim())?.body ?? null;
+  }
   async readState() { return structuredClone(this.state); }
   async writeState(s: State) { this.state = structuredClone(s); }
   stateFiles = new Map<string, string>(); // files on the state branch other than state.json, such as evidence

@@ -28796,7 +28796,7 @@ function githubRepo(slug, token2, api = "https://api.github.com", sleep2 = sleep
         if (!res.ok) throw new Error(`GitHub GET /issues/${number}/comments: ${res.status}`);
       }
       const list = await res.json();
-      const human = (Array.isArray(list) ? list : []).filter((c) => c?.user?.type !== "Bot" && !/\[bot\]$/.test(c?.user?.login ?? "") && typeof c?.body === "string" && c.body.trim() !== "");
+      const human = (Array.isArray(list) ? list : []).filter((c) => REVIEWERS.has(c?.author_association) && c?.user?.type !== "Bot" && !/\[bot\]$/.test(c?.user?.login ?? "") && typeof c?.body === "string" && c.body.trim() !== "");
       return human.length ? human[human.length - 1].body : null;
     },
     async upsertIssue(number, title, body) {
@@ -28848,7 +28848,7 @@ function githubRepo(slug, token2, api = "https://api.github.com", sleep2 = sleep
   };
   return repo;
 }
-var Refusal, isRateLimited, classify, STATE_PATH, RETRIES, sleepFor;
+var Refusal, isRateLimited, classify, STATE_PATH, REVIEWERS, RETRIES, sleepFor;
 var init_repo = __esm({
   "src/github/repo.ts"() {
     "use strict";
@@ -28866,6 +28866,7 @@ var init_repo = __esm({
     isRateLimited = (status3, headers, text4) => status3 === 429 || status3 === 403 && (headers.get("x-ratelimit-remaining") === "0" || /rate limit/i.test(text4));
     classify = (res, text4) => isRateLimited(res.status, res.headers, text4) ? "rate_limited" : res.status === 405 ? "blocked" : res.status === 401 ? "token" : res.status === 403 ? "permission" : res.status === 409 ? "moved" : "other";
     STATE_PATH = "state.json";
+    REVIEWERS = /* @__PURE__ */ new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
     RETRIES = 2;
     sleepFor = (ms2) => new Promise((r) => setTimeout(r, ms2));
   }
