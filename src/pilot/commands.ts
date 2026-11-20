@@ -464,7 +464,6 @@ const eligibleReplay = (store: PilotStore, candidateId: Sha256, packId: Sha256):
 // A decision that ends an experiment: after it, the next change may start.
 const settledBy = (store: PilotStore, experimentId: Sha256): JournalEntry | undefined =>
   store.find("analysis.decided").find((e) => e.refs.experiment === experimentId && (e.refs.recommendation === "keep" || e.refs.recommendation === "revert"));
-const settled = (store: PilotStore, experimentId: Sha256): boolean => settledBy(store, experimentId) !== undefined;
 
 // The experiments a person approved that have no keep or revert yet: the ones whose exports are still being read.
 // Read-only; `watch` uses it to find what to look at.

@@ -36034,7 +36034,6 @@ __export(main_exports, {
   CHECKOUT_PROG: () => CHECKOUT_PROG,
   DEFAULT_DIR: () => DEFAULT_DIR,
   GUIDE_URL: () => GUIDE_URL,
-  HELP: () => HELP,
   defaultDeps: () => defaultDeps,
   helpText: () => helpText,
   main: () => main
@@ -36080,7 +36079,7 @@ async function main(argv, deps, prog = CHECKOUT_PROG) {
     return 1;
   }
 }
-var DEFAULT_DIR, CHECKOUT_PROG, GUIDE_URL, helpText, HELP, OPTIONS, realLogExporter, COMMANDS, defaultDeps;
+var DEFAULT_DIR, CHECKOUT_PROG, GUIDE_URL, helpText, OPTIONS, realLogExporter, COMMANDS, defaultDeps;
 var init_main = __esm({
   "src/pilot/main.ts"() {
     "use strict";
@@ -36131,7 +36130,6 @@ Close the loop
 A live model provider is used only with --live --confirm-endpoint <url> --confirm-data "<data class>" (a host other than api.anthropic.com also needs --allow-endpoint-host <host>), and only when
 pilot.json records the customer's approval. Everything stays in the pilot directory unless you publish a review.
 Guide: docs/PILOT.md (${GUIDE_URL})`;
-    HELP = helpText(CHECKOUT_PROG);
     OPTIONS = {
       dir: { type: "string" },
       config: { type: "string" },
@@ -41185,7 +41183,7 @@ async function tryRound() {
   console.log(verdict2.action === "merge" ? `In a real run, Synthe would merge this. ${verdict2.plain}` : "In a real run, nothing would change this round.");
   console.log(`Cost: ${written.costUsd === null || costUsd2 === null ? "unknown" : `$${(written.costUsd + costUsd2).toFixed(2)}`}`);
 }
-var HELP2 = `Synthe makes your AI agent's system prompt better while you sleep.
+var HELP = `Synthe makes your AI agent's system prompt better while you sleep.
 
 Start here, inside your project's folder:
   npx synthe init     set up this repo and start
@@ -41240,7 +41238,7 @@ async function main2() {
       console.error("The pilot command hit an unexpected error and stopped.");
       return 1;
     });
-  } else console.log(HELP2);
+  } else console.log(HELP);
 }
 main2().catch((e) => {
   if (e instanceof AgentSetupError) {

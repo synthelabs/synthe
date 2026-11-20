@@ -55,8 +55,6 @@ A live model provider is used only with --live --confirm-endpoint <url> --confir
 pilot.json records the customer's approval. Everything stays in the pilot directory unless you publish a review.
 Guide: docs/PILOT.md (${GUIDE_URL})`;
 
-export const HELP = helpText(CHECKOUT_PROG);
-
 const OPTIONS = {
   dir: { type: "string" }, config: { type: "string" }, "repo-dir": { type: "string" }, rev: { type: "string" },
   telemetry: { type: "string" }, file: { type: "string" }, model: { type: "string" }, proposer: { type: "string" },
