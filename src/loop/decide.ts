@@ -280,7 +280,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
 
   // Opens the pull request, then merges it (auto mode) or leaves it for a person (propose mode, or a repo whose
   // branch rules require a review). Returns the pull request and whether it was only proposed, or null.
-  type Why = { changed: string; plain: string; technical: string; diff?: string[]; example?: Example; unverified?: string[]; evidence?: (proposed: boolean) => EvidenceRecord; delta?: (proposed: boolean) => string };
+  type Why = { found?: string; changed: string; plain: string; technical: string; diff?: string[]; example?: Example; unverified?: string[]; evidence?: (proposed: boolean) => EvidenceRecord; delta?: (proposed: boolean) => string };
   const land = async (text: string, kind: "merge" | "revert", title: string, why: Why): Promise<{ pr: number; proposed: boolean } | null> => {
     const branch = `synthe/round-${round}`;
     const landing: Landing = { branch, kind, text, priorPrompt: current!, propose: merge_rule.mode === "propose" };
@@ -304,8 +304,8 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
     const bodyFor = (proposed: boolean, blocked = false) => [
       proposed
         ? blocked
-          ? `**Waiting for your review.** Synthe found a better prompt, but this repo's rules require a review before merging into \`${base}\`. Merge this pull request to keep the change, or close it to decline. Synthe pauses until you decide.`
-          : `**Waiting for your review.** Synthe found a better prompt. Merge this pull request to keep the change, or close it to decline. Synthe pauses until you decide.`
+          ? `**Waiting for your review.** Synthe found ${why.found ?? "a better prompt"}, but this repo's rules require a review before merging into \`${base}\`. Merge this pull request to keep the change, or close it to decline. Synthe pauses until you decide.`
+          : `**Waiting for your review.** Synthe found ${why.found ?? "a better prompt"}. Merge this pull request to keep the change, or close it to decline. Synthe pauses until you decide.`
         : `**Already merged into \`${base}\`** at ${when}, because automatic merging was chosen at setup. If \`${base}\` deploys your app, this change is live.`,
       `**What changed in \`${path}\`:** ${why.changed}`,
       ...(why.diff?.length ? ["```diff\n" + why.diff.join("\n") + "\n```"] : []),
@@ -463,13 +463,15 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
           record.attacks = { total: scores.attacks.total, failed: failed ?? [], ...(failed === null || failed === undefined ? { unknown: true } : {}) };
         }
       } else {
-        const changed = chosen?.summary ?? "A change to the prompt";
+        // A deletion says so up front, in the pull request and the report, so nobody reads it as a new instruction.
+        const removed = chosen?.kind === "shorter" ? current.trim().length - text!.trim().length : null;
+        const changed = `${removed !== null ? `Shorter prompt: removed ${removed} characters and added no new instruction. ` : ""}${chosen?.summary ?? "A change to the prompt"}`;
         const example = pickExample(scores, verdict.candidateId, scenarioText);
         const pair = pickExamplePair(scores, verdict.candidateId, scenarioText);
         const unverified = newDetails(chosen?.edits, `${current}\n${goal.policy ?? ""}`);
         const name = chosen?.title ?? (changed.length > 60 ? `${changed.slice(0, 57)}...` : changed);
-        const landed = await land(text!, "merge", `Synthe: ${name}`,
-          { changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified, evidence: evidenceOf("merge", verdict.candidateId, text!, { checks: verdict.checks }),
+        const landed = await land(text!, "merge", `Synthe: ${removed !== null ? "shorter prompt, " : ""}${name}`,
+          { ...(removed !== null ? { found: "a shorter prompt that did as well" } : {}), changed, plain: verdict.plain, technical: verdict.reasons.join(" "), diff: diffLines(chosen?.edits), example, unverified, evidence: evidenceOf("merge", verdict.candidateId, text!, { checks: verdict.checks }),
             // The round's record only joins state.rounds at the end of the round, with its score
             // recorded there too, so the block is rendered from a state carrying this round's record
             // with the same score and pair that are about to be recorded on it.
@@ -483,7 +485,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
         if (landed) {
           winnerId = verdict.candidateId;
           Object.assign(record, { outcome: landed.proposed ? "proposed" : "merged", pr: landed.pr, heldBefore: verdict.heldBefore, heldAfter: verdict.heldAfter, wins: verdict.wins, losses: verdict.losses, ...(verdict.checks ? { checks: verdict.checks } : {}), ...(verdict.guards ? { guards: verdict.guards } : {}) });
-          record.changed = chosen?.summary ?? "A change to the prompt";
+          record.changed = changed;
           record.plain = verdict.plain;
           if (!landed.proposed) {
             state.lastMerge = { pr: landed.pr, priorPrompt: current, mergedHash: sha256(text!), reverted: false };

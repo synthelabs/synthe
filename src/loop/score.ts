@@ -1,10 +1,11 @@
 import type { Attack, Goal, Scenario } from "../core/goal.ts";
-import { checkRate, guardRate, holdoutScorePct, paired, signP, trainingProblem, mean, type RoundScores as BaseScores, type ScoreRow } from "../core/merge-rule.ts";
+import { candidateTrainingProblem, checkRate, guardRate, holdoutScorePct, judgedAsShorter, paired, signP, mean, type RoundScores as BaseScores, type ScoreRow } from "../core/merge-rule.ts";
 import { candidateProblem, sha256 } from "../core/safety.ts";
 import { sumCosts } from "../core/cost.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
 import { clip, type Candidate } from "./write.ts";
 import { composeCandidate, type ComposeResult } from "./compose.ts";
+import { shorterFields } from "./shorter.ts";
 
 const CONCURRENCY = 6;
 export const AGENT_MAX_TOKENS = 2000; // the agent's reply limit; every prompt gets the same one
@@ -318,7 +319,7 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
   for (const c of safe) {
     const duels = await challenge(c.id, c.text, train, trainReplies);
     trainDuels.push(duels);
-    scores.candidates.push({ id: c.id, train: duels.map((d) => d.row) });
+    scores.candidates.push({ id: c.id, train: duels.map((d) => d.row), ...shorterFields(c, baseline) });
   }
   scores.baselineTrain = currentRows(train, trainReplies, trainDuels);
 
@@ -338,10 +339,11 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
     }
   }
 
-  // Only the best candidate that passed training spends held-back scenarios; if none passed, none are spent.
+  // Only the best candidate that passed training spends held-back scenarios; if none passed, none are spent. A
+  // shorter candidate that is only no worse goes there only when no candidate passed by being better.
   const leader = scores.candidates
-    .filter((c) => trainingProblem(c, scores.baselineTrain, goal) === null)
-    .sort((a, b) => mean(b.train)! - mean(a.train)!)[0];
+    .filter((c) => candidateTrainingProblem(c, scores.baselineTrain, goal) === null)
+    .sort((a, b) => Number(judgedAsShorter(a, goal)) - Number(judgedAsShorter(b, goal)) || mean(b.train)! - mean(a.train)!)[0];
   if (leader) {
     const text = safe.find((c) => c.id === leader.id)!.text;
     const duels = await challenge(leader.id, text, holdout, await holdReplies());

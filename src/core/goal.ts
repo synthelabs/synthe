@@ -38,6 +38,8 @@ export interface Goal {
     max_rounds: number;
     stall_rounds: number; // rounds in a row without a winner before stopping
     guard_margin: number; // points the guard pass rate may fall before a change is refused, when counter_checks are set
+    // Off by default. When on, rounds after a stall try one deletion, merged if it is no worse (src/loop/shorter.ts).
+    allow_shorter?: boolean;
   };
   budget: { max_usd: number };
   // Compose (prototype, off by default): after scoring, write one more candidate from how this round's candidates
@@ -87,6 +89,7 @@ export function parseGoal(text: string): Goal {
   if (holdP !== undefined && !(typeof holdP === "number" && Number.isFinite(holdP) && holdP > 0 && holdP <= 1)) bad("merge_rule.holdout_max_p must be above 0 and at most 1");
   const margin = g.merge_rule?.guard_margin;
   if (margin !== undefined && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad("merge_rule.guard_margin must be 0 or more");
+  if (g.merge_rule?.allow_shorter !== undefined && typeof g.merge_rule.allow_shorter !== "boolean") bad("merge_rule.allow_shorter must be true or false");
   if (g.compose !== undefined && typeof g.compose !== "boolean") bad("compose must be true or false");
   return {
     ...g,

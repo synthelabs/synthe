@@ -4,8 +4,10 @@ import { sumCosts } from "../core/cost.ts";
 import { promptPathProblem, sha256 } from "../core/safety.ts";
 import { candidateFingerprint, candidateScope, validateCandidateMemory } from "../core/candidate-history.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
+import { shorterAngle, shorterProblem, shorterRound, undoEdits } from "./shorter.ts";
 
-export interface Candidate { id: string; text: string; summary?: string; title?: string; edits?: Edit[] }
+// kind "shorter": a deletion, judged by whether it is no worse rather than better (src/loop/shorter.ts).
+export interface Candidate { id: string; text: string; summary?: string; title?: string; edits?: Edit[]; kind?: "shorter" }
 export interface Written { candidates: Candidate[]; costUsd: number | null; rejected?: string[] }
 
 // Each candidate is one or two exact edits to the current prompt, GEPA-style, not a rewrite: everything else stays
@@ -126,7 +128,16 @@ export async function runWrite(goal: Goal, state: State, prompt: string, scenari
   const checks = goal.checks?.length ? `\nThe team measures a good reply with these checks; a change wins by making replies pass more of them:\n${goal.checks.map((c) => `- ${c}`).join("\n")}` : "";
   const quoteRule = goal.prompt.kind === "inline"
     ? `\nThe prompt lives inside a source-code string, so never use backslashes, ${goal.prompt.delimiter} or \${ in it.` : "";
-  const results = await pool(ANGLES, ANGLES.length, async (angle) => askJson<{ edits: Edit[]; summary: string; title?: string }>(model, {
+  // A shorter round gives the second slot to a deletion: an earlier merged change taken back out when one still can
+  // be and hasn't been tried, which needs no writer call, or else the writer asked to remove something.
+  const shorter = shorterRound(goal, state);
+  const known = `${goal.objective}\n${goal.policy ?? ""}`;
+  const undo = shorter ? undoEdits(prompt, state).flatMap((u) => {
+    const applied = applyEdits(prompt, u.edits, known);
+    return "problem" in applied || shorterProblem(prompt, applied.text) || tried.has(candidateFingerprint(applied.text)) ? [] : [{ ...u, text: applied.text }];
+  })[0] : undefined;
+  const angles = !shorter ? ANGLES : undo ? ANGLES.slice(0, 1) : [ANGLES[0], shorterAngle(prompt)];
+  const results = await pool(angles, angles.length, async (angle) => askJson<{ edits: Edit[]; summary: string; title?: string }>(model, {
     model: goal.models.writer, maxTokens: 3000, schema: SCHEMA,
     user: `You improve the system prompt of an AI agent by making small, exact edits.
 
@@ -152,15 +163,24 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
   results.forEach((r, i) => {
     const id = `candidate-${i + 1}`;
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
-    const applied = applyEdits(prompt, r.value.edits, `${goal.objective}\n${goal.policy ?? ""}`);
+    const applied = applyEdits(prompt, r.value.edits, known);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
+    const isShorter = shorter && i === 1;
+    const tooLong = isShorter ? shorterProblem(prompt, applied.text) : null;
+    if (tooLong) return void rejected.push(`${id}: ${tooLong}`);
     const fingerprint = candidateFingerprint(applied.text);
     if (fingerprint === candidateFingerprint(prompt)) return void rejected.push(`${id}: edits change only formatting or case`);
     if (tried.has(fingerprint)) return void rejected.push(`${id}: materially identical candidate already tried for this goal and prompt`);
     tried.add(fingerprint);
     candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : undefined,
-      title: typeof r.value.title === "string" && r.value.title.trim() ? r.value.title.trim().replace(/\.$/, "").slice(0, 60) : undefined, edits: r.value.edits });
+      title: typeof r.value.title === "string" && r.value.title.trim() ? r.value.title.trim().replace(/\.$/, "").slice(0, 60) : undefined, edits: r.value.edits, ...(isShorter ? { kind: "shorter" as const } : {}) });
   });
+  if (undo) {
+    tried.add(candidateFingerprint(undo.text));
+    candidates.push({ id: "candidate-2", kind: "shorter", text: undo.text, edits: undo.edits,
+      summary: `Takes out the change merged in round ${undo.round}${undo.title ? ` ("${undo.title}")` : ""}, to see if the prompt does as well without it.`,
+      title: `undo round ${undo.round}${undo.title ? `: ${undo.title}` : ""}`.slice(0, 60) });
+  }
   return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
 }
 
