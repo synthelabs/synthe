@@ -1,5 +1,6 @@
 import { STATE_BRANCH, type Goal } from "../core/goal.ts";
 import { guardSentence } from "../core/merge-rule.ts";
+import { powerLines } from "../core/power.ts";
 import { budgetSpend, isFinished, type RoundRecord, type State } from "../core/state.ts";
 import { FULL_SHARE_UNTIL, fromSyntheProxy, PROXY_AUTH_MESSAGE, PROXY_REFUSED } from "../core/share.ts";
 import { displaySeries, scoreSeries } from "./delta.ts";
@@ -188,7 +189,7 @@ function triedGroup(outcome: string): (typeof TRIED_GROUPS)[number] | null {
 const TIE_SHARE = 0.6;
 const MIN_DUELS_FOR_TIES = 20;
 
-export function noWinSection(goal: Goal, state: State): string[] {
+export function noWinSection(goal: Goal, state: State, caseCounts?: { train: number; holdout: number }): string[] {
   if (!state.stopped || state.proposal) return [];
   const budget = /^budget/.test(state.stopped);
   if (!budget && !/no winner$/.test(state.stopped)) return [];
@@ -230,6 +231,7 @@ export function noWinSection(goal: Goal, state: State): string[] {
   if (mostlyEven) {
     lines.push(`**Most test cases came out even:** in ${duels.same} of ${duelTotal} comparisons over the last ${plural(recent.length, "round")} (${Math.round((100 * duels.same) / duelTotal)}%), a change and your current prompt did equally well. Synthe counts only the cases where one reply is better, so a real improvement has too few cases left to show it. Harder test cases fix this.`, "");
   }
+  if (caseCounts) lines.push(`**What your test cases can detect:** ${powerLines(goal, caseCounts.train, caseCounts.holdout).join(" ")}`, "");
   const grouped = TRIED_GROUPS.filter((g) => groups.has(g));
   if (grouped.length) {
     lines.push("**What the changes Synthe tried did:**", ...grouped.map((g) => `- ${g[0].toUpperCase()}${g.slice(1)}: ${plural(groups.get(g)!, "change")}.`), "");
@@ -278,7 +280,7 @@ function roundRow(r: RoundRecord): string {
   return `| ${r.round} | ${result}${r.pr ? ` (#${r.pr})` : ""} | ${tried.replaceAll("|", "/").replaceAll("\n", " ")} | ${cost} |`;
 }
 
-export function renderReport(goal: Goal, state: State, now: Date = new Date(), repoSlug?: string): string {
+export function renderReport(goal: Goal, state: State, now: Date = new Date(), repoSlug?: string, counts?: { train: number; holdout: number }): string {
   const { title, summary } = headline(goal, state);
   const changes = state.rounds.filter((r) => ["merged", "reverted", "proposed"].includes(r.outcome) && r.pr);
   const mode = goal.merge_rule.mode === "propose"
@@ -303,7 +305,7 @@ export function renderReport(goal: Goal, state: State, now: Date = new Date(), r
     }
     lines.push("");
   }
-  lines.push(...noWinSection(goal, state));
+  lines.push(...noWinSection(goal, state, counts));
   lines.push("### What to do next", "", ...nextSteps(goal, state).map((s) => `- ${s}`), "");
   if (state.rounds.length) {
     lines.push(

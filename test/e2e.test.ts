@@ -355,6 +355,16 @@ test("status after manual stop overrides a still-running report headline", async
   assert.doesNotMatch(output, /Synthe is working|getting better|updates after each round/);
 });
 
+test("status tells the team what their test cases can detect", async () => {
+  reset();
+  const gh = join(dir, "gh");
+  writeFileSync(gh, `#!/bin/sh\ncase "$*" in\n*"repo view"*) echo 'o/r';;\n*"actions/workflows"*) echo active;;\n*) echo '{"round":1,"rounds":[],"spendUsd":0.1}';;\nesac\n`);
+  chmodSync(gh, 0o700);
+  const output = execFileSync("node", [resolve("dist/cli.js"), "status"], { cwd: dir, env: { PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8" });
+  assert.match(output, /What your test cases can detect: With \d+ training cases, a change must be better in at least \d+/);
+  assert.match(output, /Adding about \d+ more cases|enough training cases/);
+});
+
 test("a closed PR starts a round only for the current same-repo Synthe proposal", async () => {
   reset();
   pulls = [{ number: 1, state: "closed", merged_at: null }];

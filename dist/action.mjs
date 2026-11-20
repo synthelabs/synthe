@@ -29121,6 +29121,38 @@ function buildEvidence(p) {
   return record;
 }
 
+// src/core/power.ts
+function minWinsToPass(decided, maxP) {
+  for (let w = 0; w <= decided; w++) if (signP(w, decided - w) <= maxP) return w;
+  return null;
+}
+function casesForSixtyForty(maxP) {
+  for (let n = 1; n <= 2e3; n++) {
+    const wins = Math.ceil(0.6 * n);
+    if (signP(wins, n - wins) <= maxP) return n;
+  }
+  return null;
+}
+function powerLines(goal, trainCount, holdoutCount) {
+  const { max_p, holdout_max_p } = goal.merge_rule;
+  const lines = [];
+  const need = minWinsToPass(trainCount, max_p);
+  if (need === null) {
+    lines.push(`With ${trainCount} training cases, no change can pass: even better in every one isn't enough to rule out luck.`);
+  } else {
+    lines.push(`With ${trainCount} training cases, a change must be better in at least ${need} and worse in at most ${trainCount - need} (ties don't count) to pass.`);
+  }
+  const heldNeed = minWinsToPass(holdoutCount, holdout_max_p);
+  lines.push(heldNeed === null ? `With ${holdoutCount} held-back cases, no change can pass the held-back check.` : `With ${holdoutCount} held-back cases, at least ${heldNeed} of ${holdoutCount}.`);
+  const target = casesForSixtyForty(max_p);
+  if (target !== null && target > trainCount) {
+    lines.push(`Adding about ${target - trainCount} more cases your agent gets wrong lets a smaller real gain pass (a change better in 6 of every 10 decided cases passes at ${target}).`);
+  } else if (target !== null) {
+    lines.push("You have enough training cases for a change that is better in 6 of every 10 decided cases to pass; harder cases still help, because easy ones end in ties.");
+  }
+  return lines;
+}
+
 // src/loop/delta.ts
 function scoreSeries(state) {
   return state.rounds.map((r) => ({
@@ -29366,7 +29398,7 @@ function triedGroup(outcome2) {
 }
 var TIE_SHARE = 0.6;
 var MIN_DUELS_FOR_TIES = 20;
-function noWinSection(goal, state) {
+function noWinSection(goal, state, caseCounts) {
   if (!state.stopped || state.proposal) return [];
   const budget = /^budget/.test(state.stopped);
   if (!budget && !/no winner$/.test(state.stopped)) return [];
@@ -29396,6 +29428,7 @@ function noWinSection(goal, state) {
   if (mostlyEven) {
     lines.push(`**Most test cases came out even:** in ${duels.same} of ${duelTotal} comparisons over the last ${plural(recent.length, "round")} (${Math.round(100 * duels.same / duelTotal)}%), a change and your current prompt did equally well. Synthe counts only the cases where one reply is better, so a real improvement has too few cases left to show it. Harder test cases fix this.`, "");
   }
+  if (caseCounts) lines.push(`**What your test cases can detect:** ${powerLines(goal, caseCounts.train, caseCounts.holdout).join(" ")}`, "");
   const grouped = TRIED_GROUPS.filter((g) => groups.has(g));
   if (grouped.length) {
     lines.push("**What the changes Synthe tried did:**", ...grouped.map((g) => `- ${g[0].toUpperCase()}${g.slice(1)}: ${plural(groups.get(g), "change")}.`), "");
@@ -29438,7 +29471,7 @@ function roundRow(r) {
   const cost = r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`;
   return `| ${r.round} | ${result}${r.pr ? ` (#${r.pr})` : ""} | ${tried.replaceAll("|", "/").replaceAll("\n", " ")} | ${cost} |`;
 }
-function renderReport(goal, state, now = /* @__PURE__ */ new Date(), repoSlug) {
+function renderReport(goal, state, now = /* @__PURE__ */ new Date(), repoSlug, counts) {
   const { title, summary } = headline(goal, state);
   const changes = state.rounds.filter((r) => ["merged", "reverted", "proposed"].includes(r.outcome) && r.pr);
   const mode = goal.merge_rule.mode === "propose" ? "**Mode:** review. Each change waits in a pull request until you merge or close it." : "**Mode:** automatic. Changes are merged into your main branch as soon as they win.";
@@ -29458,7 +29491,7 @@ function renderReport(goal, state, now = /* @__PURE__ */ new Date(), repoSlug) {
     }
     lines.push("");
   }
-  lines.push(...noWinSection(goal, state));
+  lines.push(...noWinSection(goal, state, counts));
   lines.push("### What to do next", "", ...nextSteps(goal, state).map((s) => `- ${s}`), "");
   if (state.rounds.length) {
     lines.push(
@@ -30263,8 +30296,15 @@ async function writeReport(goal, repo, state) {
       console.log(`::warning::${note}`);
     }
   }
+  let counts;
   try {
-    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state, /* @__PURE__ */ new Date(), repo.slug));
+    const text = await repo.readFile(goal.scenarios, await repo.headSha(await repo.defaultBranch()));
+    const parsed = text === null ? [] : parseScenarios(text);
+    if (parsed.length) counts = { train: parsed.filter((r) => r.split === "train").length, holdout: parsed.filter((r) => r.split === "holdout").length };
+  } catch {
+  }
+  try {
+    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state, /* @__PURE__ */ new Date(), repo.slug, counts));
   } catch (e) {
     if (!(e instanceof Refusal)) throw e;
     const note = `couldn't write the report issue: ${e.plain}`;
