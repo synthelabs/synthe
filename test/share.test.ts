@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { parseGoal } from "../src/core/goal.ts";
-import { FULL_SHARE_UNTIL, scrub, sharePayload, shareRound, stopCode } from "../src/core/share.ts";
+import { scrub, sharePayload, shareRound, stopCode } from "../src/core/share.ts";
 import { newState, type RoundRecord } from "../src/core/state.ts";
 import { renderReport } from "../src/loop/report.ts";
 import { shouldShare } from "../src/core/share.ts";
@@ -41,19 +41,15 @@ test("detail example satisfies the endpoint's parseDetail contract", () => {
   assert.ok(d.example === null || ([d.example.input, d.example.before, d.example.after].every((v) => typeof v === "string" && v.length <= 2000)));
 });
 
-test("full shares capped and scrubbed text only before the cutoff; detail never does", () => {
-  const before = new Date(Date.parse(FULL_SHARE_UNTIL) - 1);
-  const after = new Date(FULL_SHARE_UNTIL);
-  const text = "ana@example.com " + "x".repeat(120 * 1024);
-  const full = { prompt: text, scenarios: text, finalPrompt: text };
-  const active = sharePayload(goal({ share: "full" }), state, record, "1.6.2", full, before);
-  assert.ok("full" in active);
-  if (!("full" in active) || !active.full) throw new Error("full missing");
-  assert.deepEqual(Object.keys(active.full), ["prompt", "scenarios", "finalPrompt"]);
-  assert.ok(Object.values(active.full).every((v) => Buffer.byteLength(v) <= 100 * 1024 && !v.includes("ana@example.com")));
-  assert.ok(Buffer.byteLength(JSON.stringify(active)) <= 256 * 1024);
-  assert.equal("full" in sharePayload(goal({ share: "full" }), state, record, "1.6.2", full, after), false);
-  assert.equal("full" in sharePayload(goal({ share: "detail" }), state, record, "1.6.2", full, before), false);
+test("an older goal with share \"full\" still loads and shares only what detail shares", () => {
+  const old = parseGoal(JSON.stringify({ ...goal(), share: "full", share_notice: "older-notice-v1", objective: "PRIVATE GOAL", checks: ["PRIVATE CHECK"] }));
+  assert.equal(old.share, "full");
+  assert.equal(old.share_notice, "older-notice-v1");
+  assert.equal(shouldShare(old), true);
+  const payload = sharePayload(old, state, record, "1.6.2");
+  assert.equal("full" in payload, false);
+  assert.deepEqual(payload, sharePayload({ ...old, share: "detail" }, state, record, "1.6.2"));
+  assert.deepEqual(Object.keys(payload).sort(), [...Object.keys(sharePayload(goal(), state, record, "1.6.2")), "detail"].sort());
 });
 
 test("an existing install without share sends nothing", () => {
@@ -128,9 +124,8 @@ test("shareRound times out without failing its caller", async () => {
 
 test("the report names the share level and workflow skips cancellation", () => {
   for (const share of [undefined, "none"] as const) assert.match(renderReport(goal({ share }), { ...state, rounds: [record] }), /Sharing with Synthe: off\./);
-  for (const [share, label] of [["numbers", "numbers only"], ["detail", "numbers and what changed"], ["full", "numbers and what changed"]] as const) assert.match(renderReport(goal({ share }), { ...state, rounds: [record] }, new Date(FULL_SHARE_UNTIL)), new RegExp(`Sharing with Synthe: ${label}\\.$`, "m"));
+  for (const [share, label] of [["numbers", "numbers only"], ["detail", "numbers and what changed"], ["full", "numbers and what changed"]] as const) assert.match(renderReport(goal({ share }), { ...state, rounds: [record] }), new RegExp(`Sharing with Synthe: ${label}\\.$`, "m"));
   for (const share of ["numbers", "detail", "full"] as const) assert.doesNotMatch(renderReport(goal({ share }), { ...state, rounds: [record] }), /Turn it off|"share": "none"/);
-  assert.match(renderReport(goal({ share: "full" }), { ...state, rounds: [record] }, new Date(Date.parse(FULL_SHARE_UNTIL) - 1)), /Sharing with Synthe: everything for Crimson Hacks \(prompt and test cases until November 9\), then numbers and what changed\./);
   const workflow = readFileSync("templates/synthe.yml", "utf8");
   assert.match(workflow, /if: \$\{\{ !cancelled\(\) && needs.write.result != 'skipped' && needs.write.outputs.go != 'false' \}\}/);
   assert.match(workflow, /permissions: \{ contents: write, pull-requests: write, issues: write, actions: write, id-token: write \}/);
@@ -140,17 +135,4 @@ test("no workflow condition starts with a bare !, which YAML would read as a tag
   const workflow = readFileSync("templates/synthe.yml", "utf8");
   const bare = workflow.split("\n").filter((line) => /^\s*if:\s*!/.test(line));
   assert.deepEqual(bare, []);
-});
-
-test("a full share uploads the train and holdout rows but never a vault row", () => {
-  const before = new Date(Date.parse(FULL_SHARE_UNTIL) - 1);
-  const row = (id: string, split: string, input: string) => JSON.stringify({ id, input, expected: "good", split });
-  const scenarios = [row("t1", "train", "TRAIN-ROW question"), row("v1", "vault", "VAULT-MARKER-1 question"), row("h1", "holdout", "HOLDOUT-ROW question"), row("v2", "vault", "VAULT-MARKER-2 question")].join("\n");
-  const payload = sharePayload(goal({ share: "full" }), state, { ...record, round: 1 }, "1.6.2", { prompt: "p", scenarios }, before);
-  if (!("full" in payload) || !payload.full) throw new Error("full missing");
-  const uploaded = JSON.stringify(payload);
-  assert.doesNotMatch(uploaded, /VAULT-MARKER|"v[12]"|\\"v[12]\\"/);
-  assert.deepEqual(payload.full.scenarios.split("\n").map((l) => JSON.parse(l).id), ["t1", "h1"]);
-  assert.match(payload.full.scenarios, /TRAIN-ROW question/);
-  assert.match(payload.full.scenarios, /HOLDOUT-ROW question/);
 });

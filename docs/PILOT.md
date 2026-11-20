@@ -437,7 +437,7 @@ A live model runs only when `pilot.json` records the approval and the operator o
 npx synthe pilot replay --candidate <id> --live --confirm-endpoint https://api.anthropic.com --confirm-data "redacted support conversations (pack)"
 ```
 
-- The key is read from the one variable `key_env` names. There is no fallback to `ANTHROPIC_API_KEY`, `SYNTHE_ANTHROPIC_KEY` or an event code, and Synthe's event proxy is never used.
+- The key is read from the one variable `key_env` names. There is no fallback to `ANTHROPIC_API_KEY` or `SYNTHE_ANTHROPIC_KEY`.
 - The destination, model, data class and limits are printed before the first request. The call that would pass a limit is refused before it is sent. One counted call is one request: the SDK's own retries are off, and a call that gets no answer in two minutes is given up, not sent again.
 - Settings in the shell cannot change the request: the base URL, a second credential, extra headers, request logging and tracing are all fixed or off.
 - `replay.model` must equal the approved model. Both prompts must run on the same model.

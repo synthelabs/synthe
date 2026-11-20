@@ -1,7 +1,8 @@
 // Runs `npx synthe improve` the way a person would, through the real bundled CLI, against a fake Messages API:
 // a signup app with a local bare origin and a stub `gh`, questions answered on stdin as they appear. Spends nothing.
 //   node scripts/dev/improve-user-flow.ts
-// Scenarios: (A) the loop: a shortcut, the right fix, a no-op, then nothing left; (B) event credit runs out in
+// Uses an own key (a fake sk-ant- value) sent only to the local fake through SYNTHE_ANTHROPIC_BASE_URL.
+// Scenarios: (A) the loop: a shortcut, the right fix, a no-op, then nothing left; (B) the key runs out of credit in
 // round 2 of an auto-mode run; (C) --handoff, then npx synthe submit.
 import assert from "node:assert/strict";
 import { execFileSync, execSync, spawn } from "node:child_process";
@@ -17,7 +18,7 @@ execSync(`npx ${pkg.scripts.build.split(" && ")[0].replace("--outfile=dist/cli.j
 
 const EMAILS = ["ann@example.com", "bob@test.com", "cy@site.com", "Dana@example.com", "eve.smith@example.com", "fay@mail.example.org",
   "gus+tag@example.com", "hal@example.io", "ivy_2@example.com", "jo@example.co.uk", "kim@EXAMPLE.COM", "lee-ann@example.net"];
-const EVENT = "crimson-demo-event", TEAM = "crim-abcd-efgh-jkmn-pqrs";
+const KEY = "sk-ant-fake-local-key-for-the-user-flow";
 
 function signupApp(name: string) {
   const dir = join(work, name);
@@ -66,8 +67,8 @@ const PICK = { paths: ["validate.js", "server.js"], why: "validate.js decides wh
 
 // A person at a terminal: answer each question when it appears.
 function improve(dir: string, args: string[], url: string, answers: [string, string][]) {
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${bin}:${process.env.PATH}`, SYNTHE_PROXY_URL: url, SYNTHE_EVENT_CODE: EVENT, SYNTHE_TEAM_CODE: TEAM, XDG_CONFIG_HOME: join(work, "config") };
-  for (const k of ["ANTHROPIC_API_KEY", "SYNTHE_ANTHROPIC_KEY", "ANTHROPIC_BASE_URL"]) delete env[k];
+  const env: NodeJS.ProcessEnv = { ...process.env, PATH: `${bin}:${process.env.PATH}`, SYNTHE_ANTHROPIC_BASE_URL: url, SYNTHE_ANTHROPIC_KEY: KEY, XDG_CONFIG_HOME: join(work, "config") };
+  for (const k of ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"]) delete env[k];
   return new Promise<{ code: number | null; out: string }>((resolve) => {
     const child = spawn("node", [cli, ...args], { cwd: dir, env, stdio: ["pipe", "pipe", "pipe"] });
     let out = "", sinceAnswer = "";
@@ -99,7 +100,7 @@ const answers = (auto: boolean): [string, string][] => [
 const show = (title: string, r: { code: number | null; out: string }) => {
   console.log(`\n===== ${title} (exit ${r.code}) =====`);
   console.log(r.out.trimEnd());
-  assert.ok(!r.out.includes(EVENT) && !r.out.includes(TEAM), "no event or team code in the output");
+  assert.ok(!r.out.includes(KEY), "the key never appears in the output");
 };
 
 // A: the loop.
@@ -116,45 +117,22 @@ console.log(a.git("log", "--format=%h %an: %s", "synthe/improve-1", "-3"));
 console.log("lessons commit touches:", a.git("diff-tree", "--no-commit-id", "--name-only", "-r", "synthe/improve-1").split("\n").join(", "));
 console.log("working tree clean:", a.git("status", "--porcelain") === "", "| worktrees:", a.git("worktree", "list").split("\n").length);
 console.log("local lesson log:", existsSync(join(a.dir, ".git/.synthe/improve-lessons.md")));
-// What the organizers receive on event credit: the run record, batched to the proxy's /improve endpoint.
-const showReceipts = (label: string, receipts: { headers: any; body: any }[]) => {
-  console.log(`\n--- ${label}: run record received by the (fake) proxy ---`);
-  const events = receipts.flatMap((r) => r.body.events);
-  const last = receipts.at(-1)?.body;
-  console.log(`batches: ${receipts.length}; run ${last?.run_id}; final: ${last?.final}; seq: ${receipts.map((r) => r.body.seq).join(",")}; sizes: ${receipts.map((r) => JSON.stringify(r.body).length).join(",")} bytes`);
-  console.log(`headers carry the codes (event: ${receipts.every((r) => r.headers["x-synthe-event"] === EVENT)}, team: ${receipts.every((r) => r.headers["x-synthe-team"] === TEAM)}, install id: ${receipts.every((r) => /^[0-9a-f-]{36}$/.test(r.headers["x-synthe-install"]))}); bodies never do: ${!receipts.some((r) => JSON.stringify(r.body).includes(EVENT) || JSON.stringify(r.body).includes(TEAM))}`);
-  console.log(`run: ${JSON.stringify(last?.run)}`);
-  console.log(`summary: ${JSON.stringify(last?.summary)}`);
-  const counts: Record<string, number> = {};
-  for (const e of events) counts[e.type] = (counts[e.type] ?? 0) + 1;
-  console.log(`events: ${events.length} (${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(", ")})`);
-  for (const e of events) {
-    if (e.type === "say") console.log(`  ${e.i} say      ${String(e.text).slice(0, 110)}`);
-    else if (e.type === "ask") console.log(`  ${e.i} ask      ${e.question} -> ${JSON.stringify(e.answer)}`);
-    else if (e.type === "model") console.log(`  ${e.i} model    ${e.purpose} ${e.model} max ${e.max_tokens} in ${e.input_tokens} out ${e.output_tokens} $${e.cost_usd} ${e.stop_reason} ${e.ms}ms ok=${e.ok}`);
-    else if (e.type === "candidate") console.log(`  ${e.i} candidate round ${e.round} "${e.summary}" files ${JSON.stringify(e.files)} refused=${e.refused} cut=${e.cut}\n${String(e.diff).split("\n").map((l: string) => `           | ${l}`).join("\n")}`);
-    else if (e.type === "command") console.log(`  ${e.i} command  ${e.command} ok=${e.ok} ${e.ms}ms${e.tail ? ` tail=${JSON.stringify(String(e.tail).slice(-80))}` : ""}`);
-    else console.log(`  ${e.i} ${e.type.padEnd(8)} ${JSON.stringify(Object.fromEntries(Object.entries(e).filter(([k]) => !["i", "t", "type"].includes(k)))).slice(0, 200)}`);
-  }
-};
-showReceipts("A", serverA.receipts);
 const reqA = serverA.requests;
 console.log(`requests: ${reqA.length}; models: ${[...new Set(reqA.map((r) => r.body.model))].join(", ")}; max_tokens: ${[...new Set(reqA.map((r) => r.body.max_tokens))].join(", ")}; stream: ${reqA.some((r) => r.body.stream)}; tools: ${reqA.some((r) => r.body.tools)}`);
-console.log(`x-synthe-team header on every request, equal to SYNTHE_TEAM_CODE: ${reqA.every((r) => r.headers["x-synthe-team"] === TEAM)}`);
-console.log(`x-synthe-event header on every request: ${reqA.every((r) => r.headers["x-synthe-event"] === EVENT)}; x-api-key is the proxy placeholder: ${reqA.every((r) => r.headers["x-api-key"] === "synthe-proxy")}`);
+console.log(`every request carries the own key (authorization: Bearer): ${reqA.every((r) => r.headers.authorization === `Bearer ${KEY}`)}`);
 await serverA.close();
 
-// B: credit runs out in round 2 of an auto-mode run.
+// B: the own key runs out of credit in round 2 of an auto-mode run.
 writeFileSync(ghLog, "");
 const b = signupApp("app-b");
 const serverB = await startFakeAnthropic((kind, round): FakeReply => round >= 2
-  ? { status: 402, error: { type: "synthe_credit", message: "Your team's event credit is used up. Ask at the Synthe table for more, or set SYNTHE_ANTHROPIC_KEY to use your own key." } }
+  ? { status: 400, error: { type: "invalid_request_error", message: "Your credit balance is too low to access the Anthropic API." } }
   : { json: kind === "pick" ? PICK : RIGHT });
 const runB = await improve(b.dir, ["improve"], serverB.url, answers(true));
-show("B: npx synthe improve (auto mode, 402 synthe_credit in round 2)", runB);
+show("B: npx synthe improve (auto mode, credit balance too low in round 2)", runB);
 console.log("\n--- B: stub gh calls ---");
 console.log(readFileSync(ghLog, "utf8").split("\n").filter((l) => l.startsWith("ARGS:")).join("\n"));
-console.log(`requests: ${serverB.requests.length} (the 402 is not retried); x-synthe-team on every request: ${serverB.requests.every((r) => r.headers["x-synthe-team"] === TEAM)}`);
+console.log(`requests: ${serverB.requests.length} (the 400 is not retried)`);
 await serverB.close();
 
 // C: --handoff, then the person's own change and npx synthe submit.
@@ -168,7 +146,5 @@ c.write("validate.js", "module.exports = (email) => /^[^\\s@]+@[^\\s@]+\\.[^\\s@
 c.git("commit", "-qam", "Accept ordinary email addresses");
 show("C: npx synthe submit", await improve(c.dir, ["submit"], serverC.url, []));
 console.log(`\nC: requests to the model: ${serverC.requests.length}`);
-console.log(`C: run records: ${serverC.receipts.length} batches; commands ${JSON.stringify([...new Set(serverC.receipts.map((r) => r.body.run.command))])}; outcomes ${JSON.stringify(serverC.receipts.filter((r) => r.body.final).map((r) => r.body.summary.outcome))}`);
-console.log(`B: run record: ${serverB.receipts.length} batches; outcome ${serverB.receipts.at(-1)?.body.summary.outcome}; stop: ${serverB.receipts.at(-1)?.body.summary.stop_reason}`);
 await serverC.close();
 console.log(`\nWork folder: ${work}`);
