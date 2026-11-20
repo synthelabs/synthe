@@ -28097,6 +28097,8 @@ function parseGoal(text) {
   if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
   const holdP = g.merge_rule?.holdout_max_p;
   if (holdP !== void 0 && !(typeof holdP === "number" && Number.isFinite(holdP) && holdP > 0 && holdP <= 1)) bad("merge_rule.holdout_max_p must be above 0 and at most 1");
+  const runAlpha = g.merge_rule?.run_alpha;
+  if (runAlpha !== void 0 && !(typeof runAlpha === "number" && Number.isFinite(runAlpha) && runAlpha > 0 && runAlpha <= 1)) bad("merge_rule.run_alpha must be above 0 and at most 1, for example 0.05");
   const margin = g.merge_rule?.guard_margin;
   if (margin !== void 0 && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad("merge_rule.guard_margin must be 0 or more");
   if (g.compose !== void 0 && typeof g.compose !== "boolean") bad("compose must be true or false");
@@ -28839,6 +28841,19 @@ function modelProblem(e) {
   return null;
 }
 
+// src/core/run-alpha.ts
+var WRITTEN_PER_ROUND = 2;
+function plannedCandidates(goal, scored = 0) {
+  return Math.max(WRITTEN_PER_ROUND + (goal.compose === true ? 1 : 0), scored);
+}
+function heldBackLimit(goal, candidates) {
+  const base = goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p;
+  const runAlpha = goal.merge_rule.run_alpha;
+  if (runAlpha === void 0) return base;
+  const trainingLuck = Math.min(1, Math.max(1, candidates) * goal.merge_rule.max_p);
+  return Math.min(base, runAlpha / (Math.max(1, goal.merge_rule.max_rounds) * trainingLuck));
+}
+
 // src/core/merge-rule.ts
 function checkRate(rows) {
   if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
@@ -28963,11 +28978,12 @@ function judgeRound(scores, goal, replaced) {
       notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
       continue;
     }
-    const holdoutMaxP = goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p;
+    const holdoutMaxP = heldBackLimit(goal, plannedCandidates(goal, scores.candidates.length));
     const heldP = signP(heldSplit.w, heldSplit.l);
     if (heldP > holdoutMaxP) {
-      reasons.push(`${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck (p ${heldP.toFixed(3)}, needs ${holdoutMaxP})`);
-      notes[c.id] = `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck, so it wasn't used.`;
+      const perRun = holdoutMaxP < (goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p);
+      reasons.push(perRun ? `${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck over a whole run (p ${heldP.toFixed(3)}, needs ${holdoutMaxP.toFixed(3)} under merge_rule.run_alpha ${goal.merge_rule.run_alpha})` : `${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck (p ${heldP.toFixed(3)}, needs ${holdoutMaxP})`);
+      notes[c.id] = perRun ? `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck across a whole run (your merge_rule.run_alpha), so it wasn't used.` : `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck, so it wasn't used.`;
       continue;
     }
     const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
@@ -29105,7 +29121,8 @@ function buildEvidence(p) {
     candidateId: p.candidateId,
     commit: p.commit ?? null,
     mergeMode: p.goal.merge_rule.mode,
-    holdoutMaxP: p.goal.merge_rule.holdout_max_p,
+    // The limit the round actually used, merge_rule.run_alpha included, so a recheck doesn't depend on today's goal.
+    holdoutMaxP: heldBackLimit(p.goal, plannedCandidates(p.goal, scores.candidates.length)),
     modelIds: { ...p.goal.models },
     scenarioScores,
     checksBefore: p.checks?.before ?? null,
@@ -29119,6 +29136,65 @@ function buildEvidence(p) {
   };
   record.sha256 = hashEvidence(record);
   return record;
+}
+
+// src/core/run-risk.ts
+var TIE_RATES = Array.from({ length: 19 }, (_, i) => i * 0.05);
+var logFactorials = [0];
+function logFactorial(n) {
+  for (let k = logFactorials.length; k <= n; k++) logFactorials[k] = logFactorials[k - 1] + Math.log(k);
+  return logFactorials[n];
+}
+function gatePassChances(n, ties, minImprovement, limit2) {
+  if (n <= 0) return ties.map(() => 0);
+  const passes = (wins, decided) => (
+    // Integer sums divided once, as mean() does, so the boundary case falls the same way.
+    (100 * wins + 50 * (n - decided)) / n >= 50 + minImprovement && signP(wins, decided - wins) <= limit2
+  );
+  const tail = [];
+  for (let decided = 0; decided <= n; decided++) {
+    let lo = 0, hi = decided + 1;
+    while (lo < hi) {
+      const mid = lo + hi >> 1;
+      if (passes(mid, decided)) hi = mid;
+      else lo = mid + 1;
+    }
+    let t = 0;
+    for (let wins = lo; wins <= decided; wins++) t += Math.exp(logFactorial(decided) - logFactorial(wins) - logFactorial(decided - wins) - decided * Math.LN2);
+    tail.push(t);
+  }
+  return ties.map((tie) => {
+    let total = 0;
+    for (let decided = 0; decided <= n; decided++) {
+      if (tail[decided] === 0) continue;
+      const tied = n - decided;
+      if (tie === 0 && tied > 0 || tie === 1 && decided > 0) continue;
+      total += tail[decided] * Math.exp(logFactorial(n) - logFactorial(decided) - logFactorial(tied) + (tied ? tied * Math.log(tie) : 0) + (decided ? decided * Math.log(1 - tie) : 0));
+    }
+    return Math.min(1, total);
+  });
+}
+function roundFalseMergeChances(goal, train, holdout, ties) {
+  const { min_improvement, max_p } = goal.merge_rule;
+  const candidates = plannedCandidates(goal);
+  const trains = gatePassChances(train, ties, min_improvement, max_p);
+  const holds = gatePassChances(holdout, ties, min_improvement, heldBackLimit(goal, candidates));
+  return ties.map((_, i) => (1 - (1 - trains[i]) ** candidates) * holds[i]);
+}
+function runFalseMergeChance(goal, train, holdout) {
+  const { max_rounds, stall_rounds } = goal.merge_rule;
+  const rounds = roundFalseMergeChances(goal, train, holdout, TIE_RATES);
+  const worst = rounds.reduce((w, m2, i) => m2 > rounds[w] ? i : w, 0);
+  const m = rounds[worst];
+  return { nothingWorks: 1 - (1 - m) ** Math.max(0, Math.min(stall_rounds, max_rounds)), anyRun: 1 - (1 - m) ** Math.max(0, max_rounds), tie: TIE_RATES[worst] };
+}
+var share = (x) => x < 1e-3 ? "under 0.1%" : `${(100 * x).toFixed(1)}%`;
+function runLuckLines(goal, rounds) {
+  const cases2 = [...rounds].reverse().find((r) => r.cases)?.cases;
+  if (!cases2) return [];
+  const { nothingWorks, anyRun } = runFalseMergeChance(goal, cases2.train, cases2.holdout);
+  const alpha = goal.merge_rule.run_alpha;
+  return [`- Luck across a whole run: with your ${cases2.train} learned-from and ${cases2.holdout} hidden test cases, the chance that a run merges a change that does nothing is at most ${share(nothingWorks)} when nothing Synthe tries really helps, and at most ${share(anyRun)} in any run of up to ${goal.merge_rule.max_rounds} rounds.${alpha === void 0 ? " To cap it lower, set `merge_rule.run_alpha` in `synthe.json` (for example 0.05); real improvements then merge less often too." : ` \`merge_rule.run_alpha\` caps it at ${+(100 * alpha).toFixed(2)}%.`}`];
 }
 
 // src/loop/delta.ts
@@ -29480,6 +29556,7 @@ function renderReport(goal, state, now = /* @__PURE__ */ new Date(), repoSlug) {
     goal.share === "none" || !goal.share ? "- Sharing with Synthe: off." : goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL) ? "- Sharing with Synthe: everything for Crimson Hacks (prompt and test cases until November 9), then numbers and what changed." : `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}.`,
     `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
+    ...runLuckLines(goal, state.rounds),
     ...state.rounds.some((r) => r.attacks) ? ["- Attacks: each round, the current prompt and the winning change also answer the frozen attack messages in `.synthe/attacks.jsonl`, and a change that fails one the current prompt passes isn't merged. Attacks are a basic check, not a security test."] : [],
     ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}.${attackLine(r) ? ` ${attackLine(r)}` : ""} ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),
     "",
@@ -30659,6 +30736,7 @@ ${goal.policy ?? ""}`);
       else if (row.score === TIE) duels.same++;
     }
     if (duels.better + duels.worse + duels.same) record.duels = duels;
+    if (scores.baselineTrain.length && scores.baselineHoldout.length) record.cases = { train: scores.baselineTrain.length, holdout: scores.baselineHoldout.length };
     const lessons = scores.baselineTrain.flatMap((r) => {
       if (typeof r.reply !== "string") return [];
       const winner = scores.candidates.map((c) => c.train.find((x) => x.id === r.id)).find((x) => x?.score === WIN && typeof x.reply === "string");
@@ -30747,6 +30825,7 @@ var package_default = {
     mutation: "node scripts/mutation-check.mjs",
     simulate: "node scripts/simulate-gate.ts",
     "simulate:pilot": "node scripts/simulate-pilot.ts",
+    "simulate:run": "node scripts/simulate-run.ts",
     "mutation:operators": "stryker run mutation/stryker.config.mjs",
     "mutation:compare": "node mutation/compare.mjs"
   },

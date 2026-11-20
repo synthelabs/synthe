@@ -538,6 +538,7 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
       else if (row.score === TIE) duels.same++;
     }
     if (duels.better + duels.worse + duels.same) record.duels = duels;
+    if (scores.baselineTrain.length && scores.baselineHoldout.length) record.cases = { train: scores.baselineTrain.length, holdout: scores.baselineHoldout.length };
     // Training rows only: held-back scenarios are never in scores.baselineTrain, so the writer can't learn them.
     // A lesson is a scenario where the current prompt broke a guardrail, failed one of the team's checks, or a rewrite
     // beat it, with both replies.

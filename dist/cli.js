@@ -81,6 +81,8 @@ function parseGoal(text4) {
   if (g.merge_rule?.mode !== void 0 && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad5("merge_rule.mode must be auto or propose");
   const holdP = g.merge_rule?.holdout_max_p;
   if (holdP !== void 0 && !(typeof holdP === "number" && Number.isFinite(holdP) && holdP > 0 && holdP <= 1)) bad5("merge_rule.holdout_max_p must be above 0 and at most 1");
+  const runAlpha = g.merge_rule?.run_alpha;
+  if (runAlpha !== void 0 && !(typeof runAlpha === "number" && Number.isFinite(runAlpha) && runAlpha > 0 && runAlpha <= 1)) bad5("merge_rule.run_alpha must be above 0 and at most 1, for example 0.05");
   const margin = g.merge_rule?.guard_margin;
   if (margin !== void 0 && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad5("merge_rule.guard_margin must be 0 or more");
   if (g.compose !== void 0 && typeof g.compose !== "boolean") bad5("compose must be true or false");
@@ -296,6 +298,26 @@ var init_safety = __esm({
   }
 });
 
+// src/core/run-alpha.ts
+function plannedCandidates(goal, scored = 0) {
+  return Math.max(WRITTEN_PER_ROUND + (goal.compose === true ? 1 : 0), scored);
+}
+function heldBackLimit(goal, candidates) {
+  const base = goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p;
+  const runAlpha = goal.merge_rule.run_alpha;
+  if (runAlpha === void 0) return base;
+  const trainingLuck = Math.min(1, Math.max(1, candidates) * goal.merge_rule.max_p);
+  return Math.min(base, runAlpha / (Math.max(1, goal.merge_rule.max_rounds) * trainingLuck));
+}
+var WRITTEN_PER_ROUND;
+var init_run_alpha = __esm({
+  "src/core/run-alpha.ts"() {
+    "use strict";
+    init_goal();
+    WRITTEN_PER_ROUND = 2;
+  }
+});
+
 // src/core/merge-rule.ts
 function checkRate(rows) {
   if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
@@ -414,11 +436,12 @@ function judgeRound(scores, goal, replaced) {
       notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
       continue;
     }
-    const holdoutMaxP = goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p;
+    const holdoutMaxP = heldBackLimit(goal, plannedCandidates(goal, scores.candidates.length));
     const heldP = signP(heldSplit.w, heldSplit.l);
     if (heldP > holdoutMaxP) {
-      reasons.push(`${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck (p ${heldP.toFixed(3)}, needs ${holdoutMaxP})`);
-      notes[c.id] = `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck, so it wasn't used.`;
+      const perRun = holdoutMaxP < (goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p);
+      reasons.push(perRun ? `${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck over a whole run (p ${heldP.toFixed(3)}, needs ${holdoutMaxP.toFixed(3)} under merge_rule.run_alpha ${goal.merge_rule.run_alpha})` : `${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck (p ${heldP.toFixed(3)}, needs ${holdoutMaxP})`);
+      notes[c.id] = perRun ? `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck across a whole run (your merge_rule.run_alpha), so it wasn't used.` : `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck, so it wasn't used.`;
       continue;
     }
     const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
@@ -510,6 +533,7 @@ var init_merge_rule = __esm({
   "src/core/merge-rule.ts"() {
     "use strict";
     init_goal();
+    init_run_alpha();
     cases = (n) => `${n} case${n === 1 ? "" : "s"}`;
     addedBreaks = (rows, current) => {
       const before = new Map(current.map((r) => [r.id, r.violation]));
@@ -28583,7 +28607,7 @@ function recomputeProblem(r, goal, splits) {
       return e.message;
     }
   }
-  const ranWith = { ...goal, merge_rule: { ...goal.merge_rule, holdout_max_p: r.holdoutMaxP ?? 1 } };
+  const ranWith = { ...goal, merge_rule: { ...goal.merge_rule, holdout_max_p: r.holdoutMaxP ?? 1, run_alpha: void 0 } };
   const v = judgeRound(scores, ranWith, replaced);
   const want = r.verdict === "propose" ? "merge" : r.verdict;
   if (v.action !== want) return `the stored verdict is ${r.verdict}, but the recorded scores give ${v.action}`;
@@ -28658,6 +28682,7 @@ var init_evidence = __esm({
     init_goal();
     init_merge_rule();
     init_prompt();
+    init_run_alpha();
     init_safety();
     EVIDENCE_DIR = ".synthe/evidence";
     evidencePath = (round) => `${EVIDENCE_DIR}/round-${round}.json`;
@@ -36235,6 +36260,11 @@ async function oidcToken(audience, env = process.env, fetcher = fetch, signal) {
   return token2;
 }
 
+// src/core/run-risk.ts
+init_merge_rule();
+init_run_alpha();
+var TIE_RATES = Array.from({ length: 19 }, (_, i) => i * 0.05);
+
 // src/loop/delta.ts
 function scoreSeries(state) {
   return state.rounds.map((r) => ({
@@ -37776,6 +37806,7 @@ var package_default = {
     mutation: "node scripts/mutation-check.mjs",
     simulate: "node scripts/simulate-gate.ts",
     "simulate:pilot": "node scripts/simulate-pilot.ts",
+    "simulate:run": "node scripts/simulate-run.ts",
     "mutation:operators": "stryker run mutation/stryker.config.mjs",
     "mutation:compare": "node mutation/compare.mjs"
   },

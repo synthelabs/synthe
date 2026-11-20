@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { GOAL_FILE, parseGoal, parseScenarios, type Goal } from "./goal.ts";
 import { checkRate, judgeRound, type CandidateScore, type RoundScores, type ScoreRow, type Verdict } from "./merge-rule.ts";
 import { findPrompts } from "./prompt.ts";
+import { heldBackLimit, plannedCandidates } from "./run-alpha.ts";
 import { sha256 } from "./safety.ts";
 
 export const EVIDENCE_DIR = ".synthe/evidence";
@@ -133,7 +134,8 @@ export function buildEvidence(p: EvidenceParams): EvidenceRecord {
     candidateId: p.candidateId,
     commit: p.commit ?? null,
     mergeMode: p.goal.merge_rule.mode,
-    holdoutMaxP: p.goal.merge_rule.holdout_max_p,
+    // The limit the round actually used, merge_rule.run_alpha included, so a recheck doesn't depend on today's goal.
+    holdoutMaxP: heldBackLimit(p.goal, plannedCandidates(p.goal, scores.candidates.length)),
     modelIds: { ...p.goal.models },
     scenarioScores,
     checksBefore: p.checks?.before ?? null,
@@ -210,7 +212,8 @@ export function recomputeProblem(r: EvidenceRecord, goal: Goal, splits: Map<stri
     }
   }
   // Recheck under the held-back limit the round ran with; a record from before the check ran with none.
-  const ranWith: Goal = { ...goal, merge_rule: { ...goal.merge_rule, holdout_max_p: r.holdoutMaxP ?? 1 } };
+  // The recorded limit already includes any run_alpha, so it isn't applied a second time.
+  const ranWith: Goal = { ...goal, merge_rule: { ...goal.merge_rule, holdout_max_p: r.holdoutMaxP ?? 1, run_alpha: undefined } };
   const v: Verdict = judgeRound(scores, ranWith, replaced);
   const want = r.verdict === "propose" ? "merge" : r.verdict;
   if (v.action !== want) return `the stored verdict is ${r.verdict}, but the recorded scores give ${v.action}`;

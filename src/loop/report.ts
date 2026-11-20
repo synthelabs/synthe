@@ -2,6 +2,7 @@ import { STATE_BRANCH, type Goal } from "../core/goal.ts";
 import { guardSentence } from "../core/merge-rule.ts";
 import { budgetSpend, isFinished, type RoundRecord, type State } from "../core/state.ts";
 import { FULL_SHARE_UNTIL, fromSyntheProxy, PROXY_AUTH_MESSAGE, PROXY_REFUSED } from "../core/share.ts";
+import { runLuckLines } from "../core/run-risk.ts";
 import { displaySeries, scoreSeries } from "./delta.ts";
 
 export const ISSUE_TITLE = "Synthe: prompt report";
@@ -323,6 +324,7 @@ export function renderReport(goal: Goal, state: State, now: Date = new Date(), r
         : `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}.`,
     `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
+    ...runLuckLines(goal, state.rounds),
     ...(state.rounds.some((r) => r.attacks) ? ["- Attacks: each round, the current prompt and the winning change also answer the frozen attack messages in `.synthe/attacks.jsonl`, and a change that fails one the current prompt passes isn't merged. Attacks are a basic check, not a security test."] : []),
     ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}.${attackLine(r) ? ` ${attackLine(r)}` : ""} ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),
     "", "</details>", "",
