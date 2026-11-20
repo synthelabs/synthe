@@ -11007,11 +11007,11 @@ ${store.memoryStoreId}`);
           }
         };
         const queue = pulls[Symbol.iterator]();
-        const worker2 = async () => {
+        const worker = async () => {
           for (const [rel, listed] of queue)
             await pullOne(rel, listed);
         };
-        await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, pulls.length) }, worker2));
+        await Promise.all(Array.from({ length: Math.min(FETCH_CONCURRENCY, pulls.length) }, worker));
       }, _SessionMemoryStores_uploadAll = /**
        * Upload the given files, {@link UPLOAD_CONCURRENCY} at a time, taking each
        * path off `unsent` as its upload returns. No upload starts once `signal`
@@ -11019,7 +11019,7 @@ ${store.memoryStoreId}`);
        */
       async function _SessionMemoryStores_uploadAll2(store, uploads, unsent, signal) {
         const queue = uploads[Symbol.iterator]();
-        const worker2 = async () => {
+        const worker = async () => {
           for (const [rel, localSha, existing] of queue) {
             if (signal?.aborted)
               return;
@@ -11029,7 +11029,7 @@ ${store.memoryStoreId}`);
               store.baseline.set(rel, sha);
           }
         };
-        await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, uploads.length) }, worker2));
+        await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, uploads.length) }, worker));
       }, _SessionMemoryStores_listMemories = /**
        * The store's memories keyed by relative path (the wire path's leading `/`
        * stripped — `#upload` re-prefixes it) — `basic` view (shas, no content) at
@@ -28047,7 +28047,7 @@ var init_sdk = __esm({
 });
 
 // src/action.ts
-import { appendFileSync, existsSync, mkdirSync as mkdirSync2, readFileSync as readFileSync4, writeFileSync as writeFileSync2 } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 
 // src/core/goal.ts
 var STATE_BRANCH = "synthe/state";
@@ -28510,66 +28510,6 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
 // src/model/client.ts
 init_sdk();
 
-// src/model/install.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
-import { chmodSync, closeSync, constants as constants2, fchmodSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute as isAbsolute2, join as join2 } from "node:path";
-function setupInstallId(env = process.env) {
-  const config = env.XDG_CONFIG_HOME && isAbsolute2(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : join2(homedir(), ".config");
-  const directory = join2(config, "synthe");
-  mkdirSync(directory, { recursive: true, mode: 448 });
-  if (!lstatSync(directory).isDirectory()) throw new Error("Synthe's config directory must not be a symlink.");
-  chmodSync(directory, 448);
-  const path4 = join2(directory, "install-id");
-  try {
-    return readInstallId(path4);
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-  const temporary = join2(directory, `.install-${randomUUID2()}`);
-  try {
-    const descriptor = openSync(temporary, "wx", 384);
-    try {
-      writeFileSync(descriptor, `${randomUUID2()}
-`);
-      fsyncSync(descriptor);
-    } finally {
-      closeSync(descriptor);
-    }
-    try {
-      linkSync(temporary, path4);
-      const parent = openSync(directory, "r");
-      try {
-        fsyncSync(parent);
-      } finally {
-        closeSync(parent);
-      }
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-    }
-    return readInstallId(path4);
-  } finally {
-    try {
-      unlinkSync(temporary);
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-  }
-}
-function readInstallId(path4) {
-  const descriptor = openSync(path4, constants2.O_RDONLY | constants2.O_NOFOLLOW | constants2.O_NONBLOCK);
-  try {
-    if (!fstatSync(descriptor).isFile()) throw new Error("Synthe's install ID must be a regular file.");
-    fchmodSync(descriptor, 384);
-    const identity = readFileSync(descriptor, "utf8").trim();
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(identity)) throw new Error("Synthe's install ID is invalid. Ask the organizer for help; it has not been reset.");
-    return identity;
-  } finally {
-    closeSync(descriptor);
-  }
-}
-
 // src/model/cache.ts
 import { createHash as createHash2 } from "node:crypto";
 function cachedSystem(system) {
@@ -28594,198 +28534,12 @@ ${system}`).digest("hex");
   };
 }
 
-// src/core/share.ts
-var ENDPOINT = "https://synthe-share.vercel.app/api/round";
-var SECRETS = [
-  [/\b(sk-(?:ant-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,})\b/g, "[key removed]"],
-  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "[token removed]"],
-  [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email removed]"],
-  [/(?<![\w.])\+?\d[\d ().-]{8,}\d(?![\w.])/g, "[phone removed]"]
-];
-var scrub = (text) => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
-var FULL_SHARE_UNTIL = "2026-11-09T23:59:00Z";
-var fullShareActive = (goal, now = /* @__PURE__ */ new Date()) => goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL);
-var shouldShare = (goal) => goal.share === "numbers" || goal.share === "detail" || goal.share === "full";
-var limited = (text, max) => scrub(text).slice(0, max);
-var fullText = (text) => {
-  const clean = scrub(text);
-  const bytes = Buffer.from(clean);
-  return bytes.length <= 100 * 1024 ? clean : bytes.subarray(0, 100 * 1024).toString("utf8").replace(/\uFFFD$/, "");
-};
-var measure = (value, max) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : null;
-function stopCode(stopped) {
-  if (!stopped) return null;
-  if (/^budget of .* is used$/.test(stopped)) return "budget";
-  if (/^reached \d+ rounds$/.test(stopped)) return "max rounds";
-  if (/^\d+ rounds in a row found no winner$/.test(stopped)) return "stalled";
-  if (/^stopped by (the )?team/i.test(stopped)) return "stopped by team";
-  if (stopped === "spend could not be measured") return "spend unknown";
-  return "other";
-}
-function sharePayload(goal, state, record, version, full, now = /* @__PURE__ */ new Date()) {
-  const payload = {
-    round: record.round,
-    outcome: record.outcome,
-    mode: goal.merge_rule.mode,
-    checksBefore: measure(record.checks?.before, 100),
-    checksAfter: measure(record.checks?.after, 100),
-    costUsd: measure(record.costUsd, 100),
-    spentUsd: state.spendUnknown ? null : measure(state.spendUsd, 1e3),
-    stop: stopCode(state.stopped),
-    version
-  };
-  if (goal.share !== "detail" && goal.share !== "full") return payload;
-  const edits = record.edits?.slice(0, 2).map((edit) => ({ find: limited(edit.find, 1500), replace: limited(edit.replace, 1500) }));
-  const detailPayload = {
-    ...payload,
-    detail: {
-      objective: limited(goal.objective, 2e3),
-      checks: (goal.checks ?? []).slice(0, 5).map((check) => limited(check, 300)),
-      change: edits?.length ? {
-        title: limited(record.title ?? record.changed ?? "Prompt change", 120),
-        summary: limited(record.changed ?? record.plain ?? "", 1e3),
-        edits
-      } : null,
-      example: record.example ? {
-        input: limited(record.example.input, 2e3),
-        before: limited(record.example.before, 2e3),
-        after: limited(record.example.after, 2e3)
-      } : null
-    }
-  };
-  if (!fullShareActive(goal, now) || !full) return detailPayload;
-  const fullValue = Object.fromEntries(Object.entries(full).filter(([, value]) => value !== void 0).map(([key, value]) => [key, fullText(value)]));
-  const result = { ...detailPayload, full: fullValue };
-  while (Buffer.byteLength(JSON.stringify(result)) > 256 * 1024) {
-    const [key, value] = Object.entries(fullValue).sort((a, b) => b[1].length - a[1].length)[0];
-    fullValue[key] = value.slice(0, Math.max(0, value.length - 1024));
-  }
-  return result;
-}
-var PROXY_REFUSED = "The Synthe proxy refused this request: ";
-var fromSyntheProxy = (text) => /Synthe's proxy|Synthe table/.test(text ?? "");
-var PROXY_AUTH_MESSAGE = "The Synthe proxy couldn't verify this GitHub run. Run `npx synthe upgrade`, commit the workflow, and try again.";
-var oidcCache = /* @__PURE__ */ new Map();
-function requireOidc(env = process.env) {
-  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) throw new Error(PROXY_AUTH_MESSAGE);
-}
-async function oidcToken(audience, env = process.env, fetcher = fetch, signal) {
-  requireOidc(env);
-  const cacheKey = JSON.stringify([audience, env.ACTIONS_ID_TOKEN_REQUEST_URL, env.ACTIONS_ID_TOKEN_REQUEST_TOKEN]);
-  const cached = oidcCache.get(cacheKey);
-  if (cached && cached.fetcher === fetcher && cached.expires - 6e4 > Date.now()) return cached.token;
-  const url = new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
-  url.searchParams.set("audience", audience);
-  const response = await fetcher(url, { headers: { Authorization: `bearer ${env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` }, signal: signal ?? AbortSignal.timeout(1e4) });
-  if (!response.ok) throw new Error(`GitHub OIDC returned ${response.status}.`);
-  const token = (await response.json()).value;
-  if (typeof token !== "string" || !token) throw new Error("GitHub OIDC returned no token.");
-  try {
-    const { exp } = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
-    if (typeof exp === "number" && Number.isFinite(exp)) oidcCache.set(cacheKey, { token, expires: exp * 1e3, fetcher });
-  } catch {
-  }
-  return token;
-}
-async function shareRound(payload, env, fetcher = fetch) {
-  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
-    return "Sharing skipped: this workflow needs OIDC permission. Run `npx synthe upgrade`.";
-  }
-  const controller = new AbortController();
-  let timer;
-  try {
-    const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => {
-        controller.abort();
-        reject(new Error("timed out"));
-      }, 1e4);
-    });
-    const token = await Promise.race([oidcToken("synthe-share", env, fetcher, controller.signal), timeout]);
-    const response = await Promise.race([fetcher(ENDPOINT, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal
-    }), timeout]);
-    return response.ok ? `Shared round ${payload.round} with Synthe.` : `Sharing skipped: endpoint returned ${response.status}.`;
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith("GitHub OIDC")) return `Sharing skipped: ${error.message}`;
-    return `Sharing skipped: ${error instanceof Error && error.message === "timed out" ? "request timed out" : "request failed"}.`;
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 // src/model/client.ts
-var PROXY_URL = "https://synthe-crimson.vercel.app/api/claude";
-var normalizeTeamCode = (code) => code.trim().toLowerCase().replace(/\s+/g, "");
-var CreditError = class extends Error {
+var MissingKeyError = class extends Error {
 };
-var ProxyError = class extends Error {
-  status;
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-};
-function eventModels(models) {
-  for (const model of Object.values(models)) {
-    if (!["claude-haiku-5-5", "claude-sonnet-5-5"].includes(model)) throw new CreditError(`Event credit only supports claude-haiku-5-5 and claude-sonnet-5-5; your goal names ${model}. Use an allowed model or run \`npx synthe key\` to use your own Anthropic key.`);
-  }
-}
-function proxyModel(eventCode, action = false, teamCode) {
-  const team = teamCode ? normalizeTeamCode(teamCode) : "";
-  const client = new Anthropic({
-    apiKey: "synthe-proxy",
-    baseURL: process.env.SYNTHE_PROXY_URL || PROXY_URL,
-    maxRetries: 2,
-    logLevel: "off",
-    fetch: async (url, init) => {
-      const headers = new Headers(init?.headers);
-      headers.set("x-synthe-event", eventCode);
-      if (team) headers.set("x-synthe-team", team);
-      headers.set("x-api-key", "synthe-proxy");
-      if (action) headers.set("Authorization", `Bearer ${await oidcToken("synthe-proxy")}`);
-      else {
-        headers.delete("Authorization");
-        headers.set("x-synthe-install", setupInstallId());
-      }
-      const response = await fetch(url, { ...init, headers });
-      if (response.status === 402 || response.status === 403) {
-        const body = await response.clone().json().catch(() => null);
-        if (body?.error?.type === "synthe_credit" && typeof body.error.message === "string") {
-          const refusedHeaders = new Headers(response.headers);
-          refusedHeaders.set("x-should-retry", "false");
-          return new Response(response.body, { status: response.status, headers: refusedHeaders });
-        }
-      }
-      return response;
-    }
-  });
-  const model = sdkModel(client);
-  return { async ask(ask) {
-    eventModels({ model: ask.model });
-    if (ask.maxTokens > 16e3) throw new CreditError("Event credit supports at most 16000 output tokens per request.");
-    try {
-      return await model.ask(ask);
-    } catch (error) {
-      const refused = error;
-      if ((refused.status === 402 || refused.status === 403) && refused.error?.error?.type === "synthe_credit" && typeof refused.error.error.message === "string") throw new CreditError(refused.error.error.message);
-      if (refused.status === 403 && refused.error?.error?.type === "synthe_proxy_auth" && typeof refused.error.error.message === "string") throw new ProxyError(403, `${PROXY_REFUSED}${refused.error.error.message}`);
-      if (refused.status === 401) {
-        if (refused.error?.error?.type === "synthe_proxy_auth") throw new ProxyError(401, PROXY_AUTH_MESSAGE);
-        throw new CreditError("Synthe's sponsored Anthropic key was rejected. Ask at the Synthe table; your workflow does not need upgrading. Once the organizer fixes it, run `npx synthe restart`.");
-      }
-      if (refused.status === 429) throw new ProxyError(429, "Synthe's proxy is busy. Wait a few minutes and try again.");
-      if (refused.status === 503 && typeof refused.error?.error?.message === "string") throw new ProxyError(503, refused.error.error.message);
-      throw error;
-    }
-  } };
-}
-function configuredModel(key, eventCode, action = false, teamCode) {
+function configuredModel(key) {
   if (key?.trim()) return anthropicModel(key.trim());
-  if (eventCode?.trim()) return proxyModel(eventCode.trim(), action, teamCode?.trim() || void 0);
-  throw new Error("No Anthropic key or event code is set. Set SYNTHE_EVENT_CODE or SYNTHE_ANTHROPIC_KEY.");
+  throw new MissingKeyError("No Anthropic key is set. Run `npx synthe key` to save one as the repo secret SYNTHE_ANTHROPIC_KEY.");
 }
 var ANTHROPIC_API_URL = "https://api.anthropic.com";
 var LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
@@ -28801,22 +28555,22 @@ function ownKeyBaseUrl(env = process.env) {
 }
 function anthropicModel(apiKey) {
   const client = new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(), maxRetries: 4 });
-  return sdkModel(client, true);
+  return sdkModel(client);
 }
-function sdkModel(client, cache = false) {
+function sdkModel(client) {
   const warm = firstAlone();
   return {
     async ask({ model, system, user, maxTokens, schema, allowCutOff }) {
       const send = () => client.messages.create({
         model,
         max_tokens: maxTokens,
-        system: cache ? cachedSystem(system) : system,
+        system: cachedSystem(system),
         messages: [{ role: "user", content: user }],
         // Haiku's thinking would spend the output limit on short scoring calls.
         ...model.startsWith("claude-haiku") ? { thinking: { type: "disabled" } } : {},
         output_config: { effort: "low", ...schema ? { format: { type: "json_schema", schema } } : {} }
       });
-      const res = cache ? await warm(model, system, send) : await send();
+      const res = await warm(model, system, send);
       const text = res.content.flatMap((b) => b.type === "text" ? [b.text] : []).join("");
       const finished = res.stop_reason === "end_turn" && text.length > 0;
       const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text.length > 0;
@@ -28851,8 +28605,6 @@ async function pool(items, limit2, fn) {
   return results;
 }
 function modelProblem(e) {
-  if (e instanceof CreditError) return e.message;
-  if (e instanceof ProxyError) return e.message;
   const err = e;
   const status = typeof err?.status === "number" ? err.status : null;
   const text = typeof err?.message === "string" ? err.message : "";
@@ -29278,8 +29030,6 @@ var left = (goal, state) => `up to ${plural(Math.max(0, goal.merge_rule.max_roun
 var missing = (r) => r?.outcome === "failed" && r.reasons.some((x) => x.startsWith("couldn't find the prompt"));
 var badKey = (r) => r?.outcome === "failed" && r.failure === "key";
 var busy = (r) => r?.outcome === "failed" && r.failure === "busy";
-var refusedCode = (r) => badKey(r) && Boolean(r.plain?.startsWith(PROXY_REFUSED));
-var CODE_FIX = "If the Synthe table gave you a new code, save it with `gh secret set SYNTHE_TEAM_CODE` (or `gh secret set SYNTHE_EVENT_CODE` for the event code), then run `npx synthe restart`.";
 var fmtScore = (n) => Number.isInteger(n) ? `${n}` : n.toFixed(1);
 function scoreMovement(state) {
   const measured = displaySeries(scoreSeries(state)).filter((p) => p.measured);
@@ -29324,7 +29074,7 @@ function headlineBase(goal, state, stoppedByTeam = false, mode = "plain") {
     return { title: `A better prompt is waiting for your review: #${state.proposal.pr}`, summary: `Merge it to keep the change, or close it to decline. Synthe pauses, spending nothing, until you decide. ${spent}` };
   }
   const last = state.rounds.at(-1);
-  if (state.stopped === "credit") return { title: "Stopped: event credit needs attention", summary: last?.plain ?? "Run `npx synthe key`, then `npx synthe restart`." };
+  if (state.stopped === "credit") return { title: "Stopped: model credit needs attention", summary: last?.plain ?? "Run `npx synthe key`, then `npx synthe restart`." };
   if (!state.stopped && (missing(last) || badKey(last))) {
     return { title: "Synthe needs you to fix something", summary: `${last.plain} ${spent}` };
   }
@@ -29332,17 +29082,15 @@ function headlineBase(goal, state, stoppedByTeam = false, mode = "plain") {
     return { title: merged > 0 ? `Stopped by you after ${plural(merged, "merged change")}` : "Stopped by you", summary: `${gain}${guardLine}It ran ${plural(state.round, "round")} before you stopped it. ${spent}` };
   }
   if (!state.stopped) {
-    const wait = busy(last) ? fromSyntheProxy(last?.plain) ? ` ${last.plain} Synthe tried again; if it stopped, run \`npx synthe restart\`.` : " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
+    const wait = busy(last) ? " The last round didn't finish because Anthropic's API was busy; Synthe tried again right away; if it stopped, run `npx synthe restart`." : "";
     return merged > 0 ? { title: `Your prompt is getting better: ${plural(merged, "change")} merged so far`, summary: `${gain}${guardLine}Synthe is still running: ${left(goal, state)}.${wait} This page updates after each round. ${spent}` } : { title: "Synthe is working on your prompt", summary: `${plural(state.round, "round")} so far; ${left(goal, state)}.${wait} This page updates after each round. ${spent}` };
   }
   const why = /no winner$/.test(state.stopped) ? `the last ${goal.merge_rule.stall_rounds} rounds found nothing clearly better` : /^budget/.test(state.stopped) ? `it used its $${goal.budget.max_usd} budget` : `it ran all ${goal.merge_rule.max_rounds} rounds`;
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
   if (recent.length > 0 && (recent.every((r) => r.outcome === "failed") || badKey(recent.at(-1)))) {
     const end = recent.at(-1);
-    if (busy(end) && fromSyntheProxy(end.plain)) return { title: "Stopped: Synthe's proxy needs attention", summary: end.plain };
     if (missing(end)) return { title: "Stopped: the last rounds didn't finish", summary: end.plain };
-    if (refusedCode(end)) return { title: "Stopped: the Synthe proxy refused this repo's code", summary: `${end.plain} ${CODE_FIX} ${spent}` };
-    if (badKey(end)) return { title: end.plain === PROXY_AUTH_MESSAGE ? "Stopped: the Synthe proxy couldn't verify this run" : "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
+    if (badKey(end)) return { title: "Stopped: your Synthe key stopped working", summary: `${end.plain} ${spent}` };
     if (busy(end) && isFinished(state.stopped)) {
       return { title: "Stopped: the last rounds didn't finish because Anthropic's API was busy", summary: `Nothing is wrong on your side. Synthe stopped because ${why}. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
     }
@@ -29359,7 +29107,6 @@ function nextSteps(goal, state) {
   const last = state.rounds.at(-1);
   if (state.stopped === "credit") steps.push("To use your own Anthropic key, run `npx synthe key`, then `npx synthe restart`.");
   else if (state.stopped && /^budget/.test(state.stopped)) steps.push(`${state.ownKeyFromUsd === void 0 ? "Run `npx synthe key` for a fresh own-key budget, or raise" : "Raise"} budget.max_usd in synthe.json${state.round >= goal.merge_rule.max_rounds ? `. Synthe has also run all ${goal.merge_rule.max_rounds} rounds, so raise merge_rule.max_rounds too` : ""} and push it, then run \`npx synthe restart\`.`);
-  else if (state.stopped && refusedCode(last)) steps.push(`${last.plain} ${CODE_FIX}`);
   else if (state.stopped && badKey(last)) steps.push(`${last.plain} Then run \`npx synthe restart\` to start Synthe again.`);
   else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
   if (state.stopped && /no winner$/.test(state.stopped) && !badKey(last)) {
@@ -29372,17 +29119,15 @@ function nextSteps(goal, state) {
   }
   if (!state.stopped && !state.proposal && missing(last)) {
     steps.push(`${last.plain} Once it's fixed, run \`npx synthe restart\`. Until then Synthe spends nothing.`);
-  } else if (!state.stopped && !state.proposal && refusedCode(last)) {
-    steps.push(`${last.plain} ${CODE_FIX}`);
   } else if (!state.stopped && !state.proposal && badKey(last)) {
-    steps.push(`${last.plain} Run \`npx synthe restart\` after ${last.plain === PROXY_AUTH_MESSAGE ? "that" : "replacing the key"}.`);
+    steps.push(`${last.plain} Run \`npx synthe restart\` after replacing the key.`);
   } else if (!state.stopped && !state.proposal) {
-    steps.push(busy(last) ? fromSyntheProxy(last?.plain) ? `${last.plain} Synthe tried again; if it has stopped, run \`npx synthe restart\`.` : "Nothing to do. Anthropic's API was busy during the last round, so Synthe tried again; if it has stopped, run `npx synthe restart`. Otherwise Synthe stops by itself." : "Nothing to do. Completed rounds start back to back and Synthe stops by itself.");
+    steps.push(busy(last) ? "Nothing to do. Anthropic's API was busy during the last round, so Synthe tried again; if it has stopped, run `npx synthe restart`. Otherwise Synthe stops by itself." : "Nothing to do. Completed rounds start back to back and Synthe stops by itself.");
     steps.push("To keep your agent unchanged, for example before a demo, run `npx synthe stop`.");
   } else if (state.proposal) {
     steps.push("To stop Synthe completely: `npx synthe stop`.");
   }
-  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete whichever of the `SYNTHE_ANTHROPIC_KEY`, `SYNTHE_EVENT_CODE` and `SYNTHE_TEAM_CODE` secrets your repo has, in its settings.");
+  if (state.stopped && !state.proposal) steps.push("When you're done with Synthe: run `npx synthe stop`, delete `synthe.json`, `.synthe/` and `.github/workflows/synthe.yml`, and delete the `SYNTHE_ANTHROPIC_KEY` secret in your repo's settings.");
   return steps;
 }
 var TRIED_GROUPS = ["not clearly better", "did not hold on the hidden test cases", "broke a rule or a guard"];
@@ -29505,7 +29250,7 @@ function renderReport(goal, state, now = /* @__PURE__ */ new Date(), repoSlug) {
     "",
     `- Goal: ${goal.objective}`,
     `- Rounds: ${state.round} of up to ${goal.merge_rule.max_rounds}. Spent ${money2(state)} of $${goal.budget.max_usd}.`,
-    goal.share === "none" || !goal.share ? "- Sharing with Synthe: off." : goal.share === "full" && now.getTime() < Date.parse(FULL_SHARE_UNTIL) ? "- Sharing with Synthe: everything for Crimson Hacks (prompt and test cases until November 9), then numbers and what changed." : `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}.`,
+    goal.share === "none" || !goal.share ? "- Sharing with Synthe: off." : `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}.`,
     `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
     ...state.rounds.some((r) => r.attacks) ? ["- Attacks: each round, the current prompt and the winning change also answer the frozen attack messages in `.synthe/attacks.jsonl`, and a change that fails one the current prompt passes isn't merged. Attacks are a basic check, not a security test."] : [],
@@ -30539,18 +30284,13 @@ ${notTested(goal).slice(1).join("\n")}
     record.outcome = "failed";
     const error = input2.error;
     if (error) record.failure = error.kind;
-    if (error?.kind === "credit") {
-      record.reasons.push(error.message);
-      record.plain = error.message;
-      state.stopped = "credit";
-      stall = false;
-    } else if (error?.kind === "busy") {
-      record.reasons.push(fromSyntheProxy(error.message) ? error.message : `Anthropic's API was busy during the ${error.step} step: ${error.message}`);
-      record.plain = fromSyntheProxy(error.message) ? error.message : "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
+    if (error?.kind === "busy") {
+      record.reasons.push(`Anthropic's API was busy during the ${error.step} step: ${error.message}`);
+      record.plain = "This round didn't finish because Anthropic's API was busy. Nothing is wrong on your side, and nothing changed. Synthe tries again right away, up to twice; if it's still busy, run `npx synthe restart` later.";
       stall = false;
     } else if (error?.kind === "key") {
-      record.reasons.push(error.message.startsWith(PROXY_REFUSED) ? `the ${error.step} step was refused by the Synthe proxy: ${error.message.slice(PROXY_REFUSED.length)}` : `the ${error.step} step's key was refused: ${error.message}`);
-      record.plain = error.message.startsWith("The Synthe proxy") ? error.message : `This round didn't finish. ${error.message.split(/(?<=\.) /)[0]} Run \`npx synthe key\` to replace your Anthropic key.`;
+      record.reasons.push(`the ${error.step} step's key was refused: ${error.message}`);
+      record.plain = `This round didn't finish. ${error.message.split(/(?<=\.) /)[0]} Run \`npx synthe key\` to replace your Anthropic key.`;
     } else {
       record.reasons.push("the round did not finish; check the Actions log and the API key");
       record.plain = "This round didn't finish. If it keeps happening, check the Actions log and that your key still has credit.";
@@ -30740,6 +30480,107 @@ ${goal.policy ?? ""}`);
   return record;
 }
 
+// src/core/share.ts
+var ENDPOINT = "https://synthe-share.vercel.app/api/round";
+var SECRETS = [
+  [/\b(sk-(?:ant-)?[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,})\b/g, "[key removed]"],
+  [/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, "[token removed]"],
+  [/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, "[email removed]"],
+  [/(?<![\w.])\+?\d[\d ().-]{8,}\d(?![\w.])/g, "[phone removed]"]
+];
+var scrub = (text) => SECRETS.reduce((value, [pattern, replacement]) => value.replace(pattern, replacement), text);
+var shouldShare = (goal) => goal.share === "numbers" || goal.share === "detail" || goal.share === "full";
+var limited = (text, max) => scrub(text).slice(0, max);
+var measure = (value, max) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= max ? value : null;
+function stopCode(stopped) {
+  if (!stopped) return null;
+  if (/^budget of .* is used$/.test(stopped)) return "budget";
+  if (/^reached \d+ rounds$/.test(stopped)) return "max rounds";
+  if (/^\d+ rounds in a row found no winner$/.test(stopped)) return "stalled";
+  if (/^stopped by (the )?team/i.test(stopped)) return "stopped by team";
+  if (stopped === "spend could not be measured") return "spend unknown";
+  return "other";
+}
+function sharePayload(goal, state, record, version) {
+  const payload = {
+    round: record.round,
+    outcome: record.outcome,
+    mode: goal.merge_rule.mode,
+    checksBefore: measure(record.checks?.before, 100),
+    checksAfter: measure(record.checks?.after, 100),
+    costUsd: measure(record.costUsd, 100),
+    spentUsd: state.spendUnknown ? null : measure(state.spendUsd, 1e3),
+    stop: stopCode(state.stopped),
+    version
+  };
+  if (goal.share !== "detail" && goal.share !== "full") return payload;
+  const edits = record.edits?.slice(0, 2).map((edit) => ({ find: limited(edit.find, 1500), replace: limited(edit.replace, 1500) }));
+  return {
+    ...payload,
+    detail: {
+      objective: limited(goal.objective, 2e3),
+      checks: (goal.checks ?? []).slice(0, 5).map((check) => limited(check, 300)),
+      change: edits?.length ? {
+        title: limited(record.title ?? record.changed ?? "Prompt change", 120),
+        summary: limited(record.changed ?? record.plain ?? "", 1e3),
+        edits
+      } : null,
+      example: record.example ? {
+        input: limited(record.example.input, 2e3),
+        before: limited(record.example.before, 2e3),
+        after: limited(record.example.after, 2e3)
+      } : null
+    }
+  };
+}
+var oidcCache = /* @__PURE__ */ new Map();
+async function oidcToken(audience, env = process.env, fetcher = fetch, signal) {
+  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) throw new Error("GitHub OIDC is not available to this workflow. Run `npx synthe upgrade`.");
+  const cacheKey = JSON.stringify([audience, env.ACTIONS_ID_TOKEN_REQUEST_URL, env.ACTIONS_ID_TOKEN_REQUEST_TOKEN]);
+  const cached = oidcCache.get(cacheKey);
+  if (cached && cached.fetcher === fetcher && cached.expires - 6e4 > Date.now()) return cached.token;
+  const url = new URL(env.ACTIONS_ID_TOKEN_REQUEST_URL);
+  url.searchParams.set("audience", audience);
+  const response = await fetcher(url, { headers: { Authorization: `bearer ${env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}` }, signal: signal ?? AbortSignal.timeout(1e4) });
+  if (!response.ok) throw new Error(`GitHub OIDC returned ${response.status}.`);
+  const token = (await response.json()).value;
+  if (typeof token !== "string" || !token) throw new Error("GitHub OIDC returned no token.");
+  try {
+    const { exp } = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+    if (typeof exp === "number" && Number.isFinite(exp)) oidcCache.set(cacheKey, { token, expires: exp * 1e3, fetcher });
+  } catch {
+  }
+  return token;
+}
+async function shareRound(payload, env, fetcher = fetch) {
+  if (!env.ACTIONS_ID_TOKEN_REQUEST_URL || !env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) {
+    return "Sharing skipped: this workflow needs OIDC permission. Run `npx synthe upgrade`.";
+  }
+  const controller = new AbortController();
+  let timer;
+  try {
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error("timed out"));
+      }, 1e4);
+    });
+    const token = await Promise.race([oidcToken("synthe-share", env, fetcher, controller.signal), timeout]);
+    const response = await Promise.race([fetcher(ENDPOINT, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    }), timeout]);
+    return response.ok ? `Shared round ${payload.round} with Synthe.` : `Sharing skipped: endpoint returned ${response.status}.`;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("GitHub OIDC")) return `Sharing skipped: ${error.message}`;
+    return `Sharing skipped: ${error instanceof Error && error.message === "timed out" ? "request timed out" : "request failed"}.`;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 // package.json
 var package_default = {
   name: "synthe",
@@ -30800,7 +30641,7 @@ var package_default = {
     test: "node --test test/*.test.ts",
     typecheck: "tsc --noEmit",
     prepublishOnly: "node scripts/check-release-tag.mjs",
-    version: "node scripts/version-pins.mjs && npm run build && git add README.md docs/AGENT-SETUP.md kit/HACKATHON.md src/cli/guide.ts dist",
+    version: "node scripts/version-pins.mjs && npm run build && git add README.md docs/AGENT-SETUP.md src/cli/guide.ts dist",
     mutation: "node scripts/mutation-check.mjs",
     simulate: "node scripts/simulate-gate.ts",
     "simulate:pilot": "node scripts/simulate-pilot.ts",
@@ -30819,348 +30660,11 @@ var package_default = {
 
 // src/loop/failure.ts
 function failureOf(step, e) {
-  if (e instanceof Error && e.message === PROXY_AUTH_MESSAGE) return { step, kind: "key", message: e.message };
-  if (e instanceof CreditError) return { step, kind: "credit", message: e.message };
-  if (e instanceof ProxyError) return { step, kind: e.status === 401 || e.status === 403 ? "key" : "busy", message: e.message };
+  if (e instanceof MissingKeyError) return { step, kind: "key", message: e.message };
   const plain = modelProblem(e);
   if (plain !== null) return { step, kind: /\bkey\b/i.test(plain) ? "key" : "busy", message: plain };
   const raw = e instanceof Error ? e.message : String(e);
   return { step, kind: "other", message: raw.trim().split("\n")[0].slice(0, 300) };
-}
-
-// src/core/events.ts
-import { spawn as spawn2 } from "node:child_process";
-import { randomUUID as randomUUID3 } from "node:crypto";
-import { readFileSync as readFileSync2 } from "node:fs";
-var EVENTS_ENDPOINT = "https://synthe-crimson.vercel.app/api/events";
-var MAX_EVENT_BYTES = 192 * 1024;
-var FLUSH_MS = 15e3;
-var WORDS = /^[a-z_-]{1,16}( [a-z_-]{1,16}){0,3}$/;
-var KEY = /^[a-z][a-z0-9_]{0,39}$/;
-var CREDENTIAL = /secret|token|password|credential|authorization|cookie|(?:^|_)key(?:$|_)|(?:team|event)_code/i;
-var CONTENT_KEYS = /* @__PURE__ */ new Set(["candidate_id", "case_id", "parent_prompt_sha256", "final_prompt_sha256", "diff", "prompt", "writer_rejection", "baseline_output", "candidate_output", "failed_checks", "reasons", "message", "no_op_reason"]);
-function scrubEventText(text, env) {
-  let clean = text;
-  for (const [name, value] of Object.entries(env)) {
-    if (value?.trim() && /secret|token|password|credential|api.?key|anthropic.*key|(?:event|team)[_-]code/i.test(name)) clean = clean.split(value.trim()).join("[removed]");
-  }
-  return scrub(clean).replace(/\bcrim(?:-[a-z0-9]{4}){4}\b/gi, "[team code removed]").replace(/\b(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-synthe-event|x-synthe-team)[ \t]*[:=][ \t]*[^\r\n]*/gi, "$1: [removed]").replace(/\bbearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [removed]").replace(/\b(?:npm_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|hf_[A-Za-z0-9]{20,}|ya29\.[A-Za-z0-9_-]+|[srp]k_(?:live|test)_[A-Za-z0-9]+)/g, "[key removed]").replace(/(["']?)\b([\w.-]*(?:secret|token|password|credential|api[_-]?key|private[_-]?key|access[_-]?key|team[_-]?code|event[_-]?code)[\w.-]*)\1\s*[:=]\s*("[^"\r\n]*"|'[^'\r\n]*'|[^\s,}\]]+)/gi, "$2=[removed]").replace(/https?:\/\/[^\s"'<>]+[?&](?:token|sig|signature|X-Amz-[\w-]+|code|key|access_token)=[^\s"'<>]*/gi, "[signed URL removed]").replace(/https?:\/\/[^\s/:@]+:[^\s/@]+@[^\s"'<>]*/g, "[credential URL removed]").replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "[private key removed]").replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD");
-}
-function eventData(value, full, env = {}, depth = 0) {
-  if (depth > 6) return null;
-  if (value === null || typeof value === "boolean") return value;
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (typeof value === "string") {
-    const clean = scrubEventText(value, env);
-    return full || clean === value && WORDS.test(clean) ? clean : null;
-  }
-  if (typeof value !== "object" || !value) return null;
-  if (depth === 6) return null;
-  if (Array.isArray(value)) return value.slice(0, 200).map((v) => eventData(v, full, env, depth + 1));
-  return Object.fromEntries(Object.entries(value).filter(([key]) => KEY.test(key) && !CREDENTIAL.test(key)).slice(0, 50).map(([key, v]) => [key, !full && CONTENT_KEYS.has(key) ? null : eventData(v, full, env, depth + 1)]));
-}
-function eventBatches(consent, events, env = {}) {
-  const batches = [];
-  let batch = [];
-  const encode2 = (items) => JSON.stringify({ schema: 1, ...consent, events: items });
-  for (const event of events) {
-    let clean = { ...event, data: eventData(event.data, consent.share === "full", env) };
-    if (Buffer.byteLength(encode2([clean])) > MAX_EVENT_BYTES) clean = { ...clean, data: { content_omitted: true } };
-    if (batch.length === 50 || Buffer.byteLength(encode2([...batch, clean])) > MAX_EVENT_BYTES) {
-      batches.push(encode2(batch));
-      batch = [];
-    }
-    batch.push(clean);
-  }
-  if (batch.length) batches.push(encode2(batch));
-  return batches;
-}
-async function sendEvents(consent, events, options = {}) {
-  const env = options.env ?? process.env, fetcher = options.fetcher ?? fetch;
-  const now = options.now ?? Date.now, deadline = now() + (options.timeoutMs ?? 6e4);
-  const sleep2 = options.sleep ?? ((ms) => new Promise((resolve2) => setTimeout(resolve2, ms)));
-  try {
-    if (!["numbers", "detail", "full"].includes(consent.share) || !/^[a-z0-9][a-z0-9.-]{0,39}$/.test(consent.notice) || !/^[a-f0-9]{40}$/.test(consent.source_sha) || !/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]{1,20})?$/.test(consent.synthe_version) || !events.length) return;
-    consent = { ...consent };
-    let effective = consent;
-    for (const original of eventBatches(consent, events, env)) {
-      let body = original;
-      if (effective.share === "numbers" && consent.share === "full") {
-        const batch = JSON.parse(original);
-        body = JSON.stringify({ ...batch, share: "numbers", events: batch.events.map((e) => ({ ...e, data: eventData(e.data, false, env) })) });
-      }
-      for (let attempt = 0; attempt < 5 && now() < deadline; attempt++) {
-        const signal = AbortSignal.timeout(Math.max(1, Math.min(5e3, deadline - now())));
-        const token = await oidcToken("synthe-events", env, fetcher, signal);
-        const response = await fetcher(EVENTS_ENDPOINT, {
-          method: "POST",
-          redirect: "error",
-          signal,
-          headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
-          body
-        });
-        if (response.ok) {
-          await response.body?.cancel();
-          break;
-        }
-        if (response.status === 403 && effective.share === "full") {
-          const text = await response.text();
-          if (/full collection has ended|full sharing needs a currently accepted sharing notice/i.test(text)) {
-            effective = { ...consent, share: "numbers" };
-            options.onDowngrade?.();
-            const batch = JSON.parse(body);
-            body = JSON.stringify({ ...batch, share: "numbers", events: batch.events.map((e) => ({ ...e, data: eventData(e.data, false, env) })) });
-            continue;
-          }
-          return;
-        }
-        const status = response.status, retryAfter = response.headers.get("retry-after");
-        await response.body?.cancel();
-        if (![409, 429, 502, 503].includes(status)) return;
-        if (attempt === 4) return;
-        const seconds = retryAfter === null ? NaN : Number(retryAfter);
-        const requested = status === 429 && retryAfter !== null ? Number.isFinite(seconds) ? Math.max(0, seconds * 1e3) : Math.max(0, Date.parse(retryAfter) - now()) : 0;
-        const wait = Math.max(500 * 2 ** attempt, Number.isFinite(requested) ? requested : 0);
-        if (now() + wait >= deadline) return;
-        await sleep2(wait);
-      }
-    }
-  } catch {
-  }
-}
-async function eventConsent(env, fetcher = fetch) {
-  const slug = env.GITHUB_REPOSITORY;
-  if (!slug || !/^[\w.-]+\/[\w.-]+$/.test(slug)) return null;
-  if (!["workflow_dispatch", "schedule", "pull_request"].includes(env.GITHUB_EVENT_NAME ?? "")) return null;
-  try {
-    if (env.GITHUB_EVENT_NAME === "pull_request") {
-      const event = JSON.parse(readFileSync2(env.GITHUB_EVENT_PATH, "utf8"));
-      if (event.pull_request?.head?.repo?.full_name !== slug) return null;
-    }
-    const token = env["INPUT_GITHUB-TOKEN"] ?? "";
-    const get = async (path4, raw = false) => {
-      const response = await fetcher(`${env.GITHUB_API_URL ?? "https://api.github.com"}/repos/${slug}${path4}`, {
-        headers: { Authorization: `Bearer ${token}`, Accept: raw ? "application/vnd.github.raw+json" : "application/vnd.github+json", "User-Agent": "synthe" },
-        redirect: "error",
-        signal: AbortSignal.timeout(5e3)
-      });
-      if (!response.ok) throw new Error("Consent unavailable");
-      return raw ? response.text() : response.json();
-    };
-    const branch = (await get("")).default_branch;
-    const source_sha = (await get(`/git/ref/heads/${encodeURIComponent(branch)}`)).object.sha;
-    const goal = JSON.parse(await get(`/contents/${GOAL_FILE}?ref=${encodeURIComponent(source_sha)}`, true));
-    if (!["numbers", "detail", "full"].includes(goal.share) || typeof goal.share_notice !== "string" || !/^[a-z0-9][a-z0-9.-]{0,39}$/.test(goal.share_notice) || !/^[a-f0-9]{40}$/.test(source_sha)) return null;
-    return { share: goal.share, notice: goal.share_notice, source_sha, synthe_version: package_default.version };
-  } catch {
-    return null;
-  }
-}
-var worker;
-var sending = [];
-function capture(kind, stage, data) {
-  try {
-    if (!process.env.ACTIONS_ID_TOKEN_REQUEST_URL || !process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) return;
-    if (!worker) {
-      worker = spawn2(process.execPath, [process.argv[1], "--synthe-events-worker"], { detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"] });
-      worker.on("error", () => {
-      });
-      worker.unref();
-      worker.channel?.unref();
-    }
-    const event = { id: randomUUID3(), kind, at: (/* @__PURE__ */ new Date()).toISOString(), stage, data: eventData(data, true, process.env) };
-    if (Buffer.byteLength(JSON.stringify(event)) > MAX_EVENT_BYTES) event.data = { content_omitted: true };
-    const child = worker;
-    if (child.connected) sending.push(new Promise((done) => {
-      child.send(event, () => done());
-    }));
-  } catch {
-  }
-}
-async function flushEvents(timeoutMs = FLUSH_MS) {
-  const child = worker;
-  if (!child) return;
-  let timer;
-  try {
-    const sent = (async () => {
-      await Promise.all(sending);
-      if (child.exitCode !== null || child.signalCode !== null) return;
-      const exited = new Promise((done) => child.once("exit", () => done()));
-      if (child.connected) child.disconnect();
-      await exited;
-    })();
-    await Promise.race([sent, new Promise((done) => {
-      timer = setTimeout(done, timeoutMs);
-    })]);
-  } catch {
-  } finally {
-    clearTimeout(timer);
-  }
-}
-var captureFailure = (stage, error) => capture("failure", WORDS.test(stage) ? stage : "round", { reason: "step failed", message: error instanceof Error ? error.message : null });
-var captureCancel = (stage = "round") => capture("cancel", stage, { reason: "cancelled" });
-async function observeRoundStep(stage, context2, work) {
-  if (stage === "write") capture("round_start", stage, {});
-  const cancel = (signal) => {
-    captureCancel(stage);
-    process.exit(signal === "SIGINT" ? 130 : 143);
-  };
-  const interrupt = () => cancel("SIGINT"), terminate = () => cancel("SIGTERM");
-  process.once("SIGINT", interrupt);
-  process.once("SIGTERM", terminate);
-  try {
-    const result = await work();
-    try {
-      if (stage === "write") {
-        const written = result;
-        for (const c of written.candidates) capture("candidate", stage, { candidate_id: c.id, parent_prompt_sha256: context2.prompt === void 0 ? null : sha256(context2.prompt), diff: c.edits ?? null, prompt: c.text, writer_rejection: null, scored: null });
-        for (const rejection of written.rejected ?? []) capture("candidate", stage, { candidate_id: null, parent_prompt_sha256: context2.prompt === void 0 ? null : sha256(context2.prompt), diff: null, prompt: null, writer_rejection: rejection, scored: false });
-      } else if (stage === "score") {
-        const { scores } = result;
-        for (const c of scores.candidates) for (const split of ["train", "holdout"]) {
-          const baseline = split === "train" ? scores.baselineTrain : scores.baselineHoldout;
-          for (const row of (c[split] ?? []).slice(0, split === "train" ? c.stoppedAfter : void 0)) {
-            const before = baseline.find((b) => b.id === row.id);
-            capture("case_result", stage, {
-              candidate_id: c.id,
-              case_id: row.id,
-              split,
-              baseline_output: before?.reply ?? null,
-              candidate_output: row.reply ?? null,
-              baseline_score: before?.score ?? null,
-              candidate_score: row.score,
-              failed_checks: row.failedChecks ?? null,
-              failed: row.failed ?? null,
-              applicable: row.applicable ?? null,
-              baseline_guard_violation: before?.violation ?? null,
-              candidate_guard_violation: row.violation,
-              attack_results: null
-            });
-          }
-        }
-      } else if (result) {
-        const record = result;
-        const chosen = record.edits && context2.candidates?.find((c) => JSON.stringify(c.edits) === JSON.stringify(record.edits));
-        capture("decision", stage, { candidate_id: chosen ? chosen.id : null, accepted: record.outcome === "merged" || record.outcome === "proposed", outcome: record.outcome, reasons: record.reasons, noise: null, calibration: null });
-        capture("round_end", stage, { round: record.round, outcome: record.outcome, no_op_reason: record.outcome === "skipped" ? record.reasons : null, pr: record.pr ?? null, commit: null, cost_usd: record.costUsd, final_prompt_sha256: chosen && record.outcome === "merged" ? sha256(chosen.text) : null });
-      }
-    } catch {
-    }
-    return result;
-  } finally {
-    process.removeListener("SIGINT", interrupt);
-    process.removeListener("SIGTERM", terminate);
-  }
-}
-function startEventsWorker() {
-  if (process.argv[2] !== "--synthe-events-worker") return false;
-  let timeout;
-  const consent = eventConsent(process.env).catch(() => null);
-  const queue = [];
-  let draining = false, disconnected = false;
-  const drain = async () => {
-    if (draining) return;
-    draining = true;
-    try {
-      const allowed = await consent;
-      while (queue.length) {
-        const batch = queue.splice(0, 50);
-        if (allowed) await sendEvents(allowed, batch, { onDowngrade: () => {
-          allowed.share = "numbers";
-        } });
-      }
-    } catch {
-    } finally {
-      draining = false;
-      if (disconnected) {
-        if (timeout) clearTimeout(timeout);
-        process.exit(0);
-      }
-    }
-  };
-  process.on("message", (event) => {
-    if (queue.length < 1e3) queue.push(event);
-    setImmediate(() => {
-      void drain();
-    });
-  });
-  process.on("disconnect", () => {
-    disconnected = true;
-    timeout = setTimeout(() => process.exit(0), 9e4);
-    void drain();
-  });
-  return true;
-}
-
-// src/core/receipts.ts
-import { readFileSync as readFileSync3 } from "node:fs";
-import { setTimeout as delay } from "node:timers/promises";
-var ENDPOINT2 = "https://synthe-crimson.vercel.app/api/collect/receipt";
-var AUDIENCE = "synthe-receipts";
-var EVENT_ENDS = Date.parse("2026-11-08T23:59:00Z");
-var CONCLUSIONS = /* @__PURE__ */ new Set(["success", "failure", "cancelled", "skipped", "timed_out", "neutral", "action_required", "stale", "startup_failure"]);
-var OWN_FINISH_ENDS = EVENT_ENDS + 36e5;
-var OWN_CONCLUSIONS = /* @__PURE__ */ new Set(["success", "failure", "cancelled"]);
-function finishReceipt(eventPath, repositoryId) {
-  let event;
-  try {
-    if (!eventPath) throw new Error();
-    event = JSON.parse(readFileSync3(eventPath, "utf8"));
-  } catch {
-    throw new Error("GitHub did not provide the completed Synthe run. Rerun this collector from Actions.");
-  }
-  const run = event?.workflow_run;
-  if (event?.action !== "completed" || run?.status !== "completed" || !repositoryId || String(event.repository?.id) !== repositoryId || String(run?.repository?.id) !== repositoryId || String(run?.head_repository?.id) !== repositoryId || typeof run?.path !== "string" || run.path.split("@", 1)[0] !== ".github/workflows/synthe.yml") return null;
-  const startedAt = Date.parse(run.run_started_at ?? run.created_at ?? "");
-  if (startedAt >= EVENT_ENDS) return null;
-  if (!Number.isSafeInteger(run.id) || run.id < 1 || !Number.isSafeInteger(run.run_attempt) || run.run_attempt < 1 || run.run_attempt > 9999 || !CONCLUSIONS.has(run.conclusion)) {
-    throw new Error("GitHub did not provide a run ID, attempt and conclusion. Rerun this collector from Actions.");
-  }
-  return { kind: "finish", run_id: String(run.id), attempt: String(run.run_attempt), conclusion: run.conclusion };
-}
-async function deliverReceipt(step, eventCode, teamCode, options = {}) {
-  const { env = process.env, fetcher = fetch, sleep: sleep2 = delay, now = Date.now } = options;
-  if (step === "receipt-start" && now() >= EVENT_ENDS) return false;
-  const own = step === "receipt-finish" && env.GITHUB_EVENT_NAME !== "workflow_run";
-  if (own && now() >= OWN_FINISH_ENDS) return false;
-  if (own && !OWN_CONCLUSIONS.has(options.conclusion ?? "")) {
-    throw new Error("Crimson tracking couldn't tell how this run ended. Commit the files from `npx synthe upgrade --event` and rerun.");
-  }
-  const receipt = step === "receipt-start" ? { kind: "start" } : own ? { kind: "finish", conclusion: options.conclusion } : finishReceipt(env.GITHUB_EVENT_PATH, env.GITHUB_REPOSITORY_ID);
-  if (!receipt) return false;
-  if (!eventCode.trim() || !teamCode.trim()) {
-    throw new Error("Crimson tracking needs both repository secrets, SYNTHE_EVENT_CODE and SYNTHE_TEAM_CODE. Add them in GitHub Actions settings, then rerun.");
-  }
-  requireOidc(env);
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt) await sleep2(attempt * 1e3);
-    let status;
-    try {
-      const signal = AbortSignal.timeout(1e4);
-      const token = await oidcToken(AUDIENCE, env, fetcher, signal);
-      const response = await fetcher(ENDPOINT2, {
-        method: "POST",
-        redirect: "error",
-        signal,
-        headers: { Authorization: `Bearer ${token}`, "content-type": "application/json", "x-synthe-event": eventCode.trim(), "x-synthe-team": teamCode.trim() },
-        body: JSON.stringify(receipt)
-      });
-      if (response.ok) {
-        const ack = await response.json();
-        if (ack && typeof ack === "object" && "ok" in ack && ack.ok === true) return true;
-      } else {
-        status = response.status;
-        await response.body?.cancel();
-      }
-    } catch {
-    }
-    if (status === 401) throw new Error("Crimson tracking couldn't verify this GitHub workflow. Commit the files from `npx synthe upgrade --event` and rerun.");
-    if (status === 403) throw new Error("Crimson tracking refused this team or repository. Check the event and team codes with the organizer, then rerun.");
-    if (status !== void 0 && status !== 409 && status !== 429 && status < 500) {
-      throw new Error(`Crimson tracking refused this receipt (HTTP ${status}). Ask the organizer before rerunning.`);
-    }
-  }
-  throw new Error("Crimson tracking didn't acknowledge this run after three attempts. Rerun from Actions or ask the organizer.");
 }
 
 // src/action.ts
@@ -31172,10 +30676,10 @@ var setOutput = (k, v) => {
 `);
 };
 var save = (name, value) => {
-  mkdirSync2(OUT, { recursive: true });
-  writeFileSync2(`${OUT}/${name}`, JSON.stringify(value));
+  mkdirSync(OUT, { recursive: true });
+  writeFileSync(`${OUT}/${name}`, JSON.stringify(value));
 };
-var load = (name) => existsSync(`${OUT}/${name}`) ? JSON.parse(readFileSync4(`${OUT}/${name}`, "utf8")) : null;
+var load = (name) => existsSync(`${OUT}/${name}`) ? JSON.parse(readFileSync(`${OUT}/${name}`, "utf8")) : null;
 async function stillWaiting(repo, branch) {
   try {
     const pr = await repo.findPr(branch);
@@ -31186,13 +30690,10 @@ async function stillWaiting(repo, branch) {
 }
 async function main() {
   const step = input("step");
-  if (step === "receipt-start" || step === "receipt-finish") {
-    const acknowledged = await deliverReceipt(step, input("event-code"), input("team-code"), { conclusion: input("conclusion") });
-    console.log(acknowledged ? "Crimson tracking acknowledged this run." : "Crimson tracking does not apply to this run.");
+  if (step === "cancel" || step === "receipt-start" || step === "receipt-finish") {
+    console.log(`The ${step} step is no longer used. Run \`npx synthe upgrade\` to remove it from your workflow.`);
     return;
   }
-  if (step === "cancel") return captureCancel();
-  if (step !== "decide" && !(input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY)?.trim() && (input("event-code") || process.env.SYNTHE_EVENT_CODE)?.trim()) requireOidc();
   const repo = githubRepo(process.env.GITHUB_REPOSITORY, input("github-token"), process.env.GITHUB_API_URL);
   if (step === "decide") {
     const branch = await repo.defaultBranch();
@@ -31202,15 +30703,9 @@ async function main() {
     const scored = load("scores.json");
     const costUsd2 = sumCosts([written?.costUsd ?? null, scored?.costUsd ?? null]);
     const goal2 = parseGoal(goalText2);
-    const fullNow = /* @__PURE__ */ new Date();
-    const fullActive = fullShareActive(goal2, fullNow);
-    const beforeState = fullActive ? await repo.readState() : null;
-    const startSource = fullActive && beforeState?.round === 0 ? await repo.readFile(goal2.prompt.path, branch) : null;
-    const startPrompt = startSource === null || !beforeState ? null : readPrompt(startSource, goal2, beforeState.prompt);
-    const scenarios2 = startPrompt !== null ? await repo.readFile(goal2.scenarios, branch) : null;
     const calibrationText = await repo.readFile(".synthe/calibration.json", branch);
     const calibration = calibrationText === null ? null : calibrationReadings(calibrationText);
-    const record = await observeRoundStep("decide", { candidates: written?.candidates }, () => runDecide(goal2, repo, { candidates: withComposed(written?.candidates, scored?.compose), scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText2), error: load("error.json"), calibration, caches: { attack: scored?.attackCache ?? null, score: scored?.scoreCache ?? null } }));
+    const record = await runDecide(goal2, repo, { candidates: withComposed(written?.candidates, scored?.compose), scores: scored?.scores ?? null, costUsd: costUsd2, writeUsd: written?.costUsd ?? null, rejected: written?.rejected, goalHash: sha256(goalText2), error: load("error.json"), calibration, caches: { attack: scored?.attackCache ?? null, score: scored?.scoreCache ?? null } });
     console.log(record ? `Round ${record.round}: ${record.outcome}. ${record.reasons.join(" ")}` : "Stopped; nothing to do.");
     const state2 = await repo.readState();
     if (record && state2.chainReady && state2.round === record.round && state2.round < goal2.merge_rule.max_rounds && !state2.stopped && !state2.proposal && !state2.pending) {
@@ -31229,21 +30724,15 @@ async function main() {
     }
     if (record && shouldShare(goal2)) {
       const sharedState = await repo.readState();
-      const finalSource = fullActive && sharedState.stopped ? await repo.readFile(goal2.prompt.path, branch) : null;
-      const finalPrompt = finalSource === null ? null : readPrompt(finalSource, goal2, sharedState.prompt);
-      const full = fullActive ? {
-        ...record.round === 1 && startPrompt !== null && scenarios2 !== null ? { prompt: startPrompt, scenarios: scenarios2 } : {},
-        ...sharedState.stopped && finalPrompt !== null ? { finalPrompt } : {}
-      } : void 0;
-      console.log(await shareRound(sharePayload(goal2, sharedState, record, package_default.version, full, /* @__PURE__ */ new Date()), process.env));
+      console.log(await shareRound(sharePayload(goal2, sharedState, record, package_default.version), process.env));
     }
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, roundSummary(goal2, await repo.readState(), record, process.env.GITHUB_REPOSITORY));
     return;
   }
-  const goal = parseGoal(readFileSync4(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
   const state = await repo.readState();
   if (step === "write" && process.env.GITHUB_EVENT_NAME === "pull_request") {
-    const event = JSON.parse(readFileSync4(process.env.GITHUB_EVENT_PATH, "utf8"));
+    const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, "utf8"));
     const pr = event.pull_request;
     const own = pr?.head?.repo?.full_name === process.env.GITHUB_REPOSITORY;
     const sameProposal = state.proposal && pr.number === state.proposal.pr && pr.head.ref === state.proposal.branch;
@@ -31260,7 +30749,7 @@ async function main() {
     setOutput("go", "check");
     return;
   }
-  if (existsSync(goal.scenarios)) resumeIfScenariosChanged(state, sha256(readFileSync4(goal.scenarios, "utf8")));
+  if (existsSync(goal.scenarios)) resumeIfScenariosChanged(state, sha256(readFileSync(goal.scenarios, "utf8")));
   const stop = stopReason(state, goal.merge_rule.max_rounds, goal.merge_rule.stall_rounds, goal.budget.max_usd);
   if (stop) {
     console.log(`Stopped: ${stop}`);
@@ -31274,15 +30763,13 @@ async function main() {
     setOutput("go", "false");
     return;
   }
-  const prompt = readPrompt(readFileSync4(goal.prompt.path, "utf8"), goal, state.prompt);
+  const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, state.prompt);
   if (prompt === null) throw new Error(`could not find the prompt in ${goal.prompt.path}`);
-  const scenarios = parseScenarios(readFileSync4(goal.scenarios, "utf8"));
+  const scenarios = parseScenarios(readFileSync(goal.scenarios, "utf8"));
   const key = input("anthropic-api-key") || process.env.SYNTHE_ANTHROPIC_KEY;
-  const eventCode = input("event-code") || process.env.SYNTHE_EVENT_CODE;
-  if (!key && eventCode) eventModels(goal.models);
-  const model = configuredModel(key, eventCode, true, input("team-code") || process.env.SYNTHE_TEAM_CODE);
+  const model = configuredModel(key);
   if (step === "write") {
-    const written = await observeRoundStep("write", { prompt }, () => runWrite(goal, state, prompt, scenarios, model));
+    const written = await runWrite(goal, state, prompt, scenarios, model);
     console.log(`Wrote ${written.candidates.length} candidates for ${written.costUsd === null ? "an unknown cost" : `$${written.costUsd.toFixed(4)}`}`);
     for (const line of explainWrite(written)) console.log(line);
     save("candidates.json", written);
@@ -31292,8 +30779,8 @@ async function main() {
     if (!written) throw new Error("candidates are missing");
     const last2 = state.lastMerge;
     const prior = last2 && !last2.reverted && last2.mergedHash === sha256(prompt) ? last2.priorPrompt : null;
-    const attacks = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync4(ATTACKS_FILE, "utf8")) : [];
-    const scored = await observeRoundStep("score", {}, () => runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null, state.scoreCache ?? null));
+    const attacks = existsSync(ATTACKS_FILE) ? parseAttacks(readFileSync(ATTACKS_FILE, "utf8")) : [];
+    const scored = await runScore(goal, prompt, written.candidates, scenarios, model, prior, Math.random, attacks, state.attackCache ?? null, state.scoreCache ?? null);
     console.log(`Scored with ${scored.calls} model calls for ${scored.costUsd === null ? "an unknown cost" : `$${scored.costUsd.toFixed(4)}`}`);
     for (const line of explainCompose(scored.compose)) console.log(line);
     for (const line of explainScores(scored.scores, scenarios)) console.log(line);
@@ -31304,13 +30791,8 @@ async function main() {
     throw new Error(`unknown step: ${step}`);
   }
 }
-if (!startEventsWorker()) main().then(() => flushEvents(), async (e) => {
+main().catch((e) => {
   const step = input("step");
-  if (step === "receipt-start" || step === "receipt-finish") {
-    console.log(`::error title=Crimson tracking::${e.message}`);
-    process.exit(1);
-  }
-  captureFailure(input("step"), e);
   console.error(e);
   if (step === "write" || step === "score") {
     try {
@@ -31322,6 +30804,5 @@ if (!startEventsWorker()) main().then(() => flushEvents(), async (e) => {
       console.error(saveError);
     }
   }
-  await flushEvents();
   process.exit(1);
 });
