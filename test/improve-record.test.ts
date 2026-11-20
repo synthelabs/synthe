@@ -80,7 +80,12 @@ test("batches stay under the proxy's limit and arrive in order; the last one is 
   assert.ok(proxy.batches.slice(0, -1).every((b) => b.body.final === false));
 });
 
-test("a dead, hanging or refusing proxy never slows or fails the run, and sends stop after two failures", async () => {
+test("a dead, hanging or refusing proxy never slows or fails the run, and sends stop after two failures", async (t) => {
+  // The fake fetch holds no socket, and the send timeout and the close wait are both unref'd timers, so in "hang"
+  // nothing keeps the event loop alive. Node 22 then ends the file mid-test and cancels the tests after it; a real
+  // hanging request holds a socket. This stands in for it and changes nothing that is measured.
+  const alive = setInterval(() => {}, 1000);
+  t.after(() => clearInterval(alive));
   for (const mode of ["down", "hang", "refuse"] as const) {
     const proxy = fakeProxy(mode), r = record(proxy), started = Date.now();
     for (let n = 1; n <= 5; n++) { r.event("say", { text: `round ${n}` }); r.flush(); }
