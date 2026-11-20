@@ -12,6 +12,7 @@ import type { IsoTime, Sha256, Stored } from "./types.ts";
 //   objects/prompt/<id>.txt    prompt texts, named by the SHA-256 of the text
 //   journal.jsonl              append-only list of what happened, each line chained to the one before
 //   reports/                   markdown rendered from the records; can be deleted and regenerated
+//   cases/                     candidate test cases from `cases`: conversation text, so never in reports/
 // Nothing here is sent anywhere. Packs and telemetry rows are customer data: keep the directory out of git.
 
 export type ObjectKind =

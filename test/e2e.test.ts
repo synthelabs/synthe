@@ -68,6 +68,7 @@ const github = createServer((req, res) => {
       files.set("main:prompt.md", files.get(`${branch}:prompt.md`)!);
       return send(200, {});
     }
+    if (path === "/issues/1/comments" && req.method === "GET") return send(200, prComments);
     if (path === "/issues" || path.startsWith("/issues/")) { issues.push(body.body); return send(path === "/issues" ? 201 : 200, { number: 3 }); }
     send(404, {});
   });
@@ -143,8 +144,11 @@ const step = (name: string, outputs = join(dir, "out.txt"), event = "workflow_di
 
 // What GitHub says about Synthe's own pull requests when the write step checks on a proposal.
 let pulls: { number: number; state: string; merged_at: string | null }[] = [];
+// The comments on pull request 1, oldest first.
+let prComments: { user: { login: string; type: string }; body: string }[] = [];
 const reset = () => {
   pulls = [{ number: 1, state: "open", merged_at: null }];
+  prComments = [];
   dir = mkdtempSync(join(tmpdir(), "synthe-e2e-"));
   cpSync("examples/support-bot", dir, { recursive: true });
   files.clear();
@@ -530,3 +534,28 @@ test("the held-back score reaches state through the decide step, never a write f
   assert.equal(state.rounds.at(-1).scorePct, 0);
 });
 
+
+test("a person closing a proposal with a comment reaches the next round's writer, through the real bundle", async () => {
+  reset();
+  pulls = [{ number: 1, state: "closed", merged_at: null }];
+  prComments = [
+    { user: { login: "reviewer", type: "User" }, body: "We never promise a refund date.\nSee the policy." },
+    { user: { login: "github-actions[bot]", type: "Bot" }, body: "Synthe report updated" },
+  ];
+  files.set("synthe/state:state.json", JSON.stringify({ round: 1, proposal: { pr: 1, round: 1, branch: "synthe/round-1", kind: "merge", text: "New", priorPrompt: "Old" }, rounds: [{ round: 1, at: "t", outcome: "proposed", pr: 1, reasons: [], costUsd: 0.1, changed: "Tell customers refunds take five days" }] }));
+  const decided = await step("decide");
+  assert.equal(decided.code, 0, decided.log);
+  const state = JSON.parse(files.get("synthe/state:state.json")!);
+  assert.deepEqual(state.closedProposals, [{ pr: 1, round: 1, summary: "Tell customers refunds take five days", comment: "We never promise a refund date. See the policy." }]);
+  assert.equal(state.rounds[0].outcome, "declined");
+  const before = bodies.length;
+  const wrote = await step("write");
+  assert.equal(wrote.code, 0, wrote.log);
+  const writer = bodies.slice(before).map((b) => b.messages[0].content as string).filter((t) => t.includes("You improve the system prompt"));
+  assert.ok(writer.length > 0);
+  for (const prompt of writer) {
+    assert.match(prompt, /A person reviewed and closed this change: Tell customers refunds take five days/);
+    assert.match(prompt, /<comment>We never promise a refund date\. See the policy\.<\/comment>/);
+    assert.doesNotMatch(prompt, /report updated/);
+  }
+});

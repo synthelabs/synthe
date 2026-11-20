@@ -133,7 +133,7 @@ function headlineBase(goal: Goal, state: State, stoppedByTeam = false, mode: Gai
     : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
 }
 
-function nextSteps(goal: Goal, state: State): string[] {
+function nextSteps(goal: Goal, state: State, pilot = false): string[] {
   const merged = state.rounds.some((r) => r.outcome === "merged" || r.outcome === "reverted");
   const steps: string[] = [];
   if (state.proposal) steps.push(`Review #${state.proposal.pr}: merge it to keep the change, or close it to decline.`);
@@ -147,6 +147,9 @@ function nextSteps(goal: Goal, state: State): string[] {
   else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
   if (state.stopped && /no winner$/.test(state.stopped) && !badKey(last)) {
     steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push, then run \`npx synthe restart\`${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. One line per case, for example:\n  \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`\n  \`expected\` describes a good answer in a sentence. \`split\` is \`train\` (Synthe learns from it) or \`holdout\` (kept hidden to check its changes).`);
+  }
+  if (pilot && state.stopped && /no winner$/.test(state.stopped) && !badKey(last)) {
+    steps.push("Replayed recorded conversations with `npx synthe pilot`? Run `npx synthe pilot cases --replay <replay id>` to turn the ones your agent failed into candidate test cases. It writes a file for you to review; nothing is added to your scenarios until you copy lines in.");
   }
   // Restart can't continue a run that has used all its rounds, whatever else stopped it, so say so with the advice.
   if (state.stopped && state.round >= goal.merge_rule.max_rounds && steps.some((s) => s.includes("npx synthe restart")) && !steps.some((s) => s.includes("max_rounds"))) {
@@ -278,7 +281,7 @@ function roundRow(r: RoundRecord): string {
   return `| ${r.round} | ${result}${r.pr ? ` (#${r.pr})` : ""} | ${tried.replaceAll("|", "/").replaceAll("\n", " ")} | ${cost} |`;
 }
 
-export function renderReport(goal: Goal, state: State, now: Date = new Date(), repoSlug?: string): string {
+export function renderReport(goal: Goal, state: State, now: Date = new Date(), repoSlug?: string, pilot = false): string {
   const { title, summary } = headline(goal, state);
   const changes = state.rounds.filter((r) => ["merged", "reverted", "proposed"].includes(r.outcome) && r.pr);
   const mode = goal.merge_rule.mode === "propose"
@@ -304,7 +307,7 @@ export function renderReport(goal: Goal, state: State, now: Date = new Date(), r
     lines.push("");
   }
   lines.push(...noWinSection(goal, state));
-  lines.push("### What to do next", "", ...nextSteps(goal, state).map((s) => `- ${s}`), "");
+  lines.push("### What to do next", "", ...nextSteps(goal, state, pilot).map((s) => `- ${s}`), "");
   if (state.rounds.length) {
     lines.push(
       "<details><summary>Round by round: every change Synthe tried and what happened</summary>", "",

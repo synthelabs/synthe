@@ -9,6 +9,7 @@ import { exportLog, writeLogExport } from "./export.ts";
 import { printable } from "./io.ts";
 import { PilotStore } from "./store.ts";
 import { watch, type LogExporter } from "./watch.ts";
+import { cases } from "./cases.ts";
 
 export const DEFAULT_DIR = ".synthe-pilot";
 // How the person started the pilot, so help and hints name a command they can type: `npx synthe pilot` from the
@@ -44,6 +45,7 @@ Review and experiment
 
 Close the loop
   promote     --list | --request <request.json>         approved failures become regression cases in a new pack version
+  cases       --replay <id> [--out <file>]              the current prompt's failures as candidate scenarios.jsonl lines for a person to review
   report                                                rebuild the evidence summary (reports/PILOT.md)
   verify      [--head <journal head>]                   recheck every record and recompute every decision; with --head,
                                                         also check the journal still holds the entry you noted earlier
@@ -60,7 +62,7 @@ const OPTIONS = {
   telemetry: { type: "string" }, file: { type: "string" }, model: { type: "string" }, proposer: { type: "string" },
   finding: { type: "string" }, author: { type: "string" }, rationale: { type: "string" }, candidate: { type: "string" },
   start: { type: "string" }, end: { type: "string" }, log: { type: "string" }, assignment: { type: "string" }, agent: { type: "string" }, share: { type: "string" }, repo: { type: "string" }, base: { type: "string" }, confirm: { type: "string" },
-  experiment: { type: "string" }, approver: { type: "string" }, request: { type: "string" }, out: { type: "string" },
+  experiment: { type: "string" }, approver: { type: "string" }, request: { type: "string" }, replay: { type: "string" }, out: { type: "string" },
   "confirm-endpoint": { type: "string" }, "allow-endpoint-host": { type: "string" }, "confirm-data": { type: "string" }, head: { type: "string" },
   publish: { type: "boolean" }, baseline: { type: "boolean" }, "allow-past-start": { type: "boolean" }, reopen: { type: "boolean" }, "accept-flags": { type: "string" }, inbox: { type: "string" }, "interim-days": { type: "string" }, live: { type: "boolean" }, reject: { type: "boolean" }, list: { type: "boolean" }, help: { type: "boolean" },
 } as const;
@@ -76,7 +78,7 @@ const COMMANDS: Record<string, Command> = {
   init: commands.init, baseline: commands.baseline, pack: commands.pack, discover: commands.discover, propose: commands.propose,
   replay: commands.replay, experiment: commands.experiment, review: commands.review, approve: commands.approve, analyze: commands.analyze,
   export: exportLog, watch: (store, flags, deps) => watch(store, flags, deps, realLogExporter(typeof flags.agent === "string" && flags.agent.trim() !== "" ? flags.agent : undefined)),
-  promote: commands.promotePack, report: commands.report, verify: commands.verify, status: commands.status,
+  promote: commands.promotePack, cases, report: commands.report, verify: commands.verify, status: commands.status,
 };
 
 export async function main(argv: string[], deps: PilotDeps, prog: string = CHECKOUT_PROG): Promise<number> {

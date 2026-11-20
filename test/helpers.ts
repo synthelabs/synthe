@@ -77,6 +77,9 @@ export class MemoryRepo implements Repo {
     const pr = [...this.prs].reverse().find((p) => p.branch === branch);
     return pr ? { number: pr.number, open: !pr.closed && !pr.merged, merged: pr.merged } : null;
   }
+  comments = new Map<number, string>(); // the last human comment on each pull request
+  failComments = false;
+  async lastHumanComment(n: number) { if (this.failComments) throw new Error("GitHub GET comments: 500"); return this.comments.get(n) ?? null; }
   async readState() { return structuredClone(this.state); }
   async writeState(s: State) { this.state = structuredClone(s); }
   stateFiles = new Map<string, string>(); // files on the state branch other than state.json, such as evidence

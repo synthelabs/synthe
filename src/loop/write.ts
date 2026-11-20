@@ -4,6 +4,7 @@ import { sumCosts } from "../core/cost.ts";
 import { promptPathProblem, sha256 } from "../core/safety.ts";
 import { candidateFingerprint, candidateScope, validateCandidateMemory } from "../core/candidate-history.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
+import { closedText } from "./closed.ts";
 
 export interface Candidate { id: string; text: string; summary?: string; title?: string; edits?: Edit[] }
 export interface Written { candidates: Candidate[]; costUsd: number | null; rejected?: string[] }
@@ -122,6 +123,7 @@ export async function runWrite(goal: Goal, state: State, prompt: string, scenari
   // These are the writer's own one-line summaries of its earlier edits, never candidate texts or customer data.
   const triedSummaries = [...new Set(state.rounds.slice(-5).flatMap((r) => (r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary))))];
   const notAgain = triedSummaries.length ? `\nAlready tried in earlier rounds without winning; don't propose these again:\n${triedSummaries.map((t) => `- ${t}`).join("\n")}\n` : "";
+  const closed = closedText(state);
   // The team's checks decide each test case, so the writer aims at them directly.
   const checks = goal.checks?.length ? `\nThe team measures a good reply with these checks; a change wins by making replies pass more of them:\n${goal.checks.map((c) => `- ${c}`).join("\n")}` : "";
   const quoteRule = goal.prompt.kind === "inline"
@@ -144,7 +146,7 @@ ${train.slice(0, MAX_EXAMPLES).map((s) => `- ${s.input} => ${s.expected}`).join(
 
 Earlier rounds:
 ${history}
-${notAgain}${lessons}
+${notAgain}${closed}${lessons}
 Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why. In "title", name the problem this fixes in a few plain lowercase words, the way a support team would say it to each other, starting with a verb: for example "stop approving every refund" or "stop inventing delivery dates", not "add policy-faithful guidance" (under 50 characters).`,
   }));
   const candidates: Candidate[] = [];

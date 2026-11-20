@@ -14,6 +14,8 @@ import type { Failure } from "./failure.ts";
 import { LOSS, TIE, WIN } from "./score.ts";
 import { candidateScope, rememberCandidates } from "../core/candidate-history.ts";
 import { fromSyntheProxy, PROXY_REFUSED } from "../core/share.ts";
+import { recordClosed } from "./closed.ts";
+import { hasPilot } from "./pilot-hint.ts";
 
 export const BUSY_RETRIES = 2;
 export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null; calibration?: { check: string; reading: string }[] | null;
@@ -124,7 +126,7 @@ async function writeReport(goal: Goal, repo: Repo, state: State) {
     }
   }
   try {
-    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state, new Date(), repo.slug));
+    state.issue = await repo.upsertIssue(state.issue, ISSUE_TITLE, renderReport(goal, state, new Date(), repo.slug, await hasPilot(repo)));
   } catch (e) {
     if (!(e instanceof Refusal)) throw e;
     const note = `couldn't write the report issue: ${e.plain}`;
@@ -153,6 +155,11 @@ async function settle(goal: Goal, repo: Repo, state: State, merged: boolean) {
       if (state.lastMerge) state.lastMerge.reverted = true;
       state.prompt = goal.prompt.kind === "inline" ? live : null;
     }
+  }
+  if (!merged && p.kind === "merge") {
+    // The comment is a bonus: failing to read it must never stop the round from settling.
+    const comment = await repo.lastHumanComment(p.pr).catch(() => null);
+    recordClosed(state, { pr: p.pr, round: p.round, summary: record?.changed ?? record?.title ?? "", comment });
   }
   if (record) {
     record.outcome = merged ? (p.kind === "merge" ? "merged" : "reverted") : "declined";
