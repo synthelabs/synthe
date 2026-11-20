@@ -62,6 +62,7 @@
     "simulate": "node scripts/simulate-gate.ts",
     "simulate:pilot": "node scripts/simulate-pilot.ts",
     "bench": "node scripts/bench.ts",
+    "simulate:run": "node scripts/simulate-run.ts",
     "mutation:operators": "stryker run mutation/stryker.config.mjs",
     "mutation:compare": "node mutation/compare.mjs"
   },

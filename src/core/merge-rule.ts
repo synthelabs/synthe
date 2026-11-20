@@ -1,4 +1,5 @@
 import { DEFAULTS, type Goal } from "./goal.ts";
+import { heldBackLimit, plannedCandidates } from "./run-alpha.ts";
 
 // One scenario's result. A null score means it could not be measured.
 // reply is kept only for the current prompt's training rows, so the next writer can study what went wrong.
@@ -181,11 +182,17 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
     }
     // The held-back win must also be unlikely to be luck. The mean check above alone passes a change with no real
     // effect about half the time, and choosing the best of several candidates on training makes that worse.
-    const holdoutMaxP = goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p;
+    // merge_rule.run_alpha, when set, can make this limit stricter than holdout_max_p (see run-alpha.ts).
+    const holdoutMaxP = heldBackLimit(goal, plannedCandidates(goal, scores.candidates.length));
     const heldP = signP(heldSplit.w, heldSplit.l);
     if (heldP > holdoutMaxP) {
-      reasons.push(`${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck (p ${heldP.toFixed(3)}, needs ${holdoutMaxP})`);
-      notes[c.id] = `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck, so it wasn't used.`;
+      const perRun = holdoutMaxP < (goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p);
+      reasons.push(perRun
+        ? `${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck over a whole run (p ${heldP.toFixed(3)}, needs ${holdoutMaxP.toFixed(3)} under merge_rule.run_alpha ${goal.merge_rule.run_alpha})`
+        : `${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck (p ${heldP.toFixed(3)}, needs ${holdoutMaxP})`);
+      notes[c.id] = perRun
+        ? `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck across a whole run (your merge_rule.run_alpha), so it wasn't used.`
+        : `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck, so it wasn't used.`;
       continue;
     }
     const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);

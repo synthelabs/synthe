@@ -38,6 +38,9 @@ export interface Goal {
     max_rounds: number;
     stall_rounds: number; // rounds in a row without a winner before stopping
     guard_margin: number; // points the guard pass rate may fall before a change is refused, when counter_checks are set
+    // Optional cap on the chance that a whole run merges at least one change that does nothing. Unset, the limits
+    // above apply as they are. Set, the held-back limit tightens to fit it (see src/core/run-alpha.ts).
+    run_alpha?: number;
   };
   budget: { max_usd: number };
   // Compose (prototype, off by default): after scoring, write one more candidate from how this round's candidates
@@ -85,6 +88,8 @@ export function parseGoal(text: string): Goal {
   if (g.merge_rule?.mode !== undefined && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
   const holdP = g.merge_rule?.holdout_max_p;
   if (holdP !== undefined && !(typeof holdP === "number" && Number.isFinite(holdP) && holdP > 0 && holdP <= 1)) bad("merge_rule.holdout_max_p must be above 0 and at most 1");
+  const runAlpha = g.merge_rule?.run_alpha;
+  if (runAlpha !== undefined && !(typeof runAlpha === "number" && Number.isFinite(runAlpha) && runAlpha > 0 && runAlpha <= 1)) bad("merge_rule.run_alpha must be above 0 and at most 1, for example 0.05");
   const margin = g.merge_rule?.guard_margin;
   if (margin !== undefined && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad("merge_rule.guard_margin must be 0 or more");
   if (g.compose !== undefined && typeof g.compose !== "boolean") bad("compose must be true or false");
