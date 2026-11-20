@@ -29,7 +29,7 @@ npm run mutation    # breaks the code on purpose and checks the tests notice
 
 ## 4. Non-negotiables
 
-1. Work on a branch per task. Never push to `main`, move the `v1` tag, create releases or run `npm publish`. A maintainer merges and releases. `scripts/go-live.sh` pushes, force-moves `v1` and dispatches paid work: don't run it.
+1. Work on a branch per task. Never push to `main`, move the `v1` tag, create releases or run `npm publish`. A maintainer merges and releases.
 2. Never read, edit or tune to holdout or frozen eval files.
 3. Never spend real API money without explicit approval. That covers `init`, `improve`, `try`, `calibrate`, `migrate` (unless `--dry-run`), `key` against a real key, and `gh workflow run` on any repo.
 4. No new dependency without asking.
