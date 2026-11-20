@@ -32,5 +32,5 @@ export function restartState(goal: Goal, state: State, scenariosHash: string | n
     return { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` };
   }
   if (noRoundsLeft) return noRoundsLeft;
-  return { state: { ...state, stopped: null, stalls: 0 }, note: stopped === "credit" ? "It had stopped on event credit." : `It had stopped because: ${stopped}.` };
+  return { state: { ...state, stopped: null, stalls: 0 }, note: stopped === "credit" ? "It had stopped when its model credit ran out." : `It had stopped because: ${stopped}.` };
 }

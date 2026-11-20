@@ -6,7 +6,7 @@ import type { ImproveConfig } from "./config.ts";
 import { protectedPathProblem } from "./protect.ts";
 import { quantity } from "./text.ts";
 
-// Event credit allows only Haiku 5.5 and Sonnet 5.5. Both calls use Sonnet: picking the wrong files or writing a weak
+// Both calls use Sonnet 5.5: picking the wrong files or writing a weak
 // change wastes a whole measurement (minutes of the team's time), which costs far more than the cents Haiku saves.
 // A typical round is about $0.03 to pick and $0.05 to $0.15 to write, under $0.25 even at the output limit.
 export const PICK_MODEL = "claude-sonnet-5-5";

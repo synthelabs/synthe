@@ -10,18 +10,10 @@ import { appendLessons, lessonLine, lessonsTarget, readLessons, upsertLessonsBlo
 import { formatValue, money, movement } from "./text.ts";
 import { verdict } from "./verdict.ts";
 import { measureAt } from "./worktree.ts";
-import { candidateFiles, checkEdits, pickFiles, proposeEdits, shownFiles, type Edit, type ShownFile, type Tried, type WriterContext } from "./writer.ts";
-import type { MeasureResult } from "./worktree.ts";
+import { candidateFiles, checkEdits, pickFiles, proposeEdits, shownFiles, type Tried, type WriterContext } from "./writer.ts";
 
 export interface LoopIo { say(t: string): void; run(cmd: string, args: string[], stdin?: string): Promise<string>; exec: Exec }
-// What a run record wants to know as it happens: each candidate (what the model proposed, or why it was refused), each
-// measurement, and each finished round with its lesson line. Optional; the loop never waits on them.
-export interface LoopHooks {
-  candidate?(c: { round: number; summary: string; shown: ShownFile[]; edits: Edit[]; refused: string | null; changedLines: number | null }): void;
-  measured?(m: MeasureResult & { round: number; commit: string }): void;
-  round?(r: RoundRecord, lesson: string): void;
-}
-export interface LoopOptions { top: string; gitDir: string; config: ImproveConfig; model: Model; rounds: number; budgetUsd: number; hooks?: LoopHooks }
+export interface LoopOptions { top: string; gitDir: string; config: ImproveConfig; model: Model; rounds: number; budgetUsd: number }
 export interface RoundRecord extends Tried { before: number; files: string[]; costUsd: number | null; commit?: string }
 export interface LoopResult { best: Measurement; rounds: RoundRecord[]; spentUsd: number; costKnown: boolean; stopped: string; lessons: string[] }
 
@@ -124,7 +116,6 @@ export async function runLoop(io: LoopIo, o: LoopOptions): Promise<LoopResult> {
       : `Round ${r.round}: not kept (${r.why}). ${cost}`);
     const line = lessonLine({ round: r.round, kept: r.kept, summary: r.summary, before: r.before, after: r.value, unit: config.metric.unit, ...(r.kept ? {} : { why: r.why }) });
     lessons.push(line);
-    try { o.hooks?.round?.(r, line); } catch { /* the record never stops the run */ }
     // The local log lives inside .git, so the run never dirties the team's working tree.
     try { appendLessons(gitDir, [line]); } catch { /* a lesson that can't be saved doesn't stop the run */ }
   };
@@ -157,13 +148,11 @@ export async function runLoop(io: LoopIo, o: LoopOptions): Promise<LoopResult> {
         const reply = await proposeEdits(model, ctx, shown);
         spentThisRound.push(reply.costUsd);
         const paths = shown.map((f) => f.path);
-        const tell = (summary: string, edits: Edit[], refused: string | null, changedLines: number | null) => { try { o.hooks?.candidate?.({ round: n, summary, shown, edits, refused, changedLines }); } catch { /* never stops the run */ } };
-        if (!reply.proposal) { tell("(no usable reply)", [], "the model's reply was not usable", null); return skip("nothing tried", "the model's reply was not usable", paths); }
+        if (!reply.proposal) { return skip("nothing tried", "the model's reply was not usable", paths); }
         const { summary, edits } = reply.proposal;
-        if (!edits.length) { tell(summary, [], "no change proposed", null); return skip(summary, "no change proposed", paths); }
+        if (!edits.length) { return skip(summary, "no change proposed", paths); }
         const checked = checkEdits(dir, edits, new Set(paths), config);
-        if ("problem" in checked) { tell(summary, edits, checked.problem, null); return skip(summary, `edit refused: ${checked.problem}`, paths); }
-        tell(summary, edits, null, checked.changedLines);
+        if ("problem" in checked) { return skip(summary, `edit refused: ${checked.problem}`, paths); }
         const changed = checked.writes.map((w) => w.path);
         io.say(`Round ${n}: trying "${summary}" (${changed.join(", ")})`);
         for (const w of checked.writes) {
@@ -180,7 +169,6 @@ export async function runLoop(io: LoopIo, o: LoopOptions): Promise<LoopResult> {
       if ("miss" in proposed) { finish(proposed.miss); continue; }
 
       const m = await measureAt(io.exec, top, proposed.commit, config, io.say);
-      try { o.hooks?.measured?.({ ...m, round: n, commit: proposed.commit }); } catch { /* never stops the run */ }
       const record: RoundRecord = { round: n, summary: proposed.summary, kept: false, value: m.measurement?.median ?? null, why: "", before, files: proposed.files, costUsd: sumCosts(spentThisRound), commit: proposed.commit };
       const firstWhy = m.measurement ? notKeptWhy(config, best, m.measurement, m.guardPassed) : null;
       if (!m.measurement) record.why = `the metric gave no number: ${(m.reason ?? "no output").replace(/\.$/, "")}`;
@@ -195,12 +183,10 @@ export async function runLoop(io: LoopIo, o: LoopOptions): Promise<LoopResult> {
         // check passed when it became the best, so only the metric runs again.
         io.say("Measuring the current best again, so the confirmation compares fresh runs with fresh runs...");
         const current = await measureAt(io.exec, top, best.commit, { ...config, guard: { command: null } }, io.say);
-        try { o.hooks?.measured?.({ ...current, round: n, commit: best.commit }); } catch { /* never stops the run */ }
         if (!current.measurement) record.why = `did not hold when measured again: the current code gave no number (${(current.reason ?? "no output").replace(/\.$/, "")})`;
         else {
           io.say(`Measuring round ${n}'s change again to confirm it...`);
           const again = await measureAt(io.exec, top, proposed.commit, config, io.say);
-          try { o.hooks?.measured?.({ ...again, round: n, commit: proposed.commit }); } catch { /* never stops the run */ }
           const confirmed = again.measurement && notKeptWhy(config, current.measurement, again.measurement, again.guardPassed);
           if (!again.measurement) record.why = `did not hold when measured again: the metric gave no number (${(again.reason ?? "no output").replace(/\.$/, "")})`;
           else if (confirmed) { record.why = `did not hold when measured again: ${confirmed}`; record.value = again.measurement.median; }
