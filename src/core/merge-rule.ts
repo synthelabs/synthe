@@ -38,6 +38,9 @@ export interface CandidateScore {
   // while attacks exist means the result is unknown, and an unknown result blocks a merge, like a duel that
   // couldn't be judged. Only the round's winning candidate is measured (see runScore), so the others stay unset.
   attackFailed?: string[] | null;
+  // Set when futility stopping (src/loop/futility.ts) stopped dueling it after this many training cases because it
+  // could no longer pass. Its remaining rows are unknown (null), never wins.
+  stoppedAfter?: number;
 }
 
 export interface RoundScores {
@@ -72,6 +75,7 @@ function tally(rows: ScoreRow[], current: ScoreRow[]) {
 
 // The same verdict as trainingProblem, in words a team understands.
 function trainingNote(c: CandidateScore, current: ScoreRow[], goal: Goal): string {
+  if (c.stoppedAfter !== undefined) return `Stopped after ${cases(c.stoppedAfter)}: it could no longer pass.`;
   const t = tally(c.train, current);
   if (mean(c.train) === null || !t) return "Some replies couldn't be judged, so it wasn't used.";
   if (mean(c.train)! < mean(current)! + goal.merge_rule.min_improvement) {
@@ -129,6 +133,7 @@ export function trainingProblem(c: CandidateScore, baselineTrain: ScoreRow[], go
   const { min_improvement, max_p } = goal.merge_rule;
   const before = mean(baselineTrain);
   if (before === null) return "baseline score unknown";
+  if (c.stoppedAfter !== undefined) return `${c.id}: stopped after ${c.stoppedAfter} test cases, it could no longer pass`;
   const after = mean(c.train);
   if (after === null) return `${c.id}: training score unknown`;
   if (after < before + min_improvement) return `${c.id}: judge score ${after.toFixed(1)}, needs ${(before + min_improvement).toFixed(1)} (${before.toFixed(0)} is even)`;

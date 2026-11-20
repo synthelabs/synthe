@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { setupInstallId } from "./install.ts";
 import { costUsd } from "../core/cost.ts";
+import { cachedSystem, firstAlone } from "./cache.ts";
 import { oidcToken, PROXY_AUTH_MESSAGE, PROXY_REFUSED } from "../core/share.ts";
 
 export const PROXY_URL = "https://synthe-crimson.vercel.app/api/claude";
@@ -92,19 +93,23 @@ export function ownKeyBaseUrl(env: NodeJS.ProcessEnv = process.env): string {
 
 export function anthropicModel(apiKey: string): Model {
   const client = new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(), maxRetries: 4 });
-  return sdkModel(client);
+  return sdkModel(client, true);
 }
 
-function sdkModel(client: Anthropic): Model {
+// cache: mark the system prompt for prompt caching and send the first request for each one alone (see cache.ts).
+// Only on the own-key path: requests through Synthe's proxy are sent as they always were.
+function sdkModel(client: Anthropic, cache = false): Model {
+  const warm = firstAlone();
   return {
     async ask({ model, system, user, maxTokens, schema, allowCutOff }) {
-      const res = await client.messages.create({
-        model, max_tokens: maxTokens, system,
+      const send = () => client.messages.create({
+        model, max_tokens: maxTokens, system: cache ? cachedSystem(system) : system,
         messages: [{ role: "user", content: user }],
         // Haiku's thinking would spend the output limit on short scoring calls.
         ...(model.startsWith("claude-haiku") ? { thinking: { type: "disabled" as const } } : {}),
         output_config: { effort: "low", ...(schema ? { format: { type: "json_schema" as const, schema } } : {}) },
       });
+      const res = cache ? await warm(model, system, send) : await send();
       const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
       const finished = res.stop_reason === "end_turn" && text.length > 0;
       const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text.length > 0;

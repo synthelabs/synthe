@@ -38,8 +38,8 @@ function world(opts: { composeReply?: unknown; hiddenPunishesBoth?: boolean; att
         const r = opts.composeReply ?? { edits: [{ find: "", replace: "Rule A. Rule B." }], summary: "adds both rules", title: "follow both rules" };
         return { text: typeof r === "string" ? r : JSON.stringify(r), costUsd: 0.01 };
       }
-      // The agent: its reply shows its own prompt.
-      if (a.system !== undefined) return { text: `reply to ${a.user} using ${a.system}`, costUsd: 0.001 };
+      // The agent: its reply shows its own prompt. Judge calls have a system prompt too, but always a schema.
+      if (a.system !== undefined && !a.schema) return { text: `reply to ${a.user} using ${a.system}`, costUsd: 0.001 };
       const schema = JSON.stringify(a.schema ?? {});
       if (schema.includes('"better"')) {
         const situation = a.user.match(/Situation: (.*)/)![1];
