@@ -50,7 +50,7 @@ Give the command, what you expected, what you got, and one diagnosis. Make at mo
 
 ## 7. Git
 
-Commit only after typecheck and tests pass. The message says why and gives the result. Push your branch. Never merge yourself, never force-push, never commit secrets or generated eval output. Never print, log, commit or pass a key or event code in argv or a URL; secrets go to `gh secret set` on stdin. Stage explicit paths, not `git add -A`. The sibling proxy repo (`synthelabs/synthe-share`) deploys production when merged to `main`.
+Commit only after typecheck and tests pass. The message says why and gives the result. Push your branch. Never merge yourself, never force-push, never commit secrets or generated eval output. Never print, log, commit or pass a key in argv or a URL; secrets go to `gh secret set` on stdin. Stage explicit paths, not `git add -A`. The sibling share-endpoint repo (`synthelabs/synthe-share`) deploys production when merged to `main`.
 
 ## 8. Cost
 

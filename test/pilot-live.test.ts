@@ -52,7 +52,7 @@ test("no live model without every part of the opt-in, and nothing is sent when i
 
 test("the key comes only from the variable the approval names: no fallback to any other credential", async () => {
   const t = transport([]);
-  const others = { ANTHROPIC_API_KEY: "other-1", SYNTHE_ANTHROPIC_KEY: "other-2", SYNTHE_EVENT_CODE: "crimson-demo-event", ANTHROPIC_AUTH_TOKEN: "other-3" };
+  const others = { ANTHROPIC_API_KEY: "other-1", SYNTHE_ANTHROPIC_KEY: "other-2", ANTHROPIC_AUTH_TOKEN: "other-3" };
   assert.equal(await codeOf(() => liveModel(approval, optIn, others, () => {}, t.fetcher)), "live_not_approved");
   assert.equal(await codeOf(() => liveModel(approval, optIn, { ...others, FERNHILL_PILOT_KEY: "   " }, () => {}, t.fetcher)), "live_not_approved");
   assert.equal(t.seen.length, 0);

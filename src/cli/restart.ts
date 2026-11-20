@@ -20,7 +20,7 @@ export function restartState(goal: Goal, state: State, scenariosHash: string | n
   }
   if (state.spendUnknown) return { why: "Synthe couldn't measure what a round cost, so it won't spend any more on this run." };
   const recent = state.rounds.slice(-goal.merge_rule.stall_rounds);
-  // Rounds that failed on a key or a refused code also count as stalls. When the latest one did, the stop clears once
+  // Rounds that failed on a key also count as stalls. When the latest one did, the stop clears once
   // the team fixes it, even if earlier rounds in the stall were ordinary no-wins: the report tells them to.
   const last = state.rounds.at(-1);
   const failedOut = recent.length > 0 && (recent.every((r) => r.outcome === "failed") || (last?.outcome === "failed" && last.failure === "key"));
@@ -32,5 +32,5 @@ export function restartState(goal: Goal, state: State, scenariosHash: string | n
     return { why: `Synthe ran all ${goal.merge_rule.max_rounds} rounds. To run more, raise merge_rule.max_rounds in synthe.json, push it, then run npx synthe restart again.` };
   }
   if (noRoundsLeft) return noRoundsLeft;
-  return { state: { ...state, stopped: null, stalls: 0 }, note: stopped === "credit" ? "It had stopped on event credit." : `It had stopped because: ${stopped}.` };
+  return { state: { ...state, stopped: null, stalls: 0 }, note: stopped === "credit" ? "It had stopped when its model credit ran out." : `It had stopped because: ${stopped}.` };
 }

@@ -4,7 +4,7 @@ import { AGENT_NEXT } from "../src/cli/init.ts";
 import { guide } from "../src/cli/guide.ts";
 
 // An agent that reads the draft as a finished install moves on to other work: no workflow, no secrets, no
-// round, nothing on the organizer dashboard. Both texts an agent reads must say otherwise.
+// round, nothing happens. Both texts an agent reads must say otherwise.
 test("the draft's NEXT line says Synthe is not installed until confirm", () => {
   assert.ok(AGENT_NEXT.startsWith("NEXT: Synthe is NOT installed yet."));
   assert.match(AGENT_NEXT, /no workflow, no secrets, no commit/);
