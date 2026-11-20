@@ -5,14 +5,12 @@
 // that can never be shown to pass, an outcome too slow to be attributed inside the window.
 import { PilotError } from "./errors.ts";
 import { isSha256, ms } from "./ids.ts";
+import { isInt, isNonEmpty, isObject } from "./io.ts";
 import type { GuardSpec, MetricContract, MetricSpec } from "./types.ts";
 
 const bad = (message: string): never => { throw new PilotError("invalid_metric", message); };
 
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isFiniteNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
-const isNonEmpty = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
-const isInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v);
 
 // A window shorter than a week cannot cover each weekday once (research A5: 7 days is a floor, not a recommendation).
 export const MIN_WINDOW_DAYS = 7;

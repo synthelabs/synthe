@@ -1,7 +1,7 @@
 import { promptPathProblem } from "../core/safety.ts";
 import { PilotError } from "./errors.ts";
 import { ms } from "./ids.ts";
-import { unsafeKey } from "./io.ts";
+import { isObject, unsafeKey } from "./io.ts";
 import { parseMetricContract } from "./metric.ts";
 import type { PilotConfig, ProviderApproval, ReplayConfig } from "./types.ts";
 
@@ -10,7 +10,6 @@ export const GITHUB_API = "https://api.github.com";
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 const bad = (why: string): never => { throw new PilotError("invalid_config", `${CONFIG_FILE}: ${why}`); };
-const isObject = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 const text = (v: unknown, name: string): string => (typeof v === "string" && v.trim() ? v : bad(`${name} is required`));
 const int = (v: unknown, name: string, min: number, max: number): number =>
   (typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : bad(`${name} must be a whole number from ${min} to ${max}`));

@@ -3,7 +3,7 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { PilotError } from "./errors.ts";
-import { readBounded } from "./io.ts";
+import { isObject, readBounded } from "./io.ts";
 import { CALL_LOG_VERSION, MAX_FIELD, MAX_METRICS, METRIC_NAME, PROBLEM_KINDS } from "./wrap.ts";
 
 export const MAX_LOG_FILE_BYTES = 64 * 1024 * 1024;
@@ -65,7 +65,6 @@ export const agentKey = (agent: string, conversationId: string): string => JSON.
 const UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const isUtc = (v: unknown): v is string => typeof v === "string" && UTC.test(v) && !Number.isNaN(Date.parse(v));
 const isId = (v: unknown): v is string => typeof v === "string" && v.trim() !== "" && v.length <= MAX_FIELD;
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 export function readCallLog(dir: string): CallLog {
   let names: string[];
