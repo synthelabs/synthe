@@ -38,9 +38,10 @@ jobs:
       - name: Stress the differential test across seeds
         run: for s in 1 2 3; do LEAN_SPEC_CASES=20000 LEAN_SPEC_SEED=$s node --test test/lean-spec.test.ts; done
 
-  # Operator mutation testing for the decision code, on pull requests that touch it, its tests or the Lean spec.
+  # Operator mutation testing for the decision code, on pull requests that touch it, its tests or the Lean spec, and on
+  # every push to main. The main runs save the incremental results that pull requests restore: a cache saved on a pull
+  # request's branch can't be read by another pull request, so without them every pull request started from nothing.
   mutation:
-    if: github.event_name == 'pull_request'
     needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -48,10 +49,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Skip unless the decision code, its tests or the spec changed
+      - name: Skip unless the decision code, its tests or the spec changed (always runs on main)
         id: changed
         run: |
-          if git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -qE '^(src/core/merge-rule\.ts|src/improve/verdict\.ts|src/core/goal\.ts|test/|spec/|mutation/)'; then echo "run=true" >> "$GITHUB_OUTPUT"; fi
+          if [ "${{ github.event_name }}" = push ] || git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -qE '^(src/core/merge-rule\.ts|src/improve/verdict\.ts|src/core/goal\.ts|test/|spec/|mutation/)'; then echo "run=true" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/setup-node@v4
         if: steps.changed.outputs.run == 'true'
         with:
@@ -73,15 +74,25 @@ jobs:
       - if: steps.changed.outputs.run == 'true'
         working-directory: spec
         run: lake build
+      # Stryker's incremental check compares only the mutated files and the test files themselves. Every other tracked
+      # file (other source, test helpers, scripts, templates, dist, docs, the Lean spec, the lockfile, this config) and
+      # the Node version go into one hash, and results are reused only from a run with the same hash, so a
+      # change anywhere else re-tests every mutant.
+      - name: Hash everything the tests depend on except the mutated files and the test files
+        if: steps.changed.outputs.run == 'true'
+        id: inputs
+        run: |
+          hash=$(git ls-files -s | grep -vE $'\t(src/core/merge-rule\\.ts|src/improve/verdict\\.ts|test/[^/]+\\.test\\.ts)$' | sha256sum | cut -c1-16)
+          echo "hash=$hash-node-$(node --version)" >> "$GITHUB_OUTPUT"
       - name: Restore the last mutation results (incremental)
         if: steps.changed.outputs.run == 'true'
         uses: actions/cache@v4
         with:
           path: mutation/reports
-          key: mutation-${{ github.head_ref }}-${{ github.sha }}
+          key: mutation-${{ steps.inputs.outputs.hash }}-${{ github.head_ref || github.ref_name }}-${{ github.sha }}
           restore-keys: |
-            mutation-${{ github.head_ref }}-
-            mutation-
+            mutation-${{ steps.inputs.outputs.hash }}-${{ github.head_ref || github.ref_name }}-
+            mutation-${{ steps.inputs.outputs.hash }}-main-
       - name: Mutation testing (fails below the kill-rate floor in mutation/stryker.config.mjs)
         if: steps.changed.outputs.run == 'true'
         run: npm run mutation:operators

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ImproveConfig } from "../../src/improve/config.ts";
-import { shellExec } from "../../src/improve/exec.ts";
+import { shellExec, type Exec } from "../../src/improve/exec.ts";
 import { runLoop, type LoopIo } from "../../src/improve/loop.ts";
 import { measureAt } from "../../src/improve/worktree.ts";
 import type { Ask, Model } from "../../src/model/client.ts";
@@ -24,7 +24,7 @@ export interface ImproveRun {
   heldOff: number; // changes that won their first measurement but not the fresh re-measure, so were not kept
   kept: string[];
   calls: { pick: number; propose: number };
-  metricRuns: number; // metric runs whose number counted, including the starting measurement
+  metricRuns: number; // every run of the metric command, including the starting measurement
   stopped: string;
 }
 
@@ -87,14 +87,18 @@ export async function runFixture(f: Fixture, seed: string): Promise<ImproveRun> 
 
     const order = shuffle(f.menu, seed, f.name, "menu");
     const { model, calls } = scriptedWriter(order);
+    // Counts every run of the metric command the loop makes, through the real shell exec.
+    let metricRuns = start.measurement.runs.length;
+    const exec: Exec = (cwd, command, timeoutMs) => {
+      if (command === f.metric) metricRuns++;
+      return shellExec(cwd, command, timeoutMs);
+    };
     const io: LoopIo = {
       say: () => {},
-      exec: shellExec,
+      exec,
       run: async (cmd, args, stdin) => execFileSync(cmd, args, { cwd: dir, encoding: "utf8", input: stdin, env: gitEnv, stdio: ["pipe", "pipe", "pipe"] }),
     };
-    let metricRuns = start.measurement.runs.length;
-    const hooks = { measured: (m: { measurement: { runs: number[] } | null }) => { metricRuns += m.measurement?.runs.length ?? 0; } };
-    const result = await runLoop(io, { top: dir, gitDir: join(dir, ".git"), config, model, rounds: order.length, budgetUsd: 10, hooks });
+    const result = await runLoop(io, { top: dir, gitDir: join(dir, ".git"), config, model, rounds: order.length, budgetUsd: 10 });
     const kinds: ChangeKind[] = result.rounds.filter((r) => r.kept).map((r) => order.find((c) => c.summary === r.summary)!.kind);
     const kept = result.rounds.filter((r) => r.kept).map((r) => order.find((c) => c.summary === r.summary)!.id);
     return {

@@ -171,7 +171,7 @@ test("cost is unknown for unlisted models and missing usage", () => {
   assert.equal(sumCosts([1, null, 2]), null);
 });
 
-test("Haiku cost matches the proxy's long-context tier including cached input", () => {
+test("Haiku cost uses the long-context tier including cached input", () => {
   assert.equal(costUsd("claude-haiku-5-5", { input_tokens: 100_000, output_tokens: 0 }), 0.01);
   assert.equal(costUsd("claude-haiku-5-5", { input_tokens: 100_001, output_tokens: 10 }), (100_001 * 0.5 + 10 * 2.5) / 1_000_000);
   for (const cacheField of ["cache_creation_input_tokens", "cache_read_input_tokens"] as const) {
