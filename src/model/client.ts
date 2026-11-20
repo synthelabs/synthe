@@ -1,9 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { costUsd } from "../core/cost.ts";
 
+export class MissingKeyError extends Error {}
 export function configuredModel(key: string | undefined): Model {
   if (key?.trim()) return anthropicModel(key.trim());
-  throw new Error("No Anthropic key is set. Run `npx synthe key` to save one as the repo secret SYNTHE_ANTHROPIC_KEY.");
+  throw new MissingKeyError("No Anthropic key is set. Run `npx synthe key` to save one as the repo secret SYNTHE_ANTHROPIC_KEY.");
 }
 
 // allowCutOff: a reply that ran into maxTokens is returned as it is (truncated: true) instead of as null. Only for plain

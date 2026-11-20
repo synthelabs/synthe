@@ -195,7 +195,7 @@ export async function runLoop(io: LoopIo, o: LoopOptions): Promise<LoopResult> {
       }
       finish(record);
     } catch (e) {
-      // Credit used up, the proxy refusing, the API down, or git failing: keep what already won and stop here.
+      // Credit used up, the key rejected, the API down, or git failing: keep what already won and stop here.
       const partial = sumCosts(spentThisRound);
       if (partial !== null) spent += partial;
       else partialUnknown = true;

@@ -14,7 +14,11 @@ export function upgrade(root: string, template: string): string {
   const cron = before.match(/cron:\s*["']?(\d+)(?:-59\/10)? \* \* \* \*/);
   const minute = cron ? Math.max(1, Number(cron[1])) : undefined;
   const after = renderWorkflow(template, Math.random, minute);
-  const old = existsSync(join(root, OLD_TRACKING_FILE)) ? ` You can delete ${OLD_TRACKING_FILE}; Synthe no longer uses it.` : "";
+  // Event setups (receipt steps, an action pinned to a release) ran on secrets that no longer work; rounds now need an
+  // own key. Own-key workflows from 1.7 to 1.10 also pass the old credential inputs, so those don't count.
+  const event = /step: receipt-start|synthelabs\/synthe@v\d+\.\d+\.\d+/.test(before)
+    ? " This workflow was set up for event credit, which has ended: run `npx synthe key` to save your own Anthropic key, then delete the old event secrets in the repo's settings." : "";
+  const old = `${existsSync(join(root, OLD_TRACKING_FILE)) ? ` You can delete ${OLD_TRACKING_FILE}; Synthe no longer uses it.` : ""}${event}`;
   if (after === before) return `${WORKFLOW_FILE} is already up to date. No files changed.${old}`;
   writeFileSync(path, after);
   return `Updated ${WORKFLOW_FILE}: rounds now chain immediately, a cancelled run no longer counts as a round, and sharing (if you turned it on) can prove which repo sent it; kept backup minute ${minute ?? "random"}. No other files changed. Commit and push this workflow file to activate it.${old}`;

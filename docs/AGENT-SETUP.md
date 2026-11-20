@@ -79,7 +79,6 @@ Run this. It writes a local draft and immediately adds its ignore entry to `.git
 SYNTHE_ANTHROPIC_KEY=<key> npx --yes github:synthelabs/synthe#v1.10.0 init --agent --prompt <path> --objective "<sentence>" --mode auto|review --message "<msg>" --message "<msg>"
 ```
 
-
 Use `--mode auto` or `--mode review` as the person chose. Leave out `--message` if they gave none.
 
 ## 6. Show the person everything step 1 printed

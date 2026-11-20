@@ -19,8 +19,8 @@ const TESTS = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) 
 const allMutations = [
   ["round state loses a concurrent own-key budget", GITHUB, 'saved.ownKeyFromUsd !== undefined', 'false'],
   ["conflicting state writes never retry", GITHUB, 'if (result.status === 409 && attempt < RETRIES) continue;', ''],
-  ["event: own key loses to credit", "src/model/client.ts", 'if (key?.trim()) return anthropicModel(key.trim());', 'if (false) return anthropicModel(key.trim());'],
-  ["event: agent mode prompts", "src/cli/init.ts", 'if (!agent && (await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)', 'if ((await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)'],
+  ["own key is never used", "src/model/client.ts", 'if (key?.trim()) return anthropicModel(key.trim());', 'if (false) return anthropicModel(key.trim());'],
+  ["agent mode prompts", "src/cli/init.ts", 'if (!agent && (await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)', 'if ((await yesNo(io, "Use these checks? Type y, or n to write your own: ")) === false)'],
   ["history accepts unvalidated text", "src/core/candidate-history.ts", 'Object.keys(entry).sort().join(",") !== "fingerprint,scope"', 'false'],
   ["history ignores the goal", "src/core/candidate-history.ts", 'JSON.stringify([goal, prompt])', 'JSON.stringify([prompt])'],
   ["history ignores the current prompt", "src/core/candidate-history.ts", 'JSON.stringify([goal, prompt])', 'JSON.stringify([goal])'],

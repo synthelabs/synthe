@@ -159,7 +159,7 @@ test("upgrade rewrites an older event-pinned workflow to the current one, keepin
   writeFileSync(join(dir, OLD_TRACKING_FILE), tracking);
   const said = upgrade(dir, template);
   assert.match(said, /^Updated \.github\/workflows\/synthe\.yml: .*kept backup minute 23\./);
-  assert.ok(said.endsWith(" You can delete .github/workflows/synthe-diagnostics.yml; Synthe no longer uses it."), said);
+  assert.ok(said.endsWith(" You can delete .github/workflows/synthe-diagnostics.yml; Synthe no longer uses it. This workflow was set up for event credit, which has ended: run `npx synthe key` to save your own Anthropic key, then delete the old event secrets in the repo's settings."), said);
   const after = readFileSync(workflow, "utf8");
   assert.equal(after, renderWorkflow(template, Math.random, 23));
   for (const gone of ["-code:", "step: cancel", "step: receipt-", "synthelabs/synthe@v1.9.0", "finish:"]) assert.ok(!after.includes(gone), gone);
@@ -172,7 +172,14 @@ test("upgrade rewrites an older event-pinned workflow to the current one, keepin
   assert.equal(upgrade(dir, template), ".github/workflows/synthe.yml is already up to date. No files changed.");
   // Without the old file, an upgrade from the older workflow doesn't mention it.
   writeFileSync(workflow, old);
-  assert.doesNotMatch(upgrade(dir, template), /synthe-diagnostics/);
+  const again = upgrade(dir, template);
+  assert.doesNotMatch(again, /synthe-diagnostics/);
+  assert.ok(again.endsWith(" This workflow was set up for event credit, which has ended: run `npx synthe key` to save your own Anthropic key, then delete the old event secrets in the repo's settings."), again);
+  // An own-key workflow from 1.7 to 1.10 passes the old credential inputs too, but it was not an event setup: no key advice.
+  const ownKeyOld = old.replaceAll("synthelabs/synthe@v1.9.0", "synthelabs/synthe@v1").split("\n").filter((line) => !/receipt|conclusion:/.test(line)).join("\n");
+  writeFileSync(workflow, ownKeyOld);
+  assert.doesNotMatch(upgrade(dir, template), /npx synthe key/);
+  assert.equal(readFileSync(workflow, "utf8"), renderWorkflow(template, Math.random, 23));
 });
 
 test("the key is never written into a file", async () => {

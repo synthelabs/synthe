@@ -1,4 +1,4 @@
-import { modelProblem } from "../model/client.ts";
+import { MissingKeyError, modelProblem } from "../model/client.ts";
 
 // Why a write or score step failed, saved for the decide step so its report gives the right advice.
 // busy: Anthropic was overloaded, rate-limited or unreachable, so the hourly backup will retry.
@@ -7,6 +7,7 @@ export type FailureKind = "busy" | "key" | "other";
 export interface Failure { step: string; kind: FailureKind; message: string }
 
 export function failureOf(step: string, e: unknown): Failure {
+  if (e instanceof MissingKeyError) return { step, kind: "key", message: e.message };
   const plain = modelProblem(e);
   if (plain !== null) return { step, kind: /\bkey\b/i.test(plain) ? "key" : "busy", message: plain };
   const raw = e instanceof Error ? e.message : String(e);

@@ -115,6 +115,18 @@ test("review: confirmation never falls back to the app key", async (context) => 
   assert.equal(ran.some((call) => call.args[0] === "secret"), false);
 });
 
+test("review: agent setup refuses a value that isn't an Anthropic key, in draft and in confirmation, before any call", async (context) => {
+  const { root, io, calls, ran } = setup(context);
+  await assert.rejects(init(io, root, undefined, "", { SYNTHE_ANTHROPIC_KEY: "sk-proj-private" }, prepare), /an Anthropic key starts with sk-ant-/);
+  assert.equal(calls.length, 0);
+  assert.equal(existsSync(join(root, DRAFT_FILE)), false);
+  await init(io, root, undefined, "", { SYNTHE_ANTHROPIC_KEY: "sk-ant-own" }, prepare);
+  const count = calls.length;
+  await assert.rejects(init(io, root, undefined, "", { SYNTHE_ANTHROPIC_KEY: "not-a-key" }, confirmation), /an Anthropic key starts with sk-ant-/);
+  assert.equal(calls.length, count);
+  assert.equal(ran.some((call) => call.args[0] === "secret"), false);
+});
+
 test("review: interactive setup never sends another provider's key", async (context) => {
   const { root, io, calls, said } = setup(context);
   const answers = ["sk-proj-private", "sk-ant-own"];

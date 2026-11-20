@@ -28509,9 +28509,11 @@ function githubRepo(slug, token, api = "https://api.github.com", sleep2 = sleepF
 
 // src/model/client.ts
 init_sdk();
+var MissingKeyError = class extends Error {
+};
 function configuredModel(key) {
   if (key?.trim()) return anthropicModel(key.trim());
-  throw new Error("No Anthropic key is set. Run `npx synthe key` to save one as the repo secret SYNTHE_ANTHROPIC_KEY.");
+  throw new MissingKeyError("No Anthropic key is set. Run `npx synthe key` to save one as the repo secret SYNTHE_ANTHROPIC_KEY.");
 }
 var ANTHROPIC_API_URL = "https://api.anthropic.com";
 var LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
@@ -30599,6 +30601,7 @@ var package_default = {
 
 // src/loop/failure.ts
 function failureOf(step, e) {
+  if (e instanceof MissingKeyError) return { step, kind: "key", message: e.message };
   const plain = modelProblem(e);
   if (plain !== null) return { step, kind: /\bkey\b/i.test(plain) ? "key" : "busy", message: plain };
   const raw = e instanceof Error ? e.message : String(e);

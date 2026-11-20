@@ -413,6 +413,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
     if (unpushed) { io.say(unpushed); return false; }
     const credential = setupCredential(env, envKey, true);
     if (!credential) askPerson("SYNTHE_ANTHROPIC_KEY (agent setup never uses ANTHROPIC_API_KEY)");
+    if (!/^sk-ant-\S+$/.test(credential)) askPerson("SYNTHE_ANTHROPIC_KEY (an Anthropic key starts with sk-ant-)");
     if (agent.checks.length) draft.goal.checks = agent.checks;
     if (agent.share) draft.goal.share = agent.share;
     if (sharingDisabled(env)) draft.goal.share = "none";
@@ -425,6 +426,7 @@ export async function init(io: Io, root: string, now = () => new Date(), envKey 
   if (!agent) io.say(`Synthe will improve your agent's system prompt in ${slug}, in a run of up to about half an hour. It tests new versions of the prompt and puts the clear winners into ${branch}, or into pull requests for you to review if you prefer.\n`);
 
   const key = agent ? setupCredential(env, envKey, true) : await askKey(io, envKey, env.SYNTHE_ANTHROPIC_KEY?.trim());
+  if (agent && key && !/^sk-ant-\S+$/.test(key)) askPerson("SYNTHE_ANTHROPIC_KEY (an Anthropic key starts with sk-ant-)");
   if (!key) {
     if (agent) askPerson("SYNTHE_ANTHROPIC_KEY (agent setup never uses ANTHROPIC_API_KEY)");
     io.say("Nothing in your repo was changed. Run `npx synthe init` again when you have a working key."); return false;

@@ -26,10 +26,15 @@ const mutations = [
   ["OIDC token cache is ignored", "src/core/share.ts", 'cached.expires - 60_000 > Date.now()', 'false'],
   ["agent sees an interactive paste prompt", "src/cli/init.ts", 'if (!agent) io.say("\\nOptional:', 'io.say("\\nOptional:'],
   ["own key is never used", "src/model/client.ts", 'if (key?.trim()) return anthropicModel(key.trim());', 'if (false) return anthropicModel(key.trim());'],
+  ["a missing key is not blamed on the key", "src/loop/failure.ts", 'if (e instanceof MissingKeyError) return { step, kind: "key", message: e.message };', ''],
+  ["agent draft sends a non-Anthropic key", "src/cli/init.ts", 'if (agent && key && !/^sk-ant-\\S+$/.test(key)) askPerson', 'if (false) askPerson'],
+  ["agent confirmation saves a non-Anthropic key", "src/cli/init.ts", 'if (!/^sk-ant-\\S+$/.test(credential)) askPerson', 'if (false) askPerson'],
+  ["event workflow upgrade hides the key step", "src/cli/upgrade.ts", '/step: receipt-start|synthelabs\\/synthe@v\\d+\\.\\d+\\.\\d+/.test(before)', 'false'],
+  ["own-key workflow upgrade is told to run key", "src/cli/upgrade.ts", '/step: receipt-start|synthelabs\\/synthe@v\\d+\\.\\d+\\.\\d+/.test(before)', '/-code:/.test(before)'],
 ];
 
 const originals = new Map(mutations.map(([, path]) => [path, readFileSync(path, "utf8")]));
-const runTests = () => spawnSync(process.execPath, ["--test", "test/review.test.ts", "test/core.test.ts", "test/init.test.ts", "test/own-key-endpoint.test.ts"], { encoding: "utf8", timeout: 60_000 });
+const runTests = () => spawnSync(process.execPath, ["--test", "test/review.test.ts", "test/core.test.ts", "test/init.test.ts", "test/own-key-endpoint.test.ts", "test/failure.test.ts"], { encoding: "utf8", timeout: 60_000 });
 const baseline = runTests();
 assert.equal(baseline.status, 0, `Regression baseline failed:\n${baseline.stdout}\n${baseline.stderr}`);
 let killed = 0;

@@ -8,6 +8,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { renderWorkflow } from "../src/cli/init.ts";
 import { runDecide } from "../src/loop/decide.ts";
 import { failureOf, type Failure } from "../src/loop/failure.ts";
+import { configuredModel } from "../src/model/client.ts";
 import { MemoryRepo, goal } from "./helpers.ts";
 
 const BUSY: Failure = { step: "score", kind: "busy", message: "Anthropic's API is busy right now. Wait a few minutes and try again." };
@@ -20,6 +21,9 @@ test("a model failure is sorted into busy (retry on backup), key (needs a person
   assert.equal(failureOf("write", { status: 500, message: "500 Internal server error" }).kind, "busy");
   assert.equal(failureOf("write", new Anthropic.APIConnectionError({ message: "fetch failed" })).kind, "busy");
   assert.equal(failureOf("write", { status: 401, message: "401 invalid x-api-key" }).kind, "key");
+  // A repo with no key secret (for example one set up on event credit) needs a person too, and the report says how.
+  const missing = (() => { try { configuredModel(undefined); } catch (e) { return failureOf("write", e); } })();
+  assert.deepEqual(missing, { step: "write", kind: "key", message: "No Anthropic key is set. Run `npx synthe key` to save one as the repo secret SYNTHE_ANTHROPIC_KEY." });
   assert.equal(failureOf("write", { status: 400, message: "400 Your credit balance is too low to access the Anthropic API." }).kind, "key");
   assert.equal(failureOf("write", { status: 400, message: "400 You have reached your specified workspace API usage limits." }).kind, "key");
   assert.equal(failureOf("write", { status: 403, message: "403 forbidden" }).kind, "key");
