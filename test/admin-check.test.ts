@@ -6,12 +6,11 @@ import { join } from "node:path";
 import { init, notAdmin, type Io } from "../src/cli/init.ts";
 import { agentOptions } from "../src/cli/agent.ts";
 
-const TEAM = "crim-aaaa-bbbb-cccc-dddd";
-const env = { SYNTHE_EVENT_CODE: "crimson", SYNTHE_TEAM_CODE: TEAM };
+const env = { SYNTHE_ANTHROPIC_KEY: "sk-ant-admin-test-key" };
 const draft = agentOptions(["--agent", "--prompt", "prompt.md", "--objective", "Be helpful", "--mode", "auto"]);
 const confirm = agentOptions(["--agent", "--confirm", "--keep-checks"]);
 
-// On a hackathon team the person at the keyboard is often a collaborator, not the repo's owner. Setup saves repo
+// On a team the person at the keyboard is often a collaborator, not the repo's owner. Setup saves repo
 // secrets and changes an Actions setting, which only admins may do, so it has to say so before anything is spent.
 function repo(context: { after: (fn: () => void) => void }, access: string | Error) {
   const root = mkdtempSync(join(tmpdir(), "synthe-admin-"));
@@ -33,7 +32,6 @@ function repo(context: { after: (fn: () => void) => void }, access: string | Err
       return "";
     },
     model: () => ({ ask: async () => { modelCalls++; throw new Error("no model call expected"); } }),
-    proxy: () => ({ ask: async () => { modelCalls++; throw new Error("no model call expected"); } }),
     template: () => "uses: __ACTION__\ncron: __MINUTE__",
     sleep: async () => {},
   };
