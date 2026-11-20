@@ -74,18 +74,25 @@ jobs:
       - if: steps.changed.outputs.run == 'true'
         working-directory: spec
         run: lake build
-      # Stryker's incremental check compares only the mutated files and the test files themselves. Everything else the
-      # tests depend on (other source, test helpers, the Lean spec, dependencies, this config) is hashed into the key,
-      # and results are reused only from a run with the same hash, so a change there always re-tests every mutant.
+      # Stryker's incremental check compares only the mutated files and the test files themselves. Every other tracked
+      # file (other source, test helpers, scripts, templates, dist, docs, the Lean spec, the lockfile, this config) and
+      # the Node version go into one hash, and results are reused only from a run with the same hash, so a
+      # change anywhere else re-tests every mutant.
+      - name: Hash everything the tests depend on except the mutated files and the test files
+        if: steps.changed.outputs.run == 'true'
+        id: inputs
+        run: |
+          hash=$(git ls-files -s | grep -vE $'\t(src/core/merge-rule\\.ts|src/improve/verdict\\.ts|test/[^/]+\\.test\\.ts)$' | sha256sum | cut -c1-16)
+          echo "hash=$hash-node-$(node --version)" >> "$GITHUB_OUTPUT"
       - name: Restore the last mutation results (incremental)
         if: steps.changed.outputs.run == 'true'
         uses: actions/cache@v4
         with:
           path: mutation/reports
-          key: mutation-${{ hashFiles('src/**', 'test/**', 'spec/**/*.lean', 'spec/lean-toolchain', 'spec/lake-manifest.json', 'spec/lakefile.toml', 'package-lock.json', 'mutation/stryker.config.mjs', '!src/core/merge-rule.ts', '!src/improve/verdict.ts', '!test/*.test.ts') }}-${{ github.head_ref || github.ref_name }}-${{ github.sha }}
+          key: mutation-${{ steps.inputs.outputs.hash }}-${{ github.head_ref || github.ref_name }}-${{ github.sha }}
           restore-keys: |
-            mutation-${{ hashFiles('src/**', 'test/**', 'spec/**/*.lean', 'spec/lean-toolchain', 'spec/lake-manifest.json', 'spec/lakefile.toml', 'package-lock.json', 'mutation/stryker.config.mjs', '!src/core/merge-rule.ts', '!src/improve/verdict.ts', '!test/*.test.ts') }}-${{ github.head_ref || github.ref_name }}-
-            mutation-${{ hashFiles('src/**', 'test/**', 'spec/**/*.lean', 'spec/lean-toolchain', 'spec/lake-manifest.json', 'spec/lakefile.toml', 'package-lock.json', 'mutation/stryker.config.mjs', '!src/core/merge-rule.ts', '!src/improve/verdict.ts', '!test/*.test.ts') }}-main-
+            mutation-${{ steps.inputs.outputs.hash }}-${{ github.head_ref || github.ref_name }}-
+            mutation-${{ steps.inputs.outputs.hash }}-main-
       - name: Mutation testing (fails below the kill-rate floor in mutation/stryker.config.mjs)
         if: steps.changed.outputs.run == 'true'
         run: npm run mutation:operators
