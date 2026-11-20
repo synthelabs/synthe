@@ -85,6 +85,7 @@ function parseGoal(text4) {
   if (runAlpha !== void 0 && !(typeof runAlpha === "number" && Number.isFinite(runAlpha) && runAlpha > 0 && runAlpha <= 1)) bad5("merge_rule.run_alpha must be above 0 and at most 1, for example 0.05");
   const margin = g.merge_rule?.guard_margin;
   if (margin !== void 0 && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad5("merge_rule.guard_margin must be 0 or more");
+  if (g.merge_rule?.allow_shorter !== void 0 && typeof g.merge_rule.allow_shorter !== "boolean") bad5("merge_rule.allow_shorter must be true or false");
   if (g.compose !== void 0 && typeof g.compose !== "boolean") bad5("compose must be true or false");
   return {
     ...g,
@@ -318,6 +319,42 @@ var init_run_alpha = __esm({
   }
 });
 
+// src/core/non-inferiority.ts
+function nonInferiorityP(wins, losses, margin = NON_INFERIORITY_MARGIN) {
+  const n = wins + losses;
+  if (!Number.isSafeInteger(wins) || !Number.isSafeInteger(losses) || wins < 0 || losses < 0 || n === 0) return 1;
+  const p = 0.5 + margin;
+  let logTerm = n * Math.log(1 - p);
+  let tail = Math.exp(logTerm);
+  for (let k = 0; k < losses; k++) {
+    logTerm += Math.log(n - k) - Math.log(k + 1) + Math.log(p) - Math.log(1 - p);
+    tail += Math.exp(logTerm);
+  }
+  return Math.min(1, tail);
+}
+function notWorseProblem(id, split, maxP, where) {
+  if (split === null) return `${id}: ${where} could not be compared`;
+  const p = nonInferiorityP(split.wins, split.losses);
+  if (p > maxP) return `${id}: shorter, but better in ${split.wins} and worse in ${split.losses} ${where} doesn't rule out a loss (p ${p.toFixed(3)} that it is no worse, needs ${maxP})`;
+  return null;
+}
+function notWorseNote(t, where) {
+  if (!t) return "Some replies couldn't be judged, so it wasn't used.";
+  return `Shorter, but it may do worse on your${where} test cases: better in ${t.w}, worse in ${t.l}, the same in ${t.t}, so it wasn't used.`;
+}
+function shorterSentence(chars, t) {
+  const removed = chars ? chars.before - chars.after : 0;
+  const what = chars && removed > 0 && chars.before > 0 ? `Removed ${removed} characters (${Math.round(100 * removed / chars.before)}%) from the prompt` : "Shortened the prompt";
+  return `${what} with no measured loss: better in ${t.w}, worse in ${t.l}, the same in ${t.t}.`;
+}
+var NON_INFERIORITY_MARGIN;
+var init_non_inferiority = __esm({
+  "src/core/non-inferiority.ts"() {
+    "use strict";
+    NON_INFERIORITY_MARGIN = 0.15;
+  }
+});
+
 // src/core/merge-rule.ts
 function checkRate(rows) {
   if (rows.length === 0 || rows.some((r) => typeof r.applicable !== "number" || typeof r.failed !== "number")) return null;
@@ -390,6 +427,12 @@ function trainingProblem(c, baselineTrain, goal) {
   if (split.p > max_p) return `${c.id}: better in ${split.wins} and worse in ${split.losses} test cases, which could be luck`;
   return null;
 }
+function candidateTrainingProblem(c, baselineTrain, goal) {
+  if (!judgedAsShorter(c, goal)) return trainingProblem(c, baselineTrain, goal);
+  if (mean(baselineTrain) === null) return "baseline score unknown";
+  if (c.stoppedAfter !== void 0) return `${c.id}: stopped after ${c.stoppedAfter} test cases, it could no longer pass`;
+  return notWorseProblem(c.id, paired(c.train, baselineTrain), goal.merge_rule.max_p, "test cases");
+}
 function judgeRound(scores, goal, replaced) {
   const { min_improvement, noise_margin, max_p } = goal.merge_rule;
   const before = mean(scores.baselineTrain);
@@ -412,18 +455,20 @@ function judgeRound(scores, goal, replaced) {
   const reasons = [];
   const notes = {};
   let best = null;
+  let bestShorter = false;
   for (const c of scores.candidates) {
-    const problem = trainingProblem(c, scores.baselineTrain, goal);
+    const shorter = judgedAsShorter(c, goal);
+    const problem = candidateTrainingProblem(c, scores.baselineTrain, goal);
     if (problem) {
       reasons.push(problem);
-      notes[c.id] = trainingNote(c, scores.baselineTrain, goal);
+      notes[c.id] = shorter && c.stoppedAfter === void 0 ? notWorseNote(tally(c.train, scores.baselineTrain), "") : trainingNote(c, scores.baselineTrain, goal);
       continue;
     }
     const after = mean(c.train);
     const split = paired(c.train, scores.baselineTrain);
     if (!c.holdout) {
       reasons.push(`${c.id}: not tried on the hidden test cases`);
-      notes[c.id] = "Also looked better, but another change did better still.";
+      notes[c.id] = shorter ? "Shorter and no worse on the test cases it learned from, but a change that did better was tried instead." : "Also looked better, but another change did better still.";
       continue;
     }
     const held = mean(c.holdout);
@@ -433,14 +478,21 @@ function judgeRound(scores, goal, replaced) {
       notes[c.id] = "Couldn't be checked on the hidden test cases, so it wasn't used.";
       continue;
     }
-    if (held < beforeHoldout + min_improvement) {
+    if (!shorter && held < beforeHoldout + min_improvement) {
       reasons.push(`${c.id}: judge score ${held.toFixed(1)} on the hidden test cases, needs ${(beforeHoldout + min_improvement).toFixed(1)}`);
       notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
       continue;
     }
     const holdoutMaxP = heldBackLimit(goal, plannedCandidates(goal, scores.candidates.length));
     const heldP = signP(heldSplit.w, heldSplit.l);
-    if (heldP > holdoutMaxP) {
+    if (shorter) {
+      const why = notWorseProblem(c.id, { wins: heldSplit.w, losses: heldSplit.l }, holdoutMaxP, "hidden test cases");
+      if (why) {
+        reasons.push(why);
+        notes[c.id] = notWorseNote(heldSplit, " hidden");
+        continue;
+      }
+    } else if (heldP > holdoutMaxP) {
       const perRun = holdoutMaxP < (goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p);
       reasons.push(perRun ? `${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck over a whole run (p ${heldP.toFixed(3)}, needs ${holdoutMaxP.toFixed(3)} under merge_rule.run_alpha ${goal.merge_rule.run_alpha})` : `${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck (p ${heldP.toFixed(3)}, needs ${holdoutMaxP})`);
       notes[c.id] = perRun ? `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck across a whole run (your merge_rule.run_alpha), so it wasn't used.` : `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck, so it wasn't used.`;
@@ -490,8 +542,9 @@ function judgeRound(scores, goal, replaced) {
     const guards = goal.counter_checks?.length ? { before: guardBefore, after: guardAfter } : void 0;
     const stillBroken = breaks(c.train) + breaks(c.holdout);
     const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout.some((h) => h.id === r.id)));
-    notes[c.id] = "Also looked better, but another change did better still.";
-    if (best === null || after > best.after) {
+    notes[c.id] = shorter ? "Shorter and no worse, but a change that did better was used instead." : "Also looked better, but another change did better still.";
+    if (best === null || bestShorter && !shorter || bestShorter === shorter && after > best.after) {
+      bestShorter = shorter;
       const rateBefore = checkRate([...scores.baselineTrain, ...currentHeld]);
       const rateAfter = checkRate([...c.train, ...c.holdout]);
       const rates = rateBefore !== null && rateAfter !== null ? { before: rateBefore, after: rateAfter } : void 0;
@@ -515,8 +568,8 @@ function judgeRound(scores, goal, replaced) {
         ...rates ? { checks: rates } : {},
         ...guards ? { guards } : {},
         ...attacks ? { attacks } : {},
-        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}${guardLine}${attackLine}`,
-        reasons: [`judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
+        plain: shorter ? `${rates ? `Your checks passed ${rates.after}% of the time, against ${rates.before}% before. ` : ""}${shorterSentence(c.chars, { w: split.wins, l: split.losses, t: c.train.length - split.wins - split.losses })} On the hidden test cases it never saw: better in ${heldSplit.w}, worse in ${heldSplit.l}, the same in ${heldSplit.t}.${rules}${guardLine}${attackLine}` : `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}${guardLine}${attackLine}`,
+        reasons: [`${shorter ? `shorter and no worse: p ${nonInferiorityP(split.wins, split.losses).toFixed(3)} on the learned-from test cases, ${nonInferiorityP(heldSplit.w, heldSplit.l).toFixed(3)} on the hidden ones; ` : ""}judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`]
       };
     }
   }
@@ -530,18 +583,20 @@ function holdoutScorePct(rows) {
   const failed = rows.reduce((n, r) => n + r.failed, 0);
   return Math.round(100 * (applicable - failed) / applicable * 10) / 10;
 }
-var cases, addedBreaks, breaks;
+var cases, addedBreaks, breaks, judgedAsShorter;
 var init_merge_rule = __esm({
   "src/core/merge-rule.ts"() {
     "use strict";
     init_goal();
     init_run_alpha();
+    init_non_inferiority();
     cases = (n) => `${n} case${n === 1 ? "" : "s"}`;
     addedBreaks = (rows, current) => {
       const before = new Map(current.map((r) => [r.id, r.violation]));
       return rows.filter((r) => r.violation === null || r.violation === true && before.get(r.id) !== true).length;
     };
     breaks = (rows) => rows.filter((r) => r.violation === true).length;
+    judgedAsShorter = (c, goal) => c.kind === "shorter" && goal.merge_rule.allow_shorter === true;
   }
 });
 
@@ -3732,7 +3787,7 @@ function setMessageContentAttributes(call, body, output, limit2) {
       return;
     }
   }
-  const size = setContentAttributes(span, {
+  const size2 = setContentAttributes(span, {
     // An empty list sets no attribute.
     [ATTR_GEN_AI_REQUEST_STOP_SEQUENCES]: body.stop_sequences?.length ? [...body.stop_sequences] : void 0,
     [ATTR_GEN_AI_SYSTEM_INSTRUCTIONS]: body.system === void 0 ? void 0 : contentParts(body.system),
@@ -3740,7 +3795,7 @@ function setMessageContentAttributes(call, body, output, limit2) {
     [ATTR_GEN_AI_OUTPUT_MESSAGES]: output === void 0 ? void 0 : [{ role: "assistant", parts: contentParts(output) }]
   }, limit2);
   if (output === void 0) {
-    call.requestContentSize = size;
+    call.requestContentSize = size2;
   }
 }
 function contentParts(content) {
@@ -3859,7 +3914,7 @@ function setContentAttributes(span, attributes, limit2) {
   const sizeOfMessages = () => Object.keys(messages).reduce((sum, key) => sum + sizeOf(values[key] ?? ""), 0);
   const stopSequencesSize = stopSequences?.reduce((sum, each) => sum + sizeOf(each), 0) ?? 0;
   const keepsStopSequences = stopSequences !== void 0 && stopSequencesSize <= limit2;
-  let size = keepsStopSequences ? stopSequencesSize : 0;
+  let size2 = keepsStopSequences ? stopSequencesSize : 0;
   let truncated = stopSequences !== void 0 && !keepsStopSequences;
   for (const key of Object.keys(others)) {
     const jsonSize = sizeOf(values[key] ?? "");
@@ -3867,21 +3922,21 @@ function setContentAttributes(span, attributes, limit2) {
       delete values[key];
       truncated = true;
     } else {
-      size += jsonSize;
+      size2 += jsonSize;
     }
   }
   let messagesSize = sizeOfMessages();
-  if (size + messagesSize > limit2) {
-    const { truncated: lostParts, ...fitted } = withoutFirstParts(messages, size + messagesSize - limit2);
+  if (size2 + messagesSize > limit2) {
+    const { truncated: lostParts, ...fitted } = withoutFirstParts(messages, size2 + messagesSize - limit2);
     truncated || (truncated = lostParts);
     serialize(fitted, values);
     messagesSize = sizeOfMessages();
   }
-  size += messagesSize;
+  size2 += messagesSize;
   if (blocks !== void 0) {
-    const kept = truncateToolResultContent(blocks, limit2 - size, sizeOf);
+    const kept = truncateToolResultContent(blocks, limit2 - size2, sizeOf);
     values[ATTR_ANTHROPIC_TOOL_RESULT_CONTENT] = kept.json;
-    size += kept.size;
+    size2 += kept.size;
     truncated || (truncated = kept.truncated);
   }
   if (truncated) {
@@ -3893,7 +3948,7 @@ function setContentAttributes(span, attributes, limit2) {
   for (const [key, value] of Object.entries(values)) {
     span.setAttribute(key, value);
   }
-  return size;
+  return size2;
 }
 function serialize(attributes, values) {
   let length = 0;
@@ -3917,17 +3972,17 @@ function withoutFirstParts(attributes, excess) {
     let removed = 0;
     while (excess > 0 && removed < parts.length) {
       const part = parts[removed];
-      const size = utf8Length(JSON.stringify(part));
+      const size2 = utf8Length(JSON.stringify(part));
       const content = part["content"];
       if (left2 === 1 && part.type === "text" && typeof content === "string") {
-        const kept = startThatFits(part, content, size - excess);
+        const kept = startThatFits(part, content, size2 - excess);
         if (kept !== content) {
           parts[removed] = { ...part, content: kept };
           truncated = true;
         }
         break;
       }
-      excess -= size + (removed + 1 < parts.length ? 1 : 0);
+      excess -= size2 + (removed + 1 < parts.length ? 1 : 0);
       removed++;
       left2--;
       truncated = true;
@@ -3947,13 +4002,13 @@ function startThatFits(part, content, limit2) {
   const escaped = JSON.stringify(head);
   let length = 0;
   let escapedLength = 0;
-  let size = 0;
+  let size2 = 0;
   while (length < head.length) {
     const point = escaped.codePointAt(1 + escapedLength);
     const units = point > 65535 ? 2 : 1;
     const escapedUnits = point !== 92 ? units : escaped[2 + escapedLength] === "u" ? 6 : 2;
-    size += point < 128 ? escapedUnits : point < 2048 ? 2 : point < 65536 ? 3 : 4;
-    if (size > room) {
+    size2 += point < 128 ? escapedUnits : point < 2048 ? 2 : point < 65536 ? 3 : 4;
+    if (size2 > room) {
       break;
     }
     escapedLength += escapedUnits;
@@ -3963,33 +4018,33 @@ function startThatFits(part, content, limit2) {
 }
 function truncateToolResultContent(blocks, limit2, sizeOf) {
   const kept = [];
-  let size = 2;
+  let size2 = 2;
   for (const block of blocks) {
-    const next = size + (kept.length === 0 ? 0 : 1) + sizeOf(block);
+    const next = size2 + (kept.length === 0 ? 0 : 1) + sizeOf(block);
     if (next > limit2) {
       break;
     }
     kept.push(block);
-    size = next;
+    size2 = next;
   }
-  return { json: "[" + kept.join(",") + "]", size, truncated: kept.length < blocks.length };
+  return { json: "[" + kept.join(",") + "]", size: size2, truncated: kept.length < blocks.length };
 }
 function utf8Length(text4) {
-  let size = 0;
+  let size2 = 0;
   for (let index = 0; index < text4.length; index++) {
     const unit = text4.charCodeAt(index);
     if (unit < 128) {
-      size += 1;
+      size2 += 1;
     } else if (unit < 2048) {
-      size += 2;
+      size2 += 2;
     } else if (unit >= 55296 && unit < 56320 && (text4.charCodeAt(index + 1) & 64512) === 56320) {
-      size += 4;
+      size2 += 4;
       index++;
     } else {
-      size += 3;
+      size2 += 3;
     }
   }
-  return size;
+  return size2;
 }
 var init_content = __esm({
   "node_modules/@anthropic-ai/sdk/lib/internal/tracing/content.mjs"() {
@@ -28580,7 +28635,7 @@ function recomputeProblem(r, goal, splits) {
     replaced = r.scenarioScores.map((s) => rowOf(s, s.candidateScore, void 0));
   } else if (r.candidateId !== null) {
     const holdout = side("holdout", cand);
-    const c = { id: r.candidateId, train: side("train", cand), ...holdout.some((h) => h.score !== null) ? { holdout } : {} };
+    const c = { id: r.candidateId, train: side("train", cand), ...holdout.some((h) => h.score !== null) ? { holdout } : {}, ...r.shorter === true ? { kind: "shorter" } : {} };
     scores.candidates = [c];
   }
   if (r.attacks) {
@@ -28609,7 +28664,7 @@ function recomputeProblem(r, goal, splits) {
       return e.message;
     }
   }
-  const ranWith = { ...goal, merge_rule: { ...goal.merge_rule, holdout_max_p: r.holdoutMaxP ?? 1, run_alpha: void 0 } };
+  const ranWith = { ...goal, merge_rule: { ...goal.merge_rule, holdout_max_p: r.holdoutMaxP ?? 1, run_alpha: void 0, ...r.shorter === true ? { allow_shorter: true } : {} } };
   const v = judgeRound(scores, ranWith, replaced);
   const want = r.verdict === "propose" ? "merge" : r.verdict;
   if (v.action !== want) return `the stored verdict is ${r.verdict}, but the recorded scores give ${v.action}`;
@@ -28626,6 +28681,7 @@ function verifyEvidence(filePath, repoRoot) {
   if (typeof r?.round !== "number" || typeof r.sha256 !== "string" || !Array.isArray(r.scenarioScores) || !Array.isArray(r.verdictReasons) || r.scenarioScores.some((s) => s === null || typeof s !== "object" || typeof s.id !== "string") || r.verdictReasons.some((x) => typeof x !== "string")) {
     return { ok: false, reason: `${filePath} isn't a Synthe evidence file` };
   }
+  if (r.shorter !== void 0 && r.shorter !== true) return { ok: false, reason: `${filePath} isn't a Synthe evidence file` };
   if (r.attacks !== void 0 && (r.attacks === null || typeof r.attacks !== "object" || typeof r.attacks.total !== "number" || ![r.attacks.baselineFailed, r.attacks.candidateFailed].every((list) => list === null || Array.isArray(list) && list.every((x) => typeof x === "string")))) {
     return { ok: false, reason: `${filePath} isn't a Synthe evidence file` };
   }
@@ -29048,16 +29104,16 @@ var init_approval = __esm({
 import { existsSync as existsSync14, linkSync as linkSync2, lstatSync as lstatSync5, mkdirSync as mkdirSync7, readFileSync as readFileSync16, realpathSync as realpathSync3, renameSync as renameSync3, statSync as statSync4, unlinkSync as unlinkSync4, writeFileSync as writeFileSync8 } from "node:fs";
 import { dirname as dirname5, isAbsolute as isAbsolute3, relative as relative2, resolve as resolve2 } from "node:path";
 function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
-  let size;
+  let size2;
   try {
     const stat2 = statSync4(path4);
     if (!stat2.isFile()) throw new PilotError("not_found", `${path4} is not a file.`);
-    size = stat2.size;
+    size2 = stat2.size;
   } catch (e) {
     if (e instanceof PilotError) throw e;
     throw new PilotError("not_found", `${path4} does not exist or cannot be read.`);
   }
-  if (size > maxBytes) throw new PilotError("too_large", `${path4} is ${size} bytes; the limit is ${maxBytes}. Export a smaller, bounded file.`);
+  if (size2 > maxBytes) throw new PilotError("too_large", `${path4} is ${size2} bytes; the limit is ${maxBytes}. Export a smaller, bounded file.`);
   return readFileSync16(path4, "utf8");
 }
 function inside(root, name) {
@@ -30439,12 +30495,12 @@ import { join as join20 } from "node:path";
 function appendLine(path4, text4) {
   const fd = openSync3(path4, constants3.O_RDWR | constants3.O_APPEND | constants3.O_CREAT | (constants3.O_NOFOLLOW ?? 0), 384);
   try {
-    const { size, mode } = fstatSync2(fd);
+    const { size: size2, mode } = fstatSync2(fd);
     if ((mode & constants3.S_IFMT) !== constants3.S_IFREG) return false;
     let lead = "";
-    if (size > 0) {
+    if (size2 > 0) {
       const last = Buffer.alloc(1);
-      if (readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 10) lead = "\n";
+      if (readSync(fd, last, 0, 1, size2 - 1) === 1 && last[0] !== 10) lead = "\n";
     }
     writeSync(fd, lead + text4);
     return true;
@@ -32198,11 +32254,11 @@ function bounded(model, limits) {
     calls: () => calls2,
     chars: () => chars,
     async chat(request) {
-      const size = requestChars(request);
+      const size2 = requestChars(request);
       if (calls2 + 1 > limits.max_calls) throw new PilotError("budget_exceeded", `Stopped before model call ${calls2 + 1}: the limit for this run is ${limits.max_calls} calls. Nothing more was sent.`);
-      if (chars + size > limits.max_input_chars) throw new PilotError("budget_exceeded", `Stopped before sending ${size} more characters: the limit for this run is ${limits.max_input_chars}. Nothing more was sent.`);
+      if (chars + size2 > limits.max_input_chars) throw new PilotError("budget_exceeded", `Stopped before sending ${size2} more characters: the limit for this run is ${limits.max_input_chars}. Nothing more was sent.`);
       calls2++;
-      chars += size;
+      chars += size2;
       return model.chat(request);
     }
   };
@@ -36843,6 +36899,24 @@ ${lines2.join("\n")}
 ` : "";
 }
 
+// src/loop/shorter.ts
+var SHORTER_AFTER_STALLS = 1;
+var SHORTER_MIN_SHARE = 0.05;
+var SHORTER_MIN_CHARS = 200;
+var shorterRound = (goal, state) => goal.merge_rule.allow_shorter === true && state.stalls >= SHORTER_AFTER_STALLS;
+var size = (t) => t.trim().length;
+var minShorterBy = (prompt) => Math.max(1, Math.min(Math.ceil(size(prompt) * SHORTER_MIN_SHARE), SHORTER_MIN_CHARS));
+function shorterProblem(before, after) {
+  const need2 = minShorterBy(before);
+  const removed = size(before) - size(after);
+  if (removed < need2) return `a shorter candidate must remove at least ${need2} characters, and this one ${removed <= 0 ? `adds ${-removed}` : `removes ${removed}`}`;
+  return null;
+}
+var shorterAngle = (prompt) => `Make the prompt shorter without making replies worse: delete or tighten one instruction that is redundant, repeats another, or isn't needed by any of the situations below. Use deletions or shorter wording only, add nothing new, and remove at least ${minShorterBy(prompt)} characters in total.`;
+function shorterFields(c, baseline2) {
+  return c.kind === "shorter" ? { kind: "shorter", chars: { before: size(baseline2), after: size(c.text) } } : {};
+}
+
 // src/loop/write.ts
 var ANGLES = [
   "Fix what made the current prompt lose in the cases below.",
@@ -36946,7 +37020,11 @@ The team measures a good reply with these checks; a change wins by making replie
 ${goal.checks.map((c) => `- ${c}`).join("\n")}` : "";
   const quoteRule = goal.prompt.kind === "inline" ? `
 The prompt lives inside a source-code string, so never use backslashes, ${goal.prompt.delimiter} or \${ in it.` : "";
-  const results = await pool(ANGLES, ANGLES.length, async (angle) => askJson(model, {
+  const shorter = shorterRound(goal, state);
+  const known = `${goal.objective}
+${goal.policy ?? ""}`;
+  const angles = shorter ? [ANGLES[0], shorterAngle(prompt)] : ANGLES;
+  const results = await pool(angles, angles.length, async (angle) => askJson(model, {
     model: goal.models.writer,
     maxTokens: 3e3,
     schema: SCHEMA,
@@ -36975,9 +37053,9 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
   results.forEach((r, i) => {
     const id = `candidate-${i + 1}`;
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
-    const applied = applyEdits(prompt, r.value.edits, `${goal.objective}
-${goal.policy ?? ""}`);
+    const applied = applyEdits(prompt, r.value.edits, known);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
+    const isShorter = shorter && i === 1 && shorterProblem(prompt, applied.text) === null;
     const fingerprint = candidateFingerprint(applied.text);
     if (fingerprint === candidateFingerprint(prompt)) return void rejected.push(`${id}: edits change only formatting or case`);
     if (tried.has(fingerprint)) return void rejected.push(`${id}: materially identical candidate already tried for this goal and prompt`);
@@ -36987,7 +37065,8 @@ ${goal.policy ?? ""}`);
       text: applied.text,
       summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : void 0,
       title: typeof r.value.title === "string" && r.value.title.trim() ? r.value.title.trim().replace(/\.$/, "").slice(0, 60) : void 0,
-      edits: r.value.edits
+      edits: r.value.edits,
+      ...isShorter ? { kind: "shorter" } : {}
     });
   });
   return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
@@ -37106,15 +37185,15 @@ ${goal.policy ?? ""}`);
 init_merge_rule();
 var BEST = 100;
 var currentScores = (train, replies) => train.map((s) => ({ id: s.id, score: (replies.get(s.id) ?? null) === null ? null : 50, violation: null }));
-function couldStillPass(id, done, rest, current, goal) {
+function couldStillPass(id, done, rest, current, goal, kind) {
   const best = [...done, ...rest.map((s) => ({ id: s.id, score: BEST, violation: false }))];
-  return trainingProblem({ id, train: best }, current, goal) === null;
+  return candidateTrainingProblem({ id, train: best, ...kind ? { kind } : {} }, current, goal) === null;
 }
-async function inChunks(items, size, fn, keepGoing) {
-  if (size < 2 || size % 2 !== 0) throw new Error("chunk size must be even");
+async function inChunks(items, size2, fn, keepGoing) {
+  if (size2 < 2 || size2 % 2 !== 0) throw new Error("chunk size must be even");
   const done = [];
-  for (let at = 0; at < items.length; at += size) {
-    done.push(...await Promise.all(items.slice(at, at + size).map(fn)));
+  for (let at = 0; at < items.length; at += size2) {
+    done.push(...await Promise.all(items.slice(at, at + size2).map(fn)));
     if (done.length < items.length && !keepGoing(done)) break;
   }
   return done;
@@ -37397,11 +37476,11 @@ async function runScore(goal, baseline2, candidates, scenarios, model, prior = n
   const holdDuels = [];
   const scores = { baselineHash: sha256(baseline2), baselineTrain: [], baselineHoldout: [], candidates: [] };
   const current = currentScores(train, trainReplies);
-  const stopFor = (id) => stopEarly ? (done) => !couldStillPass(id, done, train.slice(done.length), current, goal) : void 0;
+  const stopFor = (c) => stopEarly ? (done) => !couldStillPass(c.id, done, train.slice(done.length), current, goal, c.kind) : void 0;
   for (const c of safe) {
-    const duels = await challenge(c.id, c.text, train, trainReplies, goal.compose === true ? void 0 : stopFor(c.id));
+    const duels = await challenge(c.id, c.text, train, trainReplies, goal.compose === true ? void 0 : stopFor(c));
     trainDuels.push(duels);
-    scores.candidates.push(trained(c.id, duels));
+    scores.candidates.push({ ...trained(c.id, duels), ...shorterFields(c, baseline2) });
   }
   scores.baselineTrain = currentRows(train, trainReplies, trainDuels);
   let compose;
@@ -37410,13 +37489,13 @@ async function runScore(goal, baseline2, candidates, scenarios, model, prior = n
     costs.push(compose.costUsd);
     if (compose.candidate) {
       safe.push(compose.candidate);
-      const duels = await challenge(compose.candidate.id, compose.candidate.text, train, trainReplies, stopFor(compose.candidate.id));
+      const duels = await challenge(compose.candidate.id, compose.candidate.text, train, trainReplies, stopFor(compose.candidate));
       trainDuels.push(duels);
       scores.candidates.push(trained(compose.candidate.id, duels));
       scores.baselineTrain = currentRows(train, trainReplies, trainDuels);
     }
   }
-  const leader = scores.candidates.filter((c) => trainingProblem(c, scores.baselineTrain, goal) === null).sort((a, b) => mean(b.train) - mean(a.train))[0];
+  const leader = scores.candidates.filter((c) => candidateTrainingProblem(c, scores.baselineTrain, goal) === null).sort((a, b) => Number(judgedAsShorter(a, goal)) - Number(judgedAsShorter(b, goal)) || mean(b.train) - mean(a.train))[0];
   if (leader) {
     const text4 = safe.find((c) => c.id === leader.id).text;
     const duels = await challenge(leader.id, text4, holdout, await holdReplies());
@@ -40888,16 +40967,16 @@ var RunRecord = class {
   // Sends what is pending, in batches the proxy accepts, one after another in the background. Never throws.
   flush(final = false) {
     const batches = [];
-    let current = [], size = 0;
+    let current = [], size2 = 0;
     for (const event of this.pending) {
       const length = JSON.stringify(event).length + 1;
-      if (current.length && (size + length > EVENT_BUDGET || current.length >= MAX_BATCH_EVENTS)) {
+      if (current.length && (size2 + length > EVENT_BUDGET || current.length >= MAX_BATCH_EVENTS)) {
         batches.push(current);
         current = [];
-        size = 0;
+        size2 = 0;
       }
       current.push(event);
-      size += length;
+      size2 += length;
     }
     if (current.length || final && !batches.length) batches.push(current);
     this.pending = [];

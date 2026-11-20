@@ -41,6 +41,8 @@ export interface Goal {
     // Optional cap on the chance that a whole run merges at least one change that does nothing. Unset, the limits
     // above apply as they are. Set, the held-back limit tightens to fit it (see src/core/run-alpha.ts).
     run_alpha?: number;
+    // Off by default. When on, rounds after a stall try one deletion, merged if it is no worse (src/loop/shorter.ts).
+    allow_shorter?: boolean;
   };
   budget: { max_usd: number };
   // Compose (prototype, off by default): after scoring, write one more candidate from how this round's candidates
@@ -92,6 +94,7 @@ export function parseGoal(text: string): Goal {
   if (runAlpha !== undefined && !(typeof runAlpha === "number" && Number.isFinite(runAlpha) && runAlpha > 0 && runAlpha <= 1)) bad("merge_rule.run_alpha must be above 0 and at most 1, for example 0.05");
   const margin = g.merge_rule?.guard_margin;
   if (margin !== undefined && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad("merge_rule.guard_margin must be 0 or more");
+  if (g.merge_rule?.allow_shorter !== undefined && typeof g.merge_rule.allow_shorter !== "boolean") bad("merge_rule.allow_shorter must be true or false");
   if (g.compose !== undefined && typeof g.compose !== "boolean") bad("compose must be true or false");
   return {
     ...g,

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { GOAL_FILE, parseGoal, parseScenarios, type Goal } from "./goal.ts";
-import { checkRate, judgeRound, type CandidateScore, type RoundScores, type ScoreRow, type Verdict } from "./merge-rule.ts";
+import { checkRate, judgedAsShorter, judgeRound, type CandidateScore, type RoundScores, type ScoreRow, type Verdict } from "./merge-rule.ts";
 import { findPrompts } from "./prompt.ts";
 import { heldBackLimit, plannedCandidates } from "./run-alpha.ts";
 import { sha256 } from "./safety.ts";
@@ -57,6 +57,9 @@ export interface EvidenceRecord {
   // attack-blocked verdict recomputes as a merge and a genuine record looks tampered with. Absent when the
   // repo has no attacks file, and in records written before this was kept.
   attacks?: { total: number; baselineFailed: string[] | null; candidateFailed: string[] | null };
+  // Set only when the recorded candidate was a deletion judged by the no-worse test (merge_rule.allow_shorter), so
+  // verify re-runs that test instead of the usual one. Absent everywhere else, so other records are unchanged.
+  shorter?: true;
   costUsd: number | null;
   prevEvidenceHash: string | null;
   sha256: string;
@@ -143,6 +146,7 @@ export function buildEvidence(p: EvidenceParams): EvidenceRecord {
     guardsBefore: guardRate(base, guards),
     guardsAfter: guardRate(after, guards),
     ...(scores.attacks ? { attacks: { total: scores.attacks.total, baselineFailed: scores.attacks.baselineFailed, candidateFailed: cand?.attackFailed ?? null } } : {}),
+    ...(cand && judgedAsShorter(cand, p.goal) ? { shorter: true as const } : {}),
     costUsd: p.costUsd,
     prevEvidenceHash: p.prevEvidenceHash,
     sha256: "",
@@ -176,7 +180,7 @@ export function recomputeProblem(r: EvidenceRecord, goal: Goal, splits: Map<stri
     replaced = r.scenarioScores.map((s) => rowOf(s, s.candidateScore, undefined));
   } else if (r.candidateId !== null) {
     const holdout = side("holdout", cand);
-    const c: CandidateScore = { id: r.candidateId, train: side("train", cand), ...(holdout.some((h) => h.score !== null) ? { holdout } : {}) };
+    const c: CandidateScore = { id: r.candidateId, train: side("train", cand), ...(holdout.some((h) => h.score !== null) ? { holdout } : {}), ...(r.shorter === true ? { kind: "shorter" as const } : {}) };
     scores.candidates = [c];
   }
   // The recorded attack results go back into the rebuilt scores, so the merge rule's attack gate re-runs
@@ -213,7 +217,7 @@ export function recomputeProblem(r: EvidenceRecord, goal: Goal, splits: Map<stri
   }
   // Recheck under the held-back limit the round ran with; a record from before the check ran with none.
   // The recorded limit already includes any run_alpha, so it isn't applied a second time.
-  const ranWith: Goal = { ...goal, merge_rule: { ...goal.merge_rule, holdout_max_p: r.holdoutMaxP ?? 1, run_alpha: undefined } };
+  const ranWith: Goal = { ...goal, merge_rule: { ...goal.merge_rule, holdout_max_p: r.holdoutMaxP ?? 1, run_alpha: undefined, ...(r.shorter === true ? { allow_shorter: true } : {}) } };
   const v: Verdict = judgeRound(scores, ranWith, replaced);
   const want = r.verdict === "propose" ? "merge" : r.verdict;
   if (v.action !== want) return `the stored verdict is ${r.verdict}, but the recorded scores give ${v.action}`;
@@ -234,6 +238,7 @@ export function verifyEvidence(filePath: string, repoRoot: string): VerifyResult
     || r.verdictReasons.some((x) => typeof x !== "string")) {
     return { ok: false, reason: `${filePath} isn't a Synthe evidence file` };
   }
+  if (r.shorter !== undefined && r.shorter !== true) return { ok: false, reason: `${filePath} isn't a Synthe evidence file` };
   if (r.attacks !== undefined && (r.attacks === null || typeof r.attacks !== "object" || typeof r.attacks.total !== "number"
     || ![r.attacks.baselineFailed, r.attacks.candidateFailed].every((list) => list === null || (Array.isArray(list) && list.every((x) => typeof x === "string"))))) {
     return { ok: false, reason: `${filePath} isn't a Synthe evidence file` };
