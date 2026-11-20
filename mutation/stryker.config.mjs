@@ -18,12 +18,13 @@ const set = process.env.MUTATION_SET === "existing" ? "existing" : "with-lean";
 const skip = new Set((process.env.MUTATION_SKIP ?? "").split(",").filter(Boolean));
 
 // Only test files that import a mutated file, directly or through other modules, so the first full run (which
-// records coverage) doesn't spend minutes on unrelated end-to-end tests.
+// records coverage) doesn't spend minutes on unrelated end-to-end tests. `import type` and `export type` lines are
+// left out: Node erases them, so a test reached only through one never loads the mutated file.
 const files = [
   ...readdirSync("src", { recursive: true }).filter((f) => f.endsWith(".ts")).map((f) => `src/${f}`),
   ...readdirSync("test").filter((f) => f.endsWith(".ts")).map((f) => `test/${f}`),
 ];
-const imports = Object.fromEntries(files.map((f) => [f, [...readFileSync(f, "utf8").matchAll(/(?:from|import)\s*\(?\s*["'](\.[^"']+)["']/g)]
+const imports = Object.fromEntries(files.map((f) => [f, [...readFileSync(f, "utf8").replace(/^(?:import|export)\s+type\s[^;]*;/gm, "").matchAll(/(?:from|import)\s*\(?\s*["'](\.[^"']+)["']/g)]
   .map((m) => normalize(join(dirname(f), m[1])).replace(/\.js$/, ".ts"))]));
 const reaches = (f, seen = new Set()) => { if (seen.has(f)) return seen; seen.add(f); for (const d of imports[f] ?? []) reaches(d, seen); return seen; };
 const testFiles = files.filter((f) => f.endsWith(".test.ts") && !skip.has(f) && MUTATE.some((m) => reaches(f).has(m)))
@@ -38,6 +39,10 @@ export default {
   // TypeScript 7 has no JavaScript API for Stryker's tsconfig step, and Node strips the types itself.
   tsconfigFile: "mutation/no-tsconfig.json",
   timeoutMS: 60000,
+  // The first full run (all selected test files, one after another) took 3m54s to 4m55s on CI between 2026-11-17
+  // and 2026-11-19 and then crossed Stryker's default 5-minute limit; it was 1m20s to 1m30s with 42 to 46 files
+  // before the pilot's tests joined (2026-11-10). 15 minutes is three times the measured time.
+  dryRunTimeoutMinutes: 15,
   // Keep the Lean binary in Stryker's sandbox copy (it is gitignored).
   ignorePatterns: ["!spec/.lake/build/bin/**", "mutation/reports"],
   // Operator mutants only: comparisons, &&/||, +/-, and conditions forced true or false. Text and literal mutants

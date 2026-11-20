@@ -233,8 +233,14 @@ const nameFilter = process.env.MUTATION_MATCH ? new RegExp(process.env.MUTATION_
 const mutations = allMutations.filter(([name, file]) => (selectedFiles.length === 0 || selectedFiles.includes(file)) && (!nameFilter || nameFilter.test(name)));
 if (!mutations.length) throw new Error("No mutations match the requested files");
 console.log(`Checking ${mutations.length} mutations${selectedFiles.length ? ` in ${selectedFiles.join(", ")}` : ""}`);
-const baseline = spawnSync("node", ["--test", ...TESTS], { stdio: "inherit", timeout: 60000 });
+// Time limits: MUTATION_TIMEOUT_MS when set. Otherwise the unmutated run gets 30 minutes, and each mutation gets three
+// times what that run took (never less than 60 s), so the limit grows with the suite instead of cutting it off.
+const fixedLimit = Number(process.env.MUTATION_TIMEOUT_MS) > 0 ? Number(process.env.MUTATION_TIMEOUT_MS) : null;
+const baselineStart = Date.now();
+const baseline = spawnSync("node", ["--test", ...TESTS], { stdio: "inherit", timeout: fixedLimit ?? 30 * 60_000 });
 if (baseline.status !== 0) throw new Error("Unmutated tests must pass before checking mutations");
+const limit = fixedLimit ?? Math.max(60_000, 3 * (Date.now() - baselineStart));
+console.log(`Each mutation may run for ${Math.round(limit / 1000)} s (set MUTATION_TIMEOUT_MS to change it)`);
 
 // Every mutated file as it was before the run. Restoring each mutation from its own copy isn't enough on its own: a
 // second run at the same time could restore a copy the first had mutated, leaving a break in the source. This check
@@ -249,7 +255,7 @@ for (const [name, file, from, to] of mutations) {
   process.once("SIGINT", restore);
   try {
     writeFileSync(file, original.replace(from, to));
-    const { status } = spawnSync(process.execPath, [...process.execArgv, "--test", ...TESTS], { stdio: "ignore", timeout: 60000 });
+    const { status } = spawnSync(process.execPath, [...process.execArgv, "--test", ...TESTS], { stdio: "ignore", timeout: limit });
     if (status === 0 || status === null) survived++;
     console.log(`${status === null ? "TIMED OUT" : status === 0 ? "SURVIVED " : "killed   "} ${name}`);
   } finally {

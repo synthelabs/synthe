@@ -19,7 +19,16 @@ How it stays fast (StrykerJS with its TAP runner):
 - **Only the tests that reach the mutant.** A first full run records which test files execute each mutant; each
   mutant then runs only those, and stops at the first failure.
 - **Incremental.** `mutation/reports/incremental-*.json` keeps the last results; a later run re-tests only mutants
-  whose code or covering tests changed. CI caches it between runs.
+  whose code or covering tests changed. CI caches it between runs: every push to `main` runs the job and saves the
+  cache, and a pull request restores the newest one from its own branch or from `main`.
+
+The first full run always runs every selected test file, one after another, even with an incremental report. It is
+limited to 15 minutes (`dryRunTimeoutMinutes`); on CI it took 3m54s to 4m55s in November 2026, about three times
+longer than before the pilot's tests joined the selection. On a slower machine, raise it for one run with
+`npx stryker run mutation/stryker.config.mjs --dryRunTimeoutMinutes 30`.
+
+`npm run mutation` and `scripts/pilot-mutation-check.mjs` time each mutation against the unmutated run (three times
+its duration, at least 60 s and 300 s). Set `MUTATION_TIMEOUT_MS` to use a fixed limit instead.
 
 Measured on an M3 Pro (2026-11-08, 316 mutants): about 3 minutes 50 seconds from scratch (1 minute 12 seconds of
 that is the first full test run), 1 minute 20 seconds when nothing changed. The previous approach (a repo copy per
