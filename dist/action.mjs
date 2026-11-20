@@ -30777,6 +30777,7 @@ import { randomUUID as randomUUID3 } from "node:crypto";
 import { readFileSync as readFileSync2 } from "node:fs";
 var EVENTS_ENDPOINT = "https://synthe-crimson.vercel.app/api/events";
 var MAX_EVENT_BYTES = 192 * 1024;
+var FLUSH_MS = 15e3;
 var WORDS = /^[a-z_-]{1,16}( [a-z_-]{1,16}){0,3}$/;
 var KEY = /^[a-z][a-z0-9_]{0,39}$/;
 var CREDENTIAL = /secret|token|password|credential|authorization|cookie|(?:^|_)key(?:$|_)|(?:team|event)_code/i;
@@ -30899,6 +30900,7 @@ async function eventConsent(env, fetcher = fetch) {
   }
 }
 var worker;
+var sending = [];
 function capture(kind, stage, data) {
   try {
     if (!process.env.ACTIONS_ID_TOKEN_REQUEST_URL || !process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN) return;
@@ -30911,9 +30913,31 @@ function capture(kind, stage, data) {
     }
     const event = { id: randomUUID3(), kind, at: (/* @__PURE__ */ new Date()).toISOString(), stage, data: eventData(data, true, process.env) };
     if (Buffer.byteLength(JSON.stringify(event)) > MAX_EVENT_BYTES) event.data = { content_omitted: true };
-    if (worker.connected) worker.send(event, () => {
-    });
+    const child = worker;
+    if (child.connected) sending.push(new Promise((done) => {
+      child.send(event, () => done());
+    }));
   } catch {
+  }
+}
+async function flushEvents(timeoutMs = FLUSH_MS) {
+  const child = worker;
+  if (!child) return;
+  let timer;
+  try {
+    const sent = (async () => {
+      await Promise.all(sending);
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const exited = new Promise((done) => child.once("exit", () => done()));
+      if (child.connected) child.disconnect();
+      await exited;
+    })();
+    await Promise.race([sent, new Promise((done) => {
+      timer = setTimeout(done, timeoutMs);
+    })]);
+  } catch {
+  } finally {
+    clearTimeout(timer);
   }
 }
 var captureFailure = (stage, error) => capture("failure", WORDS.test(stage) ? stage : "round", { reason: "step failed", message: error instanceof Error ? error.message : null });
@@ -31223,7 +31247,7 @@ async function main() {
     throw new Error(`unknown step: ${step}`);
   }
 }
-if (!startEventsWorker()) main().catch((e) => {
+if (!startEventsWorker()) main().then(() => flushEvents(), async (e) => {
   const step = input("step");
   if (step === "receipt-start" || step === "receipt-finish") {
     console.log(`::error title=Crimson tracking::${e.message}`);
@@ -31241,5 +31265,6 @@ if (!startEventsWorker()) main().catch((e) => {
       console.error(saveError);
     }
   }
+  await flushEvents();
   process.exit(1);
 });

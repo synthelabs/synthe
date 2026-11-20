@@ -14,7 +14,7 @@ import { failureOf, type Failure } from "./loop/failure.ts";
 import { explainScores, runScore } from "./loop/score.ts";
 import { explainWrite, runWrite } from "./loop/write.ts";
 import { explainCompose, withComposed } from "./loop/compose.ts";
-import { captureCancel, captureFailure, observeRoundStep, startEventsWorker } from "./core/events.ts";
+import { captureCancel, captureFailure, flushEvents, observeRoundStep, startEventsWorker } from "./core/events.ts";
 import { deliverReceipt } from "./core/receipts.ts";
 
 const OUT = ".synthe-out";
@@ -173,7 +173,7 @@ async function main() {
   }
 }
 
-if (!startEventsWorker()) main().catch((e) => {
+if (!startEventsWorker()) main().then(() => flushEvents(), async (e) => {
   const step = input("step");
   if (step === "receipt-start" || step === "receipt-finish") {
     console.log(`::error title=Crimson tracking::${e.message}`);
@@ -191,5 +191,6 @@ if (!startEventsWorker()) main().catch((e) => {
       console.log(`::error title=Synthe::${failure.message.replace(/\r?\n/g, " ")}`);
     } catch (saveError) { console.error(saveError); }
   }
+  await flushEvents();
   process.exit(1);
 });
