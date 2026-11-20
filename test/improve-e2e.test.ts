@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { before, describe, test } from "node:test";
 import { startFakeAnthropic, type FakeReply } from "../scripts/dev/fake-anthropic.ts";
 
