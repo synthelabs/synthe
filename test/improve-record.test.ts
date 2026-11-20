@@ -15,7 +15,9 @@ function fakeProxy(mode: "ok" | "refuse" | "hang" | "down" = "ok") {
   const fetcher = (async (url: string | URL | Request, init?: RequestInit) => {
     calls++;
     if (mode === "down") throw new TypeError("fetch failed");
-    if (mode === "hang") return new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("timed out"), { name: "TimeoutError" }))));
+    // AbortSignal.timeout and the close wait are both unref'd, so a request that never answers must hold the event loop
+    // open itself, or newer Node versions exit before the timeout fires.
+    if (mode === "hang") return new Promise<Response>((_, reject) => { const hold = setTimeout(() => {}, 30_000); init?.signal?.addEventListener("abort", () => { clearTimeout(hold); reject(Object.assign(new Error("timed out"), { name: "TimeoutError" })); }); });
     batches.push({ url: String(url), headers: init!.headers as Record<string, string>, body: JSON.parse(init!.body as string) });
     return Response.json(mode === "refuse" ? { error: "no" } : { ok: true }, { status: mode === "refuse" ? 403 : 200 });
   }) as typeof fetch;
