@@ -14,6 +14,7 @@ import type { Failure } from "./failure.ts";
 import { LOSS, TIE, WIN } from "./score.ts";
 import { candidateScope, rememberCandidates } from "../core/candidate-history.ts";
 import { fromSyntheProxy, PROXY_REFUSED } from "../core/share.ts";
+import { combinedRounds, updatePool } from "./pool.ts";
 
 export const BUSY_RETRIES = 2;
 export interface RoundInput { candidates: Candidate[] | null; scores: RoundScores | null; costUsd: number | null; writeUsd?: number | null; rejected?: string[]; goalHash?: string; error?: Failure | null; calibration?: { check: string; reading: string }[] | null;
@@ -479,6 +480,8 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
           if (chosen?.title) record.title = chosen.title;
           if (chosen?.edits) record.edits = chosen.edits;
           if (unverified.length) record.unverified = unverified;
+          const combined = combinedRounds(chosen);
+          if (combined) record.combined = combined;
         }
         if (landed) {
           winnerId = verdict.candidateId;
@@ -523,6 +526,12 @@ export async function runDecide(goal: Goal, repo: Repo, input: RoundInput, now =
         const pair = pickExamplePair(scores, winnerId, scenarioText);
         if (pair) record.examplePair = pair;
       }
+    }
+    // Population (prototype, off by default): keep this round's partial winners for a later merge candidate, and
+    // drop pooled changes the round made stale. Training rows only, like the lessons below (see pool.ts).
+    if (judged && goal.population === true && current !== null && input.candidates) {
+      const promptAfter = record.outcome === "merged" ? input.candidates.find((c) => c.id === winnerId)?.text : record.outcome === "reverted" ? state.lastMerge?.priorPrompt : current;
+      state.pool = updatePool({ pool: state.pool, round, goal, candidates: input.candidates, scores, scenarioText, promptAfter: promptAfter ?? current, outcome: record.outcome, winnerId });
     }
     // Count check failures over every row scored this round, for the report's "what failed most". The rows
     // themselves aren't kept in state, so the count has to be taken now.

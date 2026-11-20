@@ -5,6 +5,7 @@ import { sumCosts } from "../core/cost.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
 import { clip, type Candidate } from "./write.ts";
 import { composeCandidate, type ComposeResult } from "./compose.ts";
+import { POOL_ID } from "./pool.ts";
 
 const CONCURRENCY = 6;
 export const AGENT_MAX_TOKENS = 2000; // the agent's reply limit; every prompt gets the same one
@@ -326,7 +327,10 @@ export async function runScore(goal: Goal, baseline: string, candidates: Candida
   // differently on the training cases (see compose.ts). It is dueled on the same cases and then judged by the same
   // rule as every other candidate, so it can add an option but never loosen the gate.
   let compose: ComposeResult | undefined;
-  if (goal.compose === true) {
+  // One extra candidate a round, not two: when the pool already added its merge candidate (see pool.ts), compose
+  // sits the round out, so turning both on never adds more than one comparison.
+  if (goal.compose === true && safe.some((c) => c.id === POOL_ID)) compose = { candidate: null, skipped: "the pool already added this round's extra candidate", costUsd: 0 };
+  else if (goal.compose === true) {
     compose = await composeCandidate({ goal, baseline, train, candidates: safe, scored: scores.candidates, currentReplies: trainReplies, model });
     costs.push(compose.costUsd);
     if (compose.candidate) {

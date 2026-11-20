@@ -35,7 +35,15 @@ export interface RoundRecord {
   // prompt that ended the round (the winning change, or the current prompt when nothing merged) failed.
   // unknown: the current prompt's attack results couldn't be measured, so no held count is claimed.
   attacks?: { total: number; failed: string[]; unknown?: boolean };
+  // The earlier rounds whose changes were combined into this round's merged or proposed change, when it came from
+  // the pool (see src/loop/pool.ts).
+  combined?: number[];
 }
+
+// A change from an earlier round that won some training cases without winning the round, kept so a later round can
+// combine it with another (see src/loop/pool.ts). wonOn holds training scenario ids only, never held-back ones.
+// promptHash is the prompt the wins were measured against.
+export interface PoolEntry { id: string; round: number; summary: string; edits: { find: string; replace: string }[]; wonOn: string[]; promptHash: string }
 
 export interface Landing { branch: string; kind: "merge" | "revert"; text: string; priorPrompt: string; propose?: boolean }
 
@@ -75,6 +83,8 @@ export interface State {
   chainReady?: boolean;
   // Hash of the last evidence record written, so the next one can chain to it.
   evidenceHash?: string;
+  // Only written when synthe.json sets "population": true. State saved before this existed simply has none.
+  pool?: PoolEntry[];
   rounds: RoundRecord[];
 }
 

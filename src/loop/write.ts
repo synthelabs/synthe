@@ -4,9 +4,10 @@ import { sumCosts } from "../core/cost.ts";
 import { promptPathProblem, sha256 } from "../core/safety.ts";
 import { candidateFingerprint, candidateScope, validateCandidateMemory } from "../core/candidate-history.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
+import { explainPool, mergeFromPool, type PoolMerge } from "./pool.ts";
 
 export interface Candidate { id: string; text: string; summary?: string; title?: string; edits?: Edit[] }
-export interface Written { candidates: Candidate[]; costUsd: number | null; rejected?: string[] }
+export interface Written { candidates: Candidate[]; costUsd: number | null; rejected?: string[]; population?: PoolMerge }
 
 // Each candidate is one or two exact edits to the current prompt, GEPA-style, not a rewrite: everything else stays
 // word for word, so a fix can't quietly break what already works, and the writer only outputs a few lines.
@@ -161,7 +162,11 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
     candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : undefined,
       title: typeof r.value.title === "string" && r.value.title.trim() ? r.value.title.trim().replace(/\.$/, "").slice(0, 60) : undefined, edits: r.value.edits });
   });
-  return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
+  // Population, only when synthe.json turns it on: one more candidate, built without a model call from changes
+  // earlier rounds kept (see pool.ts). It is scored and judged like the writer's own.
+  const merged = goal.population === true ? mergeFromPool({ goal, prompt, train, pool: state.pool, tried }) : undefined;
+  if (merged?.candidate) candidates.push(merged.candidate);
+  return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected, ...(merged ? { population: merged } : {}) };
 }
 
 // Shortens text to one line for the Actions log.
@@ -173,5 +178,5 @@ export function explainWrite(w: Written): string[] {
     `${c.id}: ${c.summary ?? "(no summary)"}`,
     ...(c.edits ?? []).map((e) => `  ${e.find ? `replace "${clip(e.find)}"` : "add at the end"} -> "${clip(e.replace)}"`),
   ]);
-  return [...lines, ...(w.rejected ?? []).map((r) => `rejected ${r}`)];
+  return [...lines, ...(w.rejected ?? []).map((r) => `rejected ${r}`), ...explainPool(w.population)];
 }

@@ -43,6 +43,9 @@ export interface Goal {
   // Compose (prototype, off by default): after scoring, write one more candidate from how this round's candidates
   // behaved differently, and judge it by the same merge rule. See src/loop/compose.ts.
   compose?: boolean;
+  // Population (prototype, off by default): keep changes that won some training cases without winning the round, and
+  // each round add one candidate that combines them, judged by the same merge rule. See src/loop/pool.ts.
+  population?: boolean;
 }
 
 export const DEFAULTS = {
@@ -88,6 +91,7 @@ export function parseGoal(text: string): Goal {
   const margin = g.merge_rule?.guard_margin;
   if (margin !== undefined && !(typeof margin === "number" && Number.isFinite(margin) && margin >= 0)) bad("merge_rule.guard_margin must be 0 or more");
   if (g.compose !== undefined && typeof g.compose !== "boolean") bad("compose must be true or false");
+  if (g.population !== undefined && typeof g.population !== "boolean") bad("population must be true or false");
   return {
     ...g,
     guardrails: g.guardrails ?? [],

@@ -12,6 +12,7 @@ const SHARE = "src/core/share.ts";
 const REPORT = "src/loop/report.ts";
 const EVIDENCE = "src/core/evidence.ts";
 const WORKFLOW = "templates/synthe.yml";
+const POOL = "src/loop/pool.ts";
 
 // Every test file, so a new one is never left out of the check.
 const TESTS = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
@@ -199,6 +200,20 @@ const allMutations = [
   ["a step exits before its events are sent", "src/core/events.ts", "  const child = worker;\n  if (!child) return;\n  let timer", "  const child = worker;\n  if (child) return;\n  let timer"],
   ["a silent events server holds a step open", "src/core/events.ts", "await Promise.race([sent, new Promise<void>((done) => { timer = setTimeout(done, timeoutMs); })]);", "await sent;"],
   ["attacks leaked into the writer input", SCORE, "const train = scenarios.filter((s) => s.split === \"train\");\n  const holdout", "const train = [...scenarios, ...attacks.map((a) => ({ id: a.id, input: a.input, expected: a.must, split: \"train\" as const }))].filter((s) => s.split === \"train\");\n  const holdout"],
+  ["pool: held-back ids are kept", POOL, 'e.wonOn.filter((id) => trainIds.has(id) && !fixed.has(id))', 'e.wonOn.filter((id) => !fixed.has(id))'],
+  ["pool: a change that breaks a guardrail is pooled", POOL, ' || addedBreaks(scored.train, a.scores.baselineTrain) > 0', ''],
+  ["pool: the merge candidate skips the safety check", POOL, ': candidateProblem(built.text, goal.prompt)', ': null'],
+  ["pool: conflicting edits are combined", POOL, ' || paragraphs(both.text) !== paragraphs(other.text)', ''],
+  ["pool: a combination already tried is built again", POOL, 'a.tried.has(print) ? "it was already tried for this goal and prompt" : null', 'null'],
+  ["pool: the same paragraph is added twice", POOL, 'if (entry.edits.some((e) => e.find === "" && have.includes(flat(e.replace)))) return { problem: "the prompt already has this text" };\n', ''],
+  ["pool: stale entries are kept", POOL, 'entries = entries.filter((e) => !("problem" in apply(a.promptAfter, e, a.goal)));', ''],
+  ["pool: nothing is pruned", POOL, 'entries = entries.filter((e, i) => !entries.some((d, j) => j !== i && within(e, d) && (!within(d, e) || j < i)));', ''],
+  ["pool: the cap is ignored", POOL, 'entries.slice(0, POOL_SIZE)', 'entries'],
+  ["pool: a merged winner's wins still count for the rest", POOL, 'a.outcome === "merged" && a.winnerId ? winsOf(a.winnerId) : []', '[]'],
+  ["pool: the round's winner is pooled", POOL, 'c.id === a.winnerId || ', ''],
+  ["pool: population runs when synthe.json leaves it off", WRITE, 'goal.population === true ? mergeFromPool', 'true ? mergeFromPool'],
+  ["pool: state gets a pool when population is off", DECIDE, 'judged && goal.population === true && current', 'judged && current'],
+  ["pool: compose and the pool both add a candidate", SCORE, 'goal.compose === true && safe.some((c) => c.id === POOL_ID)', 'false'],
   ["improve: a change that breaks a passing test can still win", "src/improve/verdict.ts", '  if (broken) return result(false, broken, "tests");\n', ''],
   ["improve: unnamed failing tests pass as clean", "src/improve/verdict.ts", 'if (candidate.failing === null || baseline.failing === null) return', 'if (false) return'],
   ["improve: any test failing before excuses every failure", "src/improve/verdict.ts", 'candidate.failing.filter((t) => !before.has(t))', 'candidate.failing.filter(() => false)'],
