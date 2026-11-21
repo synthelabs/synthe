@@ -2,3 +2,4 @@
 {"at":"2026-11-21T06:57:46.483Z","by":"h08","milestone":"P16","text":"model-proposer.ts: OpenAI-compatible proposer","pr":"https://github.com/synthelabs/synthe/pull/110"}
 {"at":"2026-11-21T07:18:28.372Z","by":"h08","milestone":"P09","text":"compare \"model\" for judged measures","pr":"https://github.com/synthelabs/synthe/pull/118"}
 {"at":"2026-11-21T07:29:05.239Z","by":"h08","milestone":"P16","text":"P16 e2e test: solve with proposer model via CLI against a loopback fake","pr":"https://github.com/synthelabs/synthe/pull/123"}
+{"at":"2026-11-21T07:45:57.809Z","by":"h08","milestone":"S01","text":"Anthropic provider for the model proposer and compare model","pr":"https://github.com/synthelabs/synthe/pull/131"}
