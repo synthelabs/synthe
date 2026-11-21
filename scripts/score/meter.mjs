@@ -33,13 +33,19 @@ export function usageOf(text, contentType = "") {
 }
 
 /**
- * Starts the gate. `upstream` is the API's base URL (no path). `prices` are USD per million tokens.
- * Returns { url, spent(), calls(), refused(), close() }.
+ * Starts the gate. `upstream` is the API's base URL (no path). `prices` maps each model id to its
+ * { input, output } prices in USD per million tokens. A call with the header `x-score-role: judge`
+ * (scripts/score/judge.mjs) is also counted apart, because its cost is not in any result.json.
+ * Returns { url, spent(), judgeSpent(), calls(), refused(), close() }.
  */
 export async function startMeter({ upstream, realKey, prices, capUsd }) {
   const base = upstream.replace(/\/+$/, "");
-  const usd = (input, output) => (input * prices.input + output * prices.output) / 1e6;
-  let spent = 0, reserved = 0, calls = 0, refused = 0;
+  // The dearest pair prices a call whose model the gate does not know, so the cap still holds.
+  const pairs = Object.values(prices);
+  const dearest = { input: Math.max(...pairs.map((p) => p.input)), output: Math.max(...pairs.map((p) => p.output)) };
+  const priceOf = (model) => (typeof model === "string" && Object.hasOwn(prices, model) ? prices[model] : dearest);
+  const usd = (price, input, output) => (input * price.input + output * price.output) / 1e6;
+  let spent = 0, judgeSpent = 0, reserved = 0, calls = 0, refused = 0;
 
   const server = createServer((req, res) => {
     const chunks = [];
@@ -48,9 +54,14 @@ export async function startMeter({ upstream, realKey, prices, capUsd }) {
       const send = (status, type, body, extra = {}) => { res.writeHead(status, { "content-type": type, "content-length": Buffer.byteLength(body), ...extra }); res.end(body); };
       if (req.method !== "POST") return send(404, "application/json", "{}");
       const body = Buffer.concat(chunks);
-      let maxOutput = DEFAULT_MAX_OUTPUT;
-      try { const j = JSON.parse(body.toString("utf8")); maxOutput = Number(j.max_tokens ?? j.max_completion_tokens) || DEFAULT_MAX_OUTPUT; } catch { /* the API will refuse it */ }
-      const reserve = usd(body.length, maxOutput);
+      let maxOutput = DEFAULT_MAX_OUTPUT, price = dearest;
+      try {
+        const j = JSON.parse(body.toString("utf8"));
+        maxOutput = Number(j.max_tokens ?? j.max_completion_tokens) || DEFAULT_MAX_OUTPUT;
+        price = priceOf(j.model);
+      } catch { /* the API will refuse it */ }
+      const judge = req.headers["x-score-role"] === "judge";
+      const reserve = usd(price, body.length, maxOutput);
       if (spent + reserved + reserve > capUsd) { refused++; return send(400, "application/json", JSON.stringify(REFUSED)); }
       reserved += reserve;
       calls++;
@@ -64,7 +75,7 @@ export async function startMeter({ upstream, realKey, prices, capUsd }) {
         const text = Buffer.from(await up.arrayBuffer());
         const type = up.headers.get("content-type") ?? "application/json";
         if (up.status >= 400) cost = 0;
-        else { const u = usageOf(text.toString("utf8"), type); if (u) cost = usd(u.input, u.output); }
+        else { const u = usageOf(text.toString("utf8"), type); if (u) cost = usd(price, u.input, u.output); }
         const extra = {};
         for (const h of ["retry-after", "request-id"]) if (up.headers.get(h)) extra[h] = up.headers.get(h);
         send(up.status, type, text, extra);
@@ -74,6 +85,7 @@ export async function startMeter({ upstream, realKey, prices, capUsd }) {
       } finally {
         reserved -= reserve;
         spent += cost;
+        if (judge) judgeSpent += cost;
       }
     });
   });
@@ -81,6 +93,7 @@ export async function startMeter({ upstream, realKey, prices, capUsd }) {
   return {
     url: `http://127.0.0.1:${server.address().port}`,
     spent: () => spent,
+    judgeSpent: () => judgeSpent,
     calls: () => calls,
     refused: () => refused,
     close: () => new Promise((done) => { server.closeAllConnections?.(); server.close(() => done()); }),
