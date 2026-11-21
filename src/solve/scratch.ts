@@ -62,8 +62,12 @@ export function nextBranch(top: string, name: string): string {
 
 // Throws an Error with a plain message when the folder is not in a git repository, the repository has no commit,
 // or the problem folder is not committed. `repoRoot` may be empty: the root is then found from `problemDir`.
-export async function openScratch(repoRoot: string, problemDir: string, name: string): Promise<Scratch> {
-  const s = openState(repoRoot, problemDir, name);
+// What `solve --resume` continues: the stopped run's branch, its base, the commit of its last finished round, and
+// the checkout it left behind (a killed run can not remove it).
+export interface ResumeAt { branch: string; base: string; head: string; staleRoot?: string }
+
+export async function openScratch(repoRoot: string, problemDir: string, name: string, resume?: ResumeAt): Promise<Scratch> {
+  const s = openState(repoRoot, problemDir, name, resume);
   let closed = false;
   return {
     root: s.root,
@@ -80,22 +84,27 @@ export async function openScratch(repoRoot: string, problemDir: string, name: st
   };
 }
 
-function openState(repoRoot: string, problemDir: string, name: string): State {
+function openState(repoRoot: string, problemDir: string, name: string, resume?: ResumeAt): State {
   const real = realpathSync(problemDir);
   const topOut = tryGit(repoRoot || real, ["rev-parse", "--show-toplevel"]);
   if (!topOut) throw new Error(`${problemDir} is not inside a git repository. Run git init and commit the files first.`);
   const top = realpathSync(topOut.trim());
-  const base = tryGit(top, ["rev-parse", "--verify", "HEAD^{commit}"])?.trim();
+  const base = resume ? tryGit(top, ["rev-parse", "--verify", `${resume.base}^{commit}`])?.trim() : tryGit(top, ["rev-parse", "--verify", "HEAD^{commit}"])?.trim();
+  if (resume && !base) throw new Error(`The stopped run started from commit ${resume.base.slice(0, 7)}, which is no longer in the repository.`);
   if (!base) throw new Error(`The repository at ${top} has no commit yet. Commit the files first.`);
   const rel = relative(top, real);
   if (rel && !tryGit(top, ["ls-tree", "-d", "--name-only", base, rel])?.trim()) {
     throw new Error(`The folder ${rel} is not committed in ${top}. Commit it first: Synthe works only on committed files.`);
   }
 
-  const branch = nextBranch(top, name);
+  const branch = resume ? resume.branch : nextBranch(top, name);
+  if (resume) releaseBranch(top, resume);
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "synthe-solve-")));
   try {
-    git(top, ["worktree", "add", "--quiet", "-b", branch, dir, base]);
+    // A resumed run goes on from its last finished round: a commit made after it (a round cut off between its
+    // commit and its record) is dropped. If the branch is gone (a stop that kept nothing), it is made again.
+    const start = resume ? resume.head : base;
+    git(top, ["worktree", "add", "--quiet", resume ? "-B" : "-b", branch, dir, start]);
   } catch (e) {
     rmSync(dir, { recursive: true, force: true });
     throw new Error(`Could not make a scratch checkout on ${branch}: ${firstLine(e)}`);
@@ -116,6 +125,21 @@ function openState(repoRoot: string, problemDir: string, name: string): State {
     }
   }
   return scratch;
+}
+
+// A killed run leaves its scratch checkout, and git refuses to check out a branch that another worktree holds.
+// Removes that stale checkout, but only one that is a Synthe scratch checkout on exactly this branch.
+function releaseBranch(top: string, resume: ResumeAt): void {
+  const list = tryGit(top, ["worktree", "list", "--porcelain"]) ?? "";
+  for (const block of list.split("\n\n")) {
+    const path = /^worktree (.+)$/m.exec(block)?.[1];
+    const ref = /^branch (.+)$/m.exec(block)?.[1];
+    if (!path || ref !== `refs/heads/${resume.branch}`) continue;
+    if (!/synthe-solve-[^/\\]*$/.test(path)) throw new Error(`The branch ${resume.branch} is checked out in ${path}. Switch that checkout to another branch first.`);
+    tryGit(top, ["worktree", "remove", "--force", path]);
+    rmSync(path, { recursive: true, force: true });
+  }
+  tryGit(top, ["worktree", "prune"]);
 }
 
 // The scratch HEAD: the last kept change, or the base.
