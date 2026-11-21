@@ -2,3 +2,4 @@
 {"at":"2026-11-21T07:12:11.344Z","by":"h05","milestone":"P02","text":"solve passes goal, unit and direction to report.md","pr":"https://github.com/synthelabs/synthe/pull/115"}
 {"at":"2026-11-21T07:14:31.269Z","by":"h05","milestone":"P02","text":"report.md Kept column says kept / not kept","pr":"https://github.com/synthelabs/synthe/pull/117"}
 {"at":"2026-11-21T07:25:52.105Z","by":"h05","milestone":"P02","text":"interrupted solve cleans up: stops commands, removes scratch, no empty branch, exit 130","pr":"https://github.com/synthelabs/synthe/pull/121"}
+{"at":"2026-11-21T07:40:13.806Z","by":"h05","milestone":"FINAL","text":"README: Solve mode section (problem file, problem check, run, keep rule, results, proposer protocol)","pr":"https://github.com/synthelabs/synthe/pull/127"}
