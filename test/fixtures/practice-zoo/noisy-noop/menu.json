@@ -1,0 +1,6 @@
+[
+  { "summary": "NOOP: reword the notes", "edits": [{ "path": "guide.md", "search": "Nothing here yet.", "replace": "No notes yet." }] },
+  { "summary": "NOOP: rename the notes heading", "edits": [{ "path": "guide.md", "search": "## Notes", "replace": "## Remarks" }] },
+  { "summary": "NOOP: rename the title", "edits": [{ "path": "guide.md", "search": "# Guide\n", "replace": "# The guide\n" }] },
+  { "summary": "NOOP: add a blank line at the end", "edits": [{ "path": "guide.md", "search": "Nothing here yet.\n", "replace": "Nothing here yet.\n\n" }] }
+]
