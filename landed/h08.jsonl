@@ -5,3 +5,4 @@
 {"at":"2026-11-21T07:45:57.809Z","by":"h08","milestone":"S01","text":"Anthropic provider for the model proposer and compare model","pr":"https://github.com/synthelabs/synthe/pull/131"}
 {"at":"2026-11-21T11:26:57.584Z","by":"h08","milestone":"S02","text":"cost in result.json and budget.max_usd stop (cost meter per problem)","pr":"https://github.com/synthelabs/synthe/pull/140"}
 {"at":"2026-11-21T11:53:55.942Z","by":"h08","milestone":"S02","text":"max_usd holds under parallel judge calls","pr":"https://github.com/synthelabs/synthe/pull/146"}
+{"at":"2026-11-21T12:36:04.007Z","by":"h08","milestone":"P07","text":"failed held-back output no longer reaches the proposer, result.json or report.md","pr":"https://github.com/synthelabs/synthe/pull/150"}
