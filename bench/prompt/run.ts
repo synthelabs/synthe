@@ -71,7 +71,7 @@ export async function runPromptTask(task: PromptTask, seed: string, rounds = tas
 
   for (let n = 1; n <= rounds; n++) {
     const state = await repo.readState();
-    if (stopReason(state, goal.merge_rule.max_rounds, goal.merge_rule.stall_rounds, goal.budget.max_usd)) break;
+    if (stopReason(state, goal.merge_rule.max_rounds, goal.merge_rule.stall_rounds, goal.budget.max_usd, goal.budget.max_calls)) break;
     const prompt = repo.files.get(PROMPT_PATH)!;
     const before = new Set(present(task, prompt).map((m) => m.id));
     const written = await runWrite(goal, state, prompt, scenarios, oracle);

@@ -29,3 +29,10 @@ export function sumCosts(costs: (number | null)[]): number | null {
   }
   return total;
 }
+
+// Another provider's cost, from the prices the team put in synthe.json (USD per million tokens). Cached input is
+// charged at the full input price: providers discount it differently, and over-counting keeps budgets safe.
+export function pricedCost(price: { input: number; output: number } | undefined, input: number | null | undefined, output: number | null | undefined): number | null {
+  if (!price || typeof input !== "number" || typeof output !== "number" || !Number.isFinite(input) || !Number.isFinite(output)) return null;
+  return (input * price.input + output * price.output) / 1_000_000;
+}

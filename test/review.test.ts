@@ -164,12 +164,13 @@ test("review: interactive bad keys retry before asking any setup questions", asy
   io.askSecret = async () => ++attempts === 1 ? "sk-ant-mistyped" : "sk-ant-own";
   const model = io.model;
   io.model = (key) => key === "sk-ant-mistyped" ? { ask: async (request) => { assert.deepEqual(request, cheap); throw { status: 401, message: "invalid x-api-key" }; } } : model(key);
-  io.ask = async (question) => { assert.equal(attempts, 2); return ask(question); };
+  // Only the free-provider menu, part of choosing the credential, comes before the key is accepted.
+  io.ask = async (question) => { if (!question.startsWith("Type a number, or press Enter")) assert.equal(attempts, 2); return ask(question); };
   assert.equal(await init(io, root, undefined, "", {}), true);
   assert.ok(said.includes("Your Anthropic key was rejected. Run `npx synthe key` to replace it."));
   assert.ok(calls.length > 0 && calls.every((call) => call.key === "sk-ant-own"));
   const failed = setup(context);
-  failed.io.ask = async () => { throw new Error("Setup questions must wait"); };
+  failed.io.ask = async (question) => { if (question.startsWith("Type a number, or press Enter")) return ""; throw new Error("Setup questions must wait"); };
   failed.io.askSecret = async () => "sk-ant-wrong";
   let failures = 0;
   failed.io.model = () => ({ ask: async () => { failures++; throw { status: 401, message: "invalid x-api-key" }; } });
@@ -297,7 +298,7 @@ test("review: an older credit stop still reports the own-key next step, and rest
   const report = renderReport(goal(), state);
   assert.match(report, /Stopped: model credit needs attention/);
   assert.match(report, /To use your own Anthropic key, run `npx synthe key`, then `npx synthe restart`/);
-  assert.match(report, /delete the `SYNTHE_ANTHROPIC_KEY` secret in your repo's settings/);
+  assert.match(report, /delete whichever of the `SYNTHE_API_KEY` and `SYNTHE_ANTHROPIC_KEY` secrets your repo has/);
   const next = restartState(goal(), state);
   assert.ok("state" in next, JSON.stringify(next));
   assert.equal(next.state.stopped, null);

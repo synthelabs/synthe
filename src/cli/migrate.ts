@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { costUsd, knownModels, sumCosts } from "../core/cost.ts";
+import { costUsd, knownModels, pricedCost, sumCosts } from "../core/cost.ts";
 import { GOAL_FILE, parseGoal, parseScenarios, type Goal } from "../core/goal.ts";
 import { checkRate, type ScoreRow } from "../core/merge-rule.ts";
 import { readPrompt } from "../core/prompt.ts";
-import { anthropicModel, type Model } from "../model/client.ts";
+import { providerHost, providerModel, type Model } from "../model/client.ts";
 import { compareRunners, LOSS, TIE, WIN } from "../loop/score.ts";
 
 const MAX_DROP = 5; // points of judge score, or percentage points of checks passed, that a switch may lose
@@ -12,7 +12,10 @@ const MAX_DROP = 5; // points of judge score, or percentage points of checks pas
 export interface MigrateEnv {
   cwd: string;
   say(text: string): void;
+  // SYNTHE_API_KEY, then SYNTHE_ANTHROPIC_KEY for an Anthropic goal. ANTHROPIC_API_KEY is not read: it is usually
+  // the app's own key.
   apiKey?: string;
+  anthropicKey?: string;
   model?: Model; // used instead of the real client, for tests
   random?: () => number;
 }
@@ -34,9 +37,10 @@ function parseArgs(args: string[]): { from?: string; to?: string; dryRun: boolea
 // Stands in for the API in a dry run: every reply ties, every check passes, and each call costs what a fixed-size
 // call to that model would, so the table shows the real price ratio between the two models.
 function dryRunModel(goal: Goal): Model {
+  const other = goal.provider?.kind === "openai-compatible" ? goal.provider : null;
   return {
     async ask(a) {
-      const cost = costUsd(a.model, { input_tokens: 500, output_tokens: 300 });
+      const cost = other ? pricedCost(other.prices?.[a.model], 500, 300) : costUsd(a.model, { input_tokens: 500, output_tokens: 300 });
       if (!a.schema) return { text: `[dry run] a reply from ${a.model}`, costUsd: cost };
       const props = (a.schema.properties ?? {}) as Record<string, unknown>;
       const checks = goal.checks?.filter((c) => c.trim()) ?? [];
@@ -68,9 +72,12 @@ export async function migrate(args: string[], env: MigrateEnv): Promise<number> 
   const from = parsed.from ?? goal.models.writer;
   const to = parsed.to;
   if (!to) return fail("Say which model to try: npx synthe migrate --to <model>");
-  const known = knownModels();
+  const other = goal.provider?.kind === "openai-compatible" ? goal.provider : null;
+  const known = other ? Object.keys(other.prices ?? {}) : knownModels();
   const unknown = [from, to].find((m) => !known.includes(m));
-  if (unknown) return fail(`Synthe doesn't know the model "${unknown}", so it can't work out what it costs. Models it knows: ${known.join(", ")}.`);
+  // Another provider may still report each call's cost itself (usage.cost), so a missing price only warns.
+  if (unknown && !other) return fail(`Synthe doesn't know the model "${unknown}", so it can't work out what it costs. Models it knows: ${known.join(", ")}.`);
+  if (unknown) say(`synthe.json has no price for "${unknown}" in provider.prices, so its cost shows as unknown unless ${providerHost(other!)} reports it. Add "${unknown}": { "input": USD, "output": USD } per million tokens to provider.prices to see it.`);
   if (from === to) return fail(`--from and --to are both ${to}. Pick two different models to compare.`);
 
   const prompt = readPrompt(readFileSync(join(env.cwd, goal.prompt.path), "utf8"), goal, null);
@@ -80,8 +87,10 @@ export async function migrate(args: string[], env: MigrateEnv): Promise<number> 
 
   let real = env.model;
   if (!parsed.dryRun && !real) {
-    if (!env.apiKey) return fail("`npx synthe migrate` runs on your computer, changing nothing, and needs your Synthe key:\n  ANTHROPIC_API_KEY=your-key npx synthe migrate --to " + to + "\nTo see the layout without spending anything, add --dry-run.");
-    real = anthropicModel(env.apiKey);
+    const generic = env.apiKey?.trim();
+    const key = other ? generic : (generic?.startsWith("sk-ant-") ? generic : undefined) || env.anthropicKey?.trim();
+    if (!key) return fail(`\`npx synthe migrate\` runs on your computer, changing nothing, and needs your own key${other ? ` for ${providerHost(other)}` : ""}:\n  SYNTHE_API_KEY=your-key npx synthe migrate --to ${to}\n${other ? "" : "SYNTHE_ANTHROPIC_KEY works too. "}ANTHROPIC_API_KEY isn't read, since it's usually your app's own key. To see the layout without spending anything, add --dry-run.`);
+    real = providerModel(goal.provider, key);
   }
   const model = parsed.dryRun ? dryRunModel(goal) : real!;
 

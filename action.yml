@@ -4,7 +4,8 @@ branding: { icon: trending-up, color: blue }
 inputs:
   step: { description: "write, score or decide", required: true }
   github-token: { description: Token for this job, required: true }
-  anthropic-api-key: { description: "Model key, used by write and score only", required: false, default: "" }
+  api-key: { description: "Model key for the provider synthe.json names (Anthropic unless provider says otherwise), used by write and score only", required: false, default: "" }
+  anthropic-api-key: { description: "Older name for an Anthropic key, still accepted; api-key wins when both are set", required: false, default: "" }
 outputs:
   go: { description: "true when a round should run" }
 runs:

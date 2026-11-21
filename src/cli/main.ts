@@ -1,13 +1,13 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
-import { GOAL_FILE, STATE_BRANCH, parseGoal, parseScenarios } from "../core/goal.ts";
+import { GOAL_FILE, STATE_BRANCH, parseGoal, parseScenarios, type Goal } from "../core/goal.ts";
 import { readPrompt } from "../core/prompt.ts";
 import { newState, type State } from "../core/state.ts";
 import { sha256 } from "../core/safety.ts";
 import { headline } from "../loop/report.ts";
 import { powerLines } from "../core/power.ts";
-import { anthropicModel, configuredModel, modelProblem } from "../model/client.ts";
+import { anthropicModel, configuredModel, modelProblem, providerHost } from "../model/client.ts";
 import { explainNoise, measureNoise } from "../loop/score.ts";
 import { runLocalTry } from "./try-round.ts";
 import { localCredential } from "./local-credential.ts";
@@ -22,7 +22,7 @@ import { NO_ROUNDS_YET, changesText } from "./changes.ts";
 import { askSecret } from "./secret.ts";
 import { askPiped, closeStdinLines } from "./stdin-lines.ts";
 import { upgrade } from "./upgrade.ts";
-import { AgentSetupError, agentOptions } from "./agent.ts";
+import { AgentSetupError, agentOptions, baseUrlOption } from "./agent.ts";
 import { setKey } from "./key.ts";
 import { guide } from "./guide.ts";
 import { verify } from "./verify.ts";
@@ -217,22 +217,27 @@ async function undoRound() {
 // Loads what a round on this computer needs, or says what's missing. Used by try and calibrate.
 function localRun(command: string) {
   if (!setUpHere()) return null;
-  const credential = localCredential(process.env);
+  const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
+  const credential = localCredential(process.env, goal.provider);
   if (!credential) {
-    console.log(`\`npx synthe ${command}\` runs on your computer, changing nothing, and needs your own Anthropic key.`);
-    console.log("Set SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY in your environment, then run this again.");
+    console.log(noLocalCredential(command, goal));
     process.exitCode = 1;
     return null;
   }
   console.log(credential.line);
-  const goal = parseGoal(readFileSync(GOAL_FILE, "utf8"));
+
   const prompt = readPrompt(readFileSync(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync(goal.scenarios, "utf8")), model: configuredModel(credential.key) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync(goal.scenarios, "utf8")), model: configuredModel(credential.key, goal.provider) };
+}
+
+function noLocalCredential(command: string, goal: Goal): string {
+  if (goal.provider?.kind === "openai-compatible") return `\`npx synthe ${command}\` runs on your computer, changing nothing, and needs your key for ${providerHost(goal.provider)}. Set SYNTHE_API_KEY in your environment, then run this again.`;
+  return `\`npx synthe ${command}\` runs on your computer, changing nothing, and needs your own Anthropic key.\nSet SYNTHE_API_KEY, SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY in your environment, then run this again.`;
 }
 
 // Compares the prompt now with the one the run started from on the vault cases, which no round ever reads.
@@ -240,9 +245,9 @@ async function vaultCheck() {
   if (!setUpHere()) return;
   process.exitCode = await vault({
     cwd: process.cwd(), say: console.log, ask, run,
-    credential: () => {
-      const c = localCredential(process.env);
-      return c ? { model: configuredModel(c.key), line: c.line } : null;
+    credential: (goal) => {
+      const c = localCredential(process.env, goal.provider);
+      return c ? { model: configuredModel(c.key, goal.provider), line: c.line } : null;
     },
   }, process.argv.slice(3));
 }
@@ -291,6 +296,7 @@ const HELP = `Synthe makes your AI agent's system prompt better while you sleep.
 
 Start here, inside your project's folder:
   npx synthe init     set up this repo and start
+  npx synthe init --base-url URL   the same, with any OpenAI-compatible provider's models (OpenAI, Gemini, Groq, OpenRouter, a local Ollama...)
   npx synthe guide    instructions for setup through a coding agent
   npx synthe improve  raise a number you choose (tests passing, bundle size, build time or your own command): Synthe proposes code changes, measures each one, keeps only wins and opens one pull request (own key; no AI prompt needed)
   npx synthe improve --rounds N --budget USD   at most N rounds (default 6) and USD dollars of model cost (default 1.50)
@@ -305,13 +311,13 @@ Then:
   npx synthe undo N   open a pull request that puts back the prompt from before round N
   npx synthe stop     stop it; nothing more runs or changes
   npx synthe restart  start it again, after stop or once you've fixed what stopped it
-  npx synthe key      save or replace your own Anthropic key
+  npx synthe key      save your own model key (Anthropic, or the OpenAI-compatible provider in synthe.json)
   npx synthe try      run one round on your computer, changing nothing (own key)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
   npx synthe vault   at the end of a run, compare your prompt with the one it started from on the "vault" test cases no round ever saw (own key; asks before spending)
   npx synthe calibrate     check that your checks are marked steadily and the way you mean them (own key)
   npx synthe calibrate --judge   check that the judge picks between two replies the way you do, and whether it favours longer ones (own key)
-  npx synthe migrate --to <model>   compare your prompt on another model, changing nothing (needs ANTHROPIC_API_KEY; add --dry-run to spend nothing)
+  npx synthe migrate --to <model>   compare your prompt on another model, changing nothing (needs SYNTHE_API_KEY, or SYNTHE_ANTHROPIC_KEY for Anthropic; add --dry-run to spend nothing)
 
 Enterprise pilot (one support agent, one production metric, changes a person reviews):
   npx synthe pilot help   every pilot command: replay recorded conversations offline, then keep, hold or revert from the experiment export your team produces
@@ -321,13 +327,13 @@ More: https://github.com/synthelabs/synthe#readme`;
 
 async function main() {
   const command = process.argv[2];
-  if (command === "init") process.exitCode = (await init(io, process.cwd(), undefined, undefined, process.env, agentOptions(process.argv.slice(3)))) ? 0 : 1;
+  if (command === "init") process.exitCode = (await init(io, process.cwd(), undefined, undefined, process.env, agentOptions(process.argv.slice(3)), baseUrlOption(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "guide") console.log(guide);
   else if (command === "improve") process.exitCode = (await improve({ say: console.log, ask, run, exec: shellExec, env: process.env, onInterrupt }, process.cwd(), improveOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "submit") process.exitCode = (await submit({ say: console.log, ask, run, exec: shellExec, env: process.env }, process.cwd(), submitOptions(process.argv.slice(3)))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
-    process.exitCode = (await setKey(io)) ? 0 : 1;
+    process.exitCode = (await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync(GOAL_FILE, "utf8")).provider, process.cwd())) ? 0 : 1;
   }
   else if (command === "upgrade") console.log(upgrade(process.cwd(), template()));
   else if (command === "stop") await stop();
@@ -339,7 +345,7 @@ async function main() {
   else if (command === "undo") await undoRound();
   else if (command === "calibrate") await calibrateChecks();
   else if (command === "vault") await vaultCheck();
-  else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.ANTHROPIC_API_KEY });
+  else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.SYNTHE_API_KEY, anthropicKey: process.env.SYNTHE_ANTHROPIC_KEY });
   else if (command === "pilot") {
     // Loaded on demand, so no other command pays for the pilot's code. The pilot reports its own refusals and
     // returns an exit code. An error that still escapes is not printed: its text can quote customer data.

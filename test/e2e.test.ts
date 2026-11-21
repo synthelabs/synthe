@@ -458,7 +458,8 @@ test("an own key out of credit fails the write step without retries, and decide 
   assert.equal(written.code, 1);
   assert.ok(written.log.includes(creditAdvice), written.log);
   const error = JSON.parse(readFileSync(join(dir, ".synthe-out/error.json"), "utf8"));
-  assert.deepEqual(error, { step: "write", kind: "key", message: creditAdvice });
+  // calls: both refused writer calls count toward budget.max_calls.
+  assert.deepEqual(error, { step: "write", kind: "key", message: creditAdvice, calls: 2 });
   assert.equal(requestHeaders.length, 2, "two parallel writer calls, without retries");
   const decided = await step("decide");
   assert.equal(decided.code, 0, decided.log);
@@ -580,4 +581,200 @@ test("a person closing a proposal with a comment reaches the next round's writer
     assert.match(prompt, /<comment>We never promise a refund date\. See the policy\.<\/comment>/);
     assert.doesNotMatch(prompt, /report updated|promise refunds in one day/);
   }
+});
+
+// An OpenAI-compatible provider: a stand-in for its chat completions API, answering the same way as the Anthropic one.
+// quotaAfter: requests served before every later one gets a free tier's daily-limit 429.
+const openai = { bodies: [] as any[], headers: [] as any[], urls: [] as string[], refuseSchema: false, quotaAfter: Infinity, served: 0 };
+const openaiServer = createServer((req, res) => {
+  let raw = "";
+  req.on("data", (d) => (raw += d));
+  req.on("end", () => {
+    if (req.method !== "POST" || req.url !== "/v1/chat/completions") { res.statusCode = 404; return res.end(); }
+    const b = JSON.parse(raw);
+    openai.bodies.push(b); openai.headers.push(req.headers); openai.urls.push(req.url!);
+    res.setHeader("content-type", "application/json");
+    if (openai.served++ >= openai.quotaAfter) { res.statusCode = 429; return res.end(JSON.stringify({ error: { message: "Quota exceeded for metric: free_tier_requests, limit per day" } })); }
+    if (openai.refuseSchema && b.response_format) { res.statusCode = 400; return res.end(JSON.stringify({ error: { message: "response_format json_schema is not supported" } })); }
+    const system = b.messages.find((m: any) => m.role === "system")?.content ?? "";
+    const user = b.messages.find((m: any) => m.role === "user").content as string;
+    const schema = JSON.stringify(b.response_format?.json_schema?.schema ?? user.split("matches this JSON schema")[1] ?? "");
+    let text: string;
+    if (schema.includes("guardrail_ok")) {
+      const good = (tag: string) => new RegExp(`<${tag}>\\n[^<]*policy-aware`).test(user);
+      const a = good("reply_a"), z = good("reply_b");
+      text = JSON.stringify({ better: a === z ? "tie" : a ? "A" : "B", a_guardrail_ok: true, b_guardrail_ok: true });
+    } else if (schema.includes('"results"')) {
+      const listed = (user.split("The team's checks:\n")[1] ?? "").split("\n").filter((line: string) => /^\d+\. /.test(line)).length;
+      const pass = /<reply>\n[^<]*policy-aware/.test(user);
+      text = JSON.stringify({ results: Array.from({ length: listed }, (_, i) => ({ check: i + 1, applies: true, passes: pass })) });
+    } else if (schema.includes("edits")) {
+      const current = /<prompt>\n([\s\S]*?)\n<\/prompt>/.exec(user)![1];
+      text = JSON.stringify({ edits: [{ find: current, replace: "You are careful and use the store policy." }], summary: "Uses the store policy." });
+    } else text = system.includes("careful") ? "A policy-aware answer." : "A vague answer.";
+    res.end(JSON.stringify({ id: "c", object: "chat.completion", model: b.model, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: text } }], usage: { prompt_tokens: 1000, completion_tokens: 200 } }));
+  });
+});
+before(async () => { await new Promise<void>((r) => openaiServer.listen(0, "127.0.0.1", r)); });
+after(() => { openaiServer.close(); });
+
+const withProvider = (budget?: Record<string, number>) => {
+  const goal = JSON.parse(readFileSync(join(dir, "synthe.json"), "utf8"));
+  if (budget) goal.budget = budget;
+  goal.models = { writer: "gpt-test-large", runner: "gpt-test-mini", judge: "gpt-test-mini", checker: "gpt-test-mini" };
+  goal.provider = { kind: "openai-compatible", base_url: `http://127.0.0.1:${port(openaiServer)}/v1`, prices: { "gpt-test-large": { input: 2, output: 8 }, "gpt-test-mini": { input: 0.4, output: 1.6 } } };
+  const text = `${JSON.stringify(goal, null, 2)}\n`;
+  writeFileSync(join(dir, "synthe.json"), text);
+  files.set("main:synthe.json", text);
+  openai.bodies.length = 0; openai.headers.length = 0; openai.urls.length = 0; openai.refuseSchema = false; openai.quotaAfter = Infinity; openai.served = 0;
+  for (const k of Object.keys(models)) delete models[k];
+};
+
+test("one full round on an OpenAI-compatible provider merges the winner, with the key sent only to its base URL", async () => {
+  reset();
+  withProvider();
+  // A gateway in the shell and an app's own keys must change nothing: only api-key and provider.base_url count.
+  const shell = { "INPUT_API-KEY": "provider-key", "INPUT_ANTHROPIC-API-KEY": "", OPENAI_BASE_URL: `http://127.0.0.1:${port(anthropic)}/v1`, OPENAI_API_KEY: "app-key", ANTHROPIC_API_KEY: "app-key" };
+  for (const s of ["write", "score", "decide"]) {
+    const r = await step(s, undefined, undefined, s === "decide" ? {} : shell);
+    assert.equal(r.code, 0, r.log);
+  }
+  assert.equal(merges.length, 1, files.get("synthe/state:state.json") ?? "no state");
+  assert.equal(files.get("main:prompt.md"), "You are careful and use the store policy.");
+  assert.equal(Object.keys(models).length, 0, "no request reached the Anthropic stand-in");
+  assert.ok(openai.bodies.length > 10);
+  assert.ok(openai.headers.every((h) => h.authorization === "Bearer provider-key"));
+  assert.ok(openai.urls.every((u) => !u.includes("key")));
+  const used = new Set(openai.bodies.map((b) => b.model));
+  assert.deepEqual([...used].sort(), ["gpt-test-large", "gpt-test-mini"]);
+  // Every call used 1000 input and 200 output tokens, so the round's cost follows from the prices in synthe.json.
+  const expected = openai.bodies.reduce((n, b) => n + (b.model === "gpt-test-large" ? 1000 * 2 + 200 * 8 : 1000 * 0.4 + 200 * 1.6) / 1e6, 0);
+  const state = JSON.parse(files.get("synthe/state:state.json")!);
+  assert.equal(state.rounds[0].outcome, "merged");
+  assert.ok(Math.abs(state.spendUsd - expected) < 1e-9, `${state.spendUsd} vs ${expected}`);
+  assert.ok(openai.bodies.filter((b) => b.response_format).every((b) => b.response_format.type === "json_schema" && b.response_format.json_schema.strict === true));
+});
+
+test("a provider that refuses JSON schemas still runs a round, with the schema written into the message instead", async () => {
+  reset();
+  withProvider();
+  openai.refuseSchema = true;
+  for (const s of ["write", "score", "decide"]) {
+    const r = await step(s, undefined, undefined, s === "decide" ? {} : { "INPUT_API-KEY": "provider-key", "INPUT_ANTHROPIC-API-KEY": "" });
+    assert.equal(r.code, 0, r.log);
+  }
+  assert.equal(merges.length, 1);
+  assert.ok(openai.bodies.some((b) => !b.response_format && /Reply with only a JSON object/.test(b.messages.at(-1).content)));
+});
+
+test("an OpenAI-compatible goal never sends the Anthropic key, and says which secret to set", async () => {
+  reset();
+  withProvider();
+  const r = await step("write", undefined, undefined, { "INPUT_API-KEY": "", "INPUT_ANTHROPIC-API-KEY": "sk-ant-team" });
+  assert.notEqual(r.code, 0);
+  assert.equal(openai.bodies.length, 0);
+  assert.match(r.log, /no key for it is set.*SYNTHE_API_KEY/);
+  assert.ok(!r.log.includes("sk-ant-team"));
+});
+
+test("the template passes api-key and still works when only SYNTHE_ANTHROPIC_KEY is set", async () => {
+  const template = readFileSync("templates/synthe.yml", "utf8");
+  for (const job of ["write", "score"]) {
+    const block = template.split(`step: ${job}\n`)[1].split("- if:")[0];
+    assert.match(block, /api-key: \$\{\{ secrets\.SYNTHE_API_KEY \}\}/);
+    assert.match(block, /anthropic-api-key: \$\{\{ secrets\.SYNTHE_ANTHROPIC_KEY \}\}/);
+  }
+  assert.doesNotMatch(template.split("step: decide")[1], /api-key/);
+  // GitHub passes an unset secret as an empty input: the Anthropic key alone runs the round.
+  reset();
+  for (const s of ["write", "score", "decide"]) {
+    const r = await step(s, undefined, undefined, s === "decide" ? {} : { "INPUT_API-KEY": "", "INPUT_ANTHROPIC-API-KEY": "key" });
+    assert.equal(r.code, 0, r.log);
+  }
+  assert.equal(merges.length, 1);
+  assert.ok(models["claude-sonnet-5-5"] > 0);
+});
+
+const providerKey = { "INPUT_API-KEY": "provider-key", "INPUT_ANTHROPIC-API-KEY": "" };
+const freeRound = async () => {
+  const results: Record<string, { code: number; log: string }> = {};
+  for (const s of ["write", "score", "decide"]) results[s] = await step(s, undefined, undefined, s === "decide" ? {} : providerKey);
+  return results;
+};
+
+test("a free limit used up during scoring ends the round cleanly: no failed job, no round or stall counted, and the next run goes on", async () => {
+  reset();
+  withProvider({ max_usd: 3, max_calls: 500 });
+  // The writer's two calls go through; scoring hits the daily limit.
+  openai.quotaAfter = 2;
+  const r = await freeRound();
+  for (const s of ["write", "score", "decide"]) assert.equal(r[s].code, 0, r[s].log);
+  assert.match(r.score.log, /Your provider's free limit is used up for now\. Synthe will try again on the next scheduled run\./);
+  assert.match(r.decide.log, /free limit is used up for now/);
+  assert.equal(merges.length, 0);
+  assert.equal(files.get("main:prompt.md"), readFileSync(join(dir, "prompt.md"), "utf8"));
+  const state = JSON.parse(files.get("synthe/state:state.json")!);
+  assert.equal(state.round, 0);
+  assert.equal(state.stalls, 0);
+  assert.equal(state.rounds.length, 0);
+  assert.equal(state.stopped, null);
+  assert.equal(state.chainReady, false);
+  assert.equal(state.paused.step, "score");
+  assert.ok(state.calls >= 3, String(state.calls));
+  assert.equal(dispatches, 0);
+  assert.match(issues.at(-1) ?? "", /free limit was used up during the last try .* didn't count as a round; Synthe tries again on the next scheduled run/);
+  // The limit resets: the next run is an ordinary round, and the pause is gone.
+  openai.quotaAfter = Infinity;
+  const next = await freeRound();
+  for (const s of ["write", "score", "decide"]) assert.equal(next[s].code, 0, next[s].log);
+  const after = JSON.parse(files.get("synthe/state:state.json")!);
+  assert.equal(after.round, 1);
+  assert.equal(after.rounds[0].outcome, "merged");
+  assert.equal(after.paused, undefined);
+  assert.ok(after.calls > state.calls);
+});
+
+test("a free limit used up while writing skips scoring and pauses the same way", async () => {
+  reset();
+  withProvider({ max_usd: 3, max_calls: 500 });
+  openai.quotaAfter = 0;
+  const r = await freeRound();
+  for (const s of ["write", "score", "decide"]) assert.equal(r[s].code, 0, r[s].log);
+  assert.match(readFileSync(join(dir, "out.txt"), "utf8"), /go=true/);
+  const sent = openai.bodies.length;
+  assert.ok(sent >= 1 && sent <= 2, String(sent));
+  const state = JSON.parse(files.get("synthe/state:state.json")!);
+  assert.equal(state.paused.step, "write");
+  assert.equal(state.round, 0);
+  assert.equal(state.calls, sent);
+});
+
+test("budget.max_calls stops the run before the call that would pass it, and later runs make no calls", async () => {
+  reset();
+  withProvider({ max_usd: 3, max_calls: 4 });
+  const r = await freeRound();
+  for (const s of ["write", "score", "decide"]) assert.equal(r[s].code, 0, r[s].log);
+  assert.equal(openai.bodies.length, 4);
+  assert.match(r.score.log, /Synthe made the 4 model calls this run allows \(budget\.max_calls in synthe\.json\)/);
+  const state = JSON.parse(files.get("synthe/state:state.json")!);
+  assert.equal(state.calls, 4);
+  assert.equal(state.stopped, "call limit of 4 is used");
+  assert.equal(state.round, 0);
+  assert.equal(merges.length, 0);
+  assert.match(issues.at(-1) ?? "", /it made the 4 model calls the run allows \(budget\.max_calls\)/);
+  const again = await step("write", undefined, undefined, providerKey);
+  assert.equal(again.code, 0, again.log);
+  assert.match(again.log, /Stopped: call limit of 4 is used/);
+  assert.equal(openai.bodies.length, 4);
+});
+
+test("on an Anthropic goal, a SYNTHE_API_KEY that isn't an Anthropic key is never sent to Anthropic", async () => {
+  reset();
+  for (const s of ["write", "score", "decide"]) {
+    const r = await step(s, undefined, undefined, s === "decide" ? {} : { "INPUT_API-KEY": "gsk_free_key_for_another_provider", "INPUT_ANTHROPIC-API-KEY": "key" });
+    assert.equal(r.code, 0, r.log);
+  }
+  assert.ok(requestHeaders.length > 0);
+  assert.ok(requestHeaders.every((h) => !JSON.stringify(h).includes("gsk_free_key")));
+  assert.equal(merges.length, 1);
 });

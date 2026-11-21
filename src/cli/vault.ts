@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { GOAL_FILE, STATE_BRANCH, parseGoal, parseScenarios, type Goal } from "../core/goal.ts";
 import { readPrompt } from "../core/prompt.ts";
 import { newState, type State } from "../core/state.ts";
-import type { Model } from "../model/client.ts";
+import { providerHost, type Model } from "../model/client.ts";
 import { runVault, vaultCases, vaultLines } from "../loop/vault.ts";
 
 export interface VaultIo {
@@ -88,8 +88,11 @@ export async function vault(io: VaultIo, args: string[]): Promise<number> {
 
   const credential = io.credential(goal);
   if (!credential) {
-    io.say("`npx synthe vault` runs on your computer and needs your own Anthropic key.");
-    io.say("Set SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY in your environment, then run this again.");
+    if (goal.provider?.kind === "openai-compatible") io.say(`\`npx synthe vault\` runs on your computer and needs your key for ${providerHost(goal.provider)}. Set SYNTHE_API_KEY in your environment, then run this again.`);
+    else {
+      io.say("`npx synthe vault` runs on your computer and needs your own Anthropic key.");
+      io.say("Set SYNTHE_API_KEY, SYNTHE_ANTHROPIC_KEY or ANTHROPIC_API_KEY in your environment, then run this again.");
+    }
     return 1;
   }
   io.say(credential.line);

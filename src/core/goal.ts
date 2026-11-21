@@ -4,6 +4,48 @@ export const MAX_CHECKS = 5;
 
 export type Delimiter = "`" | '"' | "'" | '"""';
 
+// Which API Synthe's model calls go to. Absent means Anthropic, exactly as before this field existed.
+// prices (openai-compatible only): USD per million tokens for each model the goal names. Synthe can't
+// check other providers' current prices, so the team supplies them (see src/core/cost.ts).
+export interface ModelPrice { input: number; output: number }
+export type Provider =
+  | { kind: "anthropic" }
+  // max_requests_per_minute: Synthe spaces its requests to stay under it and sends fewer at once (free tiers).
+  // reasoning_effort: sent with every request, for models that think by default (Gemini through a preset).
+  | { kind: "openai-compatible"; base_url: string; prices?: Record<string, ModelPrice>; max_requests_per_minute?: number; reasoning_effort?: ReasoningEffort };
+export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+export type OtherProvider = Extract<Provider, { kind: "openai-compatible" }>;
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+export const isLoopback = (url: URL) => LOOPBACK_HOSTS.has(url.hostname);
+
+// The key is sent to this URL, so it must be https, or http only to a server on this machine (Ollama, LM Studio).
+// Null when it is fine, otherwise what is wrong in plain words.
+export function baseUrlProblem(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return "provider.base_url is required for an openai-compatible provider, for example https://api.openai.com/v1";
+  let url: URL;
+  try { url = new URL(value.trim()); } catch { return `provider.base_url "${value.slice(0, 80)}" isn't a URL. Use the provider's OpenAI-compatible address, for example https://api.openai.com/v1`; }
+  if (url.username || url.password) return "provider.base_url must not contain a user name or password. Synthe sends the key in a header, never in the URL.";
+  if (url.search || url.hash) return "provider.base_url must not have a query string or # part. Synthe sends the key in a header, never in the URL.";
+  if (url.protocol === "https:") return null;
+  if (url.protocol === "http:" && isLoopback(url)) return null;
+  if (url.protocol === "http:") return "provider.base_url must use https. Plain http is allowed only for a server on this machine (localhost, 127.0.0.1 or [::1]), because the key travels with every request.";
+  return "provider.base_url must start with https://";
+}
+
+// The models a goal names whose cost Synthe can't count on: no price, or a price of 0 for both input and output.
+export function unpricedModels(models: Partial<Goal["models"]>, provider: { prices?: Record<string, ModelPrice> }): string[] {
+  const names = [...new Set([models.writer, models.runner, models.judge, models.checker].filter((m): m is string => typeof m === "string"))];
+  return names.filter((m) => { const p = provider.prices?.[m]; return !p || (p.input === 0 && p.output === 0); });
+}
+
+// How reports name where model calls go: Anthropic, as always, or the host in provider.base_url.
+export function apiName(provider?: Provider): string {
+  if (provider?.kind !== "openai-compatible") return "Anthropic's API";
+  try { return `the model API at ${new URL(provider.base_url).host}`; } catch { return "your model provider's API"; }
+}
+
 export type PromptLocation =
   | { kind: "file"; path: string }
   | { kind: "inline"; path: string; delimiter: Delimiter; initial: string };
@@ -44,13 +86,17 @@ export interface Goal {
     // Off by default. When on, rounds after a stall try one deletion, merged if it is no worse (src/loop/shorter.ts).
     allow_shorter?: boolean;
   };
-  budget: { max_usd: number };
+  // max_calls: a hard stop after this many model calls in a run, counted across every step. Required when a model's
+  // price is unknown or zero, since a free key can be on a paid plan and then max_usd would never stop anything.
+  budget: { max_usd: number; max_calls?: number };
   // Compose (prototype, off by default): after scoring, write one more candidate from how this round's candidates
   // behaved differently, and judge it by the same merge rule. See src/loop/compose.ts.
   compose?: boolean;
   // Population (prototype, off by default): keep changes that won some training cases without winning the round, and
   // each round add one candidate that combines them, judged by the same merge rule. See src/loop/pool.ts.
   population?: boolean;
+  // Optional. Absent means Anthropic with Synthe's default models and prices.
+  provider?: Provider;
 }
 
 export const DEFAULTS = {
@@ -90,6 +136,7 @@ export function parseGoal(text: string): Goal {
   if (g.share_notice !== undefined && typeof g.share_notice !== "string") bad("share_notice must be text");
   if (typeof g.scenarios !== "string") bad("scenarios path is required");
   if (!(g.budget?.max_usd > 0)) bad("budget.max_usd must be above 0");
+  if (g.budget.max_calls !== undefined && !(Number.isInteger(g.budget.max_calls) && g.budget.max_calls > 0)) bad("budget.max_calls must be a whole number above 0, for example 500");
   if (g.merge_rule?.mode !== undefined && g.merge_rule.mode !== "auto" && g.merge_rule.mode !== "propose") bad("merge_rule.mode must be auto or propose");
   const holdP = g.merge_rule?.holdout_max_p;
   if (holdP !== undefined && !(typeof holdP === "number" && Number.isFinite(holdP) && holdP > 0 && holdP <= 1)) bad("merge_rule.holdout_max_p must be above 0 and at most 1");
@@ -100,6 +147,32 @@ export function parseGoal(text: string): Goal {
   if (g.merge_rule?.allow_shorter !== undefined && typeof g.merge_rule.allow_shorter !== "boolean") bad("merge_rule.allow_shorter must be true or false");
   if (g.compose !== undefined && typeof g.compose !== "boolean") bad("compose must be true or false");
   if (g.population !== undefined && typeof g.population !== "boolean") bad("population must be true or false");
+  if (g.provider !== undefined) {
+    const p = g.provider;
+    if (!p || typeof p !== "object" || Array.isArray(p)) bad('provider must be an object, for example { "kind": "openai-compatible", "base_url": "https://api.openai.com/v1" }');
+    if (p.kind !== "anthropic" && p.kind !== "openai-compatible") bad("provider.kind must be anthropic or openai-compatible");
+    if (p.kind === "openai-compatible") { const why = baseUrlProblem(p.base_url); if (why) bad(why); }
+    if (p.kind === "anthropic" && p.base_url !== undefined) bad("provider.base_url is only for an openai-compatible provider; an Anthropic key is only ever sent to Anthropic");
+    if (p.kind === "anthropic" && p.prices !== undefined) bad("provider.prices is only for an openai-compatible provider; Synthe already knows Anthropic's prices");
+    if (p.prices !== undefined) {
+      if (!p.prices || typeof p.prices !== "object" || Array.isArray(p.prices)) bad('provider.prices must map each model to { "input": USD, "output": USD } per million tokens');
+      for (const [model, price] of Object.entries(p.prices as Record<string, any>)) {
+        const ok = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 0;
+        if (!price || !ok(price.input) || !ok(price.output)) bad(`provider.prices.${model} needs "input" and "output": USD per million tokens, 0 or more`);
+      }
+    }
+    // Every role's model on another provider needs a name Synthe can't guess.
+    if (p.kind === "openai-compatible") {
+      const missing = (["writer", "runner", "judge", "checker"] as const).filter((role) => typeof g.models?.[role] !== "string" || !g.models[role].trim());
+      if (missing.length) bad(`an openai-compatible provider needs every model named in "models": ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} missing. Synthe's defaults are Claude models.`);
+      const rpm = p.max_requests_per_minute;
+      if (rpm !== undefined && !(typeof rpm === "number" && Number.isFinite(rpm) && rpm > 0)) bad("provider.max_requests_per_minute must be a number above 0");
+      if (p.reasoning_effort !== undefined && !REASONING_EFFORTS.includes(p.reasoning_effort)) bad(`provider.reasoning_effort must be one of ${REASONING_EFFORTS.join(", ")}`);
+      // An unknown or zero price never counts as safe: only a call cap can stop such a run.
+      const unpriced = unpricedModels(g.models, p);
+      if (unpriced.length && g.budget.max_calls === undefined) bad(`${unpriced.join(", ")} ${unpriced.length === 1 ? "has" : "have"} no price, or a price of 0, in provider.prices, so budget.max_usd can't stop the run. Set budget.max_calls (the most model calls a run may make, for example 500), or add real prices: { "input": USD, "output": USD } per million tokens.`);
+    }
+  }
   return {
     ...g,
     guardrails: g.guardrails ?? [],
