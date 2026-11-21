@@ -52,6 +52,14 @@ The hardest step for a person is to write the measure. This command helps.
   prints the agreement with the person's labels as a fraction, for example `agreement 9/10`.
 - With agreement below 80%, it says so plainly, names the examples where the judge disagreed, and exits 2. The files
   stay, so the person can fix the rubric.
+- `compare.js` is for the person to try the judge by hand. Inside `solve`, problem commands never get the key. So the
+  way to use a drafted rubric in `solve` is `"compare": "model"` with `"rubric": "rubric.md"` in `measure.judge`:
+  Synthe's own model judge then reads the rubric. `measure draft` prints this snippet.
+
+## Requests to the Anthropic provider
+
+The key goes in the header that the Anthropic SDK in this repository sends, with an `anthropic-version` header. For
+`compare: "model"`, the request text gives output `a` before output `b`.
 
 ## Synthe on itself
 
