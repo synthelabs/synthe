@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "name": "demo-threshold",
+  "goal": "Tune the threshold in config.json so that more numbers get the correct label.",
+  "artifact": ["config.json"],
+  "measure": { "command": "node measure.js", "direction": "higher", "unit": "percent correct", "runs": 1 },
+  "guards": ["node check.js"],
+  "split": { "holdout": true },
+  "proposer": "model",
+  "budget": { "max_rounds": 5, "max_calls": 10 }
+}
