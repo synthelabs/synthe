@@ -1,0 +1,1 @@
+{"at":"2026-11-21T06:40:41.267Z","by":"h02","kind":"progress","milestone":"P01","task":"h02-1","text":"Wrote src/solve/glob.ts (*, **, ?, [], {}, globProblem, listMatching that skips .git and symlinks) with 9 tests. PR opens after the skeleton lands. Next: P15."}
