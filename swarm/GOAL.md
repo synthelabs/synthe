@@ -35,8 +35,13 @@ behind the commands is the swarm's to design. The contract below is fixed.
 
 ### The problem file
 
-A JSON file, any name. Paths in it are relative to the folder that holds the file. That folder must be inside a git
-repository; Synthe works in scratch checkouts and never edits the person's working tree.
+A JSON file, any name. Paths in it are relative to the folder that holds the file (the problem folder). That folder
+must be inside a git repository; Synthe works in scratch checkouts and never edits the person's working tree.
+
+In a scratch checkout, the problem folder is at the same path relative to the repository root. The measure, guard,
+proposer, `run` and `compare` commands all run in that problem folder inside the scratch checkout. Every path that
+Synthe gives a command or writes in `result.json` (for example `files[].path` and `edits[].path`) is relative to the
+problem folder.
 
 ```json
 {
@@ -77,7 +82,7 @@ Exit 1 and one line per problem, naming the field, when it is not.
 ### The proposer protocol
 
 An outside proposer is a command. Synthe writes one JSON object to its stdin and reads one JSON object from its
-stdout. The command runs in the folder that holds the problem file.
+stdout. The command runs in the problem folder inside the scratch checkout.
 
 stdin:
 
