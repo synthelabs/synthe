@@ -1,0 +1,1 @@
+{"at":"2026-11-21T06:59:04.293Z","by":"h08","title":"P16 e2e: solve with proposer model against a loopback fake server via the CLI (request object, kept gain, malformed reply, no key = exit 1, max_calls)","milestone":"P16"}
