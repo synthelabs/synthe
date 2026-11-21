@@ -28704,6 +28704,36 @@ var init_sdk = __esm({
   }
 });
 
+// src/model/cache.ts
+import { createHash as createHash2 } from "node:crypto";
+function cachedSystem(system) {
+  return system === void 0 ? void 0 : [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+}
+function firstAlone() {
+  const first = /* @__PURE__ */ new Map();
+  return async (model, system, send) => {
+    if (system === void 0 || system.length < WARM_MIN_CHARS) return send();
+    const key = createHash2("sha256").update(`${model}
+${system}`).digest("hex");
+    const ahead = first.get(key);
+    if (ahead && Date.now() - ahead.at < WARM_FOR_MS) {
+      await ahead.sent.catch(() => void 0);
+      return send();
+    }
+    const sent = send();
+    first.set(key, { sent, at: Date.now() });
+    return sent;
+  };
+}
+var WARM_MIN_CHARS, WARM_FOR_MS;
+var init_cache = __esm({
+  "src/model/cache.ts"() {
+    "use strict";
+    WARM_MIN_CHARS = 2048;
+    WARM_FOR_MS = 4 * 6e4;
+  }
+});
+
 // src/model/openai-compatible.ts
 function retryAfterMs(headers, now = Date.now()) {
   const ms2 = Number(headers.get("retry-after-ms"));
@@ -28909,6 +28939,131 @@ var init_openai_compatible = __esm({
 Reply with only a JSON object that matches this JSON schema, with no other text before or after it:
 ${JSON.stringify(schema)}`;
     unfence = (text4) => text4.match(/^\s*```(?:json)?\s*\n?([\s\S]*?)\n?\s*```\s*$/i)?.[1] ?? text4;
+  }
+});
+
+// src/model/client.ts
+function configuredModel(key, provider) {
+  if (provider?.kind === "openai-compatible") {
+    if (key?.trim()) return providerModel(provider, key.trim());
+    throw new MissingKeyError(`synthe.json sends model calls to ${providerHost(provider)}, and no key for it is set. On this computer, set SYNTHE_API_KEY. For the GitHub workflow, run \`npx synthe key\` to save it as the SYNTHE_API_KEY secret, and \`npx synthe upgrade\` if your workflow file doesn't pass api-key yet.`);
+  }
+  if (key?.trim()) return anthropicModel(key.trim());
+  throw new MissingKeyError("No Anthropic key is set. Run `npx synthe key` to save one as the repo secret SYNTHE_ANTHROPIC_KEY.");
+}
+function ownKeyBaseUrl(env = process.env) {
+  const override = env.SYNTHE_ANTHROPIC_BASE_URL?.trim();
+  if (!override) return ANTHROPIC_API_URL;
+  try {
+    const url = new URL(override);
+    if ((url.protocol === "http:" || url.protocol === "https:") && LOOPBACK.has(url.hostname)) return override;
+  } catch {
+  }
+  return ANTHROPIC_API_URL;
+}
+function providerModel(provider, apiKey) {
+  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices, maxRequestsPerMinute: provider.max_requests_per_minute, reasoningEffort: provider.reasoning_effort });
+  return anthropicModel(apiKey);
+}
+function onModel(model, id) {
+  return { ask: (a) => model.ask({ ...a, model: id }) };
+}
+function providerHost(provider) {
+  if (provider?.kind !== "openai-compatible") return "Anthropic";
+  try {
+    return new URL(provider.base_url).host;
+  } catch {
+    return provider.base_url;
+  }
+}
+function anthropicModel(apiKey, env = process.env) {
+  const client = new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(env), maxRetries: 4 });
+  return sdkModel(client);
+}
+function sdkModel(client) {
+  const warm = firstAlone();
+  return {
+    async ask({ model, system, user: user2, maxTokens, schema, allowCutOff }) {
+      const send = () => client.messages.create({
+        model,
+        max_tokens: maxTokens,
+        system: cachedSystem(system),
+        messages: [{ role: "user", content: user2 }],
+        // Haiku's thinking would spend the output limit on short scoring calls.
+        ...model.startsWith("claude-haiku") ? { thinking: { type: "disabled" } } : {},
+        output_config: { effort: "low", ...schema ? { format: { type: "json_schema", schema } } : {} }
+      });
+      const res = await warm(model, system, send);
+      const text4 = res.content.flatMap((b) => b.type === "text" ? [b.text] : []).join("");
+      const finished = res.stop_reason === "end_turn" && text4.length > 0;
+      const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text4.length > 0;
+      return {
+        text: finished || cutOff ? text4 : null,
+        costUsd: costUsd(model, res.usage),
+        ...cutOff ? { truncated: true } : {},
+        usage: { input: res.usage.input_tokens, output: res.usage.output_tokens },
+        stopReason: res.stop_reason ?? null
+      };
+    }
+  };
+}
+async function askJson(model, a) {
+  const reply = await model.ask(a);
+  if (reply.text === null) return { value: null, costUsd: reply.costUsd };
+  try {
+    return { value: JSON.parse(reply.text), costUsd: reply.costUsd };
+  } catch {
+    return { value: null, costUsd: reply.costUsd };
+  }
+}
+async function pool(items, limit2, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit2, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  }));
+  return results;
+}
+function modelProblem(e) {
+  if (e instanceof ProviderError) return providerProblem(e);
+  const err = e;
+  const status3 = typeof err?.status === "number" ? err.status : null;
+  const text4 = typeof err?.message === "string" ? err.message : "";
+  if (status3 === 401) return "Your Anthropic key was rejected. Run `npx synthe key` to replace it.";
+  if (/credit balance is too low/i.test(text4)) return "Your Anthropic key has no credit left. Run `npx synthe key` to replace it.";
+  if (/usage limit|spend limit/i.test(text4)) return "Your Anthropic key has reached its spending limit. Run `npx synthe key` to replace it.";
+  if (status3 === 403) return "Your Anthropic key isn't allowed to use this model. Run `npx synthe key` to replace it.";
+  if (status3 === 429 || status3 === 529 || status3 !== null && status3 >= 500) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
+  if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
+  return null;
+}
+function providerProblem(e) {
+  const host = e.host;
+  if (e.status === null) return e.loopback ? `Couldn't reach the model server at ${host}. Start it (for example \`ollama serve\`), or fix provider.base_url in synthe.json, and try again.` : `Couldn't reach ${host}. Check your internet connection and provider.base_url in synthe.json, then try again.`;
+  if (e.credit) return `Your key for ${host} has no credit left or has reached its spending limit. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
+  if (e.exhausted) return "Your provider's free limit is used up for now. Run the command again later.";
+  if (e.status === 401) return `Your key for ${host} was rejected. Run \`npx synthe key\` to replace it.`;
+  if (e.status === 402) return `Your key for ${host} has no credit left. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
+  if (e.status === 403) return `Your key for ${host} isn't allowed to use ${e.model}. Check "models" in synthe.json, or run \`npx synthe key\` to replace the key.`;
+  if (e.status === 404) return `${host} doesn't have the model ${e.model}, or provider.base_url doesn't point at its OpenAI-compatible API (it usually ends in /v1). Check "models" and "provider" in synthe.json. ${e.message}`;
+  if (e.status === 429 || e.status === 408 || e.status >= 500) return `${host} is busy or rate-limiting this key right now. Wait a few minutes and try again.`;
+  return `${host} refused the request for ${e.model}. Check "models" and "provider" in synthe.json. ${e.message}`;
+}
+var MissingKeyError, ANTHROPIC_API_URL, LOOPBACK;
+var init_client2 = __esm({
+  "src/model/client.ts"() {
+    "use strict";
+    init_sdk();
+    init_cost();
+    init_cache();
+    init_openai_compatible();
+    MissingKeyError = class extends Error {
+    };
+    ANTHROPIC_API_URL = "https://api.anthropic.com";
+    LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
   }
 });
 
@@ -29519,14 +29674,18 @@ function validateProblem(raw, file) {
   }
   let model;
   if (raw.model !== void 0) {
-    if (!isObject(raw.model)) errors.push(`model: must be an object with "base_url" and "model".`);
+    if (!isObject(raw.model)) errors.push(`model: must be an object with "model", and "base_url" for an OpenAI-compatible provider.`);
     else {
+      const allowed = ["provider", "base_url", "model", "prices"];
       for (const k of Object.keys(raw.model)) {
-        if (k === "base_url" || k === "model") continue;
-        errors.push(/key|token|secret|auth/i.test(k) ? `model.${k}: never put a key in the problem file. Set the SYNTHE_API_KEY environment variable.` : `model.${k}: unknown field. Allowed fields: base_url, model.`);
+        if (allowed.includes(k)) continue;
+        errors.push(/key|token|secret|auth/i.test(k) ? `model.${k}: never put a key in the problem file. Set SYNTHE_API_KEY (or SYNTHE_ANTHROPIC_KEY for Anthropic) in the environment.` : `model.${k}: unknown field. Allowed fields: ${allowed.join(", ")}.`);
       }
+      const p = raw.model.provider;
+      if (p !== void 0 && p !== "anthropic" && p !== "openai-compatible") errors.push(`model.provider: must be "anthropic" or "openai-compatible".`);
       const url = raw.model.base_url;
-      let urlOk = false;
+      const provider = p === "anthropic" || p === "openai-compatible" ? p : url !== void 0 ? "openai-compatible" : "anthropic";
+      let urlOk = url === void 0 && provider === "anthropic";
       if (typeof url === "string") {
         try {
           urlOk = ["http:", "https:"].includes(new URL(url).protocol);
@@ -29536,7 +29695,19 @@ function validateProblem(raw, file) {
       }
       if (!urlOk) errors.push(`model.base_url: must be an http or https URL, such as "https://api.example.com/v1".`);
       if (!isText(raw.model.model)) errors.push(`model.model: must be a model name.`);
-      if (urlOk && isText(raw.model.model)) model = { base_url: url, model: raw.model.model };
+      let prices;
+      let pricesOk = true;
+      if (raw.model.prices !== void 0) {
+        const pr = raw.model.prices;
+        const usd = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0;
+        if (!isObject(pr) || !usd(pr.input_per_mtok) || !usd(pr.output_per_mtok) || Object.keys(pr).some((k) => k !== "input_per_mtok" && k !== "output_per_mtok")) {
+          pricesOk = false;
+          errors.push(`model.prices: must be { "input_per_mtok": <dollars>, "output_per_mtok": <dollars> }, two numbers of 0 or more.`);
+        } else prices = { input_per_mtok: pr.input_per_mtok, output_per_mtok: pr.output_per_mtok };
+      }
+      if (urlOk && isText(raw.model.model) && pricesOk) {
+        model = { provider, model: raw.model.model, ...typeof url === "string" ? { base_url: url } : {}, ...prices ? { prices } : {} };
+      }
     }
   }
   if (!inGitRepo(dir)) errors.push(`file: the folder ${dir} is not inside a git repository. Synthe works in scratch checkouts of a git repository.`);
@@ -30916,22 +31087,30 @@ function parseProposals(text4) {
   }
   return { proposals };
 }
+function anthropicKey(env) {
+  const own = env.SYNTHE_ANTHROPIC_KEY?.trim();
+  if (own) return own;
+  const shared = env.SYNTHE_API_KEY?.trim() ?? "";
+  return shared.startsWith("sk-ant-") ? shared : "";
+}
 function problemModel(problem, env = process.env, client) {
-  const key = env.SYNTHE_API_KEY?.trim() ?? "";
   const config = problem.model;
   if (!config?.model) throw new SetupError('A "model" proposer or judge needs model.model in the problem file.');
+  const anthropic = config.provider === "anthropic";
+  const key = anthropic ? anthropicKey(env) : env.SYNTHE_API_KEY?.trim() ?? "";
   if (!client) {
-    if (!config.base_url) throw new SetupError('A "model" proposer or judge needs model.base_url in the problem file.');
-    if (!key) throw new SetupError('A "model" proposer or judge needs a key: set the SYNTHE_API_KEY environment variable.');
+    if (anthropic && !key) throw new SetupError('A "model" proposer or judge with provider "anthropic" needs a key: set SYNTHE_ANTHROPIC_KEY (or an sk-ant- key in SYNTHE_API_KEY).');
+    if (!anthropic && !config.base_url) throw new SetupError('A "model" proposer or judge needs model.base_url in the problem file.');
+    if (!anthropic && !key) throw new SetupError('A "model" proposer or judge needs a key: set the SYNTHE_API_KEY environment variable.');
   }
   return {
-    client: client ?? openAiCompatibleModel({ baseUrl: config.base_url, apiKey: key }),
+    client: client ?? (anthropic ? anthropicModel(key, env) : openAiCompatibleModel({ baseUrl: config.base_url ?? "", apiKey: key })),
     model: config.model,
     hide: (text4) => key ? text4.split(key).join("[your key]") : text4
   };
 }
 function noTextReason(stopReason) {
-  return stopReason === "length" ? "it was cut off at the length limit" : stopReason === "refusal" ? "the model refused" : `it ended with "${stopReason ?? "no reason"}"`;
+  return stopReason === "length" || stopReason === "max_tokens" ? "it was cut off at the length limit" : stopReason === "refusal" ? "the model refused" : `it ended with "${stopReason ?? "no reason"}"`;
 }
 function modelProposer(problem, env = process.env, client) {
   const { client: model, model: id, hide } = problemModel(problem, env, client);
@@ -30951,6 +31130,7 @@ var MAX_TOKENS, PROPOSALS_SCHEMA, SYSTEM, short;
 var init_model_proposer = __esm({
   "src/solve/model-proposer.ts"() {
     "use strict";
+    init_client2();
     init_openai_compatible();
     init_loop();
     MAX_TOKENS = 16e3;
@@ -38491,150 +38671,7 @@ init_cost();
 init_merge_rule();
 init_safety();
 init_cost();
-
-// src/model/client.ts
-init_sdk();
-init_cost();
-
-// src/model/cache.ts
-import { createHash as createHash2 } from "node:crypto";
-function cachedSystem(system) {
-  return system === void 0 ? void 0 : [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
-}
-var WARM_MIN_CHARS = 2048;
-var WARM_FOR_MS = 4 * 6e4;
-function firstAlone() {
-  const first = /* @__PURE__ */ new Map();
-  return async (model, system, send) => {
-    if (system === void 0 || system.length < WARM_MIN_CHARS) return send();
-    const key = createHash2("sha256").update(`${model}
-${system}`).digest("hex");
-    const ahead = first.get(key);
-    if (ahead && Date.now() - ahead.at < WARM_FOR_MS) {
-      await ahead.sent.catch(() => void 0);
-      return send();
-    }
-    const sent = send();
-    first.set(key, { sent, at: Date.now() });
-    return sent;
-  };
-}
-
-// src/model/client.ts
-init_openai_compatible();
-var MissingKeyError = class extends Error {
-};
-function configuredModel(key, provider) {
-  if (provider?.kind === "openai-compatible") {
-    if (key?.trim()) return providerModel(provider, key.trim());
-    throw new MissingKeyError(`synthe.json sends model calls to ${providerHost(provider)}, and no key for it is set. On this computer, set SYNTHE_API_KEY. For the GitHub workflow, run \`npx synthe key\` to save it as the SYNTHE_API_KEY secret, and \`npx synthe upgrade\` if your workflow file doesn't pass api-key yet.`);
-  }
-  if (key?.trim()) return anthropicModel(key.trim());
-  throw new MissingKeyError("No Anthropic key is set. Run `npx synthe key` to save one as the repo secret SYNTHE_ANTHROPIC_KEY.");
-}
-var ANTHROPIC_API_URL = "https://api.anthropic.com";
-var LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
-function ownKeyBaseUrl(env = process.env) {
-  const override = env.SYNTHE_ANTHROPIC_BASE_URL?.trim();
-  if (!override) return ANTHROPIC_API_URL;
-  try {
-    const url = new URL(override);
-    if ((url.protocol === "http:" || url.protocol === "https:") && LOOPBACK.has(url.hostname)) return override;
-  } catch {
-  }
-  return ANTHROPIC_API_URL;
-}
-function providerModel(provider, apiKey) {
-  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices, maxRequestsPerMinute: provider.max_requests_per_minute, reasoningEffort: provider.reasoning_effort });
-  return anthropicModel(apiKey);
-}
-function onModel(model, id) {
-  return { ask: (a) => model.ask({ ...a, model: id }) };
-}
-function providerHost(provider) {
-  if (provider?.kind !== "openai-compatible") return "Anthropic";
-  try {
-    return new URL(provider.base_url).host;
-  } catch {
-    return provider.base_url;
-  }
-}
-function anthropicModel(apiKey) {
-  const client = new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(), maxRetries: 4 });
-  return sdkModel(client);
-}
-function sdkModel(client) {
-  const warm = firstAlone();
-  return {
-    async ask({ model, system, user: user2, maxTokens, schema, allowCutOff }) {
-      const send = () => client.messages.create({
-        model,
-        max_tokens: maxTokens,
-        system: cachedSystem(system),
-        messages: [{ role: "user", content: user2 }],
-        // Haiku's thinking would spend the output limit on short scoring calls.
-        ...model.startsWith("claude-haiku") ? { thinking: { type: "disabled" } } : {},
-        output_config: { effort: "low", ...schema ? { format: { type: "json_schema", schema } } : {} }
-      });
-      const res = await warm(model, system, send);
-      const text4 = res.content.flatMap((b) => b.type === "text" ? [b.text] : []).join("");
-      const finished = res.stop_reason === "end_turn" && text4.length > 0;
-      const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text4.length > 0;
-      return {
-        text: finished || cutOff ? text4 : null,
-        costUsd: costUsd(model, res.usage),
-        ...cutOff ? { truncated: true } : {},
-        usage: { input: res.usage.input_tokens, output: res.usage.output_tokens },
-        stopReason: res.stop_reason ?? null
-      };
-    }
-  };
-}
-async function askJson(model, a) {
-  const reply = await model.ask(a);
-  if (reply.text === null) return { value: null, costUsd: reply.costUsd };
-  try {
-    return { value: JSON.parse(reply.text), costUsd: reply.costUsd };
-  } catch {
-    return { value: null, costUsd: reply.costUsd };
-  }
-}
-async function pool(items, limit2, fn) {
-  const results = new Array(items.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(limit2, items.length) }, async () => {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i]);
-    }
-  }));
-  return results;
-}
-function modelProblem(e) {
-  if (e instanceof ProviderError) return providerProblem(e);
-  const err = e;
-  const status3 = typeof err?.status === "number" ? err.status : null;
-  const text4 = typeof err?.message === "string" ? err.message : "";
-  if (status3 === 401) return "Your Anthropic key was rejected. Run `npx synthe key` to replace it.";
-  if (/credit balance is too low/i.test(text4)) return "Your Anthropic key has no credit left. Run `npx synthe key` to replace it.";
-  if (/usage limit|spend limit/i.test(text4)) return "Your Anthropic key has reached its spending limit. Run `npx synthe key` to replace it.";
-  if (status3 === 403) return "Your Anthropic key isn't allowed to use this model. Run `npx synthe key` to replace it.";
-  if (status3 === 429 || status3 === 529 || status3 !== null && status3 >= 500) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
-  if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
-  return null;
-}
-function providerProblem(e) {
-  const host = e.host;
-  if (e.status === null) return e.loopback ? `Couldn't reach the model server at ${host}. Start it (for example \`ollama serve\`), or fix provider.base_url in synthe.json, and try again.` : `Couldn't reach ${host}. Check your internet connection and provider.base_url in synthe.json, then try again.`;
-  if (e.credit) return `Your key for ${host} has no credit left or has reached its spending limit. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
-  if (e.exhausted) return "Your provider's free limit is used up for now. Run the command again later.";
-  if (e.status === 401) return `Your key for ${host} was rejected. Run \`npx synthe key\` to replace it.`;
-  if (e.status === 402) return `Your key for ${host} has no credit left. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
-  if (e.status === 403) return `Your key for ${host} isn't allowed to use ${e.model}. Check "models" in synthe.json, or run \`npx synthe key\` to replace the key.`;
-  if (e.status === 404) return `${host} doesn't have the model ${e.model}, or provider.base_url doesn't point at its OpenAI-compatible API (it usually ends in /v1). Check "models" and "provider" in synthe.json. ${e.message}`;
-  if (e.status === 429 || e.status === 408 || e.status >= 500) return `${host} is busy or rate-limiting this key right now. Wait a few minutes and try again.`;
-  return `${host} refused the request for ${e.model}. Check "models" and "provider" in synthe.json. ${e.message}`;
-}
+init_client2();
 
 // src/loop/write.ts
 init_cost();
@@ -38660,6 +38697,9 @@ function rememberCandidates(history, scope, texts) {
   }
   return [...unique.values()].slice(-MAX_CANDIDATE_MEMORY);
 }
+
+// src/loop/write.ts
+init_client2();
 
 // src/loop/closed.ts
 init_safety();
@@ -38955,6 +38995,7 @@ var clip = (t, n = 300) => (t === void 0 ? "(none)" : t.length > n ? `${t.slice(
 
 // src/loop/compose.ts
 init_safety();
+init_client2();
 var COMPOSED_ID = "composed";
 var MAX_CONTRASTS = 8;
 var REPLY_SHOWN = 500;
@@ -39597,6 +39638,9 @@ function headlineBase(goal, state, stoppedByTeam = false, mode = "plain") {
   return merged > 0 ? { title: `Done: your prompt got better (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
 }
 
+// src/cli/main.ts
+init_client2();
+
 // src/cli/try-round.ts
 init_goal();
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
@@ -39657,6 +39701,7 @@ async function runLocalTry(cwd, goal, prompt, scenarios, model) {
 }
 
 // src/cli/local-credential.ts
+init_client2();
 function localCredential(env, provider) {
   const generic = env.SYNTHE_API_KEY?.trim();
   if (provider?.kind === "openai-compatible") {
@@ -39711,6 +39756,7 @@ var FREE_MAX_CALLS = 500;
 init_openai_compatible();
 init_prompt();
 init_safety();
+init_client2();
 
 // src/cli/agent.ts
 var AgentSetupError = class extends Error {
@@ -39794,6 +39840,7 @@ function baseUrlOption(args) {
 
 // src/cli/calibrate.ts
 init_cost();
+init_client2();
 import { mkdirSync as mkdirSync2, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join3 } from "node:path";
 var CASES = 20;
@@ -40914,6 +40961,7 @@ Set up, but GitHub did not accept the first dispatch. Run \`gh workflow run synt
 
 // src/cli/calibrate-judge.ts
 init_cost();
+init_client2();
 var JUDGE_CASES = 10;
 var PAIRS = 6;
 var MIN_PAIRS = 3;
@@ -41055,6 +41103,7 @@ init_cost();
 init_goal();
 init_merge_rule();
 init_prompt();
+init_client2();
 import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
 import { join as join5 } from "node:path";
 var MAX_DROP = 5;
@@ -41295,6 +41344,7 @@ function upgrade(root, template2) {
 
 // src/cli/key.ts
 init_goal();
+init_client2();
 init_goal();
 init_state();
 import { readFileSync as readFileSync5, writeFileSync as writeFileSync5 } from "node:fs";
@@ -41546,6 +41596,7 @@ async function undo(d, roundArg) {
 init_goal();
 init_prompt();
 init_state();
+init_client2();
 import { existsSync as existsSync7, readFileSync as readFileSync8 } from "node:fs";
 import { join as join10 } from "node:path";
 var vaultOptions = (args) => {
@@ -41709,6 +41760,7 @@ function parseImproveConfig(raw) {
 
 // src/improve/loop.ts
 init_cost();
+init_client2();
 import { execFileSync as execFileSync3 } from "node:child_process";
 import { existsSync as existsSync12, mkdirSync as mkdirSync5, mkdtempSync as mkdtempSync2, readFileSync as readFileSync13, realpathSync as realpathSync2, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
@@ -42242,6 +42294,7 @@ async function measureAt(exec, root, commit, config, say = () => {
 
 // src/improve/writer.ts
 init_safety();
+init_client2();
 import { existsSync as existsSync11, lstatSync as lstatSync2, readFileSync as readFileSync12, realpathSync } from "node:fs";
 import { dirname as dirname3, join as join16, sep } from "node:path";
 
@@ -42861,6 +42914,7 @@ async function publish(io2, a) {
 }
 
 // src/cli/improve.ts
+init_client2();
 init_goal();
 
 // src/core/calls.ts
