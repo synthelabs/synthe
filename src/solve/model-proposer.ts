@@ -1,4 +1,4 @@
-import type { Model } from "../model/client.ts";
+import { anthropicModel, type Model } from "../model/client.ts";
 import { openAiCompatibleModel } from "../model/openai-compatible.ts";
 import { SetupError } from "./loop.ts";
 import type { Edit, Problem, Proposal, Proposer, ProposerReply, ProposerRequest } from "./types.ts";
@@ -100,19 +100,32 @@ export function parseProposals(text: string): ProposerReply {
 
 // A problem's model connection: the client, the model id, and hide() to take the key out of any text. Shared by the
 // model proposer and the model judge (compare "model"). Throws SetupError before any call when the problem cannot
-// reach a model. `client` is for tests; a run builds the OpenAI-compatible client from base_url and SYNTHE_API_KEY.
+// reach a model. `client` is for tests that skip HTTP; a run builds the client for model.provider.
+//
+// Keys (GOAL.md, GOAL-2.md): "openai-compatible" uses SYNTHE_API_KEY and sends it only to model.base_url.
+// "anthropic" uses SYNTHE_ANTHROPIC_KEY, or SYNTHE_API_KEY when it starts with sk-ant-, and sends it only to the
+// Anthropic API (or to a loopback SYNTHE_ANTHROPIC_BASE_URL, for tests).
 export interface ProblemModel { client: Model; model: string; hide(text: string): string }
 
+export function anthropicKey(env: NodeJS.ProcessEnv): string {
+  const own = env.SYNTHE_ANTHROPIC_KEY?.trim();
+  if (own) return own;
+  const shared = env.SYNTHE_API_KEY?.trim() ?? "";
+  return shared.startsWith("sk-ant-") ? shared : "";
+}
+
 export function problemModel(problem: Problem, env: NodeJS.ProcessEnv = process.env, client?: Model): ProblemModel {
-  const key = env.SYNTHE_API_KEY?.trim() ?? "";
   const config = problem.model;
   if (!config?.model) throw new SetupError('A "model" proposer or judge needs model.model in the problem file.');
+  const anthropic = config.provider === "anthropic";
+  const key = anthropic ? anthropicKey(env) : env.SYNTHE_API_KEY?.trim() ?? "";
   if (!client) {
-    if (!config.base_url) throw new SetupError('A "model" proposer or judge needs model.base_url in the problem file.');
-    if (!key) throw new SetupError('A "model" proposer or judge needs a key: set the SYNTHE_API_KEY environment variable.');
+    if (anthropic && !key) throw new SetupError('A "model" proposer or judge with provider "anthropic" needs a key: set SYNTHE_ANTHROPIC_KEY (or an sk-ant- key in SYNTHE_API_KEY).');
+    if (!anthropic && !config.base_url) throw new SetupError('A "model" proposer or judge needs model.base_url in the problem file.');
+    if (!anthropic && !key) throw new SetupError('A "model" proposer or judge needs a key: set the SYNTHE_API_KEY environment variable.');
   }
   return {
-    client: client ?? openAiCompatibleModel({ baseUrl: config.base_url, apiKey: key }),
+    client: client ?? (anthropic ? anthropicModel(key, env) : openAiCompatibleModel({ baseUrl: config.base_url ?? "", apiKey: key })),
     model: config.model,
     hide: (text) => (key ? text.split(key).join("[your key]") : text),
   };
@@ -120,7 +133,7 @@ export function problemModel(problem: Problem, env: NodeJS.ProcessEnv = process.
 
 // Why a reply had no text, in plain words.
 export function noTextReason(stopReason: string | null | undefined): string {
-  return stopReason === "length" ? "it was cut off at the length limit"
+  return stopReason === "length" || stopReason === "max_tokens" ? "it was cut off at the length limit"
     : stopReason === "refusal" ? "the model refused"
     : `it ended with "${stopReason ?? "no reason"}"`;
 }

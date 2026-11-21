@@ -7,10 +7,10 @@ import { modelCompare, winnerIn } from "../src/solve/model-compare.ts";
 import type { Problem } from "../src/solve/types.ts";
 
 const KEY = "sk-compare-secret";
-const problem = (model = { base_url: "http://127.0.0.1:1/v1", model: "judge-1" }): Problem => ({
+const problem = (model: { base_url: string; model: string } = { base_url: "http://127.0.0.1:1/v1", model: "judge-1" }): Problem => ({
   version: 1, name: "p", goal: "Answer politely.", artifact: ["a.txt"], protect: [],
   measure: { judge: { cases: "cases.jsonl", run: "node run.js", compare: "model" }, runs: 1 }, guards: [], split: { holdout: false },
-  proposer: { command: "true" }, budget: { max_rounds: 6, max_calls: null }, model, candidates: 1, dir: "/tmp", file: "/tmp/p.json",
+  proposer: { command: "true" }, budget: { max_rounds: 6, max_calls: null }, model: { provider: "openai-compatible", ...model }, candidates: 1, dir: "/tmp", file: "/tmp/p.json",
 });
 
 // A fake model: `answer` sees each request and returns the reply text.

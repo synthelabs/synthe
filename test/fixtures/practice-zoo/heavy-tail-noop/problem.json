@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "heavy-tail-noop",
+  "goal": "Raise the score that measure/score.js prints.",
+  "artifact": ["settings.json"],
+  "protect": ["measure/**"],
+  "measure": { "command": "node measure/score.js {{TMP}}", "direction": "higher", "runs": 5 },
+  "proposer": { "command": "node propose.mjs" },
+  "budget": { "max_rounds": 6 }
+}
