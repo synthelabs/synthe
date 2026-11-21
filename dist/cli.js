@@ -30161,7 +30161,7 @@ function renderReport(r, extras = {}) {
   if (r.attempts.length) {
     lines.push("## Attempts", "", "| Round | Change | Kept | Before | After | Reason |", "|---|---|---|---|---|---|");
     for (const a of r.attempts) {
-      lines.push(`| ${a.round} | ${cell2(a.summary)} | ${a.kept ? "yes" : "no"} | ${formatNumber(a.before, u)} | ${formatNumber(a.after, u)} | ${cell2(a.reason)} |`);
+      lines.push(`| ${a.round} | ${cell2(a.summary)} | ${a.kept ? "kept" : "not kept"} | ${formatNumber(a.before, u)} | ${formatNumber(a.after, u)} | ${cell2(a.reason)} |`);
     }
     lines.push("");
   } else {
