@@ -1,0 +1,1 @@
+{"at":"2026-11-21T11:30:57.443Z","by":"coordinator","title":"Holdout leak (from mon, #135): holdout command output can reach the proposer through failure reasons. The proposer must never see holdout output or numbers, including in reasons; add a unit test","milestone":"P07"}
