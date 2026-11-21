@@ -1,2 +1,3 @@
 {"at":"2026-11-21T06:56:49.118Z","by":"h07","milestone":"P02","text":"measure.ts + decide.ts: runs, split, seed, guards; two-look keep rule (decideWithConfirm) for P06","pr":"https://github.com/synthelabs/synthe/pull/108"}
 {"at":"2026-11-21T07:12:36.946Z","by":"h07","milestone":"P06","text":"solve loop uses the two-look keep rule (decideWithConfirm) for the train decision","pr":"https://github.com/synthelabs/synthe/pull/116"}
+{"at":"2026-11-21T07:32:29.567Z","by":"h07","milestone":"FINAL","text":"practice zoo runner + 4 problems; seeds 1-10: gains 50/50, no-ops 0, traps 0","pr":"https://github.com/synthelabs/synthe/pull/125"}
