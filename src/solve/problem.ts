@@ -3,6 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
+import { editableCommandInputs } from "./edits.ts";
 import { DEFAULT_MAX_ROUNDS, DEFAULT_RUNS, isJudged, type Direction, type Measure, type Problem, type ProblemCheck } from "./types.ts";
 
 const TOP_KEYS = ["version", "name", "goal", "artifact", "protect", "measure", "guards", "split", "proposer", "budget", "model", "candidates"];
@@ -250,6 +251,11 @@ export function problemSummary(check: Extract<ProblemCheck, { ok: true }>): stri
   if (p.candidates > 1) lines.push(`Candidates: ${p.candidates} in each round`);
   const usdLimit = p.budget.max_usd !== undefined ? `, at most ${p.budget.max_usd} US dollars` : "";
   lines.push(`Budget: ${p.budget.max_rounds} rounds${p.budget.max_calls ? `, ${p.budget.max_calls} model calls` : ""}${usdLimit}`);
+  // Allowed on purpose (the measure reads the file the person wants improved), but a scorer listed by mistake would
+  // let Synthe raise the score by changing the measure. So say it, and say how to stop it.
+  for (const f of editableCommandInputs(p)) {
+    lines.push(`Warning: ${f} is named in a command and listed exactly in artifact, so Synthe may change it. That is right when the command reads it as input. If it is part of the measure, list it in protect instead.`);
+  }
   lines.push(`Next: run "npx synthe solve ${p.file}".`);
   return lines.join("\n");
 }

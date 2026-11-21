@@ -131,6 +131,29 @@ function folderIn(checkout: string, problem: Problem): { top: string; prefix: st
 
 // The files that decide the number or run the proposer: every file named in the measure, judge, guard and
 // proposer commands, the judge's cases, and the problem file itself. Relative to the problem folder.
+// Every command of the problem: guards, the measure (or the judge's run and compare), and the proposer.
+function commandsOf(problem: Problem): string[] {
+  const commands = [...problem.guards];
+  if (isJudged(problem.measure)) {
+    commands.push(problem.measure.judge.run);
+    if (problem.measure.judge.compare !== "model") commands.push(problem.measure.judge.compare);
+  } else {
+    commands.push(problem.measure.command);
+  }
+  if (problem.proposer !== "model") commands.push(problem.proposer.command);
+  return commands;
+}
+
+// `node count.cjs README.md` runs count.cjs and reads README.md as its input. When artifact names README.md
+// exactly (no glob), it is the thing to improve, so it stays editable. A program a command runs is always refused,
+// and so is a file that only a glob covers. `problem check` warns about each file this returns.
+export function editableCommandInputs(problem: Problem): string[] {
+  const commands = commandsOf(problem);
+  const named = new Set(problem.artifact.filter((a) => !/[*?[\]{}]/.test(a)).map(normal));
+  const programs = new Set(commands.flatMap((c) => commandPaths([c]).slice(0, 1)).map(normal));
+  return commandPaths(commands).map(normal).filter((p) => named.has(p) && !programs.has(p));
+}
+
 export function measurePathsOf(problem: Problem): string[] {
   const commands = [...problem.guards];
   const extra: string[] = [];
@@ -146,12 +169,10 @@ export function measurePathsOf(problem: Problem): string[] {
   if (problem.proposer !== "model") commands.push(problem.proposer.command);
   const file = relative(problem.dir, problem.file).replace(/\\/g, "/");
   if (file && !file.startsWith("..")) extra.push(file);
-  // `node count.cjs README.md` runs count.cjs and reads README.md as its input. When artifact names README.md
-  // exactly (no glob), it is the thing to improve, so it stays editable. A program a command runs is always refused,
-  // and so is a file that only a glob covers, the problem file and the judge's cases.
-  const named = new Set(problem.artifact.filter((a) => !/[*?[\]{}]/.test(a)).map(normal));
-  const programs = new Set(commands.flatMap((c) => commandPaths([c]).slice(0, 1)).map(normal));
-  const fromCommands = commandPaths(commands).filter((p) => programs.has(normal(p)) || !named.has(normal(p)));
+  // A command's input that artifact names exactly stays editable (see editableCommandInputs). The problem file and
+  // the judge's cases always stay refused.
+  const editable = new Set(editableCommandInputs(problem));
+  const fromCommands = commandPaths(commands).filter((p) => !editable.has(normal(p)));
   return [...new Set([...fromCommands, ...extra.map(normal)])];
 }
 

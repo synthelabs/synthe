@@ -193,3 +193,17 @@ test("split.holdout with a judged measure is refused with one line; holdout fals
   if (!r.ok) assert.deepEqual(r.problems.map((l) => l.split(":")[0]), ["split.holdout"]);
   assert.ok(validateProblem({ ...judged, split: { holdout: false } }, join(dir, "p.json")).ok);
 });
+
+test("problem check warns when a command's input is listed exactly in artifact, and the edit stays allowed", () => {
+  const dir = repo();
+  const base = { version: 1, name: "docs", goal: "g", measure: { command: "node tools/count.cjs README.md", direction: "higher" } };
+  const warned = checkProblem(JSON.stringify({ ...base, artifact: ["README.md"] }), join(dir, "p.json"));
+  assert.ok(warned.ok);
+  assert.match(problemSummary(warned), /^Warning: README\.md is named in a command and listed exactly in artifact, so Synthe may change it\..*protect instead\.$/m);
+  // A glob that covers the file, or the program the command runs, gives no warning: those stay refused.
+  for (const artifact of [["*.md"], ["tools/count.cjs"]]) {
+    const quiet = checkProblem(JSON.stringify({ ...base, artifact }), join(dir, "p.json"));
+    assert.ok(quiet.ok);
+    assert.doesNotMatch(problemSummary(quiet), /Warning/);
+  }
+});
