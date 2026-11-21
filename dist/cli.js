@@ -29514,6 +29514,157 @@ var init_exec = __esm({
   }
 });
 
+// src/solve/glob.ts
+function normalizePath(path4) {
+  let out = path4.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+  while (out.startsWith("./")) out = out.slice(2);
+  if (out.length > 1 && out.endsWith("/")) out = out.slice(0, -1);
+  return out;
+}
+function globProblem(glob2) {
+  if (typeof glob2 !== "string" || glob2.trim() === "") return "is empty";
+  const g = normalizePath(glob2);
+  if (g.startsWith("/")) return "must be relative to the problem folder, not absolute";
+  if (g.split("/").includes("..")) return "must not use '..' to leave the problem folder";
+  let braces = 0;
+  let inClass = false;
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i];
+    if (c === "\\") {
+      i++;
+      continue;
+    }
+    if (inClass) {
+      if (c === "]") inClass = false;
+      continue;
+    }
+    if (c === "[") inClass = true;
+    else if (c === "{") braces++;
+    else if (c === "}") {
+      braces--;
+      if (braces < 0) return "has a '}' with no '{'";
+    }
+  }
+  if (inClass) return "has a '[' with no ']'";
+  if (braces > 0) return "has a '{' with no '}'";
+  return null;
+}
+function globToRegExp(glob2) {
+  const key = normalizePath(glob2);
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const problem = globProblem(key);
+  if (problem) throw new Error(`glob "${glob2}" ${problem}`);
+  const re2 = new RegExp(`^${translate(key)}$`);
+  cache.set(key, re2);
+  return re2;
+}
+function translate(g) {
+  let out = "";
+  let i = 0;
+  while (i < g.length) {
+    const c = g[i];
+    const atSegStart = i === 0 || g[i - 1] === "/";
+    if (c === "*" && g[i + 1] === "*" && atSegStart && (i + 2 === g.length || g[i + 2] === "/")) {
+      if (i + 2 === g.length) {
+        out += ".*";
+        i += 2;
+      } else {
+        out += "(?:[^/]*/)*";
+        i += 3;
+      }
+      continue;
+    }
+    if (c === "*") {
+      out += "[^/]*";
+      i++;
+      continue;
+    }
+    if (c === "?") {
+      out += "[^/]";
+      i++;
+      continue;
+    }
+    if (c === "\\" && i + 1 < g.length) {
+      out += escape2(g[i + 1]);
+      i += 2;
+      continue;
+    }
+    if (c === "[") {
+      const end = g.indexOf("]", i + 2);
+      let body = g.slice(i + 1, end);
+      let neg = false;
+      if (body.startsWith("!") || body.startsWith("^")) {
+        neg = true;
+        body = body.slice(1);
+      }
+      body = body.replace(/[\\\]^]/g, (m) => `\\${m}`);
+      out += neg ? `[^/${body}]` : `[${body}]`;
+      i = end + 1;
+      continue;
+    }
+    if (c === "{") {
+      const end = matchingBrace(g, i);
+      const parts = splitTopLevel(g.slice(i + 1, end));
+      out += `(?:${parts.map(translate).join("|")})`;
+      i = end + 1;
+      continue;
+    }
+    out += escape2(c);
+    i++;
+  }
+  return out;
+}
+function matchingBrace(g, open) {
+  let depth = 0;
+  for (let i = open; i < g.length; i++) {
+    if (g[i] === "\\") {
+      i++;
+      continue;
+    }
+    if (g[i] === "{") depth++;
+    else if (g[i] === "}" && --depth === 0) return i;
+  }
+  return g.length - 1;
+}
+function splitTopLevel(body) {
+  const parts = [];
+  let depth = 0;
+  let start2 = 0;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === "\\") {
+      i++;
+      continue;
+    }
+    if (c === "{") depth++;
+    else if (c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      parts.push(body.slice(start2, i));
+      start2 = i + 1;
+    }
+  }
+  parts.push(body.slice(start2));
+  return parts;
+}
+function escape2(c) {
+  return c.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+}
+function matchAny(globs, path4) {
+  const p = normalizePath(path4);
+  return globs.some((g) => globToRegExp(g).test(p));
+}
+function matchesAny(path4, globs) {
+  return matchAny(globs, path4);
+}
+var cache;
+var init_glob = __esm({
+  "src/solve/glob.ts"() {
+    "use strict";
+    cache = /* @__PURE__ */ new Map();
+  }
+});
+
 // src/solve/types.ts
 var isJudged, DEFAULT_RUNS2, DEFAULT_MAX_ROUNDS, MAX_MISSES2;
 var init_types2 = __esm({
@@ -29526,16 +29677,192 @@ var init_types2 = __esm({
   }
 });
 
-// src/solve/problem.ts
+// src/solve/edits.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
-import { existsSync as existsSync14, readFileSync as readFileSync16, statSync as statSync4 } from "node:fs";
-import { dirname as dirname5, isAbsolute as isAbsolute2, join as join19 } from "node:path";
+import { existsSync as existsSync14, lstatSync as lstatSync3, mkdirSync as mkdirSync6, readFileSync as readFileSync16, writeFileSync as writeFileSync8 } from "node:fs";
+import { dirname as dirname5, join as join19, posix as posix2, relative as relative2 } from "node:path";
+function commandPaths2(commands) {
+  const words2 = commands.flatMap((c) => c.split(/\s+/)).map((w) => w.replace(/^['"]|['"]$/g, "").replace(/\\/g, "/").replace(/^\.\//, "")).filter((w) => /[/.]/.test(w) && !w.startsWith("-") && !w.startsWith("/") && !/^[a-z]+:/i.test(w) && !w.split("/").includes(".."));
+  return [...new Set(words2.map((w) => w.replace(/\/$/, "")).filter(Boolean))];
+}
+function pathProblem(path4, rules) {
+  const p = normal(path4);
+  if (!p || p.startsWith("/") || /^[a-z]:/i.test(p) || p.split("/").includes("..")) return `${path4} is not a path inside the problem folder.`;
+  if (p.split("/").includes(".git")) return `${p} is inside git's own folder; a proposal may not change it.`;
+  if (matchesAny(p, rules.protect)) return `${p} is protected by the problem file (protect); a proposal may not change it.`;
+  const measured = rules.measurePaths.map(normal).find((m) => under2(p, m));
+  if (measured) return `${p} is used by the measure or a guard (${measured}); Synthe measures with it as it is.`;
+  if (!matchesAny(p, rules.artifact)) return `${p} is outside the artifact globs; a proposal may change only files that match artifact.`;
+  return null;
+}
+function checkEdits2(edits, rules) {
+  const paths = [...new Set(edits.map((e) => e.path))].sort();
+  return paths.flatMap((p) => pathProblem(p, rules) ?? []);
+}
+function count2(text4, search) {
+  let n = 0;
+  for (let i = text4.indexOf(search); i !== -1 && n < 2; i = text4.indexOf(search, i + 1)) n++;
+  return n;
+}
+function linkedParent(dir, path4) {
+  const parts = path4.split("/").slice(0, -1);
+  for (let i = 1; i <= parts.length; i++) {
+    const sub = parts.slice(0, i).join("/");
+    try {
+      if (lstatSync3(join19(dir, sub)).isSymbolicLink()) return sub;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+function applyEdits2(dir, edits, rules) {
+  if (!Array.isArray(edits) || edits.length === 0) return { ok: false, reason: "The proposal has no edits." };
+  for (const e of edits) {
+    if (!e || typeof e.path !== "string" || typeof e.search !== "string" || typeof e.replace !== "string") {
+      return { ok: false, reason: "An edit needs a path, a search and a replace, each a string." };
+    }
+  }
+  const refused = checkEdits2(edits, rules);
+  if (refused.length) return { ok: false, reason: refused.join(" ") };
+  const texts = /* @__PURE__ */ new Map();
+  for (const e of edits) {
+    const p = normal(e.path);
+    const file = join19(dir, p);
+    if (!texts.has(p)) {
+      const link = linkedParent(dir, p);
+      if (link) return { ok: false, reason: `${p} is under ${link}, a symbolic link; a proposal may change only plain files in the folder.` };
+      if (existsSync14(file)) {
+        const stat2 = lstatSync3(file);
+        if (stat2.isSymbolicLink()) return { ok: false, reason: `${p} is a symbolic link; a proposal may change only plain files.` };
+        if (!stat2.isFile()) return { ok: false, reason: `${p} is not a file.` };
+        texts.set(p, readFileSync16(file, "utf8"));
+      } else if (e.search === "") {
+        texts.set(p, "");
+      } else {
+        return { ok: false, reason: `${p} does not exist, so the search text ${preview(e.search)} cannot match.` };
+      }
+    }
+    const text4 = texts.get(p);
+    if (e.search === "") {
+      if (text4 !== "") return { ok: false, reason: `${p}: the search text is empty; an empty search can only create a new file.` };
+      texts.set(p, e.replace);
+      continue;
+    }
+    const n = count2(text4, e.search);
+    if (n !== 1) {
+      return { ok: false, reason: `${p}: the search text ${preview(e.search)} occurs ${n === 0 ? "nowhere" : "more than once"} in the file; it must occur exactly once.` };
+    }
+    const at = text4.indexOf(e.search);
+    texts.set(p, text4.slice(0, at) + e.replace + text4.slice(at + e.search.length));
+  }
+  for (const [p, text4] of texts) {
+    const file = join19(dir, p);
+    mkdirSync6(dirname5(file), { recursive: true });
+    writeFileSync8(file, text4);
+  }
+  return { ok: true, changed: [...texts.keys()].sort() };
+}
+function problemPrefix(problem) {
+  return git(problem.dir, "rev-parse", "--show-prefix").trim();
+}
+function folderIn(checkout, problem) {
+  const top = git(checkout, "rev-parse", "--show-toplevel").trim();
+  const prefix = problemPrefix(problem);
+  return { top, prefix, dir: join19(top, prefix) };
+}
+function commandsOf(problem) {
+  const commands = [...problem.guards];
+  if (isJudged(problem.measure)) {
+    commands.push(problem.measure.judge.run);
+    if (problem.measure.judge.compare !== "model") commands.push(problem.measure.judge.compare);
+  } else {
+    commands.push(problem.measure.command);
+  }
+  if (problem.proposer !== "model") commands.push(problem.proposer.command);
+  return commands;
+}
+function editableCommandInputs(problem) {
+  const commands = commandsOf(problem);
+  const named = new Set(problem.artifact.filter((a) => !/[*?[\]{}]/.test(a)).map(normal));
+  const programs = new Set(commands.flatMap((c) => commandPaths2([c]).slice(0, 1)).map(normal));
+  return commandPaths2(commands).map(normal).filter((p) => named.has(p) && !programs.has(p));
+}
+function measurePathsOf(problem) {
+  const commands = [...problem.guards];
+  const extra = [];
+  if (isJudged(problem.measure)) {
+    const j = problem.measure.judge;
+    commands.push(j.run);
+    if (j.compare !== "model") commands.push(j.compare);
+    extra.push(j.cases);
+    if (j.rubric) extra.push(j.rubric);
+  } else {
+    commands.push(problem.measure.command);
+  }
+  if (problem.proposer !== "model") commands.push(problem.proposer.command);
+  const file = relative2(problem.dir, problem.file).replace(/\\/g, "/");
+  if (file && !file.startsWith("..")) extra.push(file);
+  const editable = new Set(editableCommandInputs(problem));
+  const fromCommands = commandPaths2(commands).filter((p) => !editable.has(normal(p)));
+  return [.../* @__PURE__ */ new Set([...fromCommands, ...extra.map(normal)])];
+}
+function rulesFor(problem) {
+  return { artifact: problem.artifact, protect: problem.protect, measurePaths: measurePathsOf(problem) };
+}
+function artifactFiles(checkout, problem) {
+  const { dir } = folderIn(checkout, problem);
+  const tracked = git(dir, "ls-files", "-z", "--", ".").split("\0").filter(Boolean);
+  const files = [];
+  for (const path4 of tracked.sort()) {
+    if (!matchesAny(path4, problem.artifact) || matchesAny(path4, problem.protect)) continue;
+    const file = join19(dir, path4);
+    try {
+      const stat2 = lstatSync3(file);
+      if (!stat2.isFile() || stat2.size > MAX_FILE_BYTES2 || linkedParent(dir, path4)) continue;
+      const bytes = readFileSync16(file);
+      if (bytes.includes(0)) continue;
+      files.push({ path: path4, text: bytes.toString("utf8") });
+    } catch {
+    }
+  }
+  return files;
+}
+function applyProposal(checkout, problem, proposal) {
+  let where;
+  try {
+    where = folderIn(checkout, problem);
+  } catch (e) {
+    return { refused: `Could not find the problem folder in the scratch checkout: ${e.message.split("\n")[0]}` };
+  }
+  const r = applyEdits2(where.dir, proposal?.edits, rulesFor(problem));
+  if (!r.ok) return { refused: r.reason };
+  return { paths: r.changed.map((p) => posix2.join(where.prefix, p)) };
+}
+var normal, under2, preview, git, MAX_FILE_BYTES2;
+var init_edits = __esm({
+  "src/solve/edits.ts"() {
+    "use strict";
+    init_glob();
+    init_types2();
+    normal = (path4) => path4.replace(/\\/g, "/").replace(/^\.\//, "");
+    under2 = (path4, entry2) => path4 === entry2 || path4.startsWith(`${entry2}/`);
+    preview = (s) => JSON.stringify(s.length > 60 ? `${s.slice(0, 57)}...` : s);
+    git = (cwd, ...args) => execFileSync4("git", ["-C", cwd, ...args], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    MAX_FILE_BYTES2 = 1024 * 1024;
+  }
+});
+
+// src/solve/problem.ts
+import { execFileSync as execFileSync5 } from "node:child_process";
+import { existsSync as existsSync15, readFileSync as readFileSync17, statSync as statSync4 } from "node:fs";
+import { dirname as dirname6, isAbsolute as isAbsolute2, join as join20 } from "node:path";
 function unknownKeys(obj, allowed, prefix, errors) {
   for (const k of Object.keys(obj)) {
     if (!allowed.includes(k)) errors.push(`${prefix}${k}: unknown field. Allowed fields: ${allowed.join(", ")}.`);
   }
 }
-function pathProblem(field2, g) {
+function pathProblem2(field2, g) {
   if (!isText(g)) return `${field2}: each entry must be a non-empty glob, such as "src/**/*.py".`;
   if (isAbsolute2(g) || /^[A-Za-z]:[\\/]/.test(g)) return `${field2}: "${g}" is an absolute path. Use a path relative to the problem file's folder.`;
   if (g.split(/[\\/]/).includes("..")) return `${field2}: "${g}" uses "..". Keep paths inside the problem file's folder.`;
@@ -29547,7 +29874,7 @@ function globList(field2, v, required, errors) {
     errors.push(`${field2}: must be a ${required ? "non-empty " : ""}list of globs, such as ["src/**/*.py"].`);
     return [];
   }
-  const bad5 = v.map((g, i) => pathProblem(`${field2}[${i}]`, g)).filter((p) => p !== null);
+  const bad5 = v.map((g, i) => pathProblem2(`${field2}[${i}]`, g)).filter((p) => p !== null);
   errors.push(...bad5);
   return bad5.length ? [] : v;
 }
@@ -29597,26 +29924,26 @@ function measureOf(v, dir, errors) {
   unknownKeys(j, ["cases", "run", "compare", "rubric"], "measure.judge.", errors);
   if (!isText(j.cases)) errors.push(`measure.judge.cases: must be the path of a JSONL file of cases.`);
   else {
-    const p = pathProblem("measure.judge.cases", j.cases);
-    const casesError = p ?? casesProblem(j.cases, join19(dir, j.cases));
+    const p = pathProblem2("measure.judge.cases", j.cases);
+    const casesError = p ?? casesProblem(j.cases, join20(dir, j.cases));
     if (casesError) errors.push(p ?? `measure.judge.cases: ${casesError}`);
   }
   if (!isText(j.run)) errors.push(`measure.judge.run: must be a non-empty shell command.`);
   if (!isText(j.compare)) errors.push(`measure.judge.compare: must be a shell command or "model".`);
   let rubric;
   if (j.rubric !== void 0) {
-    const p = isText(j.rubric) ? pathProblem("measure.judge.rubric", j.rubric) : `measure.judge.rubric: must be the path of a rubric file, such as "judge/rubric.md".`;
+    const p = isText(j.rubric) ? pathProblem2("measure.judge.rubric", j.rubric) : `measure.judge.rubric: must be the path of a rubric file, such as "judge/rubric.md".`;
     if (p) errors.push(p);
     else if (j.compare !== "model") errors.push(`measure.judge.rubric: works only with "compare": "model". A compare command reads its own rubric.`);
-    else if (!existsSync14(join19(dir, j.rubric)) || !statSync4(join19(dir, j.rubric)).isFile()) errors.push(`measure.judge.rubric: Synthe can't find ${j.rubric} next to the problem file.`);
+    else if (!existsSync15(join20(dir, j.rubric)) || !statSync4(join20(dir, j.rubric)).isFile()) errors.push(`measure.judge.rubric: Synthe can't find ${j.rubric} next to the problem file.`);
     else rubric = j.rubric;
   }
   if (errors.length > before) return null;
   return { judge: { cases: j.cases, run: j.run, compare: j.compare, ...rubric ? { rubric } : {} }, runs };
 }
 function casesProblem(name, path4) {
-  if (!existsSync14(path4) || !statSync4(path4).isFile()) return `Synthe can't find ${name} next to the problem file.`;
-  const lines = readFileSync16(path4, "utf8").split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!existsSync15(path4) || !statSync4(path4).isFile()) return `Synthe can't find ${name} next to the problem file.`;
+  const lines = readFileSync17(path4, "utf8").split("\n").map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return `${name} has no cases. Write one JSON object per line.`;
   const seen = /* @__PURE__ */ new Set();
   for (const [i, line] of lines.entries()) {
@@ -29634,14 +29961,14 @@ function casesProblem(name, path4) {
 }
 function inGitRepo(dir) {
   try {
-    execFileSync4("git", ["rev-parse", "--show-toplevel"], { cwd: dir, stdio: ["ignore", "pipe", "ignore"] });
+    execFileSync5("git", ["rev-parse", "--show-toplevel"], { cwd: dir, stdio: ["ignore", "pipe", "ignore"] });
     return true;
   } catch {
     return false;
   }
 }
 function validateProblem(raw, file) {
-  const dir = dirname5(file);
+  const dir = dirname6(file);
   const errors = [];
   if (!isObject(raw)) return { ok: false, problems: ['file: must be a JSON object, such as { "version": 1, ... }.'] };
   unknownKeys(raw, TOP_KEYS, "", errors);
@@ -29771,6 +30098,9 @@ function problemSummary(check) {
   if (p.candidates > 1) lines.push(`Candidates: ${p.candidates} in each round`);
   const usdLimit = p.budget.max_usd !== void 0 ? `, at most ${p.budget.max_usd} US dollars` : "";
   lines.push(`Budget: ${p.budget.max_rounds} rounds${p.budget.max_calls ? `, ${p.budget.max_calls} model calls` : ""}${usdLimit}`);
+  for (const f of editableCommandInputs(p)) {
+    lines.push(`Warning: ${f} is named in a command and listed exactly in artifact, so Synthe may change it. That is right when the command reads it as input. If it is part of the measure, list it in protect instead.`);
+  }
   lines.push(`Next: run "npx synthe solve ${p.file}".`);
   return lines.join("\n");
 }
@@ -29778,6 +30108,7 @@ var TOP_KEYS, isObject, isText, isCount;
 var init_problem = __esm({
   "src/solve/problem.ts"() {
     "use strict";
+    init_edits();
     init_types2();
     TOP_KEYS = ["version", "name", "goal", "artifact", "protect", "measure", "guards", "split", "proposer", "budget", "model", "candidates"];
     isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -29792,13 +30123,13 @@ __export(problem_exports, {
   loadProblem: () => loadProblem,
   problemCommand: () => problemCommand
 });
-import { readFileSync as readFileSync17 } from "node:fs";
+import { readFileSync as readFileSync18 } from "node:fs";
 import { resolve as resolve2 } from "node:path";
 function loadProblem(path4, cwd) {
   const file = resolve2(cwd, path4);
   let raw;
   try {
-    raw = readFileSync17(file, "utf8");
+    raw = readFileSync18(file, "utf8");
   } catch {
     return { ok: false, problems: [`${path4}: Synthe can't read this file. Check the path.`] };
   }
@@ -29885,8 +30216,8 @@ var init_run2 = __esm({
 });
 
 // src/solve/draft.ts
-import { existsSync as existsSync15, mkdirSync as mkdirSync6, readFileSync as readFileSync18, writeFileSync as writeFileSync8 } from "node:fs";
-import { join as join20, relative as relative2, resolve as resolve3, sep as sep2 } from "node:path";
+import { existsSync as existsSync16, mkdirSync as mkdirSync7, readFileSync as readFileSync19, writeFileSync as writeFileSync9 } from "node:fs";
+import { join as join21, relative as relative3, resolve as resolve3, sep as sep2 } from "node:path";
 function readExamples(text4) {
   const problems = [];
   const examples = [];
@@ -30076,7 +30407,7 @@ function draftModelFrom(raw) {
 }
 function hintPath(path4, base) {
   if (!base) return path4;
-  const r = relative2(base, path4);
+  const r = relative3(base, path4);
   return (r || ".").split(sep2).join("/");
 }
 async function draftMeasure(examples, m, client, outDir, io2) {
@@ -30086,13 +30417,13 @@ async function draftMeasure(examples, m, client, outDir, io2) {
     io2.say("The model gave no rubric. Nothing was written. Run the command again, or try another model.");
     return 1;
   }
-  mkdirSync6(outDir, { recursive: true });
+  mkdirSync7(outDir, { recursive: true });
   const cases4 = examples.map((e, i) => JSON.stringify({ id: caseId(i), input: e.input })).join("\n") + "\n";
-  writeFileSync8(join20(outDir, "cases.jsonl"), cases4);
-  writeFileSync8(join20(outDir, "rubric.md"), rubric + "\n");
-  const script = join20(outDir, "compare.js");
-  writeFileSync8(script, compareScript(m));
-  io2.say(`Wrote ${join20(outDir, "cases.jsonl")} (${examples.length} cases), ${join20(outDir, "rubric.md")} and ${script}.`);
+  writeFileSync9(join21(outDir, "cases.jsonl"), cases4);
+  writeFileSync9(join21(outDir, "rubric.md"), rubric + "\n");
+  const script = join21(outDir, "compare.js");
+  writeFileSync9(script, compareScript(m));
+  io2.say(`Wrote ${join21(outDir, "cases.jsonl")} (${examples.length} cases), ${join21(outDir, "rubric.md")} and ${script}.`);
   const env = compareEnv(m, io2.env);
   const verdicts = await checkJudge(examples, (q) => runCompare(script, q, env, io2.hide));
   const agree = verdicts.filter((v) => v.agrees).length;
@@ -30106,18 +30437,18 @@ async function draftMeasure(examples, m, client, outDir, io2) {
       io2.say(`  ${v.id}: with good first it said ${v.goodFirst}; with good second it said ${v.badFirst}. Input:`);
       io2.say(`    ${v.input}`);
     }
-    io2.say(`Next: edit ${join20(outDir, "rubric.md")} so it explains why the good outputs are better, then run the command again.`);
+    io2.say(`Next: edit ${join21(outDir, "rubric.md")} so it explains why the good outputs are better, then run the command again.`);
     return 2;
   }
   const where = io2.hintBase ? `paths relative to ${io2.hintBase}` : "these paths";
   io2.say(`The judge agrees with you often enough. To use it in solve, put this measure in your problem file (${where}; change them if your problem file is in another folder), and keep the model section that you drafted with:`);
-  io2.say(`  "measure": { "judge": { "cases": "${hintPath(join20(outDir, "cases.jsonl"), io2.hintBase)}", "run": "<the command that prints the output for one case>", "compare": "model", "rubric": "${hintPath(join20(outDir, "rubric.md"), io2.hintBase)}" } }`);
+  io2.say(`  "measure": { "judge": { "cases": "${hintPath(join21(outDir, "cases.jsonl"), io2.hintBase)}", "run": "<the command that prints the output for one case>", "compare": "model", "rubric": "${hintPath(join21(outDir, "rubric.md"), io2.hintBase)}" } }`);
   io2.say(`To try the judge by hand, run: echo '{"case": {...}, "a": "...", "b": "..."}' | node ${script}`);
   return 0;
 }
 function examplesFile(path4) {
-  if (!existsSync15(path4)) return { ok: false, problems: [`--examples: Synthe can't find ${path4}.`] };
-  return readExamples(readFileSync18(path4, "utf8"));
+  if (!existsSync16(path4)) return { ok: false, problems: [`--examples: Synthe can't find ${path4}.`] };
+  return readExamples(readFileSync19(path4, "utf8"));
 }
 var AGREEMENT_NEEDED, RUBRIC_MAX_TOKENS, RUBRIC_SYSTEM, caseId;
 var init_draft = __esm({
@@ -30143,8 +30474,8 @@ __export(measure_exports, {
   measureCommand: () => measureCommand,
   providerKey: () => providerKey
 });
-import { readFileSync as readFileSync19 } from "node:fs";
-import { dirname as dirname6, resolve as resolve4 } from "node:path";
+import { readFileSync as readFileSync20 } from "node:fs";
+import { dirname as dirname7, resolve as resolve4 } from "node:path";
 async function measureCommand(args, cwd, say, env, client) {
   const takesValue = ["--examples", "--out", "--problem", "--model"];
   const value = (flag) => {
@@ -30170,7 +30501,7 @@ async function measureCommand(args, cwd, say, env, client) {
   else {
     let raw;
     try {
-      raw = JSON.parse(readFileSync19(resolve4(cwd, problemPath), "utf8"));
+      raw = JSON.parse(readFileSync20(resolve4(cwd, problemPath), "utf8"));
     } catch (e) {
       say(`${problemPath}: Synthe can't read this problem file as JSON (${e.message}).`);
       return 1;
@@ -30196,7 +30527,7 @@ async function measureCommand(args, cwd, say, env, client) {
   const hide = (text4) => keys.reduce((t, k) => t.split(k).join("[your key]"), text4);
   const model = client ?? (m.provider === "anthropic" ? anthropicModel(key) : openAiCompatibleModel({ baseUrl: m.base_url, apiKey: key }));
   try {
-    const hintBase = problemPath ? dirname6(resolve4(cwd, problemPath)) : cwd;
+    const hintBase = problemPath ? dirname7(resolve4(cwd, problemPath)) : cwd;
     return await draftMeasure(examples.examples, m, model, resolve4(cwd, out), { say, env, hide, hintBase });
   } catch (e) {
     say(`The model call failed: ${hide(e instanceof Error ? e.message : String(e))}`);
@@ -30511,11 +30842,11 @@ async function decideWithConfirm(direction, before, after, remeasure) {
   if (!first.keep || first.exact) return { keep: first.keep, reason: first.reason, before, after };
   const more = await remeasure();
   if ("failed" in more) return { keep: false, reason: `Could not measure again to confirm the gain: ${more.failed}`, before, after };
-  const b = join21(before, more.before), a = join21(after, more.after);
+  const b = join22(before, more.before), a = join22(after, more.after);
   const second = look(direction, b, a, CONFIRM_ALPHA, true);
   return { keep: second.keep, reason: second.reason, before: b, after: a };
 }
-var SCREEN_ALPHA, CONFIRM_ALPHA, DUST, join21;
+var SCREEN_ALPHA, CONFIRM_ALPHA, DUST, join22;
 var init_decide = __esm({
   "src/solve/decide.ts"() {
     "use strict";
@@ -30524,322 +30855,11 @@ var init_decide = __esm({
     SCREEN_ALPHA = 0.1;
     CONFIRM_ALPHA = 5e-3;
     DUST = 1e-9;
-    join21 = (a, b) => {
+    join22 = (a, b) => {
       const runs = [...a.runs, ...b.runs];
       const s = [...runs].sort((x, y) => x - y), mid = Math.floor(s.length / 2);
       return { runs, value: s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2 };
     };
-  }
-});
-
-// src/solve/glob.ts
-function normalizePath(path4) {
-  let out = path4.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
-  while (out.startsWith("./")) out = out.slice(2);
-  if (out.length > 1 && out.endsWith("/")) out = out.slice(0, -1);
-  return out;
-}
-function globProblem(glob2) {
-  if (typeof glob2 !== "string" || glob2.trim() === "") return "is empty";
-  const g = normalizePath(glob2);
-  if (g.startsWith("/")) return "must be relative to the problem folder, not absolute";
-  if (g.split("/").includes("..")) return "must not use '..' to leave the problem folder";
-  let braces = 0;
-  let inClass = false;
-  for (let i = 0; i < g.length; i++) {
-    const c = g[i];
-    if (c === "\\") {
-      i++;
-      continue;
-    }
-    if (inClass) {
-      if (c === "]") inClass = false;
-      continue;
-    }
-    if (c === "[") inClass = true;
-    else if (c === "{") braces++;
-    else if (c === "}") {
-      braces--;
-      if (braces < 0) return "has a '}' with no '{'";
-    }
-  }
-  if (inClass) return "has a '[' with no ']'";
-  if (braces > 0) return "has a '{' with no '}'";
-  return null;
-}
-function globToRegExp(glob2) {
-  const key = normalizePath(glob2);
-  const hit = cache.get(key);
-  if (hit) return hit;
-  const problem = globProblem(key);
-  if (problem) throw new Error(`glob "${glob2}" ${problem}`);
-  const re2 = new RegExp(`^${translate(key)}$`);
-  cache.set(key, re2);
-  return re2;
-}
-function translate(g) {
-  let out = "";
-  let i = 0;
-  while (i < g.length) {
-    const c = g[i];
-    const atSegStart = i === 0 || g[i - 1] === "/";
-    if (c === "*" && g[i + 1] === "*" && atSegStart && (i + 2 === g.length || g[i + 2] === "/")) {
-      if (i + 2 === g.length) {
-        out += ".*";
-        i += 2;
-      } else {
-        out += "(?:[^/]*/)*";
-        i += 3;
-      }
-      continue;
-    }
-    if (c === "*") {
-      out += "[^/]*";
-      i++;
-      continue;
-    }
-    if (c === "?") {
-      out += "[^/]";
-      i++;
-      continue;
-    }
-    if (c === "\\" && i + 1 < g.length) {
-      out += escape2(g[i + 1]);
-      i += 2;
-      continue;
-    }
-    if (c === "[") {
-      const end = g.indexOf("]", i + 2);
-      let body = g.slice(i + 1, end);
-      let neg = false;
-      if (body.startsWith("!") || body.startsWith("^")) {
-        neg = true;
-        body = body.slice(1);
-      }
-      body = body.replace(/[\\\]^]/g, (m) => `\\${m}`);
-      out += neg ? `[^/${body}]` : `[${body}]`;
-      i = end + 1;
-      continue;
-    }
-    if (c === "{") {
-      const end = matchingBrace(g, i);
-      const parts = splitTopLevel(g.slice(i + 1, end));
-      out += `(?:${parts.map(translate).join("|")})`;
-      i = end + 1;
-      continue;
-    }
-    out += escape2(c);
-    i++;
-  }
-  return out;
-}
-function matchingBrace(g, open) {
-  let depth = 0;
-  for (let i = open; i < g.length; i++) {
-    if (g[i] === "\\") {
-      i++;
-      continue;
-    }
-    if (g[i] === "{") depth++;
-    else if (g[i] === "}" && --depth === 0) return i;
-  }
-  return g.length - 1;
-}
-function splitTopLevel(body) {
-  const parts = [];
-  let depth = 0;
-  let start2 = 0;
-  for (let i = 0; i < body.length; i++) {
-    const c = body[i];
-    if (c === "\\") {
-      i++;
-      continue;
-    }
-    if (c === "{") depth++;
-    else if (c === "}") depth--;
-    else if (c === "," && depth === 0) {
-      parts.push(body.slice(start2, i));
-      start2 = i + 1;
-    }
-  }
-  parts.push(body.slice(start2));
-  return parts;
-}
-function escape2(c) {
-  return c.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
-}
-function matchAny(globs, path4) {
-  const p = normalizePath(path4);
-  return globs.some((g) => globToRegExp(g).test(p));
-}
-function matchesAny(path4, globs) {
-  return matchAny(globs, path4);
-}
-var cache;
-var init_glob = __esm({
-  "src/solve/glob.ts"() {
-    "use strict";
-    cache = /* @__PURE__ */ new Map();
-  }
-});
-
-// src/solve/edits.ts
-import { execFileSync as execFileSync5 } from "node:child_process";
-import { existsSync as existsSync16, lstatSync as lstatSync3, mkdirSync as mkdirSync7, readFileSync as readFileSync20, writeFileSync as writeFileSync9 } from "node:fs";
-import { dirname as dirname7, join as join22, posix as posix2, relative as relative3 } from "node:path";
-function commandPaths2(commands) {
-  const words2 = commands.flatMap((c) => c.split(/\s+/)).map((w) => w.replace(/^['"]|['"]$/g, "").replace(/\\/g, "/").replace(/^\.\//, "")).filter((w) => /[/.]/.test(w) && !w.startsWith("-") && !w.startsWith("/") && !/^[a-z]+:/i.test(w) && !w.split("/").includes(".."));
-  return [...new Set(words2.map((w) => w.replace(/\/$/, "")).filter(Boolean))];
-}
-function pathProblem2(path4, rules) {
-  const p = normal(path4);
-  if (!p || p.startsWith("/") || /^[a-z]:/i.test(p) || p.split("/").includes("..")) return `${path4} is not a path inside the problem folder.`;
-  if (p.split("/").includes(".git")) return `${p} is inside git's own folder; a proposal may not change it.`;
-  if (matchesAny(p, rules.protect)) return `${p} is protected by the problem file (protect); a proposal may not change it.`;
-  const measured = rules.measurePaths.map(normal).find((m) => under2(p, m));
-  if (measured) return `${p} is used by the measure or a guard (${measured}); Synthe measures with it as it is.`;
-  if (!matchesAny(p, rules.artifact)) return `${p} is outside the artifact globs; a proposal may change only files that match artifact.`;
-  return null;
-}
-function checkEdits2(edits, rules) {
-  const paths = [...new Set(edits.map((e) => e.path))].sort();
-  return paths.flatMap((p) => pathProblem2(p, rules) ?? []);
-}
-function count2(text4, search) {
-  let n = 0;
-  for (let i = text4.indexOf(search); i !== -1 && n < 2; i = text4.indexOf(search, i + 1)) n++;
-  return n;
-}
-function linkedParent(dir, path4) {
-  const parts = path4.split("/").slice(0, -1);
-  for (let i = 1; i <= parts.length; i++) {
-    const sub = parts.slice(0, i).join("/");
-    try {
-      if (lstatSync3(join22(dir, sub)).isSymbolicLink()) return sub;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-function applyEdits2(dir, edits, rules) {
-  if (!Array.isArray(edits) || edits.length === 0) return { ok: false, reason: "The proposal has no edits." };
-  for (const e of edits) {
-    if (!e || typeof e.path !== "string" || typeof e.search !== "string" || typeof e.replace !== "string") {
-      return { ok: false, reason: "An edit needs a path, a search and a replace, each a string." };
-    }
-  }
-  const refused = checkEdits2(edits, rules);
-  if (refused.length) return { ok: false, reason: refused.join(" ") };
-  const texts = /* @__PURE__ */ new Map();
-  for (const e of edits) {
-    const p = normal(e.path);
-    const file = join22(dir, p);
-    if (!texts.has(p)) {
-      const link = linkedParent(dir, p);
-      if (link) return { ok: false, reason: `${p} is under ${link}, a symbolic link; a proposal may change only plain files in the folder.` };
-      if (existsSync16(file)) {
-        const stat2 = lstatSync3(file);
-        if (stat2.isSymbolicLink()) return { ok: false, reason: `${p} is a symbolic link; a proposal may change only plain files.` };
-        if (!stat2.isFile()) return { ok: false, reason: `${p} is not a file.` };
-        texts.set(p, readFileSync20(file, "utf8"));
-      } else if (e.search === "") {
-        texts.set(p, "");
-      } else {
-        return { ok: false, reason: `${p} does not exist, so the search text ${preview(e.search)} cannot match.` };
-      }
-    }
-    const text4 = texts.get(p);
-    if (e.search === "") {
-      if (text4 !== "") return { ok: false, reason: `${p}: the search text is empty; an empty search can only create a new file.` };
-      texts.set(p, e.replace);
-      continue;
-    }
-    const n = count2(text4, e.search);
-    if (n !== 1) {
-      return { ok: false, reason: `${p}: the search text ${preview(e.search)} occurs ${n === 0 ? "nowhere" : "more than once"} in the file; it must occur exactly once.` };
-    }
-    const at = text4.indexOf(e.search);
-    texts.set(p, text4.slice(0, at) + e.replace + text4.slice(at + e.search.length));
-  }
-  for (const [p, text4] of texts) {
-    const file = join22(dir, p);
-    mkdirSync7(dirname7(file), { recursive: true });
-    writeFileSync9(file, text4);
-  }
-  return { ok: true, changed: [...texts.keys()].sort() };
-}
-function problemPrefix(problem) {
-  return git(problem.dir, "rev-parse", "--show-prefix").trim();
-}
-function folderIn(checkout, problem) {
-  const top = git(checkout, "rev-parse", "--show-toplevel").trim();
-  const prefix = problemPrefix(problem);
-  return { top, prefix, dir: join22(top, prefix) };
-}
-function measurePathsOf(problem) {
-  const commands = [...problem.guards];
-  const extra = [];
-  if (isJudged(problem.measure)) {
-    const j = problem.measure.judge;
-    commands.push(j.run);
-    if (j.compare !== "model") commands.push(j.compare);
-    extra.push(j.cases);
-    if (j.rubric) extra.push(j.rubric);
-  } else {
-    commands.push(problem.measure.command);
-  }
-  if (problem.proposer !== "model") commands.push(problem.proposer.command);
-  const file = relative3(problem.dir, problem.file).replace(/\\/g, "/");
-  if (file && !file.startsWith("..")) extra.push(file);
-  const named = new Set(problem.artifact.filter((a) => !/[*?[\]{}]/.test(a)).map(normal));
-  const programs = new Set(commands.flatMap((c) => commandPaths2([c]).slice(0, 1)).map(normal));
-  const fromCommands = commandPaths2(commands).filter((p) => programs.has(normal(p)) || !named.has(normal(p)));
-  return [.../* @__PURE__ */ new Set([...fromCommands, ...extra.map(normal)])];
-}
-function rulesFor(problem) {
-  return { artifact: problem.artifact, protect: problem.protect, measurePaths: measurePathsOf(problem) };
-}
-function artifactFiles(checkout, problem) {
-  const { dir } = folderIn(checkout, problem);
-  const tracked = git(dir, "ls-files", "-z", "--", ".").split("\0").filter(Boolean);
-  const files = [];
-  for (const path4 of tracked.sort()) {
-    if (!matchesAny(path4, problem.artifact) || matchesAny(path4, problem.protect)) continue;
-    const file = join22(dir, path4);
-    try {
-      const stat2 = lstatSync3(file);
-      if (!stat2.isFile() || stat2.size > MAX_FILE_BYTES2 || linkedParent(dir, path4)) continue;
-      const bytes = readFileSync20(file);
-      if (bytes.includes(0)) continue;
-      files.push({ path: path4, text: bytes.toString("utf8") });
-    } catch {
-    }
-  }
-  return files;
-}
-function applyProposal(checkout, problem, proposal) {
-  let where;
-  try {
-    where = folderIn(checkout, problem);
-  } catch (e) {
-    return { refused: `Could not find the problem folder in the scratch checkout: ${e.message.split("\n")[0]}` };
-  }
-  const r = applyEdits2(where.dir, proposal?.edits, rulesFor(problem));
-  if (!r.ok) return { refused: r.reason };
-  return { paths: r.changed.map((p) => posix2.join(where.prefix, p)) };
-}
-var normal, under2, preview, git, MAX_FILE_BYTES2;
-var init_edits = __esm({
-  "src/solve/edits.ts"() {
-    "use strict";
-    init_glob();
-    init_types2();
-    normal = (path4) => path4.replace(/\\/g, "/").replace(/^\.\//, "");
-    under2 = (path4, entry2) => path4 === entry2 || path4.startsWith(`${entry2}/`);
-    preview = (s) => JSON.stringify(s.length > 60 ? `${s.slice(0, 57)}...` : s);
-    git = (cwd, ...args) => execFileSync5("git", ["-C", cwd, ...args], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
-    MAX_FILE_BYTES2 = 1024 * 1024;
   }
 });
 
