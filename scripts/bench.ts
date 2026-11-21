@@ -4,22 +4,33 @@
 //   npm run bench -- --check               run, then fail if false keeps rose or real gains fell against bench/baseline.json
 //   npm run bench -- --check --results F   check an existing results file without running
 //   npm run bench -- --update-baseline     run and write bench/baseline.json (a maintainer does this on main)
+//   npm run bench -- --score               run, print only the score (one number), write nothing
 //   npm run bench -- --live                real judge and checker calls; refuses unless SYNTHE_BENCH_LIVE=1
 import { readFileSync, writeFileSync } from "node:fs";
-import { askLine, checkResults, diffLines, formatTable, runBench, runLive, type Results } from "../bench/bench.ts";
+import { askLine, checkResults, diffLines, formatTable, runBench, runLive, scoreOf, type Results } from "../bench/bench.ts";
 
 const BASELINE = "bench/baseline.json";
 const RESULTS = "bench/results.json";
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
 const value = (name: string) => { const i = args.indexOf(name); return i === -1 ? undefined : args[i + 1]; };
-const known = new Set(["--check", "--results", "--update-baseline", "--live"]);
+const known = new Set(["--check", "--results", "--update-baseline", "--live", "--score"]);
 
 async function main(): Promise<number> {
   const unknown = args.filter((a, i) => !known.has(a) && args[i - 1] !== "--results");
   if (unknown.length) {
-    console.error(`Unknown option ${unknown[0]}. Options: --check, --results <file>, --update-baseline, --live.`);
+    console.error(`Unknown option ${unknown[0]}. Options: --check, --results <file>, --update-baseline, --live, --score.`);
     return 2;
+  }
+  if (flag("--score")) {
+    // The measure for synthe.self.json: stdout holds the score and nothing else, and no file is written, so the
+    // scratch checkout stays clean. Higher is better.
+    if (args.length > 1) {
+      console.error("--score takes no other option.");
+      return 2;
+    }
+    console.log(String(scoreOf(await runBench())));
+    return 0;
   }
   if (flag("--live")) {
     const r = await runLive({ env: process.env, say: (t) => console.log(t), ask: askLine });
