@@ -1,0 +1,17 @@
+[
+  {
+    "marker": "demo threshold",
+    "proposals": [
+      { "summary": "Reword the note", "edits": [{ "path": "config.json", "search": "demo threshold file", "replace": "demo threshold file, with a longer note" }] },
+      { "summary": "Set the threshold to 50", "edits": [{ "path": "config.json", "search": "\"threshold\": 10", "replace": "\"threshold\": 50" }] },
+      { "summary": "Set the threshold to 40", "edits": [{ "path": "config.json", "search": "\"threshold\": 50", "replace": "\"threshold\": 40" }] }
+    ]
+  },
+  {
+    "marker": "demo knob",
+    "proposals": [
+      { "summary": "Reword the first line", "edits": [{ "path": "knob.txt", "search": "demo knob file", "replace": "demo knob file, reworded" }] },
+      { "summary": "Raise the level to 2", "edits": [{ "path": "knob.txt", "search": "level = 0", "replace": "level = 2" }] }
+    ]
+  }
+]

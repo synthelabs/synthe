@@ -1,0 +1,82 @@
+# The Synthe score: `solve` with a real model on the hidden problem set. A person starts it; it costs money.
+# The job prints only totals, because the swarm can read this log. It uploads no artifact.
+#
+# The scorer and the hidden set come from the branch that the workflow runs from. The code under test comes from the
+# `ref` input. Secrets are in the `scoring` environment and reach only the score step. `solve` never gets the real
+# key: the scorer's gate holds it and enforces the cost cap (scripts/score/meter.mjs).
+name: Synthe score
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit of Synthe to score
+        default: integration
+        required: true
+      model:
+        description: Model id for the proposer and the judge
+        required: true
+      input_per_mtok:
+        description: Price of input, in USD per million tokens
+        required: true
+      output_per_mtok:
+        description: Price of output, in USD per million tokens
+        required: true
+      max_usd:
+        description: Cost cap for the whole run, in USD
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: synthe-score
+  cancel-in-progress: false
+jobs:
+  score:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    environment: scoring
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the scorer
+        uses: actions/checkout@v4
+        with:
+          path: scorer
+          persist-credentials: false
+      - name: Check out the code to score
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          path: synthe
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies of the code to score
+        working-directory: synthe
+        run: npm ci
+      - name: Score
+        env:
+          SYNTHE_ANTHROPIC_KEY: ${{ secrets.SYNTHE_ANTHROPIC_KEY }}
+          HIDDEN_SET_KEY: ${{ secrets.HIDDEN_SET_KEY }}
+          SCORE_SYNTHE_DIR: ${{ github.workspace }}/synthe
+          SCORE_MODEL: ${{ inputs.model }}
+          SCORE_INPUT_PER_MTOK: ${{ inputs.input_per_mtok }}
+          SCORE_OUTPUT_PER_MTOK: ${{ inputs.output_per_mtok }}
+          SCORE_MAX_USD: ${{ inputs.max_usd }}
+          REF: ${{ inputs.ref }}
+        run: |
+          set -o pipefail
+          {
+            echo "## Synthe score"
+            echo
+            echo "Scored \`$REF\` at \`$(git -C synthe rev-parse --short HEAD)\` with the model \`$SCORE_MODEL\`. Cost cap: $SCORE_MAX_USD USD."
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          status=0
+          node scorer/scripts/score/score.mjs 2>&1 | tee -a "$GITHUB_STEP_SUMMARY" || status=$?
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
