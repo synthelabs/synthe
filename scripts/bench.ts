@@ -4,6 +4,7 @@
 //   npm run bench -- --check               run, then fail if false keeps rose or real gains fell against bench/baseline.json
 //   npm run bench -- --check --results F   check an existing results file without running
 //   npm run bench -- --update-baseline     run and write bench/baseline.json (a maintainer does this on main)
+//   npm run bench -- --zoo                 run `synthe solve` on every problem in swarm/zoo/, seeds 1 to 3; writes bench/zoo-results.json
 //   npm run bench -- --live                real judge and checker calls; refuses unless SYNTHE_BENCH_LIVE=1
 import { readFileSync, writeFileSync } from "node:fs";
 import { askLine, checkResults, diffLines, formatTable, runBench, runLive, type Results } from "../bench/bench.ts";
@@ -16,6 +17,8 @@ const value = (name: string) => { const i = args.indexOf(name); return i === -1 
 const known = new Set(["--check", "--results", "--update-baseline", "--live"]);
 
 async function main(): Promise<number> {
+  // The zoo bench has its own runner and options; it is loaded only when asked for.
+  if (flag("--zoo")) return (await import("../bench/zoo-main.ts")).zooMain(args.filter((a) => a !== "--zoo"));
   const unknown = args.filter((a, i) => !known.has(a) && args[i - 1] !== "--results");
   if (unknown.length) {
     console.error(`Unknown option ${unknown[0]}. Options: --check, --results <file>, --update-baseline, --live.`);
