@@ -1,2 +1,3 @@
 {"at":"2026-11-21T06:54:31.087Z","by":"h03","milestone":"P03","text":"Outside proposer protocol: commandProposer, failures become reasons, empty list stops","pr":"https://github.com/synthelabs/synthe/pull/103"}
 {"at":"2026-11-21T07:26:56.386Z","by":"h03","milestone":"P07","text":"Holdout end-to-end test in npm test; P07 passes","pr":"https://github.com/synthelabs/synthe/pull/120"}
+{"at":"2026-11-21T07:37:21.704Z","by":"h03","milestone":"FINAL","text":"Practice zoo: judge-bias, bad-json, protect-trap, exact-lower; 3 run in npm test","pr":"https://github.com/synthelabs/synthe/pull/129"}
