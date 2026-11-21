@@ -12,7 +12,7 @@
     { "id": "P05", "title": "Artifacts that are not code", "needs": ["P02"],
       "statement": "`solve` improves a JSON configuration (parameter tuning), a Markdown document scored by a script, and a CSV data file cleaned to raise a quality score." },
     { "id": "P06", "title": "Honest decisions on noisy measures", "needs": ["P02"],
-      "statement": "With a noisy measure, `solve` keeps a no-op change in no more than 5% of seeded runs, and keeps a real gain of one noise standard deviation in at least 80% of seeded runs when runs is 5." },
+      "statement": "With a noisy measure, `solve` keeps a no-op change in no more than 5% of seeded runs, and keeps a real gain of two noise standard deviations in at least 80% of seeded runs when runs is 5." },
     { "id": "P07", "title": "Held-back split", "needs": ["P02"],
       "statement": "With split.holdout true, a change that wins on train only (it memorizes the train cases) is refused, a change that wins on both is kept, and the proposer never receives a holdout number." },
     { "id": "P08", "title": "Protected and outside paths", "needs": ["P02"],

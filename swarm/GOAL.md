@@ -69,6 +69,7 @@ repository; Synthe works in scratch checkouts and never edits the person's worki
 | `proposer` | no | `{ "command": "..." }` for an outside proposer, or `"model"` (the default) for the configured model. |
 | `budget.max_rounds` | no | Default 6. |
 | `budget.max_calls` | no | Model calls, when the proposer or judge is a model. |
+| `model` | no | `{ "base_url": "...", "model": "..." }` for an OpenAI-compatible chat completions endpoint. Used when `proposer` or `compare` is `"model"`. The key comes only from the `SYNTHE_API_KEY` environment variable, goes only to `base_url`, and never appears in output or files. |
 
 `node src/cli/main.ts problem check <file>` validates a problem file. Exit 0 and a plain summary when it is valid.
 Exit 1 and one line per problem, naming the field, when it is not.
