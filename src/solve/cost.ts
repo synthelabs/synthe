@@ -5,7 +5,9 @@ import type { ModelPrices, Problem, SolveCost } from "./types.ts";
 // meter per problem. result.json shows the totals, and budget.max_usd stops the run before a call that would pass it.
 //
 // A call's cost is known only after it: the provider reports its tokens. So "a call that would pass the limit" is
-// judged by the most expensive call so far. With no call yet, the first call may go when the limit is above 0.
+// judged by the most expensive call so far. Calls can run in parallel (the judge asks several questions at once), so
+// each call in flight reserves that much until it ends, and the check counts the reservations too. Before any call
+// has finished, its cost is unknown: then a second call waits for the first, so parallel calls cannot pass the cap.
 
 export class BudgetError extends Error {}
 
@@ -17,6 +19,9 @@ export class CostMeter {
   outputTokens = 0;
   private usd = 0;
   private dearest = 0;
+  private reserved = 0;
+  private inFlight = 0;
+  private finished: (() => void)[] = [];
   private prices: ModelPrices | undefined;
   private maxUsd: number | null;
   constructor(prices: ModelPrices | undefined, maxUsd: number | null) {
@@ -31,7 +36,7 @@ export class CostMeter {
   // A plain stop reason when the next call would take the known cost above budget.max_usd, else null.
   stopReason(): string | null {
     if (this.maxUsd === null || !this.prices) return null;
-    if (this.usd >= this.maxUsd || this.usd + this.dearest > this.maxUsd) {
+    if (this.usd >= this.maxUsd || this.usd + this.reserved + this.dearest > this.maxUsd) {
       return `Reached the cost limit: ${dollars(this.usd)} spent, and the next model call could take it above ${dollars(this.maxUsd)}.`;
     }
     return null;
@@ -59,16 +64,29 @@ export class CostMeter {
   wrap(model: Model): Model {
     return {
       ask: async (a) => {
+        const capped = this.maxUsd !== null && this.prices !== undefined;
+        // No finished call yet means no known cost to reserve: wait for the call in flight to end first.
+        while (capped && this.calls === 0 && this.inFlight > 0) await new Promise<void>((resolve) => this.finished.push(resolve));
         const why = this.stopReason();
         if (why) throw new BudgetError(why);
+        const hold = this.dearest;
+        this.reserved += hold;
+        this.inFlight++;
+        const release = () => {
+          this.reserved -= hold;
+          this.inFlight--;
+          for (const wake of this.finished.splice(0)) wake();
+        };
         let reply: Reply;
         try {
           reply = await model.ask(a);
         } catch (e) {
           this.add(undefined);
+          release();
           throw e;
         }
         this.add(reply.usage);
+        release();
         return reply;
       },
     };
