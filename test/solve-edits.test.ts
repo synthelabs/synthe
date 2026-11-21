@@ -185,3 +185,16 @@ test("applyProposal: changes the problem folder in the checkout and returns path
   assert.equal(readFileSync(join(wt, "zoo/tune/measure/score.py"), "utf8"), "print(1)\n");
   assert.match((applyProposal(wt, problem, { summary: "s" } as never) as { refused: string }).refused, /no edits/);
 });
+
+test("measurePathsOf: a command's input that artifact names exactly stays editable; its program does not", () => {
+  const { problem } = repo();
+  // README.md is the input of the measure, and the artifact names it exactly: it is the thing to improve.
+  const doc: Problem = { ...problem, artifact: ["README.md", "tools/*.cjs"], measure: { command: "node tools/count.cjs README.md", direction: "higher", runs: 1 } };
+  assert.deepEqual(measurePathsOf(doc).sort(), ["problem.json", "propose.js", "tools/count.cjs"]);
+  // The program a command runs stays refused even when artifact names it exactly.
+  const named: Problem = { ...doc, artifact: ["README.md", "tools/count.cjs"] };
+  assert.ok(measurePathsOf(named).includes("tools/count.cjs"));
+  // A file that only a glob covers stays refused, even as an input.
+  const globbed: Problem = { ...doc, artifact: ["*.md"] };
+  assert.ok(measurePathsOf(globbed).includes("README.md"));
+});

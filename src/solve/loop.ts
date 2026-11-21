@@ -24,7 +24,7 @@ export class SetupError extends Error {}
 // about git, processes or files: solve() below gives it the steps, so this part is tested with fakes.
 
 export type Step = { ok: true } | { ok: false; reason: string };
-export type Proposed = { ok: true; proposals: Proposal[] } | { ok: false; reason: string };
+export type Proposed = { ok: true; proposals: Proposal[] } | { ok: false; reason: string; summary?: string };
 // One measurement of the checkout as it is now. `value` goes to the report; `samples` is opaque to the loop and
 // goes back to decide() as is.
 export type Measured = { ok: true; value: number; samples?: unknown } | { ok: false; reason: string };
@@ -117,7 +117,7 @@ export async function runLoop(steps: LoopSteps, options: LoopOptions): Promise<L
     round++;
     let kept = false;
     if (!proposed.ok) {
-      await record({ round, summary: "", kept: false, reason: `The proposal failed: ${proposed.reason}` });
+      await record({ round, summary: proposed.summary ?? "", kept: false, reason: `The proposal failed: ${proposed.reason}` });
     } else {
       const next = await tryRound(steps, round, proposed.proposals.slice(0, candidates), current, record);
       if (next) { current = next; kept = true; keptAny = true; }
@@ -258,7 +258,8 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
       const files = artifactFiles(scratch.root, problem);
       const { reply, calls: used } = await proposer.propose({ round, goal: problem.goal, files, history: past.map(entry), candidates });
       calls += used;
-      return "failed" in reply ? { ok: false, reason: reply.failed } : { ok: true, proposals: reply.proposals };
+      if ("failed" in reply) return { ok: false, reason: reply.failed, ...(reply.summary ? { summary: reply.summary } : {}) };
+      return { ok: true, proposals: reply.proposals };
     },
     reset: () => scratch.reset(),
     async apply(proposal) {

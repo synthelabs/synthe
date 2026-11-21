@@ -87,7 +87,6 @@ test("a proposal with the wrong shape fails the reply with a reason that names i
   const cases: Array<[unknown, RegExp]> = [
     [{ summary: "no edits" }, /proposal 2 has no "edits"/],
     [{ summary: "bad edit", edits: [{ path: "a", search: "x" }] }, /Edit 1 of the proposer's proposal 2 has no "replace"/],
-    [{ summary: "empty search", edits: [{ path: "a", search: "", replace: "y" }] }, /empty "search"/],
     [{ summary: "no change", edits: [] }, /empty "edits"/],
     [{ edits: [{ path: "a", search: "x", replace: "y" }] }, /no "summary"/],
     ["just text", /proposal 2 is not a JSON object/],
@@ -100,4 +99,16 @@ test("a proposal with the wrong shape fails the reply with a reason that names i
 
 test("a reply that is JSON but not the right shape fails with a reason", () => {
   for (const out of ["[]", "42", "{\"proposal\": []}", "", "null"]) assert.ok(failed(parseReply(out)), out);
+});
+
+test("an empty search is a new file: the reply parses, and edits.ts decides if the file may be made", () => {
+  const reply = parseReply(JSON.stringify({ proposals: [{ summary: "add a file", edits: [{ path: "new.txt", search: "", replace: "hello" }] }] }));
+  assert.deepEqual(reply, { proposals: [{ summary: "add a file", edits: [{ path: "new.txt", search: "", replace: "hello" }] }] });
+});
+
+test("a malformed proposal keeps its summary, so the history names the failed attempt", () => {
+  const reply = parseReply(JSON.stringify({ proposals: [{ summary: "tidy the parser", edits: [{ path: "a", search: "x" }] }] }));
+  assert.equal("failed" in reply && reply.summary, "tidy the parser");
+  const nameless = parseReply(JSON.stringify({ proposals: [{ edits: [] }] }));
+  assert.equal("failed" in nameless && nameless.summary, undefined);
 });

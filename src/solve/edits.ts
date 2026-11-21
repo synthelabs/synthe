@@ -145,7 +145,13 @@ export function measurePathsOf(problem: Problem): string[] {
   if (problem.proposer !== "model") commands.push(problem.proposer.command);
   const file = relative(problem.dir, problem.file).replace(/\\/g, "/");
   if (file && !file.startsWith("..")) extra.push(file);
-  return [...new Set([...commandPaths(commands), ...extra.map(normal)])];
+  // `node count.cjs README.md` runs count.cjs and reads README.md as its input. When artifact names README.md
+  // exactly (no glob), it is the thing to improve, so it stays editable. A program a command runs is always refused,
+  // and so is a file that only a glob covers, the problem file and the judge's cases.
+  const named = new Set(problem.artifact.filter((a) => !/[*?[\]{}]/.test(a)).map(normal));
+  const programs = new Set(commands.flatMap((c) => commandPaths([c]).slice(0, 1)).map(normal));
+  const fromCommands = commandPaths(commands).filter((p) => programs.has(normal(p)) || !named.has(normal(p)));
+  return [...new Set([...fromCommands, ...extra.map(normal)])];
 }
 
 export function rulesFor(problem: Problem): EditRules {

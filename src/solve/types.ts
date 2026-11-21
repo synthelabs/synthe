@@ -45,7 +45,8 @@ export interface Edit { path: string; search: string; replace: string }
 export interface Proposal { summary: string; edits: Edit[] }
 // `failed` is a plain reason: the reply was not valid JSON, had the wrong shape, or the command failed.
 // A failed reply is one failed attempt in the history. It never crashes the run.
-export type ProposerReply = { proposals: Proposal[] } | { failed: string };
+// `summary` is set when one proposal in the reply was malformed and it had a summary.
+export type ProposerReply = { proposals: Proposal[] } | { failed: string; summary?: string };
 // `calls` is how many model calls the request used (0 for an outside command); the loop counts it against max_calls.
 export interface Proposer { propose(request: ProposerRequest): Promise<{ reply: ProposerReply; calls: number }> }
 
