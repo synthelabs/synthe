@@ -30002,9 +30002,21 @@ function winnerIn(text) {
 })().catch((e) => fail("compare.js failed: " + (e && e.message ? e.message : String(e))));
 `;
 }
+function providerKey(provider, env) {
+  if (provider === "anthropic") {
+    const own = env.SYNTHE_ANTHROPIC_KEY?.trim();
+    if (own) return own;
+    const shared = env.SYNTHE_API_KEY?.trim() ?? "";
+    return shared.startsWith("sk-ant-") ? shared : "";
+  }
+  return env.SYNTHE_API_KEY?.trim() ?? "";
+}
 function compareEnv(m, env) {
-  const names2 = m.provider === "anthropic" ? ["SYNTHE_ANTHROPIC_KEY", "SYNTHE_API_KEY", "SYNTHE_ANTHROPIC_BASE_URL"] : ["SYNTHE_API_KEY"];
-  return Object.fromEntries(names2.flatMap((k) => env[k] ? [[k, env[k]]] : []));
+  const key = providerKey(m.provider, env);
+  if (!key) return {};
+  if (m.provider !== "anthropic") return { SYNTHE_API_KEY: key };
+  const base = env.SYNTHE_ANTHROPIC_BASE_URL?.trim();
+  return { SYNTHE_ANTHROPIC_KEY: key, ...base ? { SYNTHE_ANTHROPIC_BASE_URL: base } : {} };
 }
 async function checkJudge(examples, ask2, limit2 = 4) {
   const out = new Array(examples.length);
@@ -30097,15 +30109,6 @@ __export(measure_exports, {
   providerKey: () => providerKey
 });
 import { resolve as resolve4 } from "node:path";
-function providerKey(provider, env) {
-  if (provider === "anthropic") {
-    const own = env.SYNTHE_ANTHROPIC_KEY?.trim();
-    if (own) return own;
-    const shared = env.SYNTHE_API_KEY?.trim() ?? "";
-    return shared.startsWith("sk-ant-") ? shared : "";
-  }
-  return env.SYNTHE_API_KEY?.trim() ?? "";
-}
 async function measureCommand(args, cwd, say, env, client) {
   const takesValue = ["--examples", "--out", "--problem", "--model"];
   const value = (flag) => {
@@ -30174,6 +30177,7 @@ var init_measure = __esm({
     init_openai_compatible();
     init_draft();
     init_problem2();
+    init_draft();
     USAGE = "Usage: npx synthe measure draft --examples <file.jsonl> --out <dir> [--problem <problem-file> | --model <model-id>]";
   }
 });
