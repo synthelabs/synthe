@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { isAbsolute, join, resolve } from "node:path";
 import { decide, decideWithConfirm, type Remeasure } from "./decide.ts";
 import { applyProposal, artifactFiles } from "./edits.ts";
+import { meterFor } from "./cost.ts";
 import { appendHistory, nextRun, readHistory } from "./history.ts";
 import { guardFailure, measure, type Split } from "./measure.ts";
 import { commandCompare, judgeOutputs, readCases, runCases, type Compare, type Outputs } from "./judge.ts";
@@ -47,6 +48,8 @@ export interface LoopSteps {
   record?(attempt: Attempt): Promise<void> | void;
   // Model calls used so far.
   calls?(): number;
+  // A plain reason to stop before the next model call (budget.max_usd), or null.
+  budget?(): string | null;
   say?(line: string): void;
 }
 
@@ -104,6 +107,8 @@ export async function runLoop(steps: LoopSteps, options: LoopOptions): Promise<L
       stopped = `Reached the model call limit (${plural(options.maxCalls, "call")}).`;
       break;
     }
+    const overBudget = steps.budget?.() ?? null;
+    if (overBudget) { stopped = overBudget; break; }
     const proposed = await steps.propose(round + 1, [...earlier, ...attempts], candidates);
     if (proposed.ok && proposed.proposals.length === 0) {
       stopped = "The proposer had nothing more to try.";
@@ -234,6 +239,7 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
   writeRun(gitDir, problem.name, record);
 
   let calls = record.calls;
+  const meter = meterFor(problem);
   let keptCount = record.attempts.filter((a) => a.kept).length;
   let lastPaths: string[] = [];
   let lastProposal: Proposal | null = null;
@@ -245,7 +251,9 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
 
   const steps: LoopSteps = {
     say: io.say,
-    calls: () => calls,
+    // The meter also counts judge calls (compare "model"), which the proposer's own count does not see.
+    calls: () => Math.max(calls, meter.calls),
+    budget: () => meter.stopReason(),
     async propose(round, past, candidates) {
       const files = artifactFiles(scratch.root, problem);
       const { reply, calls: used } = await proposer.propose({ round, goal: problem.goal, files, history: past.map(entry), candidates });
@@ -395,6 +403,7 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     final,
     branch: result.keptAny ? scratch.branch : null,
     attempts: result.attempts,
+    cost: meter.summary(),
   };
   const unit = judged ? "share of cases won" : isJudged(problem.measure) ? undefined : problem.measure.unit;
   writeReport(outDir, solved, { goal: problem.goal, direction, ...(unit ? { unit } : {}) });

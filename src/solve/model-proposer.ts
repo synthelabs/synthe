@@ -1,5 +1,6 @@
 import { anthropicModel, type Model } from "../model/client.ts";
 import { openAiCompatibleModel } from "../model/openai-compatible.ts";
+import { meterFor } from "./cost.ts";
 import { SetupError } from "./loop.ts";
 import type { Edit, Problem, Proposal, Proposer, ProposerReply, ProposerRequest } from "./types.ts";
 
@@ -124,8 +125,10 @@ export function problemModel(problem: Problem, env: NodeJS.ProcessEnv = process.
     if (!anthropic && !config.base_url) throw new SetupError('A "model" proposer or judge needs model.base_url in the problem file.');
     if (!anthropic && !key) throw new SetupError('A "model" proposer or judge needs a key: set the SYNTHE_API_KEY environment variable.');
   }
+  // Every call goes through the problem's cost meter (cost.ts): result.json counts it, and budget.max_usd can stop it.
+  const raw = client ?? (anthropic ? anthropicModel(key, env) : openAiCompatibleModel({ baseUrl: config.base_url ?? "", apiKey: key }));
   return {
-    client: client ?? (anthropic ? anthropicModel(key, env) : openAiCompatibleModel({ baseUrl: config.base_url ?? "", apiKey: key })),
+    client: meterFor(problem).wrap(raw),
     model: config.model,
     hide: (text) => (key ? text.split(key).join("[your key]") : text),
   };

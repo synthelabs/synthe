@@ -23,6 +23,7 @@ export function writeReport(outDir: string, result: SolveResult, extras: ReportE
     final: result.final,
     branch: result.branch,
     attempts: result.attempts.map((a): Attempt => ({ round: a.round, summary: a.summary, kept: a.kept, reason: a.reason, ...(a.before === undefined ? {} : { before: a.before }), ...(a.after === undefined ? {} : { after: a.after }) })),
+    ...(result.cost ? { cost: result.cost } : {}),
   };
   writeFileSync(json, JSON.stringify(ordered, null, 2) + "\n");
   writeFileSync(md, renderReport(ordered, extras));
@@ -51,6 +52,10 @@ export function renderReport(r: SolveResult, extras: ReportExtras = {}): string 
   lines.push(`- Final: ${formatNumber(r.final, u)}`);
   lines.push(`- Attempts: ${r.attempts.length}, kept: ${kept.length}`);
   lines.push(`- Stopped: ${r.stopped}`);
+  if (r.cost && r.cost.calls > 0) {
+    const usd = r.cost.usd === null ? "cost unknown (set model.prices to see it)" : `${r.cost.usd.toFixed(4)} US dollars`;
+    lines.push(`- Model calls: ${r.cost.calls} (${r.cost.input_tokens} input tokens, ${r.cost.output_tokens} output tokens), ${usd}`);
+  }
   lines.push(r.branch
     ? `- Kept changes are on branch \`${r.branch}\`. Your working tree and current branch did not change.`
     : "- No change was kept, so Synthe made no branch. Your working tree and current branch did not change.");
