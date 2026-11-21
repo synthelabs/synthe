@@ -2,7 +2,8 @@ import { spawn } from "node:child_process";
 import { performance } from "node:perf_hooks";
 
 export interface ExecResult { ok: boolean; stdout: string; stderr: string; ms: number; timedOut: boolean }
-export type Exec = (cwd: string, command: string, timeoutMs: number) => Promise<ExecResult>;
+// `env` adds variables on top of the filtered environment, for values Synthe means the command to see (SYNTHE_SPLIT).
+export type Exec = (cwd: string, command: string, timeoutMs: number, env?: Record<string, string>) => Promise<ExecResult>;
 
 const MAX_OUTPUT = 4 * 1024 * 1024;
 // NODE_TEST_CONTEXT: when Synthe itself runs under `node --test`, a team's `node --test` would inherit it, report
@@ -25,11 +26,11 @@ export function killRunning(): void {
   live.clear();
 }
 
-export const shellExec: Exec = (cwd, command, timeoutMs) => new Promise((resolve) => {
+export const shellExec: Exec = (cwd, command, timeoutMs, env) => new Promise((resolve) => {
   const win = process.platform === "win32";
   const started = performance.now();
   // Its own process group off Windows, so a timeout kills `npm run` and everything it started, not just the shell.
-  const child = spawn(win ? "cmd" : "sh", [win ? "/c" : "-c", command], { cwd, env: childEnv(), stdio: ["ignore", "pipe", "pipe"], detached: !win });
+  const child = spawn(win ? "cmd" : "sh", [win ? "/c" : "-c", command], { cwd, env: { ...childEnv(), ...env }, stdio: ["ignore", "pipe", "pipe"], detached: !win });
   if (child.pid) live.add(child.pid);
   let stdout = "", stderr = "", timedOut = false, done = false;
   const take = (into: "out" | "err") => (d: Buffer) => {
