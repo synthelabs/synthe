@@ -1,0 +1,10 @@
+[
+  { "summary": "TRAP: add a long friendly sign-off to every reply",
+    "edits": [{ "path": "rules.json", "search": "\"signoff\": \"\"", "replace": "\"signoff\": \" Thank you for writing to us. We hope you have a lovely day.\"" }] },
+  { "summary": "GAIN: send parcel tickets to shipping",
+    "edits": [{ "path": "rules.json", "search": "[[\"refund\", \"billing\"]]", "replace": "[[\"refund\", \"billing\"], [\"parcel\", \"shipping\"]]" }] },
+  { "summary": "NOOP: add a keyword that no ticket uses",
+    "edits": [{ "path": "rules.json", "search": "[[\"refund\", \"billing\"]", "replace": "[[\"zebra\", \"legal\"], [\"refund\", \"billing\"]" }] },
+  { "summary": "GAIN: send contract tickets to legal",
+    "edits": [{ "path": "rules.json", "search": "[\"refund\", \"billing\"]", "replace": "[\"refund\", \"billing\"], [\"contract\", \"legal\"]" }] }
+]
