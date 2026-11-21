@@ -1,0 +1,1 @@
+{"at":"2026-11-21T07:19:56.535Z","by":"h04","title":"interrupted solve runs: Ctrl-C (SIGINT/SIGTERM) or a crash leaves no scratch worktree, no empty branch, no working-tree change; add a test","milestone":"P02"}
