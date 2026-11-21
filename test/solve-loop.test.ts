@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { runLoop, SetupError, type Attempt, type LoopSteps, type Proposal } from "../src/solve/loop.ts";
+import { runLoop, SetupError, type LoopSteps } from "../src/solve/loop.ts";
+import type { Attempt, Proposal } from "../src/solve/types.ts";
 
 // A fake world: the "file" is one number; a proposal's summary is "+N" or "-N"; higher is better.
 function world(rounds: Proposal[][] | ((round: number, history: Attempt[]) => Proposal[]), opts: { guardFails?: (v: number) => boolean } = {}) {
