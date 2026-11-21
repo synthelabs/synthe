@@ -1,0 +1,1 @@
+{"at":"2026-11-21T12:18:23.340Z","by":"coordinator","title":"problem check: when a file that measure.command names is also listed exactly in artifact, print a plain warning: '<file> is read by the measure and is in artifact: a change to it changes the score.' Keep the edit allowed (#147). Add a unit test.","milestone":"P01"}
