@@ -30959,11 +30959,73 @@ var init_report = __esm({
   }
 });
 
+// src/solve/resume.ts
+import { existsSync as existsSync18, mkdirSync as mkdirSync10, readFileSync as readFileSync21, renameSync as renameSync3, writeFileSync as writeFileSync11 } from "node:fs";
+import { join as join25 } from "node:path";
+function readRun(gitDir, name) {
+  const file = fileOf(gitDir, name);
+  if (!existsSync18(file)) return null;
+  try {
+    const r = JSON.parse(readFileSync21(file, "utf8"));
+    const ok = r && typeof r.run === "number" && (r.status === "running" || r.status === "ended") && typeof r.branch === "string" && typeof r.base === "string" && typeof r.head === "string" && typeof r.rounds === "number" && Array.isArray(r.attempts);
+    if (!ok) return null;
+    return {
+      run: r.run,
+      status: r.status,
+      branch: r.branch,
+      base: r.base,
+      head: r.head,
+      root: typeof r.root === "string" ? r.root : "",
+      pid: typeof r.pid === "number" ? r.pid : 0,
+      rounds: r.rounds,
+      calls: typeof r.calls === "number" ? r.calls : 0,
+      baseline: typeof r.baseline === "number" ? r.baseline : null,
+      attempts: r.attempts
+    };
+  } catch {
+    return null;
+  }
+}
+function writeRun(gitDir, name, record) {
+  const file = fileOf(gitDir, name);
+  mkdirSync10(join25(file, ".."), { recursive: true });
+  writeFileSync11(`${file}.tmp`, JSON.stringify(record, null, 2) + "\n");
+  renameSync3(`${file}.tmp`, file);
+}
+function stillRunning(record) {
+  if (!record.pid || record.pid === process.pid) return false;
+  try {
+    process.kill(record.pid, 0);
+  } catch {
+    return false;
+  }
+  try {
+    return !/^\d+ \(.*\) Z/.test(readFileSync21(`/proc/${record.pid}/stat`, "utf8"));
+  } catch {
+    return true;
+  }
+}
+function idleRounds(record) {
+  let idle = 0;
+  for (let round = record.rounds; round >= 1; round--) {
+    if (record.attempts.some((a) => a.round === round && a.kept)) break;
+    idle++;
+  }
+  return idle;
+}
+var fileOf;
+var init_resume = __esm({
+  "src/solve/resume.ts"() {
+    "use strict";
+    fileOf = (gitDir, name) => join25(gitDir, "synthe", "solve", name, "run.json");
+  }
+});
+
 // src/solve/scratch.ts
 import { execFileSync as execFileSync7 } from "node:child_process";
-import { existsSync as existsSync18, lstatSync as lstatSync4, mkdtempSync as mkdtempSync3, realpathSync as realpathSync3, rmSync as rmSync4, symlinkSync as symlinkSync2, unlinkSync as unlinkSync3 } from "node:fs";
+import { existsSync as existsSync19, lstatSync as lstatSync4, mkdtempSync as mkdtempSync3, realpathSync as realpathSync3, rmSync as rmSync4, symlinkSync as symlinkSync2, unlinkSync as unlinkSync3 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
-import { join as join25, relative as relative3 } from "node:path";
+import { join as join26, relative as relative3 } from "node:path";
 function git2(cwd, args, input) {
   return execFileSync7("git", ["-C", cwd, ...args], {
     encoding: "utf8",
@@ -30994,8 +31056,8 @@ function nextBranch2(top, name) {
   }
   return `${prefix}${max + 1}`;
 }
-async function openScratch(repoRoot, problemDir, name) {
-  const s = openState(repoRoot, problemDir, name);
+async function openScratch(repoRoot, problemDir, name, resume) {
+  const s = openState(repoRoot, problemDir, name, resume);
   let closed = false;
   return {
     root: s.root,
@@ -31011,32 +31073,35 @@ async function openScratch(repoRoot, problemDir, name) {
     }
   };
 }
-function openState(repoRoot, problemDir, name) {
+function openState(repoRoot, problemDir, name, resume) {
   const real = realpathSync3(problemDir);
   const topOut = tryGit(repoRoot || real, ["rev-parse", "--show-toplevel"]);
   if (!topOut) throw new Error(`${problemDir} is not inside a git repository. Run git init and commit the files first.`);
   const top = realpathSync3(topOut.trim());
-  const base = tryGit(top, ["rev-parse", "--verify", "HEAD^{commit}"])?.trim();
+  const base = resume ? tryGit(top, ["rev-parse", "--verify", `${resume.base}^{commit}`])?.trim() : tryGit(top, ["rev-parse", "--verify", "HEAD^{commit}"])?.trim();
+  if (resume && !base) throw new Error(`The stopped run started from commit ${resume.base.slice(0, 7)}, which is no longer in the repository.`);
   if (!base) throw new Error(`The repository at ${top} has no commit yet. Commit the files first.`);
   const rel = relative3(top, real);
   if (rel && !tryGit(top, ["ls-tree", "-d", "--name-only", base, rel])?.trim()) {
     throw new Error(`The folder ${rel} is not committed in ${top}. Commit it first: Synthe works only on committed files.`);
   }
-  const branch = nextBranch2(top, name);
-  const dir = realpathSync3(mkdtempSync3(join25(tmpdir3(), "synthe-solve-")));
+  const branch = resume ? resume.branch : nextBranch2(top, name);
+  if (resume) releaseBranch(top, resume);
+  const dir = realpathSync3(mkdtempSync3(join26(tmpdir3(), "synthe-solve-")));
   try {
-    git2(top, ["worktree", "add", "--quiet", "-b", branch, dir, base]);
+    const start2 = resume ? resume.head : base;
+    git2(top, ["worktree", "add", "--quiet", resume ? "-B" : "-b", branch, dir, start2]);
   } catch (e) {
     rmSync4(dir, { recursive: true, force: true });
     throw new Error(`Could not make a scratch checkout on ${branch}: ${firstLine4(e)}`);
   }
-  const scratch = { top, root: dir, dir: join25(dir, rel), branch, base, links: [] };
+  const scratch = { top, root: dir, dir: join26(dir, rel), branch, base, links: [] };
   for (const from of /* @__PURE__ */ new Set([top, real])) {
-    const to = join25(scratch.root, relative3(top, from));
+    const to = join26(scratch.root, relative3(top, from));
     for (const name2 of LINKED2) {
-      const source = join25(from, name2);
-      const link = join25(to, name2);
-      if (existsSync18(source) && existsSync18(to) && !existsSync18(link)) {
+      const source = join26(from, name2);
+      const link = join26(to, name2);
+      if (existsSync19(source) && existsSync19(to) && !existsSync19(link)) {
         try {
           symlinkSync2(source, link, process.platform === "win32" ? "junction" : "dir");
           scratch.links.push(link);
@@ -31046,6 +31111,18 @@ function openState(repoRoot, problemDir, name) {
     }
   }
   return scratch;
+}
+function releaseBranch(top, resume) {
+  const list = tryGit(top, ["worktree", "list", "--porcelain"]) ?? "";
+  for (const block of list.split("\n\n")) {
+    const path4 = /^worktree (.+)$/m.exec(block)?.[1];
+    const ref = /^branch (.+)$/m.exec(block)?.[1];
+    if (!path4 || ref !== `refs/heads/${resume.branch}`) continue;
+    if (!/synthe-solve-[^/\\]*$/.test(path4)) throw new Error(`The branch ${resume.branch} is checked out in ${path4}. Switch that checkout to another branch first.`);
+    tryGit(top, ["worktree", "remove", "--force", path4]);
+    rmSync4(path4, { recursive: true, force: true });
+  }
+  tryGit(top, ["worktree", "prune"]);
 }
 function headOf(s) {
   return git2(s.root, ["rev-parse", "HEAD"]).trim();
@@ -31083,7 +31160,7 @@ var init_scratch = __esm({
 
 // src/solve/loop.ts
 import { execFileSync as execFileSync8 } from "node:child_process";
-import { isAbsolute as isAbsolute4, join as join26, resolve as resolve6 } from "node:path";
+import { isAbsolute as isAbsolute4, join as join27, resolve as resolve6 } from "node:path";
 async function runLoop2(steps, options) {
   const say = steps.say ?? (() => {
   });
@@ -31091,23 +31168,29 @@ async function runLoop2(steps, options) {
   const patience = options.patience ?? MAX_MISSES2;
   const earlier = options.history ?? [];
   const attempts = [];
+  const prior = options.resume?.attempts ?? [];
   const start2 = await steps.guards();
   if (!start2.ok) throw new SetupError(`${start2.reason} This is before any change, so no change can be judged. Fix the guard first.`);
   const first = await steps.measure();
   if (!first.ok) throw new SetupError(`Could not measure the starting point: ${first.reason}`);
   let current = first;
-  say(`Starting score: ${first.value}.`);
+  const baseline2 = options.resume?.baseline ?? first.value;
+  say(options.resume ? `Resuming after round ${options.resume.rounds}. Score now: ${first.value} (baseline ${baseline2}).` : `Starting score: ${first.value}.`);
   const record = async (attempt) => {
     attempts.push(attempt);
     await steps.record?.(attempt);
     say(`Round ${attempt.round}: ${attempt.summary || "(no summary)"}: ${attempt.kept ? "kept" : "not kept"}. ${attempt.reason}`);
   };
   let stopped = `Reached the round limit (${plural2(options.maxRounds, "round")}).`;
-  let idle = 0;
-  let round = 0;
-  let keptAny = false;
+  let idle = options.resume?.idle ?? 0;
+  let round = options.resume?.rounds ?? 0;
+  let keptAny = prior.some((a) => a.kept);
   while (true) {
     if (round >= options.maxRounds) break;
+    if (idle >= patience) {
+      stopped = `${plural2(patience, "round")} in a row kept nothing.`;
+      break;
+    }
     if (options.maxCalls != null && steps.calls && steps.calls() >= options.maxCalls) {
       stopped = `Reached the model call limit (${plural2(options.maxCalls, "call")}).`;
       break;
@@ -31130,12 +31213,13 @@ async function runLoop2(steps, options) {
       }
     }
     idle = kept ? 0 : idle + 1;
+    await options.onRound?.(round, [...prior, ...attempts]);
     if (idle >= patience) {
       stopped = `${plural2(patience, "round")} in a row kept nothing.`;
       break;
     }
   }
-  return { stopped, baseline: first.value, final: current.value, attempts, rounds: round, keptAny };
+  return { stopped, baseline: baseline2, final: current.value, attempts: [...prior, ...attempts], rounds: round, keptAny };
 }
 async function tryRound(steps, round, proposals, current, record) {
   const tried = [];
@@ -31210,16 +31294,42 @@ async function solve(problem, proposer, options, io2) {
   } catch {
     throw new SetupError(`${problem.dir} is not inside a git repository. Synthe works in a scratch checkout of a git repository.`);
   }
-  const outDir = options.out ? isAbsolute4(options.out) ? options.out : resolve6(process.cwd(), options.out) : join26(repoRoot, ".synthe", "solve", problem.name);
+  const outDir = options.out ? isAbsolute4(options.out) ? options.out : resolve6(process.cwd(), options.out) : join27(repoRoot, ".synthe", "solve", problem.name);
   const history = readHistory(gitDir, problem.name).map((h) => ({ ...h }));
+  const last = readRun(gitDir, problem.name);
+  let from = null;
+  if (options.resume) {
+    if (last?.status === "running") {
+      if (stillRunning(last)) throw new SetupError(`The last run of ${problem.name} is still going (process ${last.pid}). Stop it or let it end, then resume.`);
+      from = last;
+    } else {
+      io2.say(last ? `The last run of ${problem.name} ended normally, so --resume starts a new run.` : `There is no earlier run of ${problem.name}, so --resume starts a new run.`);
+    }
+  }
+  const run2 = from ? from.run : Math.max(nextRun(gitDir, problem.name), (last?.run ?? 0) + 1);
   let scratch;
   try {
-    scratch = await openScratch(repoRoot, problem.dir, problem.name);
+    scratch = await openScratch(repoRoot, problem.dir, problem.name, from ? { branch: from.branch, base: from.base, head: from.head, staleRoot: from.root } : void 0);
   } catch (e) {
-    throw new SetupError(`Could not make the scratch checkout: ${e.message}`);
+    throw new SetupError(`Could not ${from ? "resume on" : "make"} the scratch checkout: ${e.message}`);
   }
-  let calls2 = 0;
-  let keptCount = 0;
+  if (from) io2.say(`Resuming run ${run2} of ${problem.name} on ${scratch.branch} after round ${from.rounds}.`);
+  const record = {
+    run: run2,
+    status: "running",
+    branch: scratch.branch,
+    base: from?.base ?? scratch.base,
+    head: git3(scratch.root, "rev-parse", "HEAD"),
+    root: scratch.root,
+    pid: process.pid,
+    rounds: from?.rounds ?? 0,
+    calls: from?.calls ?? 0,
+    baseline: from?.baseline ?? null,
+    attempts: from?.attempts ?? []
+  };
+  writeRun(gitDir, problem.name, record);
+  let calls2 = record.calls;
+  let keptCount = record.attempts.filter((a) => a.kept).length;
   let lastPaths = [];
   let lastProposal = null;
   const measureAt2 = async (split) => measure(scratch.dir, problem, { ...options.seed !== void 0 ? { seed: options.seed } : {}, ...split ? { split } : {} });
@@ -31257,6 +31367,7 @@ async function solve(problem, proposer, options, io2) {
         if ("failed" in held) return { ok: false, reason: `the held-back split gave no number: ${held.failed}` };
         sample.holdout = held;
       }
+      if (first && record.baseline === null) record.baseline = train.value;
       first = false;
       return { ok: true, value: train.value, samples: sample };
     },
@@ -31291,7 +31402,7 @@ async function solve(problem, proposer, options, io2) {
       keptCount++;
     },
     record(attempt) {
-      appendHistory(gitDir, problem.name, [entry(attempt)]);
+      appendHistory(gitDir, problem.name, [entry(attempt)], run2);
     }
   };
   const cleanUp = async () => {
@@ -31302,7 +31413,17 @@ async function solve(problem, proposer, options, io2) {
 Stopped. Synthe removed its scratch checkout. The ${keptCount === 1 ? "change" : `${keptCount} changes`} kept so far ${keptCount === 1 ? "is" : "are"} on the branch ${scratch.branch}. Your working tree did not change.` : "\nStopped. Synthe removed its scratch checkout and kept no change. Your working tree did not change."));
   let result2;
   try {
-    result2 = await runLoop2(steps, { maxRounds: problem.budget.max_rounds, maxCalls: problem.budget.max_calls, candidates: problem.candidates, history });
+    result2 = await runLoop2(steps, {
+      maxRounds: problem.budget.max_rounds,
+      maxCalls: problem.budget.max_calls,
+      candidates: problem.candidates,
+      history,
+      ...from ? { resume: { rounds: from.rounds, attempts: from.attempts, idle: idleRounds(from), baseline: from.baseline } } : {},
+      onRound(round, attempts) {
+        Object.assign(record, { rounds: round, calls: calls2, attempts, head: git3(scratch.root, "rev-parse", "HEAD") });
+        writeRun(gitDir, problem.name, record);
+      }
+    });
   } catch (e) {
     await cleanUp();
     throw e;
@@ -31319,7 +31440,8 @@ Stopped. Synthe removed its scratch checkout. The ${keptCount === 1 ? "change" :
     attempts: result2.attempts
   };
   writeReport(outDir, solved, { goal: problem.goal, direction, ...problem.measure.unit ? { unit: problem.measure.unit } : {} });
-  io2.say(`Wrote ${join26(outDir, "result.json")} and report.md.`);
+  writeRun(gitDir, problem.name, { ...record, status: "ended" });
+  io2.say(`Wrote ${join27(outDir, "result.json")} and report.md.`);
   if (solved.branch) io2.say(`Kept changes are on the branch ${solved.branch}.`);
   return solved;
 }
@@ -31333,6 +31455,7 @@ var init_loop = __esm({
     init_measure2();
     init_report();
     init_run2();
+    init_resume();
     init_scratch();
     init_types2();
     SetupError = class extends Error {
@@ -31589,10 +31712,11 @@ async function solveCommand(args, cwd, say, env) {
   };
   const file = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--out" && args[i - 1] !== "--seed");
   if (!file) {
-    say("Usage: npx synthe solve <problem-file> [--out DIR] [--seed N]");
+    say("Usage: npx synthe solve <problem-file> [--out DIR] [--seed N] [--resume]");
     return 1;
   }
   const options = {};
+  if (args.includes("--resume")) options.resume = true;
   const out = value("--out");
   if (out) options.out = out;
   const seed = value("--seed");
@@ -31775,7 +31899,7 @@ var init_approval = __esm({
 });
 
 // src/pilot/io.ts
-import { existsSync as existsSync19, linkSync, lstatSync as lstatSync5, mkdirSync as mkdirSync10, readFileSync as readFileSync21, realpathSync as realpathSync4, renameSync as renameSync3, statSync as statSync5, unlinkSync as unlinkSync4, writeFileSync as writeFileSync11 } from "node:fs";
+import { existsSync as existsSync20, linkSync, lstatSync as lstatSync5, mkdirSync as mkdirSync11, readFileSync as readFileSync22, realpathSync as realpathSync4, renameSync as renameSync4, statSync as statSync5, unlinkSync as unlinkSync4, writeFileSync as writeFileSync12 } from "node:fs";
 import { dirname as dirname7, isAbsolute as isAbsolute5, relative as relative4, resolve as resolve7 } from "node:path";
 function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
   let size2;
@@ -31788,7 +31912,7 @@ function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
     throw new PilotError("not_found", `${path4} does not exist or cannot be read.`);
   }
   if (size2 > maxBytes) throw new PilotError("too_large", `${path4} is ${size2} bytes; the limit is ${maxBytes}. Export a smaller, bounded file.`);
-  return readFileSync21(path4, "utf8");
+  return readFileSync22(path4, "utf8");
 }
 function inside(root, name) {
   const full = resolve7(root, name);
@@ -31811,25 +31935,25 @@ function inside(root, name) {
   return full;
 }
 function writeOnce(path4, content) {
-  mkdirSync10(dirname7(path4), { recursive: true });
+  mkdirSync11(dirname7(path4), { recursive: true });
   const tmp = `${path4}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync11(tmp, content, { mode: 384 });
+  writeFileSync12(tmp, content, { mode: 384 });
   try {
     try {
       linkSync(tmp, path4);
       return "written";
     } catch (e) {
       const code = e.code;
-      if (code !== "EEXIST" && !existsSync19(path4)) {
-        renameSync3(tmp, path4);
+      if (code !== "EEXIST" && !existsSync20(path4)) {
+        renameSync4(tmp, path4);
         return "written";
       }
       if (code !== "EEXIST" && code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV") throw e;
     }
-    if (readFileSync21(path4, "utf8") === content) return "already there";
+    if (readFileSync22(path4, "utf8") === content) return "already there";
     throw new PilotError("conflict", `${path4} already exists with different content. Stored pilot records are never replaced.`);
   } finally {
-    if (existsSync19(tmp)) unlinkSync4(tmp);
+    if (existsSync20(tmp)) unlinkSync4(tmp);
   }
 }
 function unsafeKey(value) {
@@ -31849,13 +31973,13 @@ function unsafeKey(value) {
   return null;
 }
 function writeAtomic(path4, content) {
-  mkdirSync10(dirname7(path4), { recursive: true });
+  mkdirSync11(dirname7(path4), { recursive: true });
   const tmp = `${path4}.${process.pid}.tmp`;
   try {
-    writeFileSync11(tmp, content, { mode: 384 });
-    renameSync3(tmp, path4);
+    writeFileSync12(tmp, content, { mode: 384 });
+    renameSync4(tmp, path4);
   } finally {
-    if (existsSync19(tmp)) unlinkSync4(tmp);
+    if (existsSync20(tmp)) unlinkSync4(tmp);
   }
 }
 function printable2(text4, max = 80) {
@@ -32902,8 +33026,8 @@ var init_egress = __esm({
 
 // src/pilot/wrap.ts
 import { createHash as createHash3, createHmac } from "node:crypto";
-import { closeSync as closeSync2, constants as constants2, fstatSync, mkdirSync as mkdirSync11, openSync as openSync2, readSync, writeFileSync as writeFileSync12, writeSync } from "node:fs";
-import { join as join27 } from "node:path";
+import { closeSync as closeSync2, constants as constants2, fstatSync, mkdirSync as mkdirSync12, openSync as openSync2, readSync, writeFileSync as writeFileSync13, writeSync } from "node:fs";
+import { join as join28 } from "node:path";
 function appendLine(path4, text4) {
   const fd = openSync2(path4, constants2.O_RDWR | constants2.O_APPEND | constants2.O_CREAT | (constants2.O_NOFOLLOW ?? 0), 384);
   try {
@@ -32940,13 +33064,13 @@ function pilotRecorder(options) {
   };
   function append(line, at) {
     try {
-      mkdirSync11(logDir, { recursive: true, mode: 448 });
+      mkdirSync12(logDir, { recursive: true, mode: 448 });
       try {
-        writeFileSync12(join27(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
+        writeFileSync13(join28(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
       } catch (e) {
         if (e.code !== "EEXIST") throw e;
       }
-      return appendLine(join27(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
+      return appendLine(join28(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
 `);
     } catch {
       return false;
@@ -35808,8 +35932,8 @@ var init_review = __esm({
 });
 
 // src/pilot/store.ts
-import { appendFileSync as appendFileSync3, closeSync as closeSync3, existsSync as existsSync20, mkdirSync as mkdirSync12, openSync as openSync3, readdirSync as readdirSync3, readFileSync as readFileSync22, statSync as statSync6, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
-import { join as join28 } from "node:path";
+import { appendFileSync as appendFileSync3, closeSync as closeSync3, existsSync as existsSync21, mkdirSync as mkdirSync13, openSync as openSync3, readdirSync as readdirSync3, readFileSync as readFileSync23, statSync as statSync6, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
+import { join as join29 } from "node:path";
 var OBJECT_KINDS, entryHash, MAX_OBJECT_BYTES, LOCK_STALE_MS, HELD, PilotStore;
 var init_store = __esm({
   "src/pilot/store.ts"() {
@@ -35846,7 +35970,7 @@ var init_store = __esm({
       }
       objectPath(kind, id) {
         if (!isSha256(id)) throw new PilotError("usage", `${String(id).slice(0, 80)} is not a full 64-character id.`);
-        return join28(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
+        return join29(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
       }
       // Stores a record under its content id. Storing the same record again is a no-op, so every step can be retried.
       put(kind, value) {
@@ -35864,7 +35988,7 @@ var init_store = __esm({
           writeOnce(path4, content);
         } catch (e) {
           if (!(e instanceof PilotError) || e.code !== "conflict") throw e;
-          if (!content.startsWith(readFileSync22(path4, "utf8"))) {
+          if (!content.startsWith(readFileSync23(path4, "utf8"))) {
             throw new PilotError("tampered", `${path4} already exists with content that does not match its name, so it was changed after it was written. It was not overwritten. Compare it with a backup, or start a new pilot directory.`);
           }
           writeAtomic(path4, content);
@@ -35873,7 +35997,7 @@ var init_store = __esm({
       // Reads a record and checks it still hashes to its name: an edited record is refused, not used.
       get(kind, id) {
         const path4 = this.objectPath(kind, id);
-        if (!existsSync20(path4)) throw new PilotError("not_found", `No ${kind} record ${id.slice(0, 12)} in ${this.dir}.`);
+        if (!existsSync21(path4)) throw new PilotError("not_found", `No ${kind} record ${id.slice(0, 12)} in ${this.dir}.`);
         let value;
         try {
           value = JSON.parse(readBounded(path4, MAX_OBJECT_BYTES));
@@ -35888,11 +36012,11 @@ var init_store = __esm({
         return { id, value: this.get(kind, id) };
       }
       has(kind, id) {
-        return isSha256(id) && existsSync20(this.objectPath(kind, id));
+        return isSha256(id) && existsSync21(this.objectPath(kind, id));
       }
       list(kind) {
-        const dir = join28(this.dir, "objects", kind);
-        if (!existsSync20(dir)) return [];
+        const dir = join29(this.dir, "objects", kind);
+        if (!existsSync21(dir)) return [];
         return readdirSync3(dir).map((f) => f.replace(/\.(json|txt)$/, "")).filter(isSha256).sort();
       }
       // A full id, or a prefix of at least 8 characters that names exactly one record. Approvals and publication
@@ -35916,23 +36040,23 @@ var init_store = __esm({
       }
       getPrompt(id) {
         const path4 = this.objectPath("prompt", id);
-        if (!existsSync20(path4)) throw new PilotError("not_found", `No prompt ${id.slice(0, 12)} in ${this.dir}.`);
+        if (!existsSync21(path4)) throw new PilotError("not_found", `No prompt ${id.slice(0, 12)} in ${this.dir}.`);
         const text4 = readBounded(path4);
         if (promptId(text4) !== id) throw new PilotError("tampered", `The stored prompt ${id.slice(0, 12)} no longer matches its id, so it was changed after it was written.`);
         return text4;
       }
       journalPath() {
-        return join28(this.dir, "journal.jsonl");
+        return join29(this.dir, "journal.jsonl");
       }
       // The sequence number and hash of the newest entry, kept beside the journal. The chain alone cannot show that
       // entries were cut off the end; a journal shorter than its recorded head can.
       headPath() {
-        return join28(this.dir, "journal.head");
+        return join29(this.dir, "journal.head");
       }
       head() {
-        if (!existsSync20(this.headPath())) return null;
+        if (!existsSync21(this.headPath())) return null;
         try {
-          const h = JSON.parse(readFileSync22(this.headPath(), "utf8"));
+          const h = JSON.parse(readFileSync23(this.headPath(), "utf8"));
           if (Number.isInteger(h.seq) && h.seq >= 1 && isSha256(h.hash)) return { seq: h.seq, hash: h.hash };
         } catch {
         }
@@ -35941,7 +36065,7 @@ var init_store = __esm({
       // Every entry, after checking the chain: each line must hash to its own `hash` and name the line before it.
       journal() {
         const path4 = this.journalPath();
-        if (!existsSync20(path4)) return [];
+        if (!existsSync21(path4)) return [];
         const entries = [];
         let prev = null;
         const text4 = readBounded(path4, MAX_OBJECT_BYTES);
@@ -35974,8 +36098,8 @@ var init_store = __esm({
       // next record() removes it.
       tornTail() {
         const path4 = this.journalPath();
-        if (!existsSync20(path4)) return false;
-        const bytes = readFileSync22(path4);
+        if (!existsSync21(path4)) return false;
+        const bytes = readFileSync23(path4);
         return bytes.length > 0 && bytes[bytes.length - 1] !== 10;
       }
       find(step, key) {
@@ -35998,8 +36122,8 @@ var init_store = __esm({
           }
           const rest = { seq: entries.length + 1, at, step, key, refs, prev: entries.at(-1)?.hash ?? null };
           const entry2 = { ...rest, hash: entryHash(rest) };
-          mkdirSync12(this.dir, { recursive: true });
-          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync22(this.journalPath()).lastIndexOf(10) + 1);
+          mkdirSync13(this.dir, { recursive: true });
+          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync23(this.journalPath()).lastIndexOf(10) + 1);
           appendFileSync3(this.journalPath(), `${JSON.stringify(entry2)}
 `, { mode: 384 });
           writeAtomic(this.headPath(), `${JSON.stringify({ seq: entry2.seq, hash: entry2.hash })}
@@ -36032,12 +36156,12 @@ var init_store = __esm({
       // half-written. Only a lock whose owner is gone, or that is older than `staleMs`, is removed, and only after
       // reading it again and finding the same content, so a lock that was replaced in between is not removed.
       acquire(file, staleMs) {
-        mkdirSync12(this.dir, { recursive: true });
-        const lock = join28(this.dir, file);
+        mkdirSync13(this.dir, { recursive: true });
+        const lock = join29(this.dir, file);
         const pause = new Int32Array(new SharedArrayBuffer(4));
         const read = () => {
           try {
-            return { text: readFileSync22(lock, "utf8"), age: Date.now() - statSync6(lock).mtimeMs };
+            return { text: readFileSync23(lock, "utf8"), age: Date.now() - statSync6(lock).mtimeMs };
           } catch (e) {
             if (e.code === "ENOENT") return null;
             throw e;
@@ -36086,14 +36210,14 @@ var init_store = __esm({
         return () => {
           HELD.delete(lock);
           try {
-            if (readFileSync22(lock, "utf8") === String(process.pid)) unlinkSync5(lock);
+            if (readFileSync23(lock, "utf8") === String(process.pid)) unlinkSync5(lock);
           } catch {
           }
         };
       }
       // A rendering of stored records. Safe to overwrite: the records, not the report, are the evidence.
       report(name, content) {
-        const path4 = join28(this.dir, "reports", name);
+        const path4 = join29(this.dir, "reports", name);
         writeAtomic(path4, content);
         return path4;
       }
@@ -36103,8 +36227,8 @@ var init_store = __esm({
 
 // src/pilot/commands.ts
 import { execFileSync as execFileSync9 } from "node:child_process";
-import { appendFileSync as appendFileSync4, existsSync as existsSync21, readFileSync as readFileSync23 } from "node:fs";
-import { dirname as dirname8, join as join29 } from "node:path";
+import { appendFileSync as appendFileSync4, existsSync as existsSync22, readFileSync as readFileSync24 } from "node:fs";
+import { dirname as dirname8, join as join30 } from "node:path";
 function defaultGit(args, cwd) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_")));
   return execFileSync9("git", args, { cwd, encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
@@ -36178,14 +36302,14 @@ function assertNotFromTheFuture(imported, now, cutoff) {
   }
 }
 function protectDirectory(dir, say) {
-  if (existsSync21(join29(dir, ".git"))) {
+  if (existsSync22(join30(dir, ".git"))) {
     throw new PilotError("usage", "The pilot directory is a git repository root. It holds customer data; use a directory that is not a repository, or a subdirectory with its own .gitignore.");
   }
-  const file = join29(dir, ".gitignore");
-  if (!existsSync21(file)) writeOnce(file, "*\n");
+  const file = join30(dir, ".gitignore");
+  if (!existsSync22(file)) writeOnce(file, "*\n");
   else {
-    const lines = readFileSync23(file, "utf8").split(/\r?\n/).map((l) => l.trim());
-    if (!lines.includes("*")) appendFileSync4(file, `${readFileSync23(file, "utf8").endsWith("\n") ? "" : "\n"}*
+    const lines = readFileSync24(file, "utf8").split(/\r?\n/).map((l) => l.trim());
+    if (!lines.includes("*")) appendFileSync4(file, `${readFileSync24(file, "utf8").endsWith("\n") ? "" : "\n"}*
 `);
   }
   try {
@@ -36936,7 +37060,7 @@ var init_commands = __esm({
 
 // src/pilot/calllog.ts
 import { readdirSync as readdirSync4 } from "node:fs";
-import { join as join30 } from "node:path";
+import { join as join31 } from "node:path";
 function valuesBefore(c, before) {
   const values = /* @__PURE__ */ new Map();
   const seen = /* @__PURE__ */ new Map();
@@ -36972,7 +37096,7 @@ function readCallLog(dir) {
     return c;
   };
   for (const name of names2) {
-    const text4 = readBounded(join30(dir, name), MAX_LOG_FILE_BYTES);
+    const text4 = readBounded(join31(dir, name), MAX_LOG_FILE_BYTES);
     const parts = text4.split("\n");
     parts.pop();
     for (const part of parts) {
@@ -37070,7 +37194,7 @@ var init_calllog = __esm({
 });
 
 // src/pilot/export.ts
-import { join as join31 } from "node:path";
+import { join as join32 } from "node:path";
 function buildLogExport(input) {
   const { log, contract } = input;
   if (contract.query_hash !== void 0) throw new PilotError("usage", "The metric contract pins a query hash. A call-log export comes from the wrapper, not from a query, so it cannot carry one. Export from the signed-off query instead.");
@@ -37199,9 +37323,9 @@ function writeLogExport(input) {
     tags,
     ...experiment2 ? { window: experiment2.window } : {}
   });
-  const outDir = input.outDir ?? join31(store.dir, "exports");
-  const path4 = join31(outDir, `${exportId}.json`);
-  writeAtomic(join31(outDir, csvName), built.csv);
+  const outDir = input.outDir ?? join32(store.dir, "exports");
+  const path4 = join32(outDir, `${exportId}.json`);
+  writeAtomic(join32(outDir, csvName), built.csv);
   writeAtomic(path4, `${JSON.stringify(built.header, null, 2)}
 `);
   const notes = [];
@@ -37277,7 +37401,7 @@ var init_export = __esm({
 
 // src/pilot/watch.ts
 import { readdirSync as readdirSync5 } from "node:fs";
-import { dirname as dirname9, join as join32 } from "node:path";
+import { dirname as dirname9, join as join33 } from "node:path";
 function whole(interimDays) {
   if (!Number.isInteger(interimDays) || interimDays < 1) throw new PilotError("usage", "--interim-days must be a whole number of 1 or more.");
   return interimDays;
@@ -37378,7 +37502,7 @@ function scanInbox(store, inbox, experimentId, spec) {
   const importedKeys = new Set(imports.map((e) => e.key));
   const newest = Math.max(-Infinity, ...imports.map((e) => ms(store.get("telemetry", e.refs.telemetry).exported_at)));
   const files = names2.map((name) => {
-    const path4 = join32(inbox, name);
+    const path4 = join33(inbox, name);
     try {
       const imported = importTelemetry({
         text: readBounded(path4),
@@ -37564,8 +37688,8 @@ var init_watch = __esm({
 });
 
 // src/pilot/cases.ts
-import { existsSync as existsSync22, mkdirSync as mkdirSync13, writeFileSync as writeFileSync13 } from "node:fs";
-import { dirname as dirname10, join as join33, resolve as resolve8 } from "node:path";
+import { existsSync as existsSync23, mkdirSync as mkdirSync14, writeFileSync as writeFileSync14 } from "node:fs";
+import { dirname as dirname10, join as join34, resolve as resolve8 } from "node:path";
 function describe(check) {
   switch (check.kind) {
     case "reply_includes":
@@ -37658,16 +37782,16 @@ async function cases3(store, flags, deps) {
   let path4;
   if (typeof outFlag === "string") {
     path4 = resolve8(outFlag);
-    if (existsSync22(path4)) throw new PilotError("conflict", `${printable2(outFlag, 200)} already exists. Name a new file with --out, then copy the lines you want into your scenarios file yourself.`);
-    mkdirSync13(dirname10(path4), { recursive: true });
+    if (existsSync23(path4)) throw new PilotError("conflict", `${printable2(outFlag, 200)} already exists. Name a new file with --out, then copy the lines you want into your scenarios file yourself.`);
+    mkdirSync14(dirname10(path4), { recursive: true });
     try {
-      writeFileSync13(path4, text4, { flag: "wx", mode: 384 });
+      writeFileSync14(path4, text4, { flag: "wx", mode: 384 });
     } catch (e) {
       if (e.code === "EEXIST") throw new PilotError("conflict", `${printable2(outFlag, 200)} already exists. Name a new file with --out.`);
       throw e;
     }
   } else {
-    path4 = join33(store.dir, "cases", `cases-${shortId(id)}.jsonl`);
+    path4 = join34(store.dir, "cases", `cases-${shortId(id)}.jsonl`);
     writeAtomic(path4, text4);
   }
   deps.say(`Wrote ${path4}`);
@@ -38341,16 +38465,16 @@ __export(demo_exports, {
   demo: () => demo
 });
 import { execFileSync as execFileSync10 } from "node:child_process";
-import { existsSync as existsSync23, mkdirSync as mkdirSync14, readdirSync as readdirSync6, readFileSync as readFileSync24, statSync as statSync7, writeFileSync as writeFileSync14 } from "node:fs";
-import { dirname as dirname11, join as join34, resolve as resolve9 } from "node:path";
+import { existsSync as existsSync24, mkdirSync as mkdirSync15, readdirSync as readdirSync6, readFileSync as readFileSync25, statSync as statSync7, writeFileSync as writeFileSync15 } from "node:fs";
+import { dirname as dirname11, join as join35, resolve as resolve9 } from "node:path";
 function git4(args, cwd) {
   const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_"))), ...GIT_ENV };
   return execFileSync10("git", args, { cwd, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
 }
 function filesUnder(dir) {
-  if (!existsSync23(dir)) return [];
+  if (!existsSync24(dir)) return [];
   return readdirSync6(dir).flatMap((name) => {
-    const path4 = join34(dir, name);
+    const path4 = join35(dir, name);
     return statSync7(path4).isDirectory() ? filesUnder(path4) : [path4];
   });
 }
@@ -38359,20 +38483,20 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
   const outFlag = flags.out;
   if (typeof outFlag !== "string" || !outFlag.trim()) throw new PilotError("usage", "--out is required: a new, empty directory for the demo's inputs, pilot records and reports.");
   const out = resolve9(outFlag);
-  if (existsSync23(out) && readdirSync6(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
-  const inputs = join34(out, "inputs");
-  const repoDir = join34(out, "customer-repo");
-  const dir = join34(out, "pilot");
-  mkdirSync14(inputs, { recursive: true });
-  mkdirSync14(join34(repoDir, dirname11(DEMO.prompt_path)), { recursive: true });
+  if (existsSync24(out) && readdirSync6(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
+  const inputs = join35(out, "inputs");
+  const repoDir = join35(out, "customer-repo");
+  const dir = join35(out, "pilot");
+  mkdirSync15(inputs, { recursive: true });
+  mkdirSync15(join35(repoDir, dirname11(DEMO.prompt_path)), { recursive: true });
   const put = (name, content) => {
-    const path4 = join34(inputs, name);
-    writeFileSync14(path4, content);
+    const path4 = join35(inputs, name);
+    writeFileSync15(path4, content);
     return path4;
   };
   const json = (value) => `${JSON.stringify(value, null, 2)}
 `;
-  writeFileSync14(join34(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
+  writeFileSync15(join35(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
   git4(["init", "-q", "-b", DEMO.base], repoDir);
   git4(["add", DEMO.prompt_path], repoDir);
   git4(["commit", "-q", "-m", "Juniper prompt v14"], repoDir);
@@ -38433,7 +38557,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Synthe enterprise pilot: synthetic run for Fernhill Outfitters' support agent Juniper (all data invented).");
     say(`Inputs: ${inputs}   Pilot records and reports: ${dir}`);
     expect("init succeeds", await run2("Freeze the contract and the baseline prompt", ["init", "--config", put("pilot.json", json(demoConfig())), "--repo-dir", repoDir]) === 0);
-    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync23(join34(dir, "reports", "baseline.md")));
+    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync24(join35(dir, "reports", "baseline.md")));
     expect("pack frozen", await run2("Freeze the redacted conversation pack", ["pack", "--file", put("pack.v1.json", json(demoPack()))]) === 0);
     const packV1 = activePack(store);
     expect("discover succeeds", await run2("Find recurring failures on the discovery cases", ["discover", "--model", model]) === 0);
@@ -38540,7 +38664,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("approval recorded against the exact candidate and experiment", await run2("Record the approval", ["approve", "--candidate", candD, "--experiment", expD, "--approver", DEMO.metric_owner]) === 0);
     const tagD = candidateTag(candD);
     const specD = store.get("experiment", expD);
-    const logDir = join34(out, "agent-log");
+    const logDir = join35(out, "agent-log");
     let recorderClock = 0;
     const traffic = demoTraffic({
       recorder: pilotRecorder({ logDir, agent: "Juniper", idKey: DEMO_ID_KEY, now: () => new Date(recorderClock) }),
@@ -38557,7 +38681,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     });
     const looksD = () => store.find("analysis.decided").filter((e) => e.refs.experiment === expD);
     const importsD = () => store.find("telemetry.imported").filter((e) => e.refs.scope === expD).length;
-    const watchMd = () => readFileSync24(join34(dir, "reports", "WATCH.md"), "utf8");
+    const watchMd = () => readFileSync25(join35(dir, "reports", "WATCH.md"), "utf8");
     const tick2 = async (title, iso3) => {
       traffic.upTo(Date.parse(iso3));
       atTime(iso3);
@@ -38568,7 +38692,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const lastLook = () => store.get("analysis", looksD().at(-1)?.refs.analysis ?? "");
     expect("watch --log without --assignment is refused, even while no look is due", await run2("Try a watch tick without saying how traffic was assigned", ["watch", "--log", logDir]) === 1 && looksD().length === 0);
     const t0 = await tick2("Watch tick before the experiment starts (2026-11-27)", "2026-11-27T09:00:00Z");
-    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join34(dir, "exports")).length === 0);
+    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join35(dir, "exports")).length === 0);
     const t1 = await tick2("Watch tick at the end of day 1 (2026-11-29)", "2026-11-29T23:30:00Z");
     expect("day 1: one interim look, HOLD", t1.code === 0 && looksD().length === 1 && lastLook().recommendation === "hold" && lastLook().final === false && importsD() === 1);
     const t1b = await tick2("Watch tick again on day 1, twenty minutes later", "2026-11-29T23:50:00Z");
@@ -38582,9 +38706,9 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("the cutoff: the final analysis is HOLD (inconclusive), final", t4.code === 0 && looksD().length === 4 && finalD.recommendation === "hold" && finalD.final === true && t4.md.startsWith("# HOLD"));
     expect("the lift is real but smaller than the minimum effect, so it is not a keep", (finalD.primary.candidate.estimate ?? 0) - (finalD.primary.baseline.estimate ?? 0) < specD.primary.min_effect);
     const importsAtFinal = importsD();
-    const exportsAtFinal = filesUnder(join34(dir, "exports")).length;
+    const exportsAtFinal = filesUnder(join35(dir, "exports")).length;
     const t5 = await tick2("Watch tick after the final analysis (2026-12-16)", "2026-12-16T09:00:00Z");
-    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join34(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
+    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join35(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
     const pl = traffic.planted;
     const byVersion = (m) => Object.entries(m).sort().map(([t, n]) => `${t} ${n}`).join(", ");
     const count3 = (m) => Object.values(m).reduce((a, b) => a + b, 0);
@@ -38597,9 +38721,9 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect(`the cutoff export notes carry the planted counts (${count3(pl.no_outcome)} no outcome, ${count3(pl.two_versions)} two versions, ${pl.other_version_after_outcome} after the outcome, ${pl.outcome_after_other_version} of them with the outcome recorded again, ${pl.outcome_without_call} outcome without a call), in the tick's output and in WATCH.md`, count3(pl.no_outcome) === TRAFFIC.no_outcome.length && count3(pl.two_versions) === TRAFFIC.call_before_outcome.length && pl.other_version_after_outcome === TRAFFIC.call_after_outcome.length && pl.outcome_after_other_version === TRAFFIC.repeat_after_other_call.length && pl.outcome_without_call === TRAFFIC.outcome_without_call.length && notesOk(t4.out) && notesOk(t4.md));
     expect("every conversation with a recorded call is a row, including the ones with no outcome or two versions", finalD.coverage.rows === 14 * TRAFFIC.per_day);
     expect("no new GitHub request was made after the review", github.requests.length === requestsAfterReview);
-    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync24(p, "utf8")).join("\n");
+    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync25(p, "utf8")).join("\n");
     const rawId = /fernhill-(conv|unit|orphan)-/;
-    const pilotText = [...filesUnder(join34(dir, "reports")), ...filesUnder(join34(dir, "exports")), join34(dir, "journal.jsonl")].map((p) => readFileSync24(p, "utf8")).join("\n");
+    const pilotText = [...filesUnder(join35(dir, "reports")), ...filesUnder(join35(dir, "exports")), join35(dir, "journal.jsonl")].map((p) => readFileSync25(p, "utf8")).join("\n");
     const canariesList = Object.values(CANARIES);
     expect(`the ${filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).length} log files hold no raw conversation or unit id and no message text`, logText.length > 0 && !rawId.test(logText) && !traffic.rawIds.filter((_, i) => i % 997 === 0).some((id) => logText.includes(id)) && !canariesList.some((c) => logText.toLowerCase().includes(c.toLowerCase())));
     expect("the exports, reports and journal hold no raw conversation or unit id either", !rawId.test(pilotText));
@@ -38612,8 +38736,8 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const canaries = Object.values(CANARIES);
     const leaks = (text4) => canaries.some((c) => text4.toLowerCase().includes(c.toLowerCase()));
     expect(`nothing sent to GitHub holds pack conversation text (${github.requests.length} requests checked)`, !github.requests.some((r) => leaks(r.body) || leaks(r.path)));
-    expect("no report holds pack conversation text", !filesUnder(join34(dir, "reports")).some((p) => leaks(readFileSync24(p, "utf8"))));
-    expect("the journal holds no pack conversation text", !leaks(readFileSync24(join34(dir, "journal.jsonl"), "utf8")));
+    expect("no report holds pack conversation text", !filesUnder(join35(dir, "reports")).some((p) => leaks(readFileSync25(p, "utf8"))));
+    expect("the journal holds no pack conversation text", !leaks(readFileSync25(join35(dir, "journal.jsonl"), "utf8")));
     expect("nothing printed by the commands holds pack conversation text", !leaks(transcript2.join("\n")));
     expect("the GitHub token went only to the loopback server and was never printed", github.requests.every((r) => r.authorization === "Bearer demo-token-for-the-loopback-server") && !transcript2.join("\n").includes("demo-token-for-the-loopback-server"));
     expect("no provider credential was read: the commands saw only the GitHub token variable", Object.keys(inner.env).length === 1);
@@ -38621,21 +38745,21 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Outcomes:");
     for (const line of outcomes) say(`- ${line}`);
     const decisionFiles = [`replay-${shortId(candA)}-pack-v1.md`, `decision-${shortId(expB)}.md`, `decision-${shortId(expC)}.md`, `decision-${shortId(expD)}.md`];
-    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync23(join34(dir, "reports", f))));
+    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync24(join35(dir, "reports", f))));
     say("");
     say("The four outcomes, and the file that holds each decision:");
-    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join34(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
-    say(`- Reverted: candidate ${shortId(candB)}   ${join34(dir, "reports", `decision-${shortId(expB)}.md`)}`);
-    say(`- Kept: candidate ${shortId(candC)}   ${join34(dir, "reports", `decision-${shortId(expC)}.md`)}`);
-    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join34(dir, "reports", `decision-${shortId(expD)}.md`)}`);
+    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join35(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
+    say(`- Reverted: candidate ${shortId(candB)}   ${join35(dir, "reports", `decision-${shortId(expB)}.md`)}`);
+    say(`- Kept: candidate ${shortId(candC)}   ${join35(dir, "reports", `decision-${shortId(expC)}.md`)}`);
+    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join35(dir, "reports", `decision-${shortId(expD)}.md`)}`);
     say("");
     say("Evidence to open:");
-    say(`- ${join34(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
-    say(`- ${join34(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
-    say(`- ${join34(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
-    say(`- ${join34(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
-    say(`- ${join34(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
-    say(`- ${join34(dir, "journal.jsonl")}   every step, in order`);
+    say(`- ${join35(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
+    say(`- ${join35(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
+    say(`- ${join35(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
+    say(`- ${join35(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
+    say(`- ${join35(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
+    say(`- ${join35(dir, "journal.jsonl")}   every step, in order`);
     say("");
     say(failures.length === 0 ? `Synthetic pilot passed: ${step} steps, every expectation held (${((Date.now() - startedAt) / 1e3).toFixed(1)} s).` : `Synthetic pilot FAILED: ${failures.length} expectation(s) did not hold:`);
     for (const f of failures) say(`- ${f}`);
@@ -38842,7 +38966,7 @@ init_prompt();
 init_state();
 init_safety();
 import { spawn as spawn4 } from "node:child_process";
-import { existsSync as existsSync24, readFileSync as readFileSync25, writeFileSync as writeFileSync15 } from "node:fs";
+import { existsSync as existsSync25, readFileSync as readFileSync26, writeFileSync as writeFileSync16 } from "node:fs";
 import { createInterface as createInterface4 } from "node:readline/promises";
 
 // src/loop/report.ts
@@ -43783,10 +43907,10 @@ function onInterrupt2(cleanup) {
     for (const s of signals) process.off(s, stop2);
   };
 }
-var template = () => readFileSync25(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync26(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms2) => new Promise((r) => setTimeout(r, ms2)) };
 function setUpHere() {
-  if (existsSync24(GOAL_FILE)) return true;
+  if (existsSync25(GOAL_FILE)) return true;
   console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
   process.exitCode = 1;
   return false;
@@ -43815,7 +43939,7 @@ async function status2() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync25(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync26(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -43823,7 +43947,7 @@ async function status2() {
   const sameModel = sameModelNote(goal.models);
   if (sameModel) console.log(sameModel);
   try {
-    const rows = parseScenarios(readFileSync25(goal.scenarios, "utf8"));
+    const rows = parseScenarios(readFileSync26(goal.scenarios, "utf8"));
     const power = powerLines(goal, rows.filter((r) => r.split === "train").length, rows.filter((r) => r.split === "holdout").length);
     console.log(`What your test cases can detect: ${power[0]} ${power.at(-1)}`);
   } catch {
@@ -43842,7 +43966,7 @@ async function changes() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync25(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync26(GOAL_FILE, "utf8"));
   console.log(changesText(goal, s));
 }
 async function stop() {
@@ -43861,7 +43985,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync25(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync26(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -43871,7 +43995,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync24(goal.scenarios) ? sha256(readFileSync25(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync25(goal.scenarios) ? sha256(readFileSync26(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -43900,7 +44024,7 @@ async function undoRound() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync25(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync26(GOAL_FILE, "utf8"));
   const token2 = (await run("gh", ["auth", "token"])).trim();
   const history = async (path4) => {
     const shas = (await run("git", ["log", "--format=%H", "--", path4])).split("\n").filter(Boolean);
@@ -43910,7 +44034,7 @@ async function undoRound() {
 }
 function localRun(command) {
   if (!setUpHere()) return null;
-  const goal = parseGoal(readFileSync25(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync26(GOAL_FILE, "utf8"));
   const credential = localCredential(process.env, goal.provider);
   if (!credential) {
     console.log(noLocalCredential(command, goal));
@@ -43918,13 +44042,13 @@ function localRun(command) {
     return null;
   }
   console.log(credential.line);
-  const prompt = readPrompt(readFileSync25(goal.prompt.path, "utf8"), goal, null);
+  const prompt = readPrompt(readFileSync26(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync25(goal.scenarios, "utf8")), model: configuredModel(credential.key, goal.provider) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync26(goal.scenarios, "utf8")), model: configuredModel(credential.key, goal.provider) };
 }
 function noLocalCredential(command, goal) {
   if (goal.provider?.kind === "openai-compatible") return `\`npx synthe ${command}\` runs on your computer, changing nothing, and needs your key for ${providerHost(goal.provider)}. Set SYNTHE_API_KEY in your environment, then run this again.`;
@@ -43954,8 +44078,8 @@ async function calibrateChecks() {
   const result2 = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result2) return;
   if (result2.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync25(GOAL_FILE, "utf8"));
-    writeFileSync15(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result2.checks }, null, 2)}
+    const saved = JSON.parse(readFileSync26(GOAL_FILE, "utf8"));
+    writeFileSync16(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result2.checks }, null, 2)}
 `);
     console.log(`
 Saved your reworded checks in ${GOAL_FILE}. Push them so Synthe's next round uses them:`);
@@ -44024,7 +44148,7 @@ async function main2() {
   else if (command === "submit") process.exitCode = await submit({ say: console.log, ask, run, exec: shellExec, env: process.env }, process.cwd(), submitOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
-    process.exitCode = await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync25(GOAL_FILE, "utf8")).provider, process.cwd()) ? 0 : 1;
+    process.exitCode = await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync26(GOAL_FILE, "utf8")).provider, process.cwd()) ? 0 : 1;
   } else if (command === "upgrade") console.log(upgrade(process.cwd(), template()));
   else if (command === "stop") await stop();
   else if (command === "status") await status2();
