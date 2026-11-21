@@ -4,6 +4,7 @@ import { decide } from "./decide.ts";
 import { applyProposal, artifactFiles } from "./edits.ts";
 import { appendHistory, readHistory } from "./history.ts";
 import { failedGuard, measure, type Split } from "./measure.ts";
+import { commandCompare, judgeOutputs, readCases, runCases, type Outputs } from "./judge.ts";
 import { writeReport } from "./report.ts";
 import { openScratch, type Scratch } from "./scratch.ts";
 import { isJudged, MAX_MISSES, type Attempt, type Decision, type HistoryEntry, type Measurement, type Problem, type Proposal, type Proposer, type SolveOptions, type SolveResult } from "./types.ts";
@@ -24,8 +25,9 @@ export type Proposed = { ok: true; proposals: Proposal[] } | { ok: false; reason
 // goes back to decide() as is.
 export type Measured = { ok: true; value: number; samples?: unknown } | { ok: false; reason: string };
 type Ok = Measured & { ok: true };
-// `strength` ranks the proposals of one round that pass the rule: the highest is kept.
-export interface StepDecision { keep: boolean; reason: string; strength?: number }
+// `strength` ranks the proposals of one round that pass the rule: the highest is kept. `value`, when given, is the
+// attempt's "after" number in place of the measured value: a judged measure only has a number for a comparison.
+export interface StepDecision { keep: boolean; reason: string; strength?: number; value?: number }
 
 export interface LoopSteps {
   // `history` holds every earlier attempt, from earlier runs too.
@@ -130,6 +132,7 @@ async function tryRound(steps: LoopSteps, round: number, proposals: Proposal[], 
     attempt.after = measured.value;
     const decision = await steps.decide(current, measured);
     attempt.reason = decision.reason;
+    if (decision.value !== undefined) attempt.after = decision.value;
     if (!decision.keep) continue;
     passed.push(attempt);
     const strength = decision.strength ?? 0;
@@ -164,8 +167,9 @@ interface Sample { train: Measurement; holdout?: Measurement }
 const entry = (a: Attempt): HistoryEntry => ({ round: a.round, summary: a.summary, kept: a.kept, reason: a.reason });
 
 export async function solve(problem: Problem, proposer: Proposer, options: SolveOptions, io: SolveIo): Promise<SolveResult> {
-  if (isJudged(problem.measure)) throw new SetupError("Judged measures (measure.judge) are not supported by solve yet.");
-  const direction = problem.measure.direction;
+  const judged = isJudged(problem.measure) ? problem.measure.judge : null;
+  if (judged?.compare === "model") throw new SetupError('measure.judge.compare "model" is not supported by solve yet. Give a compare command.');
+  const direction = isJudged(problem.measure) ? "higher" : problem.measure.direction;
   let repoRoot: string, gitDir: string;
   try {
     repoRoot = git(problem.dir, "rev-parse", "--show-toplevel");
@@ -246,6 +250,35 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
       appendHistory(gitDir, problem.name, [entry(attempt)]);
     },
   };
+  // A judged measure has no number for one version alone, only for a comparison. So each version's "measurement"
+  // is its outputs, and decide() asks the judge. The numbers in the report are the share of cases the newer
+  // version won (a tie is half): 0.5 is the starting point, and `final` compares the last kept version with it.
+  let judgeFinal: (() => Promise<number>) | null = null;
+  if (judged) {
+    const cases = readCases(scratch.dir, judged.cases);
+    if ("failed" in cases) {
+      await scratch.close(false);
+      throw new SetupError(`The judged measure could not start: ${cases.failed}`);
+    }
+    const compareFn = commandCompare(scratch.dir, judged.compare);
+    let baseOutputs: Outputs | null = null;
+    steps.measure = async () => {
+      const out = await runCases(scratch.dir, judged.run, cases);
+      if ("failed" in out) return { ok: false, reason: out.failed };
+      baseOutputs ??= out;
+      return { ok: true, value: 0.5, samples: out };
+    };
+    steps.decide = async (kept, cand) => {
+      const d = await judgeOutputs(cases, kept.samples as Outputs, cand.samples as Outputs, compareFn);
+      return { keep: d.keep, reason: d.reason, strength: d.share, value: d.share };
+    };
+    judgeFinal = async () => {
+      await scratch.reset();
+      const out = await runCases(scratch.dir, judged.run, cases);
+      if ("failed" in out || !baseOutputs) return 0.5;
+      return (await judgeOutputs(cases, baseOutputs, out, compareFn)).share;
+    };
+  }
   let result: LoopResult;
   try {
     result = await runLoop(steps, { maxRounds: problem.budget.max_rounds, maxCalls: problem.budget.max_calls, candidates: problem.candidates, history });
@@ -253,12 +286,16 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     await scratch.close(false);
     throw e;
   }
+  let final = result.final;
+  if (judgeFinal && result.keptAny) {
+    try { final = await judgeFinal(); } catch { /* the report keeps 0.5 */ }
+  }
   await scratch.close(result.keptAny);
   const solved: SolveResult = {
     problem: problem.name,
     stopped: result.stopped,
     baseline: result.baseline,
-    final: result.final,
+    final,
     branch: result.keptAny ? scratch.branch : null,
     attempts: result.attempts,
   };
