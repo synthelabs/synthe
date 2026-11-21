@@ -25,7 +25,8 @@ export interface Problem {
   guards: string[];
   split: { holdout: boolean };
   proposer: { command: string } | "model";
-  budget: { max_rounds: number; max_calls: number | null };
+  // max_usd (GOAL-2.md) needs model.prices; problem check refuses it without them.
+  budget: { max_rounds: number; max_calls: number | null; max_usd?: number | null };
   model?: ModelConfig;
   candidates: number;
   dir: string;
@@ -58,6 +59,9 @@ export interface Decision { keep: boolean; reason: string }
 // One row of result.json's `attempts`. `before` and `after` are absent when the attempt was never measured.
 export interface Attempt { round: number; summary: string; kept: boolean; reason: string; before?: number; after?: number }
 
+// GOAL-2.md: model calls of every kind and their tokens. usd is null when calls were made without model.prices.
+export interface SolveCost { calls: number; input_tokens: number; output_tokens: number; usd: number | null }
+
 export interface SolveResult {
   problem: string;
   stopped: string;
@@ -65,6 +69,7 @@ export interface SolveResult {
   final: number;
   branch: string | null;
   attempts: Attempt[];
+  cost?: SolveCost;
 }
 
 // `resume`: go on with the most recent run of the problem when it stopped before its own stop rule (GOAL-2.md).
