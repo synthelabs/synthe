@@ -7,6 +7,15 @@ export interface RunOptions { stdin?: string; env?: Record<string, string>; time
 export const COMMAND_TIMEOUT_MS = 600_000;
 const MAX_OUTPUT = 4 * 1024 * 1024;
 
+// The commands that run now. They are detached (their own process group, so a timeout can stop the whole tree),
+// so they do not get the terminal's Ctrl-C: an interrupted run must stop them itself, with stopRunning.
+const running = new Set<() => void>();
+
+// Stops every command that runs now, with its child processes. Synchronous: a signal handler calls it.
+export function stopRunning(): void {
+  for (const stop of [...running]) stop();
+}
+
 // Runs one shell command of the problem (measure, guard, proposer, judge) and never throws. The command gets the
 // person's environment without Synthe's own keys and tokens (see childEnv), plus only the SYNTHE_* values named in
 // `env`, such as SYNTHE_SPLIT and SYNTHE_SEED. So a measure command can never read SYNTHE_API_KEY.
@@ -17,13 +26,13 @@ export function runCommand(cwd: string, command: string, o: RunOptions = {}): Pr
     let stdout = "", stderr = "", timedOut = false, done = false;
     child.stdout.on("data", (d: Buffer) => { if (stdout.length < MAX_OUTPUT) stdout += d.toString().slice(0, MAX_OUTPUT - stdout.length); });
     child.stderr.on("data", (d: Buffer) => { if (stderr.length < MAX_OUTPUT) stderr += d.toString().slice(0, MAX_OUTPUT - stderr.length); });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try { if (win) child.kill("SIGKILL"); else process.kill(-child.pid!, "SIGKILL"); } catch { /* already gone */ }
-    }, o.timeoutMs ?? COMMAND_TIMEOUT_MS);
+    const kill = () => { try { if (win) child.kill("SIGKILL"); else process.kill(-child.pid!, "SIGKILL"); } catch { /* already gone */ } };
+    running.add(kill);
+    const timer = setTimeout(() => { timedOut = true; kill(); }, o.timeoutMs ?? COMMAND_TIMEOUT_MS);
     const finish = (code: number | null) => {
       if (done) return;
       done = true;
+      running.delete(kill);
       clearTimeout(timer);
       resolve({ ok: code === 0 && !timedOut, code, stdout, stderr, timedOut });
     };

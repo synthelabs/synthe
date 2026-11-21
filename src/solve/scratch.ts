@@ -62,8 +62,12 @@ export function nextBranch(top: string, name: string): string {
 
 // Throws an Error with a plain message when the folder is not in a git repository, the repository has no commit,
 // or the problem folder is not committed. `repoRoot` may be empty: the root is then found from `problemDir`.
+// The scratch checkouts that are open now, so an interrupted run can remove them (closeOpenScratches).
+const open = new Set<State>();
+
 export async function openScratch(repoRoot: string, problemDir: string, name: string): Promise<Scratch> {
   const s = openState(repoRoot, problemDir, name);
+  open.add(s);
   let closed = false;
   return {
     root: s.root,
@@ -73,8 +77,9 @@ export async function openScratch(repoRoot: string, problemDir: string, name: st
     commit: async (paths, message) => commitKept(s, paths, message),
     reset: async () => resetScratch(s),
     close: async (keepBranch) => {
-      if (closed) return;
+      if (closed || !open.has(s)) return;
       closed = true;
+      open.delete(s);
       closeScratch(s, keepBranch);
     },
   };
@@ -139,6 +144,20 @@ function commitKept(s: State, paths: string[], message: string): string {
 function resetScratch(s: State): void {
   git(s.root, ["reset", "--hard", "--quiet", "HEAD"]);
   git(s.root, ["clean", "-fdq", ...LINKED.flatMap((n) => ["-e", n])]);
+}
+
+// For Ctrl-C or a kill: removes every open scratch checkout, synchronously. A branch stays only when it holds a
+// kept change (a commit after the base); an empty branch is deleted. Returns the branches that stay.
+export function closeOpenScratches(): string[] {
+  const kept: string[] = [];
+  for (const s of [...open]) {
+    open.delete(s);
+    let keep = false;
+    try { keep = headOf(s) !== s.base; } catch { /* the checkout is broken: nothing to keep */ }
+    closeScratch(s, keep);
+    if (keep) kept.push(s.branch);
+  }
+  return kept;
 }
 
 // Removes the scratch checkout. The branch stays only when the run kept a change, so a run that keeps nothing
