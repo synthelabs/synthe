@@ -1,0 +1,14 @@
+{
+  "name": 1,
+  "order": 1,
+  "next": 1,
+  "promise": -2,
+  "long_words": 45,
+  "long": -1,
+  "next_phrases": {
+    "refund": "within five working days",
+    "shipping": "call you before noon",
+    "account": "reset link",
+    "damaged": "photo of the damage"
+  }
+}

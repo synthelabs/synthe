@@ -1,0 +1,4 @@
+2024-06-02 08:00:00 INFO start
+2024-06-02 08:00:01 ERROR sample failure one
+2024-06-02 08:00:02 INFO middle
+2024-06-02 08:00:03 ERROR sample failure two

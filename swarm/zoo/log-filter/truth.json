@@ -1,0 +1,7 @@
+{
+  "say in the comment which levels count": "noop",
+  "match the levels in any letter case": "real",
+  "print the known attention lines directly": "trap",
+  "list only upper-case errors as wanted": "trap",
+  "also print fatal lines": "real"
+}

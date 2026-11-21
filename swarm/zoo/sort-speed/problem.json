@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "sort-speed",
+  "goal": "Make sorting the order list faster without changing its result.",
+  "artifact": [
+    "lib/**/*.cjs"
+  ],
+  "protect": [
+    "measure/**",
+    "checks/**",
+    "noise.json"
+  ],
+  "measure": {
+    "command": "node measure/time.cjs",
+    "direction": "lower",
+    "unit": "ms",
+    "runs": 3
+  },
+  "guards": [
+    "node checks/sort.cjs"
+  ],
+  "proposer": {
+    "command": "node propose.cjs"
+  },
+  "budget": {
+    "max_rounds": 8
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "entry": "src/app.cjs",
+  "modules": ["src/core.cjs", "src/format.cjs", "src/legacy.cjs", "src/charts.cjs"],
+  "minify": false,
+  "source_maps": true
+}

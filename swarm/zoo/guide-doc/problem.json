@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "guide-doc",
+  "goal": "Make the user guide complete: the required sections, a usage example and short lines.",
+  "artifact": [
+    "docs/*.md"
+  ],
+  "protect": [
+    "measure/**",
+    "checks/**"
+  ],
+  "measure": {
+    "command": "node measure/score.cjs",
+    "direction": "higher",
+    "unit": "points"
+  },
+  "guards": [
+    "node checks/prose.cjs"
+  ],
+  "proposer": {
+    "command": "node propose.cjs"
+  },
+  "budget": {
+    "max_rounds": 10
+  }
+}

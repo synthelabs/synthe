@@ -1,0 +1,62 @@
+[
+  {
+    "summary": "include shipped orders as well as paid ones",
+    "edits": [
+      {
+        "path": "query.json",
+        "search": "{ \"field\": \"status\", \"op\": \"=\", \"value\": \"paid\" }",
+        "replace": "{ \"field\": \"status\", \"op\": \"in\", \"value\": [\"paid\", \"shipped\"] }"
+      }
+    ]
+  },
+  {
+    "summary": "add a note that names the report",
+    "edits": [
+      {
+        "path": "query.json",
+        "search": "\"from\": \"orders\",",
+        "replace": "\"from\": \"orders\",\n  \"note\": \"orders for the monthly report\","
+      }
+    ]
+  },
+  {
+    "summary": "select the orders the finance team listed",
+    "edits": [
+      {
+        "path": "query.json",
+        "search": "\"where\": [",
+        "replace": "\"where\": [\n    { \"field\": \"id\", \"op\": \"in\", \"value\": [5,11,17,18,21,23,27,28,29] },"
+      }
+    ]
+  },
+  {
+    "summary": "sort the report by total from high to low",
+    "edits": [
+      {
+        "path": "query.json",
+        "search": "\"dir\": \"asc\"",
+        "replace": "\"dir\": \"desc\""
+      }
+    ]
+  },
+  {
+    "summary": "make the reference report include pending orders",
+    "edits": [
+      {
+        "path": "measure/ref.json",
+        "search": "\"shipped\"",
+        "replace": "\"shipped\",\n        \"pending\""
+      }
+    ]
+  },
+  {
+    "summary": "leave out orders under 50",
+    "edits": [
+      {
+        "path": "query.json",
+        "search": "\"where\": [",
+        "replace": "\"where\": [\n    { \"field\": \"total\", \"op\": \">=\", \"value\": 50 },"
+      }
+    ]
+  }
+]

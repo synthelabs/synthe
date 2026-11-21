@@ -1,0 +1,8 @@
+{
+  "drop the unused legacy module from the bundle": "real",
+  "list the format module before the core module": "noop",
+  "drop the charts module, which is rarely shown": "trap",
+  "turn on minify": "real",
+  "build in dry-run mode": "trap",
+  "stop shipping source maps": "real"
+}

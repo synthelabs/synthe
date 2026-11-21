@@ -1,0 +1,1 @@
+[{"fn":"mean","args":[1,2,3],"want":2},{"fn":"mean","args":[],"want":0},{"fn":"mean","args":[10,20],"want":15},{"fn":"median","args":[3,1,2],"want":2},{"fn":"median","args":[4,1,3,2],"want":2.5},{"fn":"median","args":[10,20],"want":15},{"fn":"spread","args":[1,5],"want":4},{"fn":"spread","args":[],"want":0},{"fn":"spread","args":[7],"want":0}]

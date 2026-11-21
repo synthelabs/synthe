@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "slug-cases",
+  "goal": "Make the slug function produce the expected slug for more titles.",
+  "artifact": [
+    "slug.cjs"
+  ],
+  "protect": [
+    "measure/**",
+    "checks/**"
+  ],
+  "measure": {
+    "command": "node measure/count.cjs",
+    "direction": "higher",
+    "unit": "cases",
+    "runs": 1
+  },
+  "guards": [
+    "node checks/guard.cjs"
+  ],
+  "proposer": {
+    "command": "node propose.cjs"
+  },
+  "budget": {
+    "max_rounds": 9
+  }
+}
