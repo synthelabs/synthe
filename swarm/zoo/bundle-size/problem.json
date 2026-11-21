@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "bundle-size",
+  "goal": "Make the shipped bundle smaller while the app still works.",
+  "artifact": [
+    "build.json"
+  ],
+  "protect": [
+    "measure/**",
+    "checks/**",
+    "src/**"
+  ],
+  "measure": {
+    "command": "node measure/size.cjs",
+    "direction": "lower",
+    "unit": "bytes",
+    "runs": 1
+  },
+  "guards": [
+    "node checks/smoke.cjs"
+  ],
+  "proposer": {
+    "command": "node propose.cjs"
+  },
+  "budget": {
+    "max_rounds": 8
+  }
+}

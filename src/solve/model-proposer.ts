@@ -10,8 +10,6 @@ import type { Edit, Problem, Proposal, Proposer, ProposerReply, ProposerRequest 
 // The key comes only from SYNTHE_API_KEY and goes only to problem.model.base_url (openAiCompatibleModel never reads
 // another variable and refuses redirects). It never appears in a reason: every reason passes through hide().
 
-// A setup problem (no key, no base_url, no model) is a SetupError: the CLI prints it and exits 1.
-
 const MAX_TOKENS = 16_000;
 
 // The reply shape. Sent as a JSON schema when the server takes one; openAiCompatibleModel puts it in the message
@@ -100,27 +98,40 @@ export function parseProposals(text: string): ProposerReply {
   return { proposals };
 }
 
-// Builds the proposer for proposer "model". Throws SetupError before any call when the problem cannot reach a model.
-// Every later problem is `{ failed: reason }`. `client` is for tests; a run builds the OpenAI-compatible client.
-export function modelProposer(problem: Problem, env: NodeJS.ProcessEnv = process.env, client?: Model): Proposer {
+// A problem's model connection: the client, the model id, and hide() to take the key out of any text. Shared by the
+// model proposer and the model judge (compare "model"). Throws SetupError before any call when the problem cannot
+// reach a model. `client` is for tests; a run builds the OpenAI-compatible client from base_url and SYNTHE_API_KEY.
+export interface ProblemModel { client: Model; model: string; hide(text: string): string }
+
+export function problemModel(problem: Problem, env: NodeJS.ProcessEnv = process.env, client?: Model): ProblemModel {
   const key = env.SYNTHE_API_KEY?.trim() ?? "";
   const config = problem.model;
-  if (!config?.model) throw new SetupError('proposer "model" needs model.model in the problem file.');
+  if (!config?.model) throw new SetupError('A "model" proposer or judge needs model.model in the problem file.');
   if (!client) {
-    if (!config.base_url) throw new SetupError('proposer "model" needs model.base_url in the problem file.');
-    if (!key) throw new SetupError('proposer "model" needs a key: set the SYNTHE_API_KEY environment variable.');
+    if (!config.base_url) throw new SetupError('A "model" proposer or judge needs model.base_url in the problem file.');
+    if (!key) throw new SetupError('A "model" proposer or judge needs a key: set the SYNTHE_API_KEY environment variable.');
   }
-  const model = client ?? openAiCompatibleModel({ baseUrl: config.base_url, apiKey: key });
-  const hide = (s: string) => (key ? s.split(key).join("[your key]") : s);
+  return {
+    client: client ?? openAiCompatibleModel({ baseUrl: config.base_url, apiKey: key }),
+    model: config.model,
+    hide: (text) => (key ? text.split(key).join("[your key]") : text),
+  };
+}
+
+// Why a reply had no text, in plain words.
+export function noTextReason(stopReason: string | null | undefined): string {
+  return stopReason === "length" ? "it was cut off at the length limit"
+    : stopReason === "refusal" ? "the model refused"
+    : `it ended with "${stopReason ?? "no reason"}"`;
+}
+
+// Builds the proposer for proposer "model". Every problem after setup is `{ failed: reason }`.
+export function modelProposer(problem: Problem, env: NodeJS.ProcessEnv = process.env, client?: Model): Proposer {
+  const { client: model, model: id, hide } = problemModel(problem, env, client);
   const ask = async (request: ProposerRequest): Promise<ProposerReply> => {
     try {
-      const reply = await model.ask({ model: config.model, system: SYSTEM, user: buildUser(request), maxTokens: MAX_TOKENS, schema: PROPOSALS_SCHEMA });
-      if (reply.text === null) {
-        const why = reply.stopReason === "length" ? "it was cut off at the length limit"
-          : reply.stopReason === "refusal" ? "the model refused"
-          : `it ended with "${reply.stopReason ?? "no reason"}"`;
-        return { failed: hide(`The model gave no usable reply: ${why}.`) };
-      }
+      const reply = await model.ask({ model: id, system: SYSTEM, user: buildUser(request), maxTokens: MAX_TOKENS, schema: PROPOSALS_SCHEMA });
+      if (reply.text === null) return { failed: hide(`The model gave no usable reply: ${noTextReason(reply.stopReason)}.`) };
       const parsed = parseProposals(reply.text);
       return "failed" in parsed ? { failed: hide(parsed.failed) } : parsed;
     } catch (error) {

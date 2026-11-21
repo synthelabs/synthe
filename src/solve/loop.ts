@@ -4,8 +4,10 @@ import { decide, decideWithConfirm, type Remeasure } from "./decide.ts";
 import { applyProposal, artifactFiles } from "./edits.ts";
 import { appendHistory, readHistory } from "./history.ts";
 import { failedGuard, measure, type Split } from "./measure.ts";
-import { commandCompare, judgeOutputs, readCases, runCases, type Outputs } from "./judge.ts";
+import { commandCompare, judgeOutputs, readCases, runCases, type Compare, type Outputs } from "./judge.ts";
+import { modelCompare } from "./model-compare.ts";
 import { writeReport } from "./report.ts";
+import { stopRunning } from "./run.ts";
 import { openScratch, type Scratch } from "./scratch.ts";
 import { isJudged, MAX_MISSES, type Attempt, type Decision, type HistoryEntry, type Measurement, type Problem, type Proposal, type Proposer, type SolveOptions, type SolveResult } from "./types.ts";
 
@@ -166,9 +168,20 @@ interface Sample { train: Measurement; holdout?: Measurement }
 // The proposer only hears the round, summary, kept flag and reason: never a holdout number.
 const entry = (a: Attempt): HistoryEntry => ({ round: a.round, summary: a.summary, kept: a.kept, reason: a.reason });
 
+// Ctrl-C, a kill or the terminal closing: clean up, say what is left, and exit 130. Returns the function that
+// removes the handlers.
+function onInterrupt(cleanUp: () => Promise<void>, say: () => void): () => void {
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+  const stop = () => {
+    const exit = () => { say(); process.exit(130); };
+    cleanUp().then(exit, exit);
+  };
+  for (const s of signals) process.once(s, stop);
+  return () => { for (const s of signals) process.off(s, stop); };
+}
+
 export async function solve(problem: Problem, proposer: Proposer, options: SolveOptions, io: SolveIo): Promise<SolveResult> {
   const judged = isJudged(problem.measure) ? problem.measure.judge : null;
-  if (judged?.compare === "model") throw new SetupError('measure.judge.compare "model" is not supported by solve yet. Give a compare command.');
   const direction = isJudged(problem.measure) ? "higher" : problem.measure.direction;
   let repoRoot: string, gitDir: string;
   try {
@@ -188,6 +201,7 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
   }
 
   let calls = 0;
+  let keptCount = 0;
   let lastPaths: string[] = [];
   let lastProposal: Proposal | null = null;
   const measureAt = async (split?: Split): Promise<Measurement | { failed: string }> =>
@@ -264,6 +278,7 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     },
     async keep(proposal, round) {
       await scratch.commit(lastPaths, `synthe solve ${problem.name}, round ${round}: ${proposal.summary || "change"}`.slice(0, 200));
+      keptCount++;
     },
     record(attempt) {
       appendHistory(gitDir, problem.name, [entry(attempt)]);
@@ -279,7 +294,15 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
       await scratch.close(false);
       throw new SetupError(`The judged measure could not start: ${cases.failed}`);
     }
-    const compareFn = commandCompare(scratch.dir, judged.compare);
+    let compareFn: Compare;
+    try {
+      compareFn = judged.compare === "model" ? modelCompare(problem, io.env) : commandCompare(scratch.dir, judged.compare);
+    } catch (e) {
+      await scratch.close(false);
+      throw new SetupError(`The judged measure could not start: ${(e as Error).message}`);
+    }
+    // A model judge's questions are model calls and count against budget.max_calls; a compare command's are not.
+    const judgeCalls = (d: { calls: number }) => { if (judged.compare === "model") calls += d.calls; };
     let baseOutputs: Outputs | null = null;
     steps.measure = async () => {
       const out = await runCases(scratch.dir, judged.run, cases);
@@ -289,25 +312,34 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     };
     steps.decide = async (kept, cand) => {
       const d = await judgeOutputs(cases, kept.samples as Outputs, cand.samples as Outputs, compareFn);
+      judgeCalls(d);
       return { keep: d.keep, reason: d.reason, strength: d.share, value: d.share };
     };
     judgeFinal = async () => {
       await scratch.reset();
       const out = await runCases(scratch.dir, judged.run, cases);
       if ("failed" in out || !baseOutputs) return 0.5;
-      return (await judgeOutputs(cases, baseOutputs, out, compareFn)).share;
+      const d = await judgeOutputs(cases, baseOutputs, out, compareFn);
+      judgeCalls(d);
+      return d.share;
     };
   }
+  // A crash or a Ctrl-C must leave no scratch worktree and no empty branch. A branch that holds kept changes stays:
+  // that work was measured and is worth keeping.
+  const cleanUp = async () => { stopRunning(); await scratch.close(keptCount > 0); };
+  const unhook = onInterrupt(cleanUp, () => io.say(keptCount > 0
+    ? `\nStopped. Synthe removed its scratch checkout. The ${keptCount === 1 ? "change" : `${keptCount} changes`} kept so far ${keptCount === 1 ? "is" : "are"} on the branch ${scratch.branch}. Your working tree did not change.`
+    : "\nStopped. Synthe removed its scratch checkout and kept no change. Your working tree did not change."));
   let result: LoopResult;
+  let final: number;
   try {
     result = await runLoop(steps, { maxRounds: problem.budget.max_rounds, maxCalls: problem.budget.max_calls, candidates: problem.candidates, history });
+    final = judgeFinal && result.keptAny ? await judgeFinal() : result.final;
   } catch (e) {
-    await scratch.close(false);
+    await cleanUp();
     throw e;
-  }
-  let final = result.final;
-  if (judgeFinal && result.keptAny) {
-    try { final = await judgeFinal(); } catch { /* the report keeps 0.5 */ }
+  } finally {
+    unhook();
   }
   await scratch.close(result.keptAny);
   const solved: SolveResult = {

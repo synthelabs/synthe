@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "name": "phone-regex",
+  "goal": "Make the phone number pattern accept more real phone numbers and still refuse what is not one.",
+  "artifact": [
+    "pattern.txt"
+  ],
+  "protect": [
+    "measure/**",
+    "checks/**"
+  ],
+  "measure": {
+    "command": "node measure/score.cjs",
+    "direction": "higher",
+    "unit": "%",
+    "runs": 1
+  },
+  "guards": [
+    "node checks/negatives.cjs"
+  ],
+  "split": {
+    "holdout": true
+  },
+  "proposer": {
+    "command": "node propose.cjs"
+  },
+  "budget": {
+    "max_rounds": 8
+  }
+}

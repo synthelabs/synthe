@@ -30311,10 +30311,21 @@ var init_history = __esm({
 
 // src/solve/run.ts
 import { spawn as spawn3 } from "node:child_process";
+function stopRunning() {
+  const win3 = process.platform === "win32";
+  for (const pid of live2) {
+    try {
+      process.kill(win3 ? pid : -pid, "SIGKILL");
+    } catch {
+    }
+  }
+  live2.clear();
+}
 function runCommand(cwd, command, o = {}) {
   return new Promise((resolve9) => {
     const win3 = process.platform === "win32";
     const child = spawn3(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: { ...childEnv(), ...o.env }, stdio: ["pipe", "pipe", "pipe"], detached: !win3 });
+    if (child.pid) live2.add(child.pid);
     let stdout = "", stderr = "", timedOut = false, done = false;
     child.stdout.on("data", (d) => {
       if (stdout.length < MAX_OUTPUT2) stdout += d.toString().slice(0, MAX_OUTPUT2 - stdout.length);
@@ -30333,6 +30344,7 @@ function runCommand(cwd, command, o = {}) {
     const finish = (code) => {
       if (done) return;
       done = true;
+      if (child.pid) live2.delete(child.pid);
       clearTimeout(timer);
       resolve9({ ok: code === 0 && !timedOut, code, stdout, stderr, timedOut });
     };
@@ -30346,13 +30358,14 @@ function runCommand(cwd, command, o = {}) {
     child.stdin.end(o.stdin ?? "");
   });
 }
-var COMMAND_TIMEOUT_MS2, MAX_OUTPUT2;
+var COMMAND_TIMEOUT_MS2, MAX_OUTPUT2, live2;
 var init_run2 = __esm({
   "src/solve/run.ts"() {
     "use strict";
     init_exec();
     COMMAND_TIMEOUT_MS2 = 6e5;
     MAX_OUTPUT2 = 4 * 1024 * 1024;
+    live2 = /* @__PURE__ */ new Set();
   }
 });
 
@@ -30700,6 +30713,20 @@ async function tryRound(steps, round, proposals, current, record) {
   for (const a of tried) await record(a);
   return next;
 }
+function onInterrupt(cleanUp, say) {
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
+  const stop2 = () => {
+    const exit = () => {
+      say();
+      process.exit(130);
+    };
+    cleanUp().then(exit, exit);
+  };
+  for (const s of signals) process.once(s, stop2);
+  return () => {
+    for (const s of signals) process.off(s, stop2);
+  };
+}
 async function solve(problem, proposer, options, io2) {
   if (isJudged(problem.measure)) throw new SetupError("Judged measures (measure.judge) are not supported by solve yet.");
   const direction = problem.measure.direction;
@@ -30719,6 +30746,7 @@ async function solve(problem, proposer, options, io2) {
     throw new SetupError(`Could not make the scratch checkout: ${e.message}`);
   }
   let calls2 = 0;
+  let keptCount = 0;
   let lastPaths = [];
   let lastProposal = null;
   const measureAt2 = async (split) => measure(scratch.dir, problem, { ...options.seed !== void 0 ? { seed: options.seed } : {}, ...split ? { split } : {} });
@@ -30787,17 +30815,26 @@ async function solve(problem, proposer, options, io2) {
     },
     async keep(proposal, round) {
       await scratch.commit(lastPaths, `synthe solve ${problem.name}, round ${round}: ${proposal.summary || "change"}`.slice(0, 200));
+      keptCount++;
     },
     record(attempt) {
       appendHistory(gitDir, problem.name, [entry(attempt)]);
     }
   };
+  const cleanUp = async () => {
+    stopRunning();
+    await scratch.close(keptCount > 0);
+  };
+  const unhook = onInterrupt(cleanUp, () => io2.say(keptCount > 0 ? `
+Stopped. Synthe removed its scratch checkout. The ${keptCount === 1 ? "change" : `${keptCount} changes`} kept so far ${keptCount === 1 ? "is" : "are"} on the branch ${scratch.branch}. Your working tree did not change.` : "\nStopped. Synthe removed its scratch checkout and kept no change. Your working tree did not change."));
   let result2;
   try {
     result2 = await runLoop2(steps, { maxRounds: problem.budget.max_rounds, maxCalls: problem.budget.max_calls, candidates: problem.candidates, history });
   } catch (e) {
-    await scratch.close(false);
+    await cleanUp();
     throw e;
+  } finally {
+    unhook();
   }
   await scratch.close(result2.keptAny);
   const solved = {
@@ -30822,6 +30859,7 @@ var init_loop = __esm({
     init_history();
     init_measure();
     init_report();
+    init_run2();
     init_scratch();
     init_types2();
     SetupError = class extends Error {
@@ -30878,23 +30916,29 @@ function parseProposals(text4) {
   }
   return { proposals };
 }
-function modelProposer(problem, env = process.env, client) {
+function problemModel(problem, env = process.env, client) {
   const key = env.SYNTHE_API_KEY?.trim() ?? "";
   const config = problem.model;
-  if (!config?.model) throw new SetupError('proposer "model" needs model.model in the problem file.');
+  if (!config?.model) throw new SetupError('A "model" proposer or judge needs model.model in the problem file.');
   if (!client) {
-    if (!config.base_url) throw new SetupError('proposer "model" needs model.base_url in the problem file.');
-    if (!key) throw new SetupError('proposer "model" needs a key: set the SYNTHE_API_KEY environment variable.');
+    if (!config.base_url) throw new SetupError('A "model" proposer or judge needs model.base_url in the problem file.');
+    if (!key) throw new SetupError('A "model" proposer or judge needs a key: set the SYNTHE_API_KEY environment variable.');
   }
-  const model = client ?? openAiCompatibleModel({ baseUrl: config.base_url, apiKey: key });
-  const hide = (s) => key ? s.split(key).join("[your key]") : s;
+  return {
+    client: client ?? openAiCompatibleModel({ baseUrl: config.base_url, apiKey: key }),
+    model: config.model,
+    hide: (text4) => key ? text4.split(key).join("[your key]") : text4
+  };
+}
+function noTextReason(stopReason) {
+  return stopReason === "length" ? "it was cut off at the length limit" : stopReason === "refusal" ? "the model refused" : `it ended with "${stopReason ?? "no reason"}"`;
+}
+function modelProposer(problem, env = process.env, client) {
+  const { client: model, model: id, hide } = problemModel(problem, env, client);
   const ask2 = async (request) => {
     try {
-      const reply = await model.ask({ model: config.model, system: SYSTEM, user: buildUser(request), maxTokens: MAX_TOKENS, schema: PROPOSALS_SCHEMA });
-      if (reply.text === null) {
-        const why = reply.stopReason === "length" ? "it was cut off at the length limit" : reply.stopReason === "refusal" ? "the model refused" : `it ended with "${reply.stopReason ?? "no reason"}"`;
-        return { failed: hide(`The model gave no usable reply: ${why}.`) };
-      }
+      const reply = await model.ask({ model: id, system: SYSTEM, user: buildUser(request), maxTokens: MAX_TOKENS, schema: PROPOSALS_SCHEMA });
+      if (reply.text === null) return { failed: hide(`The model gave no usable reply: ${noTextReason(reply.stopReason)}.`) };
       const parsed = parseProposals(reply.text);
       return "failed" in parsed ? { failed: hide(parsed.failed) } : parsed;
     } catch (error) {
@@ -38713,12 +38757,12 @@ function mergeFromPool(a) {
   const trainIds = new Set(a.train.map((s) => s.id));
   const saved = validPool(a.pool);
   if (saved.length === 0) return { candidate: null, skipped: "the pool is empty" };
-  const live2 = saved.map((e) => ({ ...e, wonOn: e.wonOn.filter((id) => trainIds.has(id)) })).filter((e) => e.wonOn.length > 0 && !("problem" in apply(prompt, e, goal))).sort((x, y) => x.round - y.round);
-  if (live2.length === 0) return { candidate: null, skipped: "no pooled change still applies to the current prompt" };
+  const live3 = saved.map((e) => ({ ...e, wonOn: e.wonOn.filter((id) => trainIds.has(id)) })).filter((e) => e.wonOn.length > 0 && !("problem" in apply(prompt, e, goal))).sort((x, y) => x.round - y.round);
+  if (live3.length === 0) return { candidate: null, skipped: "no pooled change still applies to the current prompt" };
   const now = sha256(prompt);
   const options = [
-    ...live2.flatMap((x, i) => live2.slice(i + 1).map((y) => [x, y])),
-    ...live2.filter((e) => e.promptHash !== now).map((e) => [e])
+    ...live3.flatMap((x, i) => live3.slice(i + 1).map((y) => [x, y])),
+    ...live3.filter((e) => e.promptHash !== now).map((e) => [e])
   ];
   const cover = (o) => new Set(o.flatMap((e) => e.wonOn)).size;
   const newest = (o) => o.reduce((n, e) => n + e.round, 0) / o.length;
@@ -41731,7 +41775,7 @@ var package_default = {
   },
   scripts: {
     build: "node scripts/build.mjs",
-    test: "node --test test/*.test.ts",
+    test: "node scripts/with-tmp.mjs node --test test/*.test.ts",
     typecheck: "tsc --noEmit",
     prepublishOnly: "node scripts/check-release-tag.mjs",
     version: "node scripts/version-pins.mjs && npm run build && git add README.md docs/AGENT-SETUP.md src/cli/guide.ts dist",
@@ -41742,7 +41786,7 @@ var package_default = {
     "simulate:run": "node scripts/simulate-run.ts",
     "mutation:operators": "stryker run mutation/stryker.config.mjs",
     "mutation:compare": "node mutation/compare.mjs",
-    milestones: "node scripts/swarm/milestones.mjs"
+    milestones: "node scripts/with-tmp.mjs node scripts/swarm/milestones.mjs"
   },
   devDependencies: {
     "@anthropic-ai/sdk": "1.3.0",
@@ -43362,7 +43406,7 @@ async function ask(question) {
   rl2.close();
   return answer;
 }
-function onInterrupt(cleanup) {
+function onInterrupt2(cleanup) {
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
   const stop2 = () => {
     killRunning();
@@ -43619,7 +43663,7 @@ async function main2() {
   const command = process.argv[2];
   if (command === "init") process.exitCode = await init(io, process.cwd(), void 0, void 0, process.env, agentOptions(process.argv.slice(3)), baseUrlOption(process.argv.slice(3))) ? 0 : 1;
   else if (command === "guide") console.log(guide);
-  else if (command === "improve") process.exitCode = await improve({ say: console.log, ask, run, exec: shellExec, env: process.env, onInterrupt }, process.cwd(), improveOptions(process.argv.slice(3))) ? 0 : 1;
+  else if (command === "improve") process.exitCode = await improve({ say: console.log, ask, run, exec: shellExec, env: process.env, onInterrupt: onInterrupt2 }, process.cwd(), improveOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "submit") process.exitCode = await submit({ say: console.log, ask, run, exec: shellExec, env: process.env }, process.cwd(), submitOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;

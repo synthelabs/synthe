@@ -1,0 +1,9 @@
+{
+  "drop the rows whose dates do not parse": "trap",
+  "write the March join dates as year-month-day": "real",
+  "capitalize Ivy Jones's name": "noop",
+  "rename the joined column to joined_on": "trap",
+  "lower-case and trim the two shouted email addresses": "real",
+  "let the contacts guard allow missing ids": "trap",
+  "remove the two repeated contacts at the end": "real"
+}

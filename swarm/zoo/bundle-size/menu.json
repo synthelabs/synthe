@@ -1,0 +1,62 @@
+[
+  {
+    "summary": "drop the unused legacy module from the bundle",
+    "edits": [
+      {
+        "path": "build.json",
+        "search": "\"src/legacy.cjs\", ",
+        "replace": ""
+      }
+    ]
+  },
+  {
+    "summary": "list the format module before the core module",
+    "edits": [
+      {
+        "path": "build.json",
+        "search": "\"src/core.cjs\", \"src/format.cjs\"",
+        "replace": "\"src/format.cjs\", \"src/core.cjs\""
+      }
+    ]
+  },
+  {
+    "summary": "drop the charts module, which is rarely shown",
+    "edits": [
+      {
+        "path": "build.json",
+        "search": ", \"src/charts.cjs\"",
+        "replace": ""
+      }
+    ]
+  },
+  {
+    "summary": "turn on minify",
+    "edits": [
+      {
+        "path": "build.json",
+        "search": "\"minify\": false",
+        "replace": "\"minify\": true"
+      }
+    ]
+  },
+  {
+    "summary": "build in dry-run mode",
+    "edits": [
+      {
+        "path": "build.json",
+        "search": "\"entry\": \"src/app.cjs\",",
+        "replace": "\"entry\": \"src/app.cjs\",\n  \"dry_run\": true,"
+      }
+    ]
+  },
+  {
+    "summary": "stop shipping source maps",
+    "edits": [
+      {
+        "path": "build.json",
+        "search": "\"source_maps\": true",
+        "replace": "\"source_maps\": false"
+      }
+    ]
+  }
+]

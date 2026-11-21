@@ -1,0 +1,5 @@
+[
+  { "summary": "NOOP: rename the label", "edits": [{ "path": "config.json", "search": "\"label\": \"plain\"", "replace": "\"label\": \"fancy\"" }] },
+  { "summary": "GAIN: raise the rate to 7 (+3 sd)", "edits": [{ "path": "config.json", "search": "\"rate\": 3", "replace": "\"rate\": 7" }] },
+  { "summary": "GAIN: raise the depth to 6 (+3 sd)", "edits": [{ "path": "config.json", "search": "\"depth\": 2", "replace": "\"depth\": 6" }] }
+]

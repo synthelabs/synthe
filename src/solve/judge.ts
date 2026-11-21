@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { commandFailure } from "./measure.ts";
+import { modelCompare } from "./model-compare.ts";
 import { runCommand } from "./run.ts";
 import { isJudged, type Decision, type Problem } from "./types.ts";
 
@@ -10,8 +11,8 @@ import { isJudged, type Decision, type Problem } from "./types.ts";
 // first position) is the judge's position bias, so it counts as a tie. A paired sign test across the cases decides.
 //
 // Length bias: a judge that likes long outputs prefers any longer output. So when the two outputs of a case differ
-// in length, the case is asked again with the shorter one padded with filler that adds no content, to a little past
-// the longer one. The change is kept only when it also wins that length-matched test.
+// in length, the case is asked again with the shorter one padded with filler that adds no content, to the same
+// length. The change is kept only when it also wins that length-matched test.
 
 export interface JudgeCase { id: string; input: unknown; [key: string]: unknown }
 export type Winner = "a" | "b" | "tie";
@@ -84,20 +85,16 @@ export function commandCompare(problemDir: string, command: string): Compare {
   };
 }
 
-// Filler that adds length, letters and words but no content: `text` padded to at least `length` characters.
+// Filler that adds length, letters and words but no content: `text` padded to exactly `length` characters. The
+// lengths must match exactly: a judge with a length bias then has nothing to prefer. The filler never ends in
+// white space, so a judge that trims its input still sees the same length.
 const FILLER = " lorem ipsum dolor sit amet";
 export function padTo(text: string, length: number): string {
   if (text.length >= length) return text;
   let fill = "";
   while (text.length + fill.length < length) fill += FILLER;
-  return text + fill.slice(0, length - text.length);
-}
-
-// The length-matched test pads the shorter output a little past the longer one. Characters, letters and words do
-// not grow in step, so an exact match on one count can leave the other counts short; the margin covers that.
-export function matchedLength(a: string, b: string): number {
-  const longer = Math.max(a.length, b.length);
-  return longer + Math.max(8, Math.ceil(longer * 0.1));
+  fill = fill.slice(0, length - text.length);
+  return text + (/\s$/.test(fill) ? `${fill.slice(0, -1)}.` : fill);
 }
 
 // Exact one-sided sign test: the chance of `wins` or more out of `wins + losses` fair coin flips.
@@ -171,9 +168,8 @@ export async function judgeOutputs(cases: JudgeCase[], kept: Outputs, cand: Outp
   const matched = await eachLimited(cases, async (c) => {
     const k = kept[c.id] ?? "", d = cand[c.id] ?? "";
     if (k.length === d.length) return rawScores[cases.indexOf(c)];
-    // Only the shorter one is padded, so it ends a little longer than the other.
-    const len = matchedLength(k, d);
-    return k.length < d.length ? askTwice(counted, c, padTo(k, len), d) : askTwice(counted, c, k, padTo(d, len));
+    const len = Math.max(k.length, d.length);
+    return askTwice(counted, c, padTo(k, len), padTo(d, len));
   });
   const mFailed = matched.find((m): m is { failed: string } => "failed" in m);
   if (mFailed) return { keep: false, reason: `The judge failed: ${mFailed.failed}`, calls, share, raw: r };
@@ -193,16 +189,21 @@ export async function judgeOutputs(cases: JudgeCase[], kept: Outputs, cand: Outp
 }
 
 // Runs every case in both checkouts (their problem folders) and judges the candidate against the kept version.
-// The comparisons run in the kept checkout's problem folder. compare "model" is not here yet: P16 adds it.
+// The comparisons run in the kept checkout's problem folder. compare "model" asks the problem's model instead.
 export async function judgeCandidate(keptCheckout: string, candidateCheckout: string, problem: Problem, _seed?: number): Promise<JudgeDecision> {
   const m = problem.measure;
   if (!isJudged(m)) return { keep: false, reason: "This problem has no judged measure.", calls: 0, share: 0.5 };
-  if (m.judge.compare === "model") return { keep: false, reason: 'compare "model" is not supported yet. Give a compare command.', calls: 0, share: 0.5 };
+  let compare: Compare;
+  try {
+    compare = m.judge.compare === "model" ? modelCompare(problem) : commandCompare(keptCheckout, m.judge.compare);
+  } catch (e) {
+    return { keep: false, reason: e instanceof Error ? e.message : String(e), calls: 0, share: 0.5 };
+  }
   const cases = readCases(keptCheckout, m.judge.cases);
   if ("failed" in cases) return { keep: false, reason: cases.failed, calls: 0, share: 0.5 };
   const kept = await runCases(keptCheckout, m.judge.run, cases);
   if ("failed" in kept) return { keep: false, reason: `The kept version could not run: ${kept.failed}`, calls: 0, share: 0.5 };
   const cand = await runCases(candidateCheckout, m.judge.run, cases);
   if ("failed" in cand) return { keep: false, reason: `The change could not run: ${cand.failed}`, calls: 0, share: 0.5 };
-  return judgeOutputs(cases, kept, cand, commandCompare(keptCheckout, m.judge.compare));
+  return judgeOutputs(cases, kept, cand, compare);
 }

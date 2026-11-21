@@ -1,0 +1,7 @@
+{
+  "say in the header comment how the total price is computed": "noop",
+  "compute each order's sort key once before sorting": "real",
+  "skip sorting long lists, which usually arrive sorted already": "trap",
+  "time a smaller, more typical sample of orders": "trap",
+  "use the merge sort helper instead of insertion sort": "real"
+}

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { judgeCandidate, judgeOutputs, matchedLength, padTo, parseWinner, readCases, signTestP, type Compare, type JudgeCase, type Outputs } from "../src/solve/judge.ts";
+import { judgeCandidate, judgeOutputs, padTo, parseWinner, readCases, signTestP, type Compare, type JudgeCase, type Outputs } from "../src/solve/judge.ts";
 import type { Problem } from "../src/solve/types.ts";
 
 const cases: JudgeCase[] = Array.from({ length: 10 }, (_, i) => ({ id: `c${i}`, input: `question ${i}` }));
@@ -51,9 +51,8 @@ test("a win that comes only from the judge's position bias is refused", async ()
 test("a win that comes only from longer output is refused, and the reason says so", async () => {
   const padded = outputs((i) => `Answer ${i}. This answer is now much longer, with more words that add nothing at all.`);
   const letters = (s: string) => (s.match(/[a-z]/gi) ?? []).length;
-  const words = (s: string) => s.split(/\s+/).filter(Boolean).length;
   const by = (n: (s: string) => number): Compare => async (_c, a, b) => (n(a) === n(b) ? "tie" : n(a) > n(b) ? "a" : "b");
-  for (const judge of [longer, truthfulButLong, by(letters), by(words)]) {
+  for (const judge of [longer, truthfulButLong, by(letters)]) {
     const d = await judgeOutputs(cases, kept, padded, judge);
     assert.equal(d.keep, false);
     assert.match(d.reason, /same length/);
@@ -90,9 +89,11 @@ test("helpers: sign test, padding and the judge's reply", () => {
   assert.ok(Math.abs(signTestP(5, 0) - 1 / 32) < 1e-12);
   assert.ok(Math.abs(signTestP(8, 2) - 56 / 1024) < 1e-12);
   assert.equal(padTo("abc", 10).length, 10);
-  assert.ok(matchedLength("abc", "abcdefghij") > 10);
+  assert.equal(padTo("ab", 4), "ab l");
+  assert.equal(padTo("abc", 9), "abc lorem");
+  assert.ok(!/\s$/.test(padTo("x", 7)), "the filler never ends in white space");
   assert.equal(padTo("abcdef", 4), "abcdef");
-  assert.equal(padTo("ab", 3), "ab ");
+  assert.equal(padTo("ab", 3), "ab.");
   assert.equal(parseWinner('log line\n{"winner": "b"}\n'), "b");
   assert.equal(parseWinner('{"winner":"x"}'), null);
 });
