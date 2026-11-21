@@ -31243,13 +31243,6 @@ function commandCompare(problemDir, command) {
     return w ?? { failed: `The compare command \`${command}\` did not print {"winner": "a" | "b" | "tie"}.` };
   };
 }
-function padTo(text4, length) {
-  if (text4.length >= length) return text4;
-  let fill2 = "";
-  while (text4.length + fill2.length < length) fill2 += FILLER;
-  fill2 = fill2.slice(0, length - text4.length);
-  return text4 + (/\s$/.test(fill2) ? `${fill2.slice(0, -1)}.` : fill2);
-}
 function signTestP(wins, losses) {
   const n = wins + losses;
   if (n === 0) return 1;
@@ -31269,7 +31262,7 @@ async function askTwice(compare2, c, kept, cand) {
   const candFirst = first === "b" ? 1 : first === "a" ? -1 : 0;
   const candSecond = second === "a" ? 1 : second === "b" ? -1 : 0;
   const sum = candFirst + candSecond;
-  return { score: sum > 0 ? 1 : sum < 0 ? -1 : 0, split: candFirst * candSecond === -1 };
+  return { score: sum === 2 ? 1 : sum === -2 ? -1 : 0, split: candFirst * candSecond === -1 };
 }
 function tally2(scores) {
   const wins = scores.filter((s) => s.score > 0).length;
@@ -31297,35 +31290,17 @@ async function judgeOutputs(cases4, kept, cand, compare2, alpha = JUDGE_ALPHA) {
     }
     return { keep: false, reason, calls: calls2, share, raw: r };
   }
-  const matched = await eachLimited(cases4, async (c) => {
-    const k = kept[c.id] ?? "", d = cand[c.id] ?? "";
-    if (k.length === d.length) return rawScores[cases4.indexOf(c)];
-    const len = Math.max(k.length, d.length);
-    return askTwice(counted, c, padTo(k, len), padTo(d, len));
-  });
-  const mFailed = matched.find((m2) => "failed" in m2);
-  if (mFailed) return { keep: false, reason: `The judge failed: ${mFailed.failed}`, calls: calls2, share, raw: r };
-  const m = tally2(matched);
-  if (m.wins <= m.losses || m.p >= alpha) {
-    return {
-      keep: false,
-      reason: `The judge preferred it in ${r.wins} of ${plural2(n, "case")}, but with both outputs at the same length it ${score(m)}. The win came from longer output, not better output.`,
-      calls: calls2,
-      share,
-      raw: r,
-      matched: m
-    };
-  }
+  const longerWins = cases4.filter((c, i) => rawScores[i].score > 0 && (cand[c.id] ?? "").length > (kept[c.id] ?? "").length).length;
+  const note = longerWins === r.wins ? " Every output it preferred was also longer, so check that your judge does not favour length." : "";
   return {
     keep: true,
-    reason: `The judge preferred it in both orders: of ${plural2(n, "case")} it ${score(r)} (sign test p = ${r.p.toFixed(3)}), and it still won with both outputs at the same length.`,
+    reason: `The judge preferred it in both orders: of ${plural2(n, "case")} it ${score(r)} (sign test p = ${r.p.toFixed(3)}).${note}`,
     calls: calls2,
     share,
-    raw: r,
-    matched: m
+    raw: r
   };
 }
-var JUDGE_ALPHA, PARALLEL, FILLER, plural2, score;
+var JUDGE_ALPHA, PARALLEL, plural2, score;
 var init_judge = __esm({
   "src/solve/judge.ts"() {
     "use strict";
@@ -31335,7 +31310,6 @@ var init_judge = __esm({
     init_types2();
     JUDGE_ALPHA = 0.05;
     PARALLEL = 4;
-    FILLER = " lorem ipsum dolor sit amet";
     plural2 = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
     score = (t) => `won ${t.wins}, lost ${t.losses}, tied ${t.ties}`;
   }
