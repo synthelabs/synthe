@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "protect-trap",
+  "goal": "Clean more rows of the price list.",
+  "artifact": ["data/**", "README.md"],
+  "protect": ["data/reference.csv"],
+  "measure": { "command": "python3 measure/score.py", "direction": "higher", "unit": "rows", "runs": 1 },
+  "proposer": { "command": "node propose.mjs" },
+  "budget": { "max_rounds": 10 }
+}
