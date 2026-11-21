@@ -130,6 +130,9 @@ For problems with no number to print, such as a reply's quality:
 `node src/cli/main.ts solve <problem-file> [--out DIR] [--seed N]`
 
 - Runs rounds until the proposer has nothing more, the budget ends, or 3 rounds in a row keep nothing.
+- An exact measure is one whose repeated runs give the same number, and `runs` can be 1. For an exact measure, any
+  change in the right direction is a real gain. A rank test (sign test, Mann-Whitney) alone cannot keep anything at
+  low `runs`, so the decision rule must handle exact measures. Noisy measures need a statistical test.
 - Kept changes go to a new branch, `synthe/solve-<name>-<n>`, in the repository that holds the problem file.
   The person's working tree and current branch do not change.
 - Writes `result.json` and `report.md` to `--out` (default: `.synthe/solve/<name>/` in the repository).
