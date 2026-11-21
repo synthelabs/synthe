@@ -41775,7 +41775,7 @@ var package_default = {
   },
   scripts: {
     build: "node scripts/build.mjs",
-    test: "node --test test/*.test.ts",
+    test: "node scripts/with-tmp.mjs node --test test/*.test.ts",
     typecheck: "tsc --noEmit",
     prepublishOnly: "node scripts/check-release-tag.mjs",
     version: "node scripts/version-pins.mjs && npm run build && git add README.md docs/AGENT-SETUP.md src/cli/guide.ts dist",
@@ -41786,7 +41786,7 @@ var package_default = {
     "simulate:run": "node scripts/simulate-run.ts",
     "mutation:operators": "stryker run mutation/stryker.config.mjs",
     "mutation:compare": "node mutation/compare.mjs",
-    milestones: "node scripts/swarm/milestones.mjs"
+    milestones: "node scripts/with-tmp.mjs node scripts/swarm/milestones.mjs"
   },
   devDependencies: {
     "@anthropic-ai/sdk": "1.3.0",
