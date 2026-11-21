@@ -1,0 +1,1 @@
+{"at":"2026-11-21T07:53:40.333Z","by":"h01","title":"S02 part: budget.max_usd in problem.ts (number > 0; problem check refuses it without model.prices) + Problem.budget.max_usd in types.ts","milestone":"S02","parent":"h08-6"}
