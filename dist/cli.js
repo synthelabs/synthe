@@ -30483,7 +30483,7 @@ async function solve(problem, proposer, options, io2) {
     branch: result2.keptAny ? scratch.branch : null,
     attempts: result2.attempts
   };
-  writeReport(outDir, solved);
+  writeReport(outDir, solved, { goal: problem.goal, direction, ...problem.measure.unit ? { unit: problem.measure.unit } : {} });
   io2.say(`Wrote ${join23(outDir, "result.json")} and report.md.`);
   if (solved.branch) io2.say(`Kept changes are on the branch ${solved.branch}.`);
   return solved;
