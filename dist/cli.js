@@ -31913,7 +31913,10 @@ async function solve(problem, proposer, options, io2) {
       const strength = sign * (c.train.value - k.train.value);
       if (!onTrain.keep || !holdout) return { ...onTrain, strength };
       const now = await measureAt2("holdout");
-      if ("failed" in now) return { keep: false, reason: `Could not measure the held-back split: ${now.failed}` };
+      if ("failed" in now) {
+        io2.say(`The held-back measure failed for this change: ${now.failed}`);
+        return { keep: false, reason: "It won on the train split, but the held-back measure failed for it, so it is not kept. Synthe's output has the details; the proposer never sees held-back output." };
+      }
       c.holdout = now;
       const onHoldout = decide(direction, k.holdout, now);
       if (!onHoldout.keep) return { keep: false, reason: "It won on the train split but not on the held-back split, so it does not generalize." };
