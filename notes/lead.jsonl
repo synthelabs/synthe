@@ -1,1 +1,2 @@
 {"at":"2026-11-21T07:18:48.744Z","by":"lead","kind":"progress","text":"Milestone table on integration at 07:17 UTC (2ddd410): PASS P01 P02 P03 P04 P05 P06 P07 P08 P10 P11 P12 P13. No check yet: P09 P14 P15 P16 FINAL. 12 of 17 pass."}
+{"at":"2026-11-21T07:36:30.236Z","by":"lead","kind":"progress","text":"Milestone table on integration 99d0dd2 at 07:37 UTC: PASS P01-P08, P10-P13, P15, P16 (14). FAIL P09 (0/1), P14 (0/1), FINAL (0/1). No check yet: S01-S05. 14 of 22 pass."}
