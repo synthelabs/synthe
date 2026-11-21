@@ -10,9 +10,10 @@ import { isJudged, type Decision, type Problem } from "./types.ts";
 // only when it wins in both orders, and against it only when it loses in both. A split (each side wins in the
 // first position) is the judge's position bias, so it counts as a tie. A paired sign test across the cases decides.
 //
-// Length bias: a judge that likes long outputs prefers any longer output. So when the two outputs of a case differ
-// in length, the case is asked again with the shorter one padded with filler that adds no content, to the same
-// length. The change is kept only when it also wins that length-matched test.
+// The judge always reads exactly what `run` printed. Synthe never pads or changes an output to control for length:
+// a real judge reads filler as a worse reply. A judge that follows length by chance wins too few cases in both
+// orders to pass the test. A judge that prefers the longer output almost every time cannot be told apart from a
+// true preference by its answers alone, so the reason of a kept change says when every win was also longer.
 
 export interface JudgeCase { id: string; input: unknown; [key: string]: unknown }
 export type Winner = "a" | "b" | "tie";
@@ -85,18 +86,6 @@ export function commandCompare(problemDir: string, command: string): Compare {
   };
 }
 
-// Filler that adds length, letters and words but no content: `text` padded to exactly `length` characters. The
-// lengths must match exactly: a judge with a length bias then has nothing to prefer. The filler never ends in
-// white space, so a judge that trims its input still sees the same length.
-const FILLER = " lorem ipsum dolor sit amet";
-export function padTo(text: string, length: number): string {
-  if (text.length >= length) return text;
-  let fill = "";
-  while (text.length + fill.length < length) fill += FILLER;
-  fill = fill.slice(0, length - text.length);
-  return text + (/\s$/.test(fill) ? `${fill.slice(0, -1)}.` : fill);
-}
-
 // Exact one-sided sign test: the chance of `wins` or more out of `wins + losses` fair coin flips.
 export function signTestP(wins: number, losses: number): number {
   const n = wins + losses;
@@ -112,7 +101,9 @@ export function signTestP(wins: number, losses: number): number {
 
 export interface Tally { wins: number; losses: number; ties: number; splits: number; p: number }
 
-// +1 when the candidate wins both orders, -1 when it loses both, 0 otherwise.
+// +1 only when the candidate wins in both orders, -1 only when it loses in both, 0 otherwise. A win in one order
+// and a tie in the other is not a win: a judge that picks by position or by length some of the time gives exactly
+// that pattern for two outputs of the same quality, and counting it would keep changes that are no better.
 async function askTwice(compare: Compare, c: JudgeCase, kept: string, cand: string): Promise<{ score: -1 | 0 | 1; split: boolean } | { failed: string }> {
   const first = await compare(c, kept, cand); // the candidate is b
   if (typeof first !== "string") return first;
@@ -121,8 +112,7 @@ async function askTwice(compare: Compare, c: JudgeCase, kept: string, cand: stri
   const candFirst = first === "b" ? 1 : first === "a" ? -1 : 0;
   const candSecond = second === "a" ? 1 : second === "b" ? -1 : 0;
   const sum = candFirst + candSecond;
-  // A win in one order and a tie in the other still leans to one side; a win and a loss is a split.
-  return { score: sum > 0 ? 1 : sum < 0 ? -1 : 0, split: candFirst * candSecond === -1 };
+  return { score: sum === 2 ? 1 : sum === -2 ? -1 : 0, split: candFirst * candSecond === -1 };
 }
 
 function tally(scores: { score: number; split: boolean }[]): Tally {
@@ -138,7 +128,6 @@ export interface JudgeDecision extends Decision {
   // The candidate's share of the cases, with a tie as half: 0.5 means no better and no worse.
   share: number;
   raw?: Tally;
-  matched?: Tally;
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -164,27 +153,13 @@ export async function judgeOutputs(cases: JudgeCase[], kept: Outputs, cand: Outp
     return { keep: false, reason, calls, share, raw: r };
   }
 
-  // Ask again with both outputs of each case at the same length. Cases whose outputs already match keep their score.
-  const matched = await eachLimited(cases, async (c) => {
-    const k = kept[c.id] ?? "", d = cand[c.id] ?? "";
-    if (k.length === d.length) return rawScores[cases.indexOf(c)];
-    const len = Math.max(k.length, d.length);
-    return askTwice(counted, c, padTo(k, len), padTo(d, len));
-  });
-  const mFailed = matched.find((m): m is { failed: string } => "failed" in m);
-  if (mFailed) return { keep: false, reason: `The judge failed: ${mFailed.failed}`, calls, share, raw: r };
-  const m = tally(matched as { score: number; split: boolean }[]);
-  if (m.wins <= m.losses || m.p >= alpha) {
-    return {
-      keep: false,
-      reason: `The judge preferred it in ${r.wins} of ${plural(n, "case")}, but with both outputs at the same length it ${score(m)}. The win came from longer output, not better output.`,
-      calls, share, raw: r, matched: m,
-    };
-  }
+  // Only a note for the reader: the answers cannot separate a length bias from a true preference here.
+  const longerWins = cases.filter((c, i) => rawScores[i].score > 0 && (cand[c.id] ?? "").length > (kept[c.id] ?? "").length).length;
+  const note = longerWins === r.wins ? " Every output it preferred was also longer, so check that your judge does not favour length." : "";
   return {
     keep: true,
-    reason: `The judge preferred it in both orders: of ${plural(n, "case")} it ${score(r)} (sign test p = ${r.p.toFixed(3)}), and it still won with both outputs at the same length.`,
-    calls, share, raw: r, matched: m,
+    reason: `The judge preferred it in both orders: of ${plural(n, "case")} it ${score(r)} (sign test p = ${r.p.toFixed(3)}).${note}`,
+    calls, share, raw: r,
   };
 }
 

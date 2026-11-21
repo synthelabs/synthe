@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { judgeCandidate, judgeOutputs, padTo, parseWinner, readCases, signTestP, type Compare, type JudgeCase, type Outputs } from "../src/solve/judge.ts";
+import { judgeCandidate, judgeOutputs, parseWinner, readCases, signTestP, type Compare, type JudgeCase, type Outputs } from "../src/solve/judge.ts";
 import type { Problem } from "../src/solve/types.ts";
 
 const cases: JudgeCase[] = Array.from({ length: 10 }, (_, i) => ({ id: `c${i}`, input: `question ${i}` }));
@@ -48,16 +48,26 @@ test("a win that comes only from the judge's position bias is refused", async ()
   assert.equal(d.raw?.splits, 10);
 });
 
-test("a win that comes only from longer output is refused, and the reason says so", async () => {
+test("the judge reads only real outputs, and a kept change whose wins were all longer says so", async () => {
+  const cand = outputs((i) => `Answer ${i}, because of the rule, which is explained here at length.`);
+  const seen = new Set<string>();
+  const spy: Compare = async (c, a, b) => { seen.add(a); seen.add(b); return truthfulButLong(c, a, b); };
+  const d = await judgeOutputs(cases, kept, cand, spy);
+  assert.equal(d.keep, true, d.reason);
+  assert.match(d.reason, /also longer/);
+  const real = new Set([...Object.values(kept), ...Object.values(cand)]);
+  for (const text of seen) assert.ok(real.has(text), `the judge saw text that no run printed: ${text}`);
+  assert.equal(d.calls, 20); // 10 cases, 2 orders, nothing more
+});
+
+test("a judge that follows length only by chance does not get a longer, no-better change kept", async () => {
   const padded = outputs((i) => `Answer ${i}. This answer is now much longer, with more words that add nothing at all.`);
-  const letters = (s: string) => (s.match(/[a-z]/gi) ?? []).length;
-  const by = (n: (s: string) => number): Compare => async (_c, a, b) => (n(a) === n(b) ? "tie" : n(a) > n(b) ? "a" : "b");
-  for (const judge of [longer, truthfulButLong, by(letters)]) {
-    const d = await judgeOutputs(cases, kept, padded, judge);
-    assert.equal(d.keep, false);
-    assert.match(d.reason, /same length/);
-    assert.match(d.reason, /longer output/);
-  }
+  // Prefers the longer output in 4 of 10 asks, by a fixed pattern; otherwise it sees no difference.
+  let asks = 0;
+  const sometimes: Compare = async (_c, a, b) => (asks++ % 10 < 4 && a.length !== b.length ? (a.length > b.length ? "a" : "b") : "tie");
+  const d = await judgeOutputs(cases, kept, padded, sometimes);
+  assert.equal(d.keep, false, d.reason);
+  assert.match(d.reason, /did not clearly prefer/);
 });
 
 test("a real gain that is also longer is still kept by a judge with a length bias", async () => {
@@ -84,16 +94,10 @@ test("a failing judge becomes a reason, not a crash", async () => {
   assert.match(d.reason, /judge failed: no answer/);
 });
 
-test("helpers: sign test, padding and the judge's reply", () => {
+test("helpers: sign test and the judge's reply", () => {
   assert.equal(signTestP(0, 0), 1);
   assert.ok(Math.abs(signTestP(5, 0) - 1 / 32) < 1e-12);
   assert.ok(Math.abs(signTestP(8, 2) - 56 / 1024) < 1e-12);
-  assert.equal(padTo("abc", 10).length, 10);
-  assert.equal(padTo("ab", 4), "ab l");
-  assert.equal(padTo("abc", 9), "abc lorem");
-  assert.ok(!/\s$/.test(padTo("x", 7)), "the filler never ends in white space");
-  assert.equal(padTo("abcdef", 4), "abcdef");
-  assert.equal(padTo("ab", 3), "ab.");
   assert.equal(parseWinner('log line\n{"winner": "b"}\n'), "b");
   assert.equal(parseWinner('{"winner":"x"}'), null);
 });
@@ -114,7 +118,7 @@ test("judgeCandidate runs the real commands in each checkout", async () => {
   const problem = { measure: { judge: { cases: "cases.jsonl", run: "node run.mjs", compare: "node judge.mjs" }, runs: 1 } } as unknown as Problem;
   const d = await judgeCandidate(a, b, problem);
   assert.equal(d.keep, true, d.reason);
-  assert.equal(d.calls, 40); // 10 cases, 2 orders, raw and length-matched
+  assert.equal(d.calls, 20); // 10 cases, 2 orders
   const back = await judgeCandidate(b, a, problem);
   assert.equal(back.keep, false);
 

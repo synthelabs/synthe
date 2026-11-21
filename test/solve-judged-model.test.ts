@@ -25,7 +25,9 @@ const server: Server = createServer((req, res) => {
     const user = [...body.messages].reverse().find((m: { role: string }) => m.role === "user");
     const q = JSON.parse(typeof user.content === "string" ? user.content : user.content.map((p: { text: string }) => p.text).join(""));
     const g = (s: string) => s.includes("because");
-    const w = g(q.a) !== g(q.b) ? (g(q.a) ? "a" : "b") : q.a.length === q.b.length ? "tie" : q.a.length > q.b.length ? "a" : "b";
+    // A length bias on some of the cases only: when neither reply gives a reason, the longer one wins for those cases.
+    const follows = Number(/question (\d)/.exec(q.a)?.[1] ?? 1) % 3 === 0;
+    const w = g(q.a) !== g(q.b) ? (g(q.a) ? "a" : "b") : !follows || q.a.length === q.b.length ? "tie" : q.a.length > q.b.length ? "a" : "b";
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ winner: w }) }, finish_reason: "stop" }] }));
   });
@@ -84,7 +86,7 @@ test("compare model: the model judge keeps a real gain, refuses a longer-only ch
   const result = JSON.parse(readFileSync(join(top, "out", "result.json"), "utf8"));
   const [pad, reason] = result.attempts;
   assert.equal(pad.kept, false, pad.reason);
-  assert.match(pad.reason, /same length/);
+  assert.match(pad.reason, /did not clearly prefer/);
   assert.equal(reason.kept, true, reason.reason);
   assert.equal(git(top, "show", `${result.branch}:style.txt`), "Answer, because of the rule.");
   assert.ok(asked >= 16, `the model judge was asked each case in both orders (asked ${asked})`);
