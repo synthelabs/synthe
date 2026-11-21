@@ -30861,9 +30861,17 @@ function tail(text4, lines = 3) {
   const t = text4.trim().split("\n").slice(-lines).join(" | ").trim();
   return t.length > 300 ? `...${t.slice(-300)}` : t;
 }
+function failureLines(text4) {
+  const lines = text4.split("\n").map((l) => l.trim()).filter((l) => l && !/^npm (error|ERR!)/i.test(l));
+  const notOk = lines.filter((l) => /^not ok\b/.test(l));
+  const picked = notOk.length ? notOk : lines.filter((l) => /\b(error|fail(ed|ure|s)?|assert)/i.test(l) && !/^# (fail|pass|tests)\b/.test(l));
+  const t = picked.slice(0, 3).join(" | ");
+  return t.length > 300 ? `${t.slice(0, 300)}...` : t;
+}
 function commandFailure(what, command, r) {
   if (r.timedOut) return `${what} \`${command}\` did not finish in time.`;
-  const said = tail(r.stderr) || tail(r.stdout);
+  const said = failureLines(`${r.stdout}
+${r.stderr}`) || tail(r.stderr) || tail(r.stdout);
   return `${what} \`${command}\` failed${said ? `: ${said}` : " and printed nothing"}.`;
 }
 async function measure(checkout, problem, ctx = {}) {
@@ -30888,9 +30896,6 @@ async function guardFailure(checkout, problem) {
     if (!r.ok) return { guard: guard2, reason: commandFailure("The guard", guard2, r) };
   }
   return null;
-}
-async function failedGuard(checkout, problem) {
-  return (await guardFailure(checkout, problem))?.guard ?? null;
 }
 var NUMBER2, median2;
 var init_measure2 = __esm({
@@ -31713,8 +31718,8 @@ async function solve(problem, proposer, options, io2) {
       return { ok: true };
     },
     async guards() {
-      const failed = await failedGuard(scratch.dir, problem);
-      return failed === null ? { ok: true } : { ok: false, reason: `The guard \`${failed}\` failed.` };
+      const failed = await guardFailure(scratch.dir, problem);
+      return failed === null ? { ok: true } : { ok: false, reason: failed.reason };
     },
     async measure() {
       const train = await measureAt2(holdout ? "train" : void 0);
