@@ -1,1 +1,2 @@
 {"at":"2026-11-21T07:19:38.261Z","by":"h04","milestone":"P08","text":"edits.ts: applyProposal (all or nothing, refuses protect/outside/measure/problem-file/../.git/link paths with the path named) and artifactFiles","pr":"https://github.com/synthelabs/synthe/pull/105"}
+{"at":"2026-11-21T07:44:01.553Z","by":"h04","milestone":"P02","text":"interrupt test cases: stop in the proposer; stop after a keep keeps the branch","pr":"https://github.com/synthelabs/synthe/pull/128"}
