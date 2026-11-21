@@ -12,12 +12,8 @@ const work = mkdtempSync(join(tmpdir(), "synthe-improve-e2e-"));
 const cli = join(work, "bundle/cli.js");
 
 before(() => {
-  // The same esbuild command `npm run build` uses for dist/cli.js, written elsewhere: e2e.test.ts rebuilds dist/
-  // in a parallel process, and reading a bundle mid-write would make both tests flaky.
-  const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-  const buildCli = pkg.scripts.build.split(" && ")[0];
-  assert.ok(buildCli.includes("--outfile=dist/cli.js"));
-  execSync(`npx ${buildCli.replace("--outfile=dist/cli.js", `--outfile=${cli}`)}`, { stdio: "ignore" });
+  // The CLI as `npm run build` builds it, written elsewhere: e2e.test.ts rebuilds dist/ in a parallel process.
+  execFileSync(process.execPath, ["scripts/build.mjs", "--cli", cli], { stdio: "ignore" });
 });
 
 const EMAILS = ["ann@example.com", "bob@test.com", "cy@site.com", "Dana@example.com", "eve.smith@example.com", "fay@mail.example.org",

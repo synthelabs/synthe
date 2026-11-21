@@ -30578,7 +30578,7 @@ var package_default = {
     node: ">=20"
   },
   scripts: {
-    build: "esbuild src/cli/main.ts --bundle --loader:.md=text --platform=node --format=esm --target=node20 --outfile=dist/cli.js --banner:js='#!/usr/bin/env node' && esbuild src/action.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/action.mjs && node scripts/build-wrap.mjs",
+    build: "node scripts/build.mjs",
     test: "node --test test/*.test.ts",
     typecheck: "tsc --noEmit",
     prepublishOnly: "node scripts/check-release-tag.mjs",
