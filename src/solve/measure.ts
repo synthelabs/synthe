@@ -1,26 +1,8 @@
-import { shellExec, type Exec } from "../improve/exec.ts";
+import { runCommand, type RunResult } from "./run.ts";
+import { isJudged, type Measurement, type Problem } from "./types.ts";
 
 export type Split = "train" | "holdout";
-
-export interface MeasureOptions {
-  /** The scratch checkout. */
-  cwd: string;
-  command: string;
-  /** Runs per measurement. GOAL.md's default is 3. */
-  runs?: number;
-  /** Sets SYNTHE_SPLIT for the command. Leave it out when the problem has no holdout split. */
-  split?: Split;
-  exec?: Exec;
-  timeoutMs?: number;
-}
-
-export type Measured = { ok: true; runs: number[] } | { ok: false; reason: string };
-
-export type GuardResult = { ok: true } | { ok: false; guard: string; reason: string };
-
-export const DEFAULT_RUNS = 3;
-// A measure or guard that hangs must not hang the whole run. Ten minutes is far above any zoo problem.
-export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+export interface MeasureContext { seed?: number; split?: Split }
 
 const NUMBER = /[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g;
 
@@ -32,39 +14,57 @@ export function lastNumber(stdout: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+export const median = (xs: number[]): number => {
+  const s = [...xs].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+};
+
 // The last lines of output, so a reason says what the command printed without a wall of text.
 function tail(text: string, lines = 3): string {
   const t = text.trim().split("\n").slice(-lines).join(" | ").trim();
   return t.length > 300 ? `...${t.slice(-300)}` : t;
 }
 
-function failure(what: string, command: string, r: { timedOut: boolean; stdout: string; stderr: string }, timeoutMs: number): string {
-  if (r.timedOut) return `${what} \`${command}\` did not finish in ${Math.round(timeoutMs / 1000)} seconds.`;
+/** A plain sentence for a command that did not exit 0. */
+export function commandFailure(what: string, command: string, r: RunResult): string {
+  if (r.timedOut) return `${what} \`${command}\` did not finish in time.`;
   const said = tail(r.stderr) || tail(r.stdout);
-  return `${what} \`${command}\` failed${said ? `: ${said}` : " and printed nothing."}`;
+  return `${what} \`${command}\` failed${said ? `: ${said}` : " and printed nothing"}.`;
 }
 
-/** Runs the measure command `runs` times and returns every score. Any failed run fails the measurement. */
-export async function measure(o: MeasureOptions): Promise<Measured> {
-  const exec = o.exec ?? shellExec;
-  const timeoutMs = o.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const env = o.split ? { SYNTHE_SPLIT: o.split } : undefined;
+// Runs the problem's measure in the checkout: measure.command `runs` times (the last number on stdout is the
+// score), with SYNTHE_SPLIT set when the problem has a held-back split and SYNTHE_SEED set when there is a seed.
+// Returns the measurement, or the plain reason no number came out. Any failed run fails the whole measurement:
+// a score from a half-broken run is not a score. Judged measures: judge.ts.
+export async function measure(checkout: string, problem: Problem, ctx: MeasureContext = {}): Promise<Measurement | { failed: string }> {
+  const m = problem.measure;
+  if (isJudged(m)) return { failed: "A judged measure has no command to run; judge.ts compares judged versions." };
+  const env: Record<string, string> = {};
+  if (ctx.split) env.SYNTHE_SPLIT = ctx.split;
+  if (ctx.seed !== undefined) env.SYNTHE_SEED = String(ctx.seed);
   const runs: number[] = [];
-  for (let i = 0; i < Math.max(1, o.runs ?? DEFAULT_RUNS); i++) {
-    const r = await exec(o.cwd, o.command, timeoutMs, env);
-    if (!r.ok) return { ok: false, reason: failure("The measure command", o.command, r, timeoutMs) };
+  for (let i = 0; i < Math.max(1, m.runs); i++) {
+    const r = await runCommand(checkout, m.command, { env });
+    if (!r.ok) return { failed: commandFailure("The measure command", m.command, r) };
     const n = lastNumber(r.stdout);
-    if (n === null) return { ok: false, reason: `The measure command \`${o.command}\` printed no number. Its last number on stdout is the score.` };
+    if (n === null) return { failed: `The measure command \`${m.command}\` printed no number. Its last number on stdout is the score.` };
     runs.push(n);
   }
-  return { ok: true, runs };
+  return { value: median(runs), runs };
 }
 
-/** Runs each guard in order and stops at the first that fails. The reason names that guard. */
-export async function runGuards(cwd: string, guards: string[], exec: Exec = shellExec, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<GuardResult> {
-  for (const guard of guards) {
-    const r = await exec(cwd, guard, timeoutMs);
-    if (!r.ok) return { ok: false, guard, reason: failure("The guard", guard, r, timeoutMs) };
+/** Every guard in order; stops at the first that fails and says why, naming the guard. */
+export async function guardFailure(checkout: string, problem: Problem): Promise<{ guard: string; reason: string } | null> {
+  for (const guard of problem.guards) {
+    const r = await runCommand(checkout, guard);
+    if (!r.ok) return { guard, reason: commandFailure("The guard", guard, r) };
   }
-  return { ok: true };
+  return null;
+}
+
+// Runs every guard in the checkout. Returns null when all exit 0, or the first guard command that failed.
+// guardFailure gives the same answer with the guard's output for a reason.
+export async function failedGuard(checkout: string, problem: Problem): Promise<string | null> {
+  return (await guardFailure(checkout, problem))?.guard ?? null;
 }
