@@ -139,6 +139,7 @@ export function measurePathsOf(problem: Problem): string[] {
     commands.push(j.run);
     if (j.compare !== "model") commands.push(j.compare);
     extra.push(j.cases);
+    if (j.rubric) extra.push(j.rubric);
   } else {
     commands.push(problem.measure.command);
   }

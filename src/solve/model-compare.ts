@@ -1,7 +1,10 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Model } from "../model/client.ts";
 import type { Compare } from "./judge.ts";
+import { SetupError } from "./loop.ts";
 import { noTextReason, problemModel } from "./model-proposer.ts";
-import type { Problem } from "./types.ts";
+import { isJudged, type Problem } from "./types.ts";
 
 // The model judge: compare "model" in a judged measure. It gets the same object a compare command gets on stdin,
 // { case, a, b }, and must answer { winner: "a" | "b" | "tie" }. judge.ts asks each question twice with a and b
@@ -19,7 +22,8 @@ export const WINNER_SCHEMA: Record<string, unknown> = {
 
 export const JUDGE_SYSTEM = [
   "You judge which of two outputs better meets the goal for one input.",
-  "You get a JSON object: the goal, the case with its input, and two outputs, a and b.",
+  "You get a JSON object: the goal, maybe a rubric, the case with its input, and two outputs, a and b.",
+  "When there is a rubric, judge by its criteria, most important first.",
   "Judge only the quality of the output for the goal. The order of a and b means nothing, and a longer output is not better for being longer.",
   'Reply with only a JSON object: {"winner": "a"}, {"winner": "b"}, or {"winner": "tie"} when neither is better.',
 ].join("\n");
@@ -35,12 +39,23 @@ export function winnerIn(text: string): "a" | "b" | "tie" | null {
   return null;
 }
 
+// The rubric of a judged measure (measure.judge.rubric), read once when the judge is built. It is a protected file,
+// so no proposal changes it during the run. A rubric that cannot be read stops setup, before any model call.
+export function rubricText(problem: Problem): string | undefined {
+  const m = problem.measure;
+  if (!isJudged(m) || !m.judge.rubric) return undefined;
+  try { return readFileSync(join(problem.dir, m.judge.rubric), "utf8").trim() || undefined; } catch {
+    throw new SetupError(`Synthe can't read the rubric ${m.judge.rubric} (measure.judge.rubric).`);
+  }
+}
+
 // Throws SetupError before any call when the problem cannot reach a model. Never throws after that.
 export function modelCompare(problem: Problem, env: NodeJS.ProcessEnv = process.env, client?: Model): Compare {
   const { client: model, model: id, hide } = problemModel(problem, env, client);
+  const rubric = rubricText(problem);
   return async (c, a, b) => {
     try {
-      const user = JSON.stringify({ goal: problem.goal, case: c, a, b }, null, 2);
+      const user = JSON.stringify({ goal: problem.goal, ...(rubric ? { rubric } : {}), case: c, a, b }, null, 2);
       const reply = await model.ask({ model: id, system: JUDGE_SYSTEM, user, maxTokens: MAX_TOKENS, schema: WINNER_SCHEMA });
       if (reply.text === null) return { failed: hide(`The model judge gave no usable reply: ${noTextReason(reply.stopReason)}.`) };
       const w = winnerIn(reply.text);

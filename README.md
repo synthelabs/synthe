@@ -86,6 +86,16 @@ A JSON file with any name, in a folder inside a git repository. Paths and globs 
 | `budget.max_calls` | no | The most model calls the run may make. |
 | `candidates` | no | Proposals to ask for in each round. Default 1. Each one is measured, and the round keeps at most one: the best that passes the keep rule. |
 
+When no command can print a number, such as for a reply's quality, measure with a judge instead of `measure.command`:
+
+```json
+"measure": { "judge": { "cases": "judge/cases.jsonl", "run": "node run.js", "compare": "model", "rubric": "judge/rubric.md" } }
+```
+
+`run` prints the output for one case. `compare` is `"model"` (the model in the `model` section judges, with the optional `rubric`) or your own command that prints `{"winner": "a" | "b" | "tie"}`. Synthe asks every question twice with the two outputs swapped. Commands never get your key.
+
+To write the rubric from examples (`{"input": "...", "good": "...", "bad": "..."}` on each line), run `npx synthe measure draft --examples examples.jsonl --out judge --model <model-id>`. It writes `judge/cases.jsonl`, `judge/rubric.md` and `judge/compare.js`, checks the judge against your labels in both orders, and prints `agreement N/M`. Below 80% it names the examples and exits 2: edit `rubric.md` and run it again. Then it prints the measure above, ready to paste.
+
 Check a problem file before you run it:
 
 ```bash

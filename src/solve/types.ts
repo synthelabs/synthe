@@ -4,7 +4,8 @@
 export type Direction = "higher" | "lower";
 
 export interface CommandMeasure { command: string; direction: Direction; unit?: string; runs: number }
-export interface JudgeMeasure { judge: { cases: string; run: string; compare: string | "model" }; runs: number }
+// rubric (GOAL-2.md): a file, relative to the problem folder, that the model judge reads. Only with compare "model".
+export interface JudgeMeasure { judge: { cases: string; run: string; compare: string | "model"; rubric?: string }; runs: number }
 export type Measure = CommandMeasure | JudgeMeasure;
 export const isJudged = (m: Measure): m is JudgeMeasure => "judge" in m;
 

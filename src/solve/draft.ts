@@ -215,8 +215,10 @@ export async function draftMeasure(examples: Example[], m: DraftModel, client: M
     io.say(`Next: edit ${join(outDir, "rubric.md")} so it explains why the good outputs are better, then run the command again.`);
     return 2;
   }
-  io.say("The judge agrees with you often enough. To use it, put this measure in your problem file (paths relative to the problem file):");
-  io.say(`  "measure": { "judge": { "cases": "${join(outDir, "cases.jsonl")}", "run": "<the command that prints the output for one case>", "compare": "node ${script}" } }`);
+  // GOAL-2.md: inside solve, problem commands never get the key, so solve uses the rubric through its own model judge.
+  io.say("The judge agrees with you often enough. To use it in solve, put this measure in your problem file, with the paths relative to the problem file, and keep the model section that you drafted with:");
+  io.say(`  "measure": { "judge": { "cases": "${join(outDir, "cases.jsonl")}", "run": "<the command that prints the output for one case>", "compare": "model", "rubric": "${join(outDir, "rubric.md")}" } }`);
+  io.say(`To try the judge by hand, run: echo '{"case": {...}, "a": "...", "b": "..."}' | node ${script}`);
   return 0;
 }
 

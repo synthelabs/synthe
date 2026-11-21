@@ -72,7 +72,7 @@ function measureOf(v: unknown, dir: string, errors: string[]): Measure | null {
   const runs = countOf("measure.runs", v.runs, DEFAULT_RUNS, errors);
   const j = v.judge;
   if (!isObject(j)) { errors.push(`measure.judge: must be an object with "cases", "run" and "compare".`); return null; }
-  unknownKeys(j, ["cases", "run", "compare"], "measure.judge.", errors);
+  unknownKeys(j, ["cases", "run", "compare", "rubric"], "measure.judge.", errors);
   if (!isText(j.cases)) errors.push(`measure.judge.cases: must be the path of a JSONL file of cases.`);
   else {
     const p = pathProblem("measure.judge.cases", j.cases);
@@ -81,8 +81,17 @@ function measureOf(v: unknown, dir: string, errors: string[]): Measure | null {
   }
   if (!isText(j.run)) errors.push(`measure.judge.run: must be a non-empty shell command.`);
   if (!isText(j.compare)) errors.push(`measure.judge.compare: must be a shell command or "model".`);
+  let rubric: string | undefined;
+  if (j.rubric !== undefined) {
+    // GOAL-2.md: a drafted rubric is used through compare "model". A compare command has its own rubric inside it.
+    const p = isText(j.rubric) ? pathProblem("measure.judge.rubric", j.rubric) : `measure.judge.rubric: must be the path of a rubric file, such as "judge/rubric.md".`;
+    if (p) errors.push(p);
+    else if (j.compare !== "model") errors.push(`measure.judge.rubric: works only with "compare": "model". A compare command reads its own rubric.`);
+    else if (!existsSync(join(dir, j.rubric as string)) || !statSync(join(dir, j.rubric as string)).isFile()) errors.push(`measure.judge.rubric: Synthe can't find ${j.rubric} next to the problem file.`);
+    else rubric = j.rubric as string;
+  }
   if (errors.length > before) return null;
-  return { judge: { cases: j.cases as string, run: j.run as string, compare: j.compare as string }, runs };
+  return { judge: { cases: j.cases as string, run: j.run as string, compare: j.compare as string, ...(rubric ? { rubric } : {}) }, runs };
 }
 
 function casesProblem(name: string, path: string): string | null {
