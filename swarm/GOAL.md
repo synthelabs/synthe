@@ -65,13 +65,14 @@ problem folder.
 | `goal` | yes | Shown to the proposer. |
 | `artifact` | yes | Globs of files Synthe may change. Any file type. A change outside these globs is refused. |
 | `protect` | no | Globs Synthe must never change. A change that touches them is refused, even inside `artifact`. |
-| `measure.command` | one of two | A shell command, run in the scratch checkout. Its last number on stdout is the score. |
+| `measure.command` | one of two | A shell command, run in the scratch checkout. Its last number on stdout is the score. A leading minus sign belongs to the number: `-20` is -20. |
 | `measure.judge` | one of two | A judged measure; see below. |
 | `measure.direction` | with `command` | `higher` or `lower`. |
 | `measure.runs` | no | Runs per measurement; default 3. |
 | `guards` | no | Shell commands that must exit 0 after a change, or the change is refused. |
 | `split.holdout` | no | When true, `measure.command` runs with `SYNTHE_SPLIT=train` to compare proposals, and a proposal is kept only if it also wins with `SYNTHE_SPLIT=holdout`. The proposer never sees holdout results. |
 | `proposer` | no | `{ "command": "..." }` for an outside proposer, or `"model"` (the default) for the configured model. |
+| `candidates` | no | How many proposals Synthe asks for in each round. Default 1. |
 | `budget.max_rounds` | no | Default 6. |
 | `budget.max_calls` | no | Model calls, when the proposer or judge is a model. |
 | `model` | no | `{ "base_url": "...", "model": "..." }` for an OpenAI-compatible chat completions endpoint. Used when `proposer` or `compare` is `"model"`. The key comes only from the `SYNTHE_API_KEY` environment variable, goes only to `base_url`, and never appears in output or files. |
@@ -97,7 +98,8 @@ stdin:
 ```
 
 `files` holds every file that matches `artifact`, at its current kept version. `history` holds every earlier attempt
-for this problem, from this run and from earlier runs. `candidates` is how many proposals Synthe wants this round.
+for this problem, from this run and from earlier runs. Two runs are the same problem when they have the same `name`
+in the same repository. A problem never gets the history of another problem. `candidates` is how many proposals Synthe wants this round.
 
 stdout:
 
