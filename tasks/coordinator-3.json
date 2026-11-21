@@ -1,0 +1,1 @@
+{"at":"2026-11-21T11:31:02.681Z","by":"coordinator","title":"max_usd overspend (from mon, #140): with 4 judge questions in parallel, the run can pass budget.max_usd by up to 3 calls. Reserve cost before each call so parallel calls cannot pass the cap; add a unit test","milestone":"S02"}
