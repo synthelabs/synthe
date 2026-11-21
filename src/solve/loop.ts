@@ -4,6 +4,8 @@ import { decide, decideWithConfirm, type Remeasure } from "./decide.ts";
 import { applyProposal, artifactFiles } from "./edits.ts";
 import { appendHistory, nextRun, readHistory } from "./history.ts";
 import { failedGuard, measure, type Split } from "./measure.ts";
+import { commandCompare, judgeOutputs, readCases, runCases, type Compare, type Outputs } from "./judge.ts";
+import { modelCompare } from "./model-compare.ts";
 import { writeReport } from "./report.ts";
 import { stopRunning } from "./run.ts";
 import { idleRounds, readRun, type RunRecord, stillRunning, writeRun } from "./resume.ts";
@@ -26,8 +28,9 @@ export type Proposed = { ok: true; proposals: Proposal[] } | { ok: false; reason
 // goes back to decide() as is.
 export type Measured = { ok: true; value: number; samples?: unknown } | { ok: false; reason: string };
 type Ok = Measured & { ok: true };
-// `strength` ranks the proposals of one round that pass the rule: the highest is kept.
-export interface StepDecision { keep: boolean; reason: string; strength?: number }
+// `strength` ranks the proposals of one round that pass the rule: the highest is kept. `value`, when given, is the
+// attempt's "after" number in place of the measured value: a judged measure only has a number for a comparison.
+export interface StepDecision { keep: boolean; reason: string; strength?: number; value?: number }
 
 export interface LoopSteps {
   // `history` holds every earlier attempt, from earlier runs too.
@@ -144,6 +147,7 @@ async function tryRound(steps: LoopSteps, round: number, proposals: Proposal[], 
     attempt.after = measured.value;
     const decision = await steps.decide(current, measured);
     attempt.reason = decision.reason;
+    if (decision.value !== undefined) attempt.after = decision.value;
     if (!decision.keep) continue;
     passed.push(attempt);
     const strength = decision.strength ?? 0;
@@ -190,8 +194,8 @@ function onInterrupt(cleanUp: () => Promise<void>, say: () => void): () => void 
 }
 
 export async function solve(problem: Problem, proposer: Proposer, options: SolveOptions, io: SolveIo): Promise<SolveResult> {
-  if (isJudged(problem.measure)) throw new SetupError("Judged measures (measure.judge) are not supported by solve yet.");
-  const direction = problem.measure.direction;
+  const judged = isJudged(problem.measure) ? problem.measure.judge : null;
+  const direction = isJudged(problem.measure) ? "higher" : problem.measure.direction;
   let repoRoot: string, gitDir: string;
   try {
     repoRoot = git(problem.dir, "rev-parse", "--show-toplevel");
@@ -314,6 +318,46 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
       appendHistory(gitDir, problem.name, [entry(attempt)], run);
     },
   };
+  // A judged measure has no number for one version alone, only for a comparison. So each version's "measurement"
+  // is its outputs, and decide() asks the judge. The numbers in the report are the share of cases the newer
+  // version won (a tie is half): 0.5 is the starting point, and `final` compares the last kept version with it.
+  let judgeFinal: (() => Promise<number>) | null = null;
+  if (judged) {
+    const cases = readCases(scratch.dir, judged.cases);
+    if ("failed" in cases) {
+      await scratch.close(false);
+      throw new SetupError(`The judged measure could not start: ${cases.failed}`);
+    }
+    let compareFn: Compare;
+    try {
+      compareFn = judged.compare === "model" ? modelCompare(problem, io.env) : commandCompare(scratch.dir, judged.compare);
+    } catch (e) {
+      await scratch.close(false);
+      throw new SetupError(`The judged measure could not start: ${(e as Error).message}`);
+    }
+    // A model judge's questions are model calls and count against budget.max_calls; a compare command's are not.
+    const judgeCalls = (d: { calls: number }) => { if (judged.compare === "model") calls += d.calls; };
+    let baseOutputs: Outputs | null = null;
+    steps.measure = async () => {
+      const out = await runCases(scratch.dir, judged.run, cases);
+      if ("failed" in out) return { ok: false, reason: out.failed };
+      baseOutputs ??= out;
+      return { ok: true, value: 0.5, samples: out };
+    };
+    steps.decide = async (kept, cand) => {
+      const d = await judgeOutputs(cases, kept.samples as Outputs, cand.samples as Outputs, compareFn);
+      judgeCalls(d);
+      return { keep: d.keep, reason: d.reason, strength: d.share, value: d.share };
+    };
+    judgeFinal = async () => {
+      await scratch.reset();
+      const out = await runCases(scratch.dir, judged.run, cases);
+      if ("failed" in out || !baseOutputs) return 0.5;
+      const d = await judgeOutputs(cases, baseOutputs, out, compareFn);
+      judgeCalls(d);
+      return d.share;
+    };
+  }
   // A crash or a Ctrl-C must leave no scratch worktree and no empty branch. A branch that holds kept changes stays:
   // that work was measured and is worth keeping.
   const cleanUp = async () => { stopRunning(); await scratch.close(keptCount > 0); };
@@ -321,6 +365,7 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     ? `\nStopped. Synthe removed its scratch checkout. The ${keptCount === 1 ? "change" : `${keptCount} changes`} kept so far ${keptCount === 1 ? "is" : "are"} on the branch ${scratch.branch}. Your working tree did not change.`
     : "\nStopped. Synthe removed its scratch checkout and kept no change. Your working tree did not change."));
   let result: LoopResult;
+  let final: number;
   try {
     result = await runLoop(steps, {
       maxRounds: problem.budget.max_rounds, maxCalls: problem.budget.max_calls, candidates: problem.candidates, history,
@@ -330,6 +375,7 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
         writeRun(gitDir, problem.name, record);
       },
     });
+    final = judgeFinal && result.keptAny ? await judgeFinal() : result.final;
   } catch (e) {
     await cleanUp();
     throw e;
@@ -341,11 +387,12 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     problem: problem.name,
     stopped: result.stopped,
     baseline: result.baseline,
-    final: result.final,
+    final,
     branch: result.keptAny ? scratch.branch : null,
     attempts: result.attempts,
   };
-  writeReport(outDir, solved, { goal: problem.goal, direction, ...(problem.measure.unit ? { unit: problem.measure.unit } : {}) });
+  const unit = judged ? "share of cases won" : isJudged(problem.measure) ? undefined : problem.measure.unit;
+  writeReport(outDir, solved, { goal: problem.goal, direction, ...(unit ? { unit } : {}) });
   writeRun(gitDir, problem.name, { ...record, status: "ended" });
   io.say(`Wrote ${join(outDir, "result.json")} and report.md.`);
   if (solved.branch) io.say(`Kept changes are on the branch ${solved.branch}.`);
