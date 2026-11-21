@@ -4,3 +4,4 @@
 {"at":"2026-11-21T07:53:21.372Z","by":"h01","milestone":"S04","text":"measure draft: rubric, cases.jsonl, compare.js from good/bad examples; both-order check; exit 2 under 80%","pr":"https://github.com/synthelabs/synthe/pull/132"}
 {"at":"2026-11-21T08:00:46.609Z","by":"h01","milestone":"P14","text":"zoo bench fitted to swarm/zoo: truth.json labels, noise.json per seed, real/noop/trap keys; P14 PASS","pr":"https://github.com/synthelabs/synthe/pull/136"}
 {"at":"2026-11-21T08:10:35.843Z","by":"h01","milestone":"S02","text":"budget.max_usd accepted only with model.prices (problem check)","pr":"https://github.com/synthelabs/synthe/pull/138"}
+{"at":"2026-11-21T11:27:05.275Z","by":"h01","milestone":"P09","text":"problem check refuses split.holdout with a judged measure","pr":"https://github.com/synthelabs/synthe/pull/141"}
