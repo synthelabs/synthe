@@ -322,6 +322,15 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
   // is its outputs, and decide() asks the judge. The numbers in the report are the share of cases the newer
   // version won (a tie is half): 0.5 is the starting point, and `final` compares the last kept version with it.
   let judgeFinal: (() => Promise<number>) | null = null;
+  // A model judge's questions are model calls and count against budget.max_calls; a compare command's are not.
+  // The limit is checked before each question, not only at the start of a round: one round asks many questions.
+  // The check and the count happen before the call is awaited, so parallel questions can not pass the limit.
+  const withCallLimit = (ask: Compare): Compare => async (c, a, b) => {
+    const max = problem.budget.max_calls;
+    if (max != null && calls >= max) return { failed: `the model call limit (${max} calls) was reached, so the model judge was not asked.` };
+    calls++;
+    return ask(c, a, b);
+  };
   if (judged) {
     const cases = readCases(scratch.dir, judged.cases);
     if ("failed" in cases) {
@@ -330,13 +339,11 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     }
     let compareFn: Compare;
     try {
-      compareFn = judged.compare === "model" ? modelCompare(problem, io.env) : commandCompare(scratch.dir, judged.compare);
+      compareFn = judged.compare === "model" ? withCallLimit(modelCompare(problem, io.env)) : commandCompare(scratch.dir, judged.compare);
     } catch (e) {
       await scratch.close(false);
       throw new SetupError(`The judged measure could not start: ${(e as Error).message}`);
     }
-    // A model judge's questions are model calls and count against budget.max_calls; a compare command's are not.
-    const judgeCalls = (d: { calls: number }) => { if (judged.compare === "model") calls += d.calls; };
     let baseOutputs: Outputs | null = null;
     steps.measure = async () => {
       const out = await runCases(scratch.dir, judged.run, cases);
@@ -346,16 +353,13 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     };
     steps.decide = async (kept, cand) => {
       const d = await judgeOutputs(cases, kept.samples as Outputs, cand.samples as Outputs, compareFn);
-      judgeCalls(d);
       return { keep: d.keep, reason: d.reason, strength: d.share, value: d.share };
     };
     judgeFinal = async () => {
       await scratch.reset();
       const out = await runCases(scratch.dir, judged.run, cases);
       if ("failed" in out || !baseOutputs) return 0.5;
-      const d = await judgeOutputs(cases, baseOutputs, out, compareFn);
-      judgeCalls(d);
-      return d.share;
+      return (await judgeOutputs(cases, baseOutputs, out, compareFn)).share;
     };
   }
   // A crash or a Ctrl-C must leave no scratch worktree and no empty branch. A branch that holds kept changes stays:
