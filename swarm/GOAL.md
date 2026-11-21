@@ -129,6 +129,7 @@ For problems with no number to print, such as a reply's quality:
 - `run`: gets one case on stdin and prints the output for it, using the files in the scratch checkout.
 - `compare`: gets `{ "case": {...}, "a": "...", "b": "..." }` on stdin and prints `{ "winner": "a" | "b" | "tie" }`.
   Synthe asks each question twice with `a` and `b` swapped, and uses a paired test across cases to decide.
+  `a` and `b` are exactly the outputs that `run` printed. Synthe never pads, cuts or rewrites them to suit a judge.
   `compare` may also be `"model"`.
 
 ### The solve command

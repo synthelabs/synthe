@@ -25,7 +25,8 @@ export interface Problem {
   guards: string[];
   split: { holdout: boolean };
   proposer: { command: string } | "model";
-  budget: { max_rounds: number; max_calls: number | null };
+  // max_usd (GOAL-2.md): stop before a model call that would take the known cost above it. Needs model.prices.
+  budget: { max_rounds: number; max_calls: number | null; max_usd?: number };
   model?: ModelConfig;
   candidates: number;
   dir: string;
