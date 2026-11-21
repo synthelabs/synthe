@@ -147,9 +147,16 @@ export function validateProblem(raw: unknown, file: string): ProblemCheck {
   if (raw.budget !== undefined) {
     if (!isObject(raw.budget)) errors.push(`budget: must be an object, such as { "max_rounds": 6 }.`);
     else {
-      unknownKeys(raw.budget, ["max_rounds", "max_calls"], "budget.", errors);
+      unknownKeys(raw.budget, ["max_rounds", "max_calls", "max_usd"], "budget.", errors);
       budget.max_rounds = countOf("budget.max_rounds", raw.budget.max_rounds, DEFAULT_MAX_ROUNDS, errors);
       if (raw.budget.max_calls !== undefined) budget.max_calls = countOf("budget.max_calls", raw.budget.max_calls, 1, errors);
+      const usd = raw.budget.max_usd;
+      if (usd !== undefined) {
+        if (typeof usd !== "number" || !Number.isFinite(usd) || usd <= 0) errors.push(`budget.max_usd: must be a number of US dollars above 0, such as 2.5.`);
+        // Without prices Synthe cannot know what a call costs, so it cannot keep a dollar limit (GOAL-2.md).
+        else if (!isObject(raw.model) || raw.model.prices === undefined) errors.push(`budget.max_usd: needs model.prices, so Synthe knows what each call costs. Add "prices": { "input_per_mtok": ..., "output_per_mtok": ... } to model, or remove max_usd.`);
+        else budget.max_usd = usd;
+      }
     }
   }
 
@@ -229,7 +236,8 @@ export function problemSummary(check: Extract<ProblemCheck, { ok: true }>): stri
   if (p.split.holdout) lines.push(`Holdout: on. A change is kept only if it also wins on the holdout split.`);
   lines.push(`Proposer: ${p.proposer === "model" ? "the configured model" : p.proposer.command}`);
   if (p.candidates > 1) lines.push(`Candidates: ${p.candidates} in each round`);
-  lines.push(`Budget: ${p.budget.max_rounds} rounds${p.budget.max_calls ? `, ${p.budget.max_calls} model calls` : ""}`);
+  const usdLimit = p.budget.max_usd !== undefined ? `, at most ${p.budget.max_usd} US dollars` : "";
+  lines.push(`Budget: ${p.budget.max_rounds} rounds${p.budget.max_calls ? `, ${p.budget.max_calls} model calls` : ""}${usdLimit}`);
   lines.push(`Next: run "npx synthe solve ${p.file}".`);
   return lines.join("\n");
 }
