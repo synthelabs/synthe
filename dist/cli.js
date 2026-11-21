@@ -24733,7 +24733,7 @@ var init_BetaMessageThread = __esm({
         }));
       }
       /** @internal */
-      _send(messages, params, options, parseReply) {
+      _send(messages, params, options, parseReply2) {
         const turn = this._state.startTurn(toMessageList(messages), params);
         const received = (async () => {
           try {
@@ -24747,7 +24747,7 @@ var init_BetaMessageThread = __esm({
         })();
         return new APIPromise(this._client, received.then(({ props }) => props), async () => {
           const { props, reply } = await received;
-          return addResponseIDs(parseReply(reply), props.response);
+          return addResponseIDs(parseReply2(reply), props.response);
         });
       }
       /** Like `send()`, and returns the reply's stream. The turn is in progress until the stream ends or is aborted. */
@@ -29017,6 +29017,64 @@ var init_repo = __esm({
   }
 });
 
+// src/improve/exec.ts
+import { spawn as spawn2 } from "node:child_process";
+import { performance } from "node:perf_hooks";
+function childEnv(env = process.env) {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("SYNTHE_") && !HIDDEN.includes(k)));
+}
+function killRunning() {
+  for (const pid of live) {
+    try {
+      process.kill(process.platform === "win32" ? pid : -pid, "SIGKILL");
+    } catch {
+    }
+  }
+  live.clear();
+}
+var MAX_OUTPUT, HIDDEN, live, shellExec;
+var init_exec = __esm({
+  "src/improve/exec.ts"() {
+    "use strict";
+    MAX_OUTPUT = 4 * 1024 * 1024;
+    HIDDEN = ["ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "NODE_TEST_CONTEXT"];
+    live = /* @__PURE__ */ new Set();
+    shellExec = (cwd, command, timeoutMs) => new Promise((resolve7) => {
+      const win3 = process.platform === "win32";
+      const started = performance.now();
+      const child = spawn2(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: childEnv(), stdio: ["ignore", "pipe", "pipe"], detached: !win3 });
+      if (child.pid) live.add(child.pid);
+      let stdout = "", stderr = "", timedOut = false, done = false;
+      const take = (into) => (d) => {
+        if (into === "out" && stdout.length < MAX_OUTPUT) stdout += d.toString().slice(0, MAX_OUTPUT - stdout.length);
+        if (into === "err" && stderr.length < MAX_OUTPUT) stderr += d.toString().slice(0, MAX_OUTPUT - stderr.length);
+      };
+      child.stdout.on("data", take("out"));
+      child.stderr.on("data", take("err"));
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try {
+          if (win3) child.kill("SIGKILL");
+          else process.kill(-child.pid, "SIGKILL");
+        } catch {
+        }
+      }, timeoutMs);
+      const finish = (code) => {
+        if (done) return;
+        done = true;
+        if (child.pid) live.delete(child.pid);
+        clearTimeout(timer);
+        resolve7({ ok: code === 0 && !timedOut, stdout, stderr, ms: Math.round(performance.now() - started), timedOut });
+      };
+      child.on("error", (e) => {
+        stderr += e.message;
+        finish(null);
+      });
+      child.on("close", finish);
+    });
+  }
+});
+
 // src/solve/problem.ts
 function checkProblem(_raw, _file) {
   return { ok: false, problems: ["problem check is not built yet"] };
@@ -29081,16 +29139,161 @@ var init_loop = __esm({
   }
 });
 
+// src/solve/model-proposer.ts
+function modelProposer(_problem, _env) {
+  throw new Error("model-proposer.ts is not built yet");
+}
+var init_model_proposer = __esm({
+  "src/solve/model-proposer.ts"() {
+    "use strict";
+  }
+});
+
+// src/solve/run.ts
+import { spawn as spawn3 } from "node:child_process";
+function runCommand(cwd, command, o = {}) {
+  return new Promise((resolve7) => {
+    const win3 = process.platform === "win32";
+    const child = spawn3(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: { ...childEnv(), ...o.env }, stdio: ["pipe", "pipe", "pipe"], detached: !win3 });
+    let stdout = "", stderr = "", timedOut = false, done = false;
+    child.stdout.on("data", (d) => {
+      if (stdout.length < MAX_OUTPUT2) stdout += d.toString().slice(0, MAX_OUTPUT2 - stdout.length);
+    });
+    child.stderr.on("data", (d) => {
+      if (stderr.length < MAX_OUTPUT2) stderr += d.toString().slice(0, MAX_OUTPUT2 - stderr.length);
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        if (win3) child.kill("SIGKILL");
+        else process.kill(-child.pid, "SIGKILL");
+      } catch {
+      }
+    }, o.timeoutMs ?? COMMAND_TIMEOUT_MS2);
+    const finish = (code) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve7({ ok: code === 0 && !timedOut, code, stdout, stderr, timedOut });
+    };
+    child.on("error", (e) => {
+      stderr += e.message;
+      finish(null);
+    });
+    child.on("close", finish);
+    child.stdin.on("error", () => {
+    });
+    child.stdin.end(o.stdin ?? "");
+  });
+}
+var COMMAND_TIMEOUT_MS2, MAX_OUTPUT2;
+var init_run2 = __esm({
+  "src/solve/run.ts"() {
+    "use strict";
+    init_exec();
+    COMMAND_TIMEOUT_MS2 = 6e5;
+    MAX_OUTPUT2 = 4 * 1024 * 1024;
+  }
+});
+
 // src/solve/proposer.ts
-function commandProposer(_problem) {
-  throw new Error("proposer.ts is not built yet");
+function requestObject(r) {
+  return {
+    round: r.round,
+    goal: r.goal,
+    files: r.files.map((f) => ({ path: f.path, text: f.text })),
+    history: r.history.map((h) => ({ round: h.round, summary: h.summary, kept: h.kept, reason: h.reason })),
+    candidates: r.candidates
+  };
 }
-function proposerFor(problem) {
-  return commandProposer(problem);
+function parseJson(stdout) {
+  const text4 = stdout.trim();
+  try {
+    return JSON.parse(text4);
+  } catch {
+  }
+  const last = text4.split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? "";
+  try {
+    return JSON.parse(last);
+  } catch {
+    return void 0;
+  }
 }
+function checkProposal(raw, n) {
+  const label = `proposal ${n}`;
+  if (!isObject(raw)) return `The proposer's ${label} is not a JSON object.`;
+  if (typeof raw.summary !== "string") return `The proposer's ${label} has no "summary" text.`;
+  if (!Array.isArray(raw.edits)) return `The proposer's ${label} has no "edits" list.`;
+  if (raw.edits.length === 0) return `The proposer's ${label} has an empty "edits" list, so it changes nothing.`;
+  const edits = [];
+  for (const [i, e] of raw.edits.entries()) {
+    const where = `Edit ${i + 1} of the proposer's ${label}`;
+    if (!isObject(e)) return `${where} is not a JSON object.`;
+    for (const field2 of ["path", "search", "replace"]) {
+      if (typeof e[field2] !== "string") return `${where} has no "${field2}" text.`;
+    }
+    const { path: path4, search, replace } = e;
+    if (!path4.trim()) return `${where} has an empty "path".`;
+    if (search === "") return `${where} has an empty "search", so it can not match exactly once.`;
+    edits.push({ path: path4, search, replace });
+  }
+  return { summary: raw.summary.trim() || label, edits };
+}
+function parseReply(stdout) {
+  if (!stdout.trim()) return { failed: "The proposer printed nothing on stdout. It must print one JSON object." };
+  const data = parseJson(stdout);
+  if (data === void 0) return { failed: `The proposer's reply is not valid JSON: ${short(stdout, 120)}` };
+  if (!isObject(data)) return { failed: `The proposer's reply is not a JSON object with a "proposals" list.` };
+  if (!Array.isArray(data.proposals)) return { failed: `The proposer's reply has no "proposals" list.` };
+  const proposals = [];
+  for (const [i, raw] of data.proposals.entries()) {
+    const p = checkProposal(raw, i + 1);
+    if (typeof p === "string") return { failed: p };
+    proposals.push(p);
+  }
+  return { proposals };
+}
+function replyFrom(result2, timeoutMs) {
+  if (result2.timedOut) return { failed: `The proposer command did not finish in ${Math.round(timeoutMs / 1e3)} seconds and was stopped.` };
+  if (!result2.ok) {
+    const detail = short(result2.stderr || result2.stdout);
+    return { failed: `The proposer command ${result2.code === null ? "could not start" : `exited with code ${result2.code}`}${detail ? `: ${detail}` : "."}` };
+  }
+  return parseReply(result2.stdout);
+}
+function commandProposer(problem, o = {}) {
+  if (problem.proposer === "model") throw new Error("commandProposer needs a problem with a proposer command.");
+  const command = problem.proposer.command;
+  const timeoutMs = o.timeoutMs ?? PROPOSER_TIMEOUT_MS;
+  const run2 = o.run ?? runCommand;
+  return {
+    async propose(request) {
+      let result2;
+      try {
+        result2 = await run2(problem.dir, command, { stdin: `${JSON.stringify(requestObject(request))}
+`, timeoutMs });
+      } catch (e) {
+        return { reply: { failed: `The proposer command could not start: ${short(e instanceof Error ? e.message : String(e))}` }, calls: 0 };
+      }
+      return { reply: replyFrom(result2, timeoutMs), calls: 0 };
+    }
+  };
+}
+function proposerFor(problem, env = process.env) {
+  return problem.proposer === "model" ? modelProposer(problem, env) : commandProposer(problem);
+}
+var PROPOSER_TIMEOUT_MS, short, isObject;
 var init_proposer = __esm({
   "src/solve/proposer.ts"() {
     "use strict";
+    init_model_proposer();
+    init_run2();
+    PROPOSER_TIMEOUT_MS = 10 * 6e4;
+    short = (s, n = 200) => {
+      const one2 = s.trim().replace(/\s+/g, " ");
+      return one2.length > n ? `${one2.slice(0, n)}...` : one2;
+    };
+    isObject = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
   }
 });
 
@@ -29379,14 +29582,14 @@ function printable2(text4, max = 80) {
   const flat2 = text4.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, " ").replace(/ {2,}/g, " ").trim();
   return flat2.length > max ? `${flat2.slice(0, max)}... (cut at ${max} characters)` : flat2;
 }
-var MAX_INPUT_BYTES, UNSAFE_KEYS, isObject, isNonEmpty, isInt;
+var MAX_INPUT_BYTES, UNSAFE_KEYS, isObject2, isNonEmpty, isInt;
 var init_io = __esm({
   "src/pilot/io.ts"() {
     "use strict";
     init_errors3();
     MAX_INPUT_BYTES = 32 * 1024 * 1024;
     UNSAFE_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
-    isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+    isObject2 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
     isNonEmpty = (v) => typeof v === "string" && v.trim() !== "";
     isInt = (v) => typeof v === "number" && Number.isInteger(v);
   }
@@ -29413,7 +29616,7 @@ function inRange(v, lo, hi, loOpen, hiOpen) {
   return (loOpen ? v > lo : v >= lo) && (hiOpen ? v < hi : v <= hi);
 }
 function parseMetricContract(value) {
-  if (!isObject(value)) return bad("metric must be an object.");
+  if (!isObject2(value)) return bad("metric must be an object.");
   onlyKeys(value, [
     "version",
     "primary",
@@ -29431,7 +29634,7 @@ function parseMetricContract(value) {
     "signed_off"
   ], "");
   if (value.version !== 1) bad("metric.version must be 1.");
-  if (!isObject(value.primary)) return bad("metric.primary must be an object.");
+  if (!isObject2(value.primary)) return bad("metric.primary must be an object.");
   onlyKeys(value.primary, ["name", "kind", "unit", "direction", "min_effect"], ".primary");
   const primarySpec = metricSpec(value.primary, "primary");
   const minEffect = value.primary.min_effect;
@@ -29442,7 +29645,7 @@ function parseMetricContract(value) {
   const seen = /* @__PURE__ */ new Set([primary2.name]);
   const guards = value.guards.map((g, i) => {
     const where = `guards[${i}]`;
-    if (!isObject(g)) return bad(`metric.${where} must be an object.`);
+    if (!isObject2(g)) return bad(`metric.${where} must be an object.`);
     onlyKeys(g, ["name", "kind", "unit", "direction", "max_harm", "critical", "early_stop", "range"], `.${where}`);
     const spec = metricSpec(g, where);
     if (spec.name === primary2.name) bad(`metric.${where}.name "${spec.name}" is the primary metric. A guard must be a different metric.`);
@@ -29456,13 +29659,13 @@ function parseMetricContract(value) {
     const guard2 = { ...spec, max_harm: maxHarm, critical: g.critical };
     if (g.range !== void 0) {
       if (spec.kind !== "mean") bad(`metric.${where}.range is only for a mean guard. A rate is always between 0 and 1.`);
-      if (!isObject(g.range)) return bad(`metric.${where}.range must be an object with min and max.`);
+      if (!isObject2(g.range)) return bad(`metric.${where}.range must be an object with min and max.`);
       onlyKeys(g.range, ["min", "max"], `.${where}.range`);
       if (!isFiniteNumber(g.range.min) || !isFiniteNumber(g.range.max) || g.range.min >= g.range.max) bad(`metric.${where}.range needs finite numbers with min below max: the smallest and largest value one conversation can have.`);
       guard2.range = { min: g.range.min, max: g.range.max };
     }
     if (g.early_stop !== void 0) {
-      if (!isObject(g.early_stop)) return bad(`metric.${where}.early_stop must be an object with min_per_arm.`);
+      if (!isObject2(g.early_stop)) return bad(`metric.${where}.early_stop must be an object with min_per_arm.`);
       onlyKeys(g.early_stop, ["min_per_arm"], `.${where}.early_stop`);
       if (!isInt(g.early_stop.min_per_arm) || g.early_stop.min_per_arm < 1) bad(`metric.${where}.early_stop.min_per_arm must be a whole number of at least 1.`);
       if (g.critical !== true) bad(`metric.${where}.early_stop is only allowed on a critical guard. Set critical to true or remove early_stop.`);
@@ -29484,7 +29687,7 @@ function parseMetricContract(value) {
   if (!inRange(value.max_missing_rate, 0, 0.5, false, false)) bad("metric.max_missing_rate must be between 0 and 0.5.");
   if (!inRange(value.max_unattributed_rate, 0, 0.5, false, false)) bad("metric.max_unattributed_rate must be between 0 and 0.5.");
   if (value.query_hash !== void 0 && !isSha256(value.query_hash)) bad("metric.query_hash must be 64 lowercase hex characters (the SHA-256 of the metric query).");
-  if (!isObject(value.signed_off)) return bad("metric.signed_off must be an object with by and at.");
+  if (!isObject2(value.signed_off)) return bad("metric.signed_off must be an object with by and at.");
   onlyKeys(value.signed_off, ["by", "at"], ".signed_off");
   if (!isNonEmpty(value.signed_off.by)) bad("metric.signed_off.by must name the person who signed off the metric.");
   if (typeof value.signed_off.at !== "string" || Number.isNaN(ms(value.signed_off.at))) bad("metric.signed_off.at must be a UTC time like 2026-09-01T12:00:00Z.");
@@ -29529,10 +29732,10 @@ function onlyKeys2(value, allowed, where) {
   if (extra !== void 0) bad2(`${where} has an unknown field "${extra}"`);
 }
 function parseReplay(v) {
-  if (!isObject(v)) return bad2("replay is required");
+  if (!isObject2(v)) return bad2("replay is required");
   onlyKeys2(v, ["model", "max_tokens", "temperature", "max_steps_per_turn", "gate", "min_recurring_cases", "max_changed_lines"], "replay");
   const gate = v.gate;
-  if (!isObject(gate)) return bad2("replay.gate is required");
+  if (!isObject2(gate)) return bad2("replay.gate is required");
   onlyKeys2(gate, ["min_paired_cases", "min_paired_coverage", "min_net_wins", "max_unchecked_blocking_guards"], "replay.gate");
   const temperature = v.temperature === null ? null : fraction(v.temperature, "replay.temperature");
   return {
@@ -29552,7 +29755,7 @@ function parseReplay(v) {
 }
 function parseProvider(v) {
   if (v === null) return null;
-  if (!isObject(v)) return bad2("provider must be null (scripted models only) or an approval object");
+  if (!isObject2(v)) return bad2("provider must be null (scripted models only) or an approval object");
   onlyKeys2(v, ["provider", "endpoint", "model", "key_env", "data_class", "approved_by", "approved_at", "max_calls", "max_input_chars"], "provider");
   if (v.provider !== "anthropic") bad2('provider.provider must be "anthropic"');
   const endpoint = text2(v.endpoint, "provider.endpoint");
@@ -29587,7 +29790,7 @@ function parsePilotConfig(source) {
   } catch {
     return bad2("not valid JSON");
   }
-  if (!isObject(v)) return bad2("must be a JSON object");
+  if (!isObject2(v)) return bad2("must be a JSON object");
   const unsafe = unsafeKey(v);
   if (unsafe) bad2(`has a field named "${unsafe}", which is not allowed`);
   onlyKeys2(v, ["version", "pilot_id", "agent", "repo", "metric", "replay", "provider"], "the file");
@@ -29595,7 +29798,7 @@ function parsePilotConfig(source) {
   const pilotId = text2(v.pilot_id, "pilot_id");
   if (!/^[a-z0-9][a-z0-9-]{2,39}$/.test(pilotId)) bad2("pilot_id must be 3 to 40 lowercase letters, digits or dashes");
   const agent = v.agent;
-  if (!isObject(agent)) return bad2("agent is required");
+  if (!isObject2(agent)) return bad2("agent is required");
   onlyKeys2(agent, ["name", "prompt_path", "baseline_tag"], "agent");
   const promptPath = text2(agent.prompt_path, "agent.prompt_path");
   const pathProblem = promptPathProblem(promptPath);
@@ -29603,7 +29806,7 @@ function parsePilotConfig(source) {
   const baselineTag = text2(agent.baseline_tag, "agent.baseline_tag");
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(baselineTag)) bad2("agent.baseline_tag must be 1 to 64 letters, digits, dots, dashes or underscores");
   const repo = v.repo;
-  if (!isObject(repo)) return bad2("repo is required");
+  if (!isObject2(repo)) return bad2("repo is required");
   onlyKeys2(repo, ["slug", "base", "api"], "repo");
   const slug = text2(repo.slug, "repo.slug");
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(slug)) bad2("repo.slug must look like owner/name");
@@ -29738,7 +29941,7 @@ function parsePack(text4) {
   } catch {
     return bad3("The pack file is not valid JSON.");
   }
-  if (!isObject(raw)) return bad3("The pack file must be a JSON object.");
+  if (!isObject2(raw)) return bad3("The pack file must be a JSON object.");
   if (unsafeKey(raw) !== null) bad3("The pack has a field named __proto__, constructor or prototype, which no pack needs. Rename it and export again.");
   onlyKeys3(raw, ["version", "name", "pack_version", "parent_pack_id", "source", "tools", "check_catalog", "cases"], "The pack");
   if (raw.version !== 1) bad3("The pack version field must be 1.");
@@ -29752,18 +29955,18 @@ function parsePack(text4) {
   if (raw.tools.length > PACK_LIMITS.tools) throw new PilotError("too_large", `The pack lists ${raw.tools.length} tools; the limit is ${PACK_LIMITS.tools}.`);
   const toolNames = /* @__PURE__ */ new Set();
   for (const [i, t] of raw.tools.entries()) {
-    if (!isObject(t)) {
+    if (!isObject2(t)) {
       bad3(`Tool #${i + 1} must be an object.`);
       continue;
     }
     onlyKeys3(t, ["name", "description", "input_schema"], `Tool #${i + 1}`);
     if (!isNonEmpty(t.name)) bad3(`Tool #${i + 1} needs a name.`);
     if (typeof t.description !== "string") bad3(`Tool ${safeName(t.name)} needs a description.`);
-    if (!isObject(t.input_schema)) bad3(`Tool ${safeName(t.name)} needs an input_schema object.`);
+    if (!isObject2(t.input_schema)) bad3(`Tool ${safeName(t.name)} needs an input_schema object.`);
     if (toolNames.has(t.name)) bad3(`Tool ${safeName(t.name)} is listed twice.`);
     toolNames.add(t.name);
   }
-  if (!isObject(raw.check_catalog)) bad3("check_catalog must be an object of check id to sentence.");
+  if (!isObject2(raw.check_catalog)) bad3("check_catalog must be an object of check id to sentence.");
   const catalog = raw.check_catalog;
   for (const [id, sentence] of Object.entries(catalog)) {
     if (!isNonEmpty(sentence)) bad3(`check_catalog entry ${safeName(id)} must be a non-empty sentence.`);
@@ -29782,11 +29985,11 @@ function checkApproval(source) {
   const refuse2 = (what) => {
     throw new PilotError("pack_not_approved", `The pack has no recorded approval: ${what}. Ask the data owner to complete the source block and export again.`);
   };
-  if (!isObject(source)) return refuse2("the source block is missing");
+  if (!isObject2(source)) return refuse2("the source block is missing");
   for (const key of ["exported_by", "exported_at"]) if (!isNonEmpty(source[key])) refuse2(`source.${key} is missing`);
   if (Number.isNaN(ms(source.exported_at))) refuse2("source.exported_at is not a UTC time like 2026-10-01T00:00:00Z");
   const red = source.redaction;
-  if (!isObject(red)) return refuse2("source.redaction is missing");
+  if (!isObject2(red)) return refuse2("source.redaction is missing");
   for (const key of ["method", "approved_by", "approved_at"]) if (!isNonEmpty(red[key])) refuse2(`source.redaction.${key} is missing`);
   if (Number.isNaN(ms(red.approved_at))) refuse2("source.redaction.approved_at is not a UTC time like 2026-10-01T00:00:00Z");
   if (!Array.isArray(source.approved_uses) || !source.approved_uses.includes("replay")) refuse2('source.approved_uses does not include "replay"');
@@ -29795,7 +29998,7 @@ function checkApproval(source) {
   if (source.policy_version !== void 0 && typeof source.policy_version !== "string") bad3("source.policy_version must be a string.");
 }
 function checkCase(c, index, ctx) {
-  if (!isObject(c)) {
+  if (!isObject2(c)) {
     bad3(`Case #${index + 1} must be an object.`);
     return;
   }
@@ -29806,7 +30009,7 @@ function checkCase(c, index, ctx) {
   ctx.seen.add(c.id);
   if (c.split !== "discovery" && c.split !== "heldout") bad3(`${label} needs split "discovery" or "heldout".`);
   const prov = c.provenance;
-  if (!isObject(prov)) {
+  if (!isObject2(prov)) {
     bad3(`${label} needs a provenance block.`);
     return;
   }
@@ -29818,14 +30021,14 @@ function checkCase(c, index, ctx) {
   const turns = checkMessages(c, label, ctx);
   checkChecks(c, label, turns, ctx);
   if (c.observed !== void 0) {
-    if (!isObject(c.observed)) bad3(`${label} observed must be an object.`);
+    if (!isObject2(c.observed)) bad3(`${label} observed must be an object.`);
     for (const [k, v] of Object.entries(c.observed)) {
       if (!(v === null || typeof v === "boolean" || typeof v === "number" && Number.isFinite(v))) bad3(`${label} observed value ${safeName(k)} must be a number, true, false or null.`);
     }
   }
   if (c.regression !== void 0) {
     const r = c.regression;
-    if (!isObject(r)) {
+    if (!isObject2(r)) {
       bad3(`${label} regression must be an object.`);
       return;
     }
@@ -29842,7 +30045,7 @@ function checkMessages(c, label, ctx) {
   };
   messages.forEach((m, i2) => {
     const at = `${label} message ${i2 + 1}`;
-    if (!isObject(m)) {
+    if (!isObject2(m)) {
       bad3(`${at} must be an object.`);
       return;
     }
@@ -29862,7 +30065,7 @@ function checkMessages(c, label, ctx) {
     if (role === "assistant" && m.tool_calls !== void 0) {
       if (!Array.isArray(m.tool_calls)) bad3(`${at} tool_calls must be an array.`);
       for (const tc of m.tool_calls) {
-        if (!isObject(tc)) {
+        if (!isObject2(tc)) {
           bad3(`${at} has a tool call that is not an object.`);
           continue;
         }
@@ -29870,7 +30073,7 @@ function checkMessages(c, label, ctx) {
         if (!isNonEmpty(tc.id)) bad3(`${at} has a tool call without an id.`);
         if (!isNonEmpty(tc.name)) bad3(`${at} has a tool call without a name.`);
         if (!ctx.toolNames.has(tc.name)) bad3(`${at} calls tool ${safeName(tc.name)}, which the pack does not list in tools.`);
-        if (!isObject(tc.input)) bad3(`${at} has a tool call for ${safeName(tc.name)} whose input is not an object.`);
+        if (!isObject2(tc.input)) bad3(`${at} has a tool call for ${safeName(tc.name)} whose input is not an object.`);
         tooLong(canonicalJson(tc.input).length, `message ${i2 + 1} tool input`);
       }
     }
@@ -29918,7 +30121,7 @@ function checkChecks(c, label, turns, ctx) {
   const pairs = /* @__PURE__ */ new Set();
   checks.forEach((k, i) => {
     const at = `${label} check #${i + 1}`;
-    if (!isObject(k)) {
+    if (!isObject2(k)) {
       bad3(`${at} must be an object.`);
       return;
     }
@@ -29949,7 +30152,7 @@ function scanForPersonalData(pack2) {
   const walk3 = (value, where) => {
     if (typeof value === "string") hit(value, where);
     else if (Array.isArray(value)) for (const v of value) walk3(v, where);
-    else if (isObject(value)) for (const [k, v] of Object.entries(value)) {
+    else if (isObject2(value)) for (const [k, v] of Object.entries(value)) {
       hit(k, where);
       walk3(v, where);
     }
@@ -30918,7 +31121,7 @@ function likelyCopies(rows) {
   return { twins, expected };
 }
 function validateRow(raw, where, contract) {
-  if (!isObject(raw)) return bad4(`${where} is not an object.`);
+  if (!isObject2(raw)) return bad4(`${where} is not an object.`);
   const unknown = Object.keys(raw).filter((k) => !ROW_FIELDS.includes(k));
   if (unknown.length > 0) bad4(`${where} has an undocumented field ${shown(unknown[0])}. ${MINIMISE}`);
   for (const field2 of ["conversation_id", "prompt_version", "started_at"]) {
@@ -30934,7 +31137,7 @@ function validateRow(raw, where, contract) {
     checkPersonalData(v, field2, where);
   }
   if (!validTime(raw.started_at)) bad4(`${where}: started_at must be a UTC time like 2026-09-01T12:00:00Z.`);
-  if (!isObject(raw.values)) return bad4(`${where}: values must be an object of metric name to number or null.`);
+  if (!isObject2(raw.values)) return bad4(`${where}: values must be an object of metric name to number or null.`);
   const metrics = contractMetrics(contract);
   const extra = Object.keys(raw.values).filter((k) => !metrics.some((m) => m.name === k));
   if (extra.length > 0) bad4(`${where}: values has ${shown(extra[0])}, which is not a metric in the contract. ${MINIMISE}`);
@@ -31062,7 +31265,7 @@ function rowsFromCsv(text4, file, contract) {
   }).map(({ line, raw }) => validateRow(raw, `${file} line ${line}`, contract));
 }
 function validateAggregate(raw, where, contract) {
-  if (!isObject(raw)) return bad4(`${where} is not an object.`);
+  if (!isObject2(raw)) return bad4(`${where} is not an object.`);
   const unknown = Object.keys(raw).filter((k) => !["prompt_version", "n", "immature", "unattributed", "metrics", "segments"].includes(k));
   if (unknown.length > 0) bad4(`${where} has an undocumented field ${shown(unknown[0])}. ${MINIMISE}`);
   if (!isNonEmpty(raw.prompt_version)) bad4(`${where}: prompt_version must be a non-empty string.`);
@@ -31072,14 +31275,14 @@ function validateAggregate(raw, where, contract) {
     if (!isCount(raw[field2])) bad4(`${where}: ${field2} must be a whole number of 0 or more.`);
   }
   const n = raw.n;
-  if (!isObject(raw.metrics)) return bad4(`${where}: metrics must be an object of metric name to summary.`);
+  if (!isObject2(raw.metrics)) return bad4(`${where}: metrics must be an object of metric name to summary.`);
   const metrics = contractMetrics(contract);
   const extra = Object.keys(raw.metrics).filter((k) => !metrics.some((m) => m.name === k));
   if (extra.length > 0) bad4(`${where}: metrics has "${extra[0]}", which is not a metric in the contract. ${MINIMISE}`);
   const out = {};
   for (const m of metrics) {
     const s = raw.metrics[m.name];
-    if (!isObject(s)) return bad4(`${where}: metrics is missing ${m.name}.`);
+    if (!isObject2(s)) return bad4(`${where}: metrics is missing ${m.name}.`);
     if (s.kind !== m.kind) bad4(`${where}: metrics.${m.name}.kind must be "${m.kind}", as in the contract.`);
     if (m.kind === "rate") {
       const unk = Object.keys(s).filter((k) => !["kind", "successes", "missing"].includes(k));
@@ -31114,7 +31317,7 @@ function validateAggregate(raw, where, contract) {
   }
   const agg = { prompt_version: raw.prompt_version, n, immature: raw.immature, unattributed: raw.unattributed, metrics: out };
   if (raw.segments !== void 0) {
-    if (!isObject(raw.segments)) return bad4(`${where}: segments must be an object of segment to count.`);
+    if (!isObject2(raw.segments)) return bad4(`${where}: segments must be an object of segment to count.`);
     const segments = {};
     for (const [k, v] of Object.entries(raw.segments)) {
       if (k.length > MAX_ID) bad4(`${where}: a segment name is longer than ${MAX_ID} characters.`);
@@ -31172,7 +31375,7 @@ function importTelemetry(input) {
   } catch {
     return bad4("The export is not valid JSON. Export it again as one JSON file shaped as docs/PILOT.md describes.");
   }
-  if (!isObject(parsed)) return bad4("The export must be a JSON object.");
+  if (!isObject2(parsed)) return bad4("The export must be a JSON object.");
   const x = parsed;
   if (unsafeKey(x) !== null) bad4("The export has a field named __proto__, constructor or prototype, which no export needs.");
   const unknownTop = Object.keys(x).filter((k) => !TOP_KEYS.includes(k));
@@ -31181,7 +31384,7 @@ function importTelemetry(input) {
   if (!isNonEmpty(x.export_id)) bad4("The export needs a non-empty export_id (the customer's own id for this export).");
   if (!isNonEmpty(x.source)) bad4("The export needs a non-empty source naming the system it came from.");
   if (!validTime(x.exported_at)) bad4("exported_at must be a UTC time like 2026-09-20T00:00:00Z.");
-  if (!isObject(x.window)) return bad4("window must be an object with start and end.");
+  if (!isObject2(x.window)) return bad4("window must be an object with start and end.");
   if (Object.keys(x.window).some((k) => k !== "start" && k !== "end")) bad4("window may only have start and end.");
   if (!validTime(x.window.start) || !validTime(x.window.end)) bad4("window.start and window.end must be UTC times like 2026-09-01T00:00:00Z.");
   if (ms(x.window.start) >= ms(x.window.end)) bad4("window.start must be before window.end.");
@@ -31189,7 +31392,7 @@ function importTelemetry(input) {
   if (input.purpose === "baseline" && x.assignment !== "none") bad4(`A baseline export covers the current prompt only, so assignment must be "none" (it is "${x.assignment}").`);
   if (input.purpose === "experiment" && x.assignment === "none") bad4('An experiment export compares two prompts, so assignment must be "randomized" or "observational", not "none".');
   if (!isNonEmpty(x.denominator)) bad4("The export needs a non-empty denominator.");
-  if (!isObject(x.units) || Object.values(x.units).some((u) => typeof u !== "string")) bad4("units must be an object of metric name to unit.");
+  if (!isObject2(x.units) || Object.values(x.units).some((u) => typeof u !== "string")) bad4("units must be an object of metric name to unit.");
   if (x.query_hash !== void 0 && !isSha256(x.query_hash)) bad4("query_hash must be 64 lowercase hex characters.");
   if (x.expected_rows !== void 0 && !isCount(x.expected_rows)) bad4("expected_rows must be a whole number of 0 or more.");
   const forms = ["rows", "rows_csv", "aggregates"].filter((k) => x[k] !== void 0);
@@ -32250,19 +32453,19 @@ function parseModelScript(source) {
   } catch {
     return bad5("it is not valid JSON");
   }
-  if (!isObject(v) || v.version !== 1 || typeof v.name !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.name)) return bad5("it needs version 1 and a short lowercase name");
+  if (!isObject2(v) || v.version !== 1 || typeof v.name !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.name)) return bad5("it needs version 1 and a short lowercase name");
   if (typeof v.fallback !== "string" || !v.fallback.trim()) return bad5("it needs a fallback reply");
   if (!Array.isArray(v.rules) || v.rules.length > 500) return bad5("rules must be a list of at most 500 rules");
   for (const [i, rule] of v.rules.entries()) {
     const where = `rule ${i + 1}`;
-    if (!isObject(rule) || !isObject(rule.when) || !isObject(rule.reply)) return bad5(`${where} needs "when" and "reply"`);
+    if (!isObject2(rule) || !isObject2(rule.when) || !isObject2(rule.reply)) return bad5(`${where} needs "when" and "reply"`);
     for (const key of ["system_includes", "system_excludes", "user_includes", "result_includes", "called", "not_called", "ever_called", "never_called"]) {
       if (rule.when[key] !== void 0 && !strings(rule.when[key])) return bad5(`${where}: when.${key} must be a list of phrases`);
     }
     if (rule.when.after_tool !== void 0 && rule.when.after_tool !== null && typeof rule.when.after_tool !== "string") return bad5(`${where}: when.after_tool must be a tool name or null`);
     for (const captures of [rule.capture, rule.capture_result]) {
       if (captures === void 0) continue;
-      if (!isObject(captures)) return bad5(`${where}: capture must map names to patterns`);
+      if (!isObject2(captures)) return bad5(`${where}: capture must map names to patterns`);
       for (const pattern of Object.values(captures)) {
         if (typeof pattern !== "string" || pattern.length > 200) return bad5(`${where}: a capture pattern must be text of at most 200 characters`);
         try {
@@ -32274,7 +32477,7 @@ function parseModelScript(source) {
     }
     const { text: text4, tool } = rule.reply;
     if (text4 !== void 0 && typeof text4 !== "string") return bad5(`${where}: reply.text must be text`);
-    if (tool !== void 0 && (!isObject(tool) || typeof tool.name !== "string" || !isObject(tool.input))) return bad5(`${where}: reply.tool needs a name and an input object`);
+    if (tool !== void 0 && (!isObject2(tool) || typeof tool.name !== "string" || !isObject2(tool.input))) return bad5(`${where}: reply.tool needs a name and an input object`);
     if (text4 === void 0 && tool === void 0) return bad5(`${where}: reply needs text or a tool call`);
   }
   return v;
@@ -32282,7 +32485,7 @@ function parseModelScript(source) {
 function fill(value, values) {
   if (typeof value === "string") return value.replace(/\{([a-z_]+)\}/g, (whole2, name) => values[name] ?? whole2);
   if (Array.isArray(value)) return value.map((v) => fill(v, values));
-  if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v, values)]));
+  if (isObject2(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v, values)]));
   return value;
 }
 function scriptedModel(script) {
@@ -32359,13 +32562,13 @@ function parseProposerScript(source) {
   } catch {
     return bad5("it is not valid JSON");
   }
-  if (!isObject(v) || v.version !== 1 || typeof v.name !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.name) || !isObject(v.findings)) return bad5("it needs version 1, a short lowercase name and a findings object");
+  if (!isObject2(v) || v.version !== 1 || typeof v.name !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.name) || !isObject2(v.findings)) return bad5("it needs version 1, a short lowercase name and a findings object");
   for (const [check, attempts] of Object.entries(v.findings)) {
     if (!Array.isArray(attempts)) return bad5(`findings.${check} must be a list of attempts`);
     for (const a of attempts) {
-      if (!isObject(a) || typeof a.rationale !== "string" || !a.rationale.trim()) return bad5(`every attempt for ${check} needs a rationale`);
+      if (!isObject2(a) || typeof a.rationale !== "string" || !a.rationale.trim()) return bad5(`every attempt for ${check} needs a rationale`);
       if (a.append !== void 0 && !strings(a.append)) return bad5(`append for ${check} must be a list of lines`);
-      if (a.replace !== void 0 && !(Array.isArray(a.replace) && a.replace.every((r) => isObject(r) && typeof r.find === "string" && r.find !== "" && typeof r.with === "string"))) return bad5(`replace for ${check} must be a list of {find, with}`);
+      if (a.replace !== void 0 && !(Array.isArray(a.replace) && a.replace.every((r) => isObject2(r) && typeof r.find === "string" && r.find !== "" && typeof r.with === "string"))) return bad5(`replace for ${check} must be a list of {find, with}`);
       if (a.append === void 0 && a.replace === void 0) return bad5(`every attempt for ${check} needs append or replace`);
     }
   }
@@ -32395,7 +32598,7 @@ function transcript(messages, token2) {
 ${text4}`;
   return messages.map((m) => m.role === "user" ? turn("CUSTOMER", m.text) : m.role === "assistant" ? turn("AGENT", `${m.text}${(m.tool_calls ?? []).map((c) => ` [calls ${c.name}]`).join("")}`) : turn(`TOOL ${m.name}`, m.result)).join("\n");
 }
-function modelProposer(model, modelName2, maxTokens, token2 = randomToken) {
+function modelProposer2(model, modelName2, maxTokens, token2 = randomToken) {
   return {
     destination: model.destination,
     async propose(context2) {
@@ -33991,7 +34194,7 @@ function proposerFor2(flags, config, deps) {
   if (flags.live === true) {
     if (spec) throw new PilotError("usage", "Give --proposer scripted:<file> or --live, not both.");
     const model = liveModel(config.provider, liveOptIn(flags), deps.env, deps.say, deps.fetch);
-    return modelProposer(model, config.provider.model, 8e3);
+    return modelProposer2(model, config.provider.model, 8e3);
   }
   if (!spec?.startsWith("scripted:")) throw new PilotError("usage", "Name where the candidate comes from: --file <prompt> with --author and --rationale (a person wrote it), --proposer scripted:<file>, or --live.");
   return scriptedProposer(parseProposerScript(readBounded(spec.slice("scripted:".length), 4 * 1024 * 1024)));
@@ -34764,7 +34967,7 @@ function readCallLog(dir) {
         log.malformed++;
         continue;
       }
-      if (!isObject(line) || line.v !== CALL_LOG_VERSION || !isUtc(line.at) || !isId2(line.agent)) {
+      if (!isObject2(line) || line.v !== CALL_LOG_VERSION || !isUtc(line.at) || !isId2(line.agent)) {
         log.malformed++;
         continue;
       }
@@ -34798,7 +35001,7 @@ function readCallLog(dir) {
         continue;
       }
       if (line.type === "outcome") {
-        if (!isObject(line.values)) {
+        if (!isObject2(line.values)) {
           log.malformed++;
           continue;
         }
@@ -36620,7 +36823,7 @@ init_goal();
 init_prompt();
 init_state();
 init_safety();
-import { spawn as spawn3 } from "node:child_process";
+import { spawn as spawn4 } from "node:child_process";
 import { existsSync as existsSync19, readFileSync as readFileSync21, writeFileSync as writeFileSync12 } from "node:fs";
 import { createInterface as createInterface4 } from "node:readline/promises";
 
@@ -41889,62 +42092,11 @@ async function submit(io2, _root, options) {
   return true;
 }
 
-// src/improve/exec.ts
-import { spawn as spawn2 } from "node:child_process";
-import { performance } from "node:perf_hooks";
-var MAX_OUTPUT = 4 * 1024 * 1024;
-var HIDDEN = ["ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "NODE_TEST_CONTEXT"];
-function childEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("SYNTHE_") && !HIDDEN.includes(k)));
-}
-var live = /* @__PURE__ */ new Set();
-function killRunning() {
-  for (const pid of live) {
-    try {
-      process.kill(process.platform === "win32" ? pid : -pid, "SIGKILL");
-    } catch {
-    }
-  }
-  live.clear();
-}
-var shellExec = (cwd, command, timeoutMs) => new Promise((resolve7) => {
-  const win3 = process.platform === "win32";
-  const started = performance.now();
-  const child = spawn2(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: childEnv(), stdio: ["ignore", "pipe", "pipe"], detached: !win3 });
-  if (child.pid) live.add(child.pid);
-  let stdout = "", stderr = "", timedOut = false, done = false;
-  const take = (into) => (d) => {
-    if (into === "out" && stdout.length < MAX_OUTPUT) stdout += d.toString().slice(0, MAX_OUTPUT - stdout.length);
-    if (into === "err" && stderr.length < MAX_OUTPUT) stderr += d.toString().slice(0, MAX_OUTPUT - stderr.length);
-  };
-  child.stdout.on("data", take("out"));
-  child.stderr.on("data", take("err"));
-  const timer = setTimeout(() => {
-    timedOut = true;
-    try {
-      if (win3) child.kill("SIGKILL");
-      else process.kill(-child.pid, "SIGKILL");
-    } catch {
-    }
-  }, timeoutMs);
-  const finish = (code) => {
-    if (done) return;
-    done = true;
-    if (child.pid) live.delete(child.pid);
-    clearTimeout(timer);
-    resolve7({ ok: code === 0 && !timedOut, stdout, stderr, ms: Math.round(performance.now() - started), timedOut });
-  };
-  child.on("error", (e) => {
-    stderr += e.message;
-    finish(null);
-  });
-  child.on("close", finish);
-});
-
 // src/cli/main.ts
+init_exec();
 var run = (cmd, args, stdin) => new Promise((resolve7, reject) => {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_")));
-  const child = spawn3(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env });
+  const child = spawn4(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env });
   let out = "", err = "";
   child.stdout.on("data", (d) => {
     out += d;
