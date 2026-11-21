@@ -3,7 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { applyEdits, checkEdits, commandPaths, type EditRules, pathProblem } from "../src/solve/edits.ts";
+import { execFileSync } from "node:child_process";
+import { applyEdits, applyProposal, artifactFiles, checkEdits, commandPaths, type EditRules, measurePathsOf, pathProblem } from "../src/solve/edits.ts";
+import type { Problem } from "../src/solve/types.ts";
 
 const rules: EditRules = {
   artifact: ["src/**/*.py", "config.json"],
@@ -121,4 +123,65 @@ test("applyEdits: a symbolic link, or a folder that is one, is refused and the t
   assert.equal(c.ok, false);
   assert.equal(existsSync(join(outside, "new.py")), false);
   assert.equal(readFileSync(join(outside, "secret.py"), "utf8"), "keep\n");
+});
+
+function repo(): { root: string; problem: Problem } {
+  const root = mkdtempSync(join(tmpdir(), "synthe-edits-repo-"));
+  const files: Record<string, string> = {
+    "README.md": "top\n",
+    "zoo/tune/config.json": '{"rate": 1}\n',
+    "zoo/tune/src/a.py": "A = 1\n",
+    "zoo/tune/src/vendor/v.py": "V = 1\n",
+    "zoo/tune/src/blob.py": "x\0y",
+    "zoo/tune/measure/score.py": "print(1)\n",
+    "zoo/tune/propose.js": "\n",
+    "zoo/tune/problem.json": "{}\n",
+  };
+  for (const [p, text] of Object.entries(files)) {
+    mkdirSync(join(root, p, ".."), { recursive: true });
+    writeFileSync(join(root, p), text);
+  }
+  writeFileSync(join(root, "zoo/tune/src/untracked.py"), "U = 1\n");
+  const git = (...a: string[]) => execFileSync("git", ["-C", root, ...a], { stdio: "pipe" });
+  git("init", "-q");
+  git("add", "--", ...Object.keys(files));
+  git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init");
+  const dir = join(root, "zoo/tune");
+  const problem: Problem = {
+    version: 1, name: "tune", goal: "g", artifact: ["config.json", "src/**/*.py", "measure/**", "propose.js", "problem.json"], protect: ["src/vendor/**"],
+    measure: { command: "python3 measure/score.py", direction: "higher", runs: 3 }, guards: [], split: { holdout: false },
+    proposer: { command: "node propose.js" }, budget: { max_rounds: 6, max_calls: null }, candidates: 1, dir, file: join(dir, "problem.json"),
+  };
+  return { root, problem };
+}
+
+test("measurePathsOf: the measure, guard, judge and proposer files and the problem file", () => {
+  const { problem } = repo();
+  assert.deepEqual(measurePathsOf(problem).sort(), ["measure/score.py", "problem.json", "propose.js"]);
+  const judged: Problem = { ...problem, guards: ["sh guard.sh"], proposer: "model", measure: { judge: { cases: "cases.jsonl", run: "node run.js", compare: "model" }, runs: 3 } };
+  assert.deepEqual(measurePathsOf(judged).sort(), ["cases.jsonl", "guard.sh", "problem.json", "run.js"]);
+});
+
+test("artifactFiles: tracked text files that match artifact and are not protected, relative to the problem folder", () => {
+  const { root, problem } = repo();
+  assert.deepEqual(artifactFiles(root, problem).map((f) => f.path),
+    ["config.json", "measure/score.py", "problem.json", "propose.js", "src/a.py"]);
+  assert.equal(artifactFiles(join(root, "zoo/tune"), problem).find((f) => f.path === "src/a.py")?.text, "A = 1\n");
+});
+
+test("applyProposal: changes the problem folder in the checkout and returns paths from the checkout root", () => {
+  const { root, problem } = repo();
+  const checkout = mkdtempSync(join(tmpdir(), "synthe-edits-checkout-"));
+  execFileSync("git", ["-C", root, "worktree", "add", "-q", "--detach", join(checkout, "wt")], { stdio: "pipe" });
+  const wt = join(checkout, "wt");
+  const ok = applyProposal(wt, problem, { summary: "s", edits: [{ path: "config.json", search: "1", replace: "2" }] });
+  assert.deepEqual(ok, { paths: ["zoo/tune/config.json"] });
+  assert.equal(readFileSync(join(wt, "zoo/tune/config.json"), "utf8"), '{"rate": 2}\n');
+  assert.equal(readFileSync(join(root, "zoo/tune/config.json"), "utf8"), '{"rate": 1}\n');
+  for (const [path, why] of [["measure/score.py", /measure\/score\.py is used by the measure/], ["propose.js", /propose\.js is used by/], ["problem.json", /problem\.json is used by/], ["src/vendor/v.py", /src\/vendor\/v\.py is protected/], ["README.md", /README\.md is outside/]] as const) {
+    const r = applyProposal(wt, problem, { summary: "s", edits: [{ path, search: "1", replace: "2" }] });
+    assert.match("refused" in r ? r.refused : "", why, path);
+  }
+  assert.equal(readFileSync(join(wt, "zoo/tune/measure/score.py"), "utf8"), "print(1)\n");
+  assert.match((applyProposal(wt, problem, { summary: "s" } as never) as { refused: string }).refused, /no edits/);
 });

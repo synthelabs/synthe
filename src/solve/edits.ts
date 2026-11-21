@@ -1,8 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, posix, relative } from "node:path";
 import { matchesAny } from "./glob.ts";
-
-export interface Edit { path: string; search: string; replace: string }
+import { type Edit, isJudged, type Problem, type Proposal, type ProposerFile } from "./types.ts";
 
 // What a proposal may touch. Paths are relative to the problem folder, with "/" separators.
 export interface EditRules {
@@ -112,4 +112,75 @@ export function applyEdits(dir: string, edits: Edit[], rules: EditRules): EditRe
     writeFileSync(file, text);
   }
   return { ok: true, changed: [...texts.keys()].sort() };
+}
+
+const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+
+// The problem folder's path inside its repository ("" at the root, else "sub/dir/"), so the same folder can be
+// found inside a scratch checkout of that repository.
+function problemPrefix(problem: Problem): string {
+  return git(problem.dir, "rev-parse", "--show-prefix").trim();
+}
+
+// The problem folder inside the checkout. `checkout` may be the checkout's root or any folder in it.
+function folderIn(checkout: string, problem: Problem): { top: string; prefix: string; dir: string } {
+  const top = git(checkout, "rev-parse", "--show-toplevel").trim();
+  const prefix = problemPrefix(problem);
+  return { top, prefix, dir: join(top, prefix) };
+}
+
+// The files that decide the number or run the proposer: every file named in the measure, judge, guard and
+// proposer commands, the judge's cases, and the problem file itself. Relative to the problem folder.
+export function measurePathsOf(problem: Problem): string[] {
+  const commands = [...problem.guards];
+  const extra: string[] = [];
+  if (isJudged(problem.measure)) {
+    const j = problem.measure.judge;
+    commands.push(j.run);
+    if (j.compare !== "model") commands.push(j.compare);
+    extra.push(j.cases);
+  } else {
+    commands.push(problem.measure.command);
+  }
+  if (problem.proposer !== "model") commands.push(problem.proposer.command);
+  const file = relative(problem.dir, problem.file).replace(/\\/g, "/");
+  if (file && !file.startsWith("..")) extra.push(file);
+  return [...new Set([...commandPaths(commands), ...extra.map(normal)])];
+}
+
+export function rulesFor(problem: Problem): EditRules {
+  return { artifact: problem.artifact, protect: problem.protect, measurePaths: measurePathsOf(problem) };
+}
+
+const MAX_FILE_BYTES = 1024 * 1024;
+
+// The files the proposer sees: every tracked file in the problem folder of the checkout that matches artifact and
+// is not protected, at its current version. Paths are relative to the problem folder. Links, large files and
+// binary files are left out: the proposer edits text.
+export function artifactFiles(checkout: string, problem: Problem): ProposerFile[] {
+  const { dir } = folderIn(checkout, problem);
+  const tracked = git(dir, "ls-files", "-z", "--", ".").split("\0").filter(Boolean);
+  const files: ProposerFile[] = [];
+  for (const path of tracked.sort()) {
+    if (!matchesAny(path, problem.artifact) || matchesAny(path, problem.protect)) continue;
+    const file = join(dir, path);
+    try {
+      const stat = lstatSync(file);
+      if (!stat.isFile() || stat.size > MAX_FILE_BYTES || linkedParent(dir, path)) continue;
+      const bytes = readFileSync(file);
+      if (bytes.includes(0)) continue;
+      files.push({ path, text: bytes.toString("utf8") });
+    } catch { /* deleted in the checkout */ }
+  }
+  return files;
+}
+
+// Applies one proposal to the scratch checkout: all edits or none. Paths in the proposal are relative to the
+// problem folder; the changed paths come back relative to the checkout root, ready for Scratch.commit.
+export function applyProposal(checkout: string, problem: Problem, proposal: Proposal): { paths: string[] } | { refused: string } {
+  let where: { top: string; prefix: string; dir: string };
+  try { where = folderIn(checkout, problem); } catch (e) { return { refused: `Could not find the problem folder in the scratch checkout: ${(e as Error).message.split("\n")[0]}` }; }
+  const r = applyEdits(where.dir, proposal?.edits, rulesFor(problem));
+  if (!r.ok) return { refused: r.reason };
+  return { paths: r.changed.map((p) => posix.join(where.prefix, p)) };
 }
