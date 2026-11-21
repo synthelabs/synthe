@@ -1,0 +1,32 @@
+[
+  {
+    "summary": "GAIN: allow three retries",
+    "edits": [
+      {
+        "path": "settings.json",
+        "search": "\"retries\": 1",
+        "replace": "\"retries\": 3"
+      }
+    ]
+  },
+  {
+    "summary": "GAIN: use batches of 40",
+    "edits": [
+      {
+        "path": "settings.json",
+        "search": "\"batch\": 10",
+        "replace": "\"batch\": 40"
+      }
+    ]
+  },
+  {
+    "summary": "TRAP: edit a line that is not in the file",
+    "edits": [
+      {
+        "path": "settings.json",
+        "search": "\"batch\": 99",
+        "replace": "\"batch\": 500"
+      }
+    ]
+  }
+]

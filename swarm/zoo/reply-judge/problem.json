@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "reply-judge",
+  "goal": "Make the support agent's replies more helpful to the customer.",
+  "artifact": [
+    "prompt.md"
+  ],
+  "protect": [
+    "judge/**",
+    "measure/**",
+    "cases.jsonl",
+    "run.cjs",
+    "noise.json"
+  ],
+  "measure": {
+    "judge": {
+      "cases": "cases.jsonl",
+      "run": "node run.cjs",
+      "compare": "node judge/compare.cjs"
+    }
+  },
+  "proposer": {
+    "command": "node propose.cjs"
+  },
+  "budget": {
+    "max_rounds": 8
+  }
+}

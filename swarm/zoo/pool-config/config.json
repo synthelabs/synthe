@@ -1,0 +1,7 @@
+{
+  "workers": 2,
+  "batch_size": 10,
+  "timeout_ms": 200,
+  "retries": 1,
+  "log_level": "info"
+}

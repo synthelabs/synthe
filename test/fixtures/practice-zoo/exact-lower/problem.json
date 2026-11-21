@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "exact-lower",
+  "goal": "Fix the typos in guide.md.",
+  "artifact": ["guide.md"],
+  "measure": { "command": "python3 measure/typos.py", "direction": "lower", "unit": "typos", "runs": 2 },
+  "guards": ["sh checks/complete.sh"],
+  "proposer": { "command": "node propose.mjs" },
+  "budget": { "max_rounds": 10 }
+}

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "name": "bad-json",
+  "goal": "Finish more jobs per minute.",
+  "artifact": ["settings.json"],
+  "measure": { "command": "node measure/score.js", "direction": "higher", "unit": "jobs per minute", "runs": 1 },
+  "proposer": { "command": "node flaky-propose.mjs" },
+  "budget": { "max_rounds": 10 }
+}

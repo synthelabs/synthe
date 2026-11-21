@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "name": "holdout-trap",
+  "goal": "Make answer(x) right on more cases.",
+  "artifact": ["solver.py"],
+  "protect": ["measure/**"],
+  "measure": { "command": "python3 measure/score.py", "direction": "higher", "runs": 1 },
+  "split": { "holdout": true },
+  "proposer": { "command": "node propose.mjs" },
+  "budget": { "max_rounds": 6 }
+}

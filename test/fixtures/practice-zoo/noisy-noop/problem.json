@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "noisy-noop",
+  "goal": "Lower the reading cost that measure/score.js prints.",
+  "artifact": ["guide.md"],
+  "protect": ["measure/**"],
+  "measure": { "command": "node measure/score.js {{TMP}}", "direction": "lower", "runs": 5 },
+  "proposer": { "command": "node propose.mjs" },
+  "budget": { "max_rounds": 6 }
+}

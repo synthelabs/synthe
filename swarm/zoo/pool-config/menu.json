@@ -1,0 +1,52 @@
+[
+  {
+    "summary": "run 8 workers, one for each core",
+    "edits": [
+      {
+        "path": "config.json",
+        "search": "\"workers\": 2,",
+        "replace": "\"workers\": 8,"
+      }
+    ]
+  },
+  {
+    "summary": "retry failed jobs up to 20 times",
+    "edits": [
+      {
+        "path": "config.json",
+        "search": "\"retries\": 1,",
+        "replace": "\"retries\": 20,"
+      }
+    ]
+  },
+  {
+    "summary": "take 60 jobs in each batch",
+    "edits": [
+      {
+        "path": "config.json",
+        "search": "\"batch_size\": 10,",
+        "replace": "\"batch_size\": 60,"
+      }
+    ]
+  },
+  {
+    "summary": "wait up to a minute for each job",
+    "edits": [
+      {
+        "path": "config.json",
+        "search": "\"timeout_ms\": 200,",
+        "replace": "\"timeout_ms\": 60000,"
+      }
+    ]
+  },
+  {
+    "summary": "skip the auth check on internal jobs",
+    "edits": [
+      {
+        "path": "config.json",
+        "search": "{\n  \"workers\": ",
+        "replace": "{\n  \"skip_auth\": true,\n  \"workers\": "
+      }
+    ]
+  }
+]

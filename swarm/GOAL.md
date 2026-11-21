@@ -76,7 +76,7 @@ problem folder.
 | `measure.direction` | with `command` | `higher` or `lower`. |
 | `measure.runs` | no | Runs per measurement; default 3. |
 | `guards` | no | Shell commands that must exit 0 after a change, or the change is refused. |
-| `split.holdout` | no | When true, `measure.command` runs with `SYNTHE_SPLIT=train` to compare proposals, and a proposal is kept only if it also wins with `SYNTHE_SPLIT=holdout`. The proposer never sees holdout results. |
+| `split.holdout` | no | When true, `measure.command` runs with `SYNTHE_SPLIT=train` to compare proposals, and a proposal is kept only if it also wins (scores strictly better) with `SYNTHE_SPLIT=holdout`. The proposer never sees holdout results. |
 | `proposer` | no | `{ "command": "..." }` for an outside proposer, or `"model"` (the default) for the configured model. |
 | `candidates` | no | How many proposals Synthe asks for in each round. Default 1. |
 | `budget.max_rounds` | no | Default 6. |

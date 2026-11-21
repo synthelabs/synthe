@@ -1,0 +1,22 @@
+{"id":"t1","input":"I want a refund","want":"billing"}
+{"id":"t2","input":"Refund my order","want":"billing"}
+{"id":"t3","input":"Refund the fee please","want":"billing"}
+{"id":"t4","input":"Where is my refund","want":"billing"}
+{"id":"t5","input":"Where is my parcel","want":"shipping"}
+{"id":"t6","input":"The parcel is late","want":"shipping"}
+{"id":"t7","input":"Track my parcel","want":"shipping"}
+{"id":"t8","input":"My parcel never came","want":"shipping"}
+{"id":"t9","input":"Parcel left at the wrong door","want":"shipping"}
+{"id":"t10","input":"Is the parcel lost","want":"shipping"}
+{"id":"t11","input":"The parcel box was wet","want":"shipping"}
+{"id":"t12","input":"Send the parcel again","want":"shipping"}
+{"id":"t13","input":"Hello there","want":"general"}
+{"id":"t14","input":"Do you sell gift cards","want":"general"}
+{"id":"t15","input":"Good morning","want":"general"}
+{"id":"t16","input":"Read my contract","want":"legal"}
+{"id":"t17","input":"The contract clause seven","want":"legal"}
+{"id":"t18","input":"Cancel the contract","want":"legal"}
+{"id":"t19","input":"A contract question","want":"legal"}
+{"id":"t20","input":"My contract ends soon","want":"legal"}
+{"id":"t21","input":"Contract terms please","want":"legal"}
+{"id":"t22","input":"Sign the contract","want":"legal"}

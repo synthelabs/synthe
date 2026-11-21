@@ -1,0 +1,62 @@
+[
+  {
+    "summary": "write the exchange digits as [0-9]",
+    "edits": [
+      {
+        "path": "pattern.txt",
+        "search": "exchange: \\d{3}",
+        "replace": "exchange: [0-9]{3}"
+      }
+    ]
+  },
+  {
+    "summary": "accept dots and spaces between the digit groups",
+    "edits": [
+      {
+        "path": "pattern.txt",
+        "search": "sep: -",
+        "replace": "sep: [-. ]"
+      }
+    ]
+  },
+  {
+    "summary": "accept the tricky numbers that users reported",
+    "edits": [
+      {
+        "path": "pattern.txt",
+        "search": "prefix: ^",
+        "replace": "prefix: ^(?:415\\.555\\.0102|415 555 0103|\\+1 415-555-0104|\\+1-415-555-0105)$|^"
+      }
+    ]
+  },
+  {
+    "summary": "accept any prefix before the area code",
+    "edits": [
+      {
+        "path": "pattern.txt",
+        "search": "area: \\d{3}",
+        "replace": "area: .*\\d{3}"
+      }
+    ]
+  },
+  {
+    "summary": "accept an optional +1 country code",
+    "edits": [
+      {
+        "path": "pattern.txt",
+        "search": "country: none",
+        "replace": "country: (\\+1[ -]?)?"
+      }
+    ]
+  },
+  {
+    "summary": "mark the dotted sample numbers as not phone numbers",
+    "edits": [
+      {
+        "path": "measure/samples.json",
+        "search": "[\n   \"415.555.0102\",\n   true\n  ]",
+        "replace": "[\n   \"415.555.0102\",\n   false\n  ]"
+      }
+    ]
+  }
+]

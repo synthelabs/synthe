@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "pool-config",
+  "goal": "Raise the job queue's throughput by tuning config.json.",
+  "artifact": [
+    "config.json"
+  ],
+  "protect": [
+    "measure/**",
+    "checks/**",
+    "noise.json"
+  ],
+  "measure": {
+    "command": "node measure/throughput.cjs",
+    "direction": "higher",
+    "unit": "jobs/s",
+    "runs": 3
+  },
+  "guards": [
+    "node checks/limits.cjs"
+  ],
+  "proposer": {
+    "command": "node propose.cjs"
+  },
+  "budget": {
+    "max_rounds": 8
+  }
+}
