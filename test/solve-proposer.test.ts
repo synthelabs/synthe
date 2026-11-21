@@ -3,9 +3,10 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NOTHING_MORE, askProposer, parseProposerReply, type ProposerInput } from "../src/solve/proposer.ts";
+import { commandProposer, parseReply } from "../src/solve/proposer.ts";
+import type { Problem, ProposerRequest } from "../src/solve/types.ts";
 
-const input: ProposerInput = {
+const request: ProposerRequest = {
   round: 2,
   goal: "Make the score higher.",
   files: [{ path: "config.json", text: "{\"a\": 1}\n" }],
@@ -13,88 +14,90 @@ const input: ProposerInput = {
   candidates: 1,
 };
 
-function script(body: string): { dir: string; command: string } {
+function problemWith(body: string): Problem {
   const dir = mkdtempSync(join(tmpdir(), "synthe-proposer-"));
   writeFileSync(join(dir, "propose.js"), body);
-  return { dir, command: "node propose.js" };
+  return {
+    version: 1, name: "p", goal: request.goal, artifact: ["config.json"], protect: [],
+    measure: { command: "echo 1", direction: "higher", runs: 3 }, guards: [], split: { holdout: false },
+    proposer: { command: "node propose.js" }, budget: { max_rounds: 6, max_calls: null }, candidates: 1,
+    dir, file: join(dir, "problem.json"),
+  };
 }
 
+const failed = (r: unknown) => (r && typeof r === "object" && "failed" in r ? String((r as { failed: string }).failed) : "");
+
 test("the proposer gets the stdin object, runs in the problem folder, and its proposals come back", async () => {
-  const { dir, command } = script(`
+  const p = problemWith(`
     const fs = require("node:fs");
-    const stdin = fs.readFileSync(0, "utf8");
-    fs.writeFileSync("seen.json", stdin);
+    fs.writeFileSync("seen.json", fs.readFileSync(0, "utf8"));
     console.log(JSON.stringify({ proposals: [{ summary: "set a to 3", edits: [{ path: "config.json", search: "1", replace: "3" }] }] }));
   `);
-  const reply = await askProposer(command, dir, input);
-  assert.deepEqual(JSON.parse(readFileSync(join(dir, "seen.json"), "utf8")), input);
-  assert.equal(reply.kind, "proposals");
-  assert.ok(reply.kind === "proposals");
-  assert.deepEqual(reply.items, [{ ok: true, proposal: { summary: "set a to 3", edits: [{ path: "config.json", search: "1", replace: "3" }] } }]);
+  const { reply, calls } = await commandProposer(p).propose(request);
+  assert.deepEqual(JSON.parse(readFileSync(join(p.dir, "seen.json"), "utf8")), request);
+  assert.equal(calls, 0);
+  assert.deepEqual(reply, { proposals: [{ summary: "set a to 3", edits: [{ path: "config.json", search: "1", replace: "3" }] }] });
 });
 
 test("history reaches the proposer with only round, summary, kept and reason: no scores", async () => {
-  const { dir, command } = script(`require("node:fs").writeFileSync("seen.json", require("node:fs").readFileSync(0, "utf8")); console.log('{"proposals":[]}');`);
-  const rich = { ...input, history: [{ round: 1, summary: "s", kept: true, reason: "r", before: 1, after: 2, holdout: 9 }] };
-  await askProposer(command, dir, rich);
-  assert.deepEqual(JSON.parse(readFileSync(join(dir, "seen.json"), "utf8")).history, [{ round: 1, summary: "s", kept: true, reason: "r" }]);
+  const p = problemWith(`require("node:fs").writeFileSync("seen.json", require("node:fs").readFileSync(0, "utf8")); console.log('{"proposals":[]}');`);
+  const rich = { ...request, history: [{ round: 1, summary: "s", kept: true, reason: "r", before: 1, after: 2, holdout: 9 }] };
+  await commandProposer(p).propose(rich);
+  assert.deepEqual(JSON.parse(readFileSync(join(p.dir, "seen.json"), "utf8")).history, [{ round: 1, summary: "s", kept: true, reason: "r" }]);
 });
 
-test("an empty proposals list means nothing more to try", async () => {
-  const { dir, command } = script(`console.log(JSON.stringify({ proposals: [] }));`);
-  assert.deepEqual(await askProposer(command, dir, input), { kind: "empty", reason: NOTHING_MORE });
+test("an empty proposals list comes back as an empty list, so the loop can stop", async () => {
+  const p = problemWith(`console.log(JSON.stringify({ proposals: [] }));`);
+  assert.deepEqual((await commandProposer(p).propose(request)).reply, { proposals: [] });
 });
 
-test("bad JSON is a failed proposal with a reason, not a crash", async () => {
-  const { dir, command } = script(`console.log("this is not json {");`);
-  const reply = await askProposer(command, dir, input);
-  assert.equal(reply.kind, "failed");
-  assert.match(reply.kind === "failed" ? reply.reason : "", /not valid JSON/);
+test("bad JSON is a failed reply with a reason, not a crash", async () => {
+  const p = problemWith(`console.log("this is not json {");`);
+  assert.match(failed((await commandProposer(p).propose(request)).reply), /not valid JSON/);
 });
 
 test("a non-zero exit, a timeout and a missing command each fail with a plain reason", async () => {
-  const exit = script(`console.error("boom"); process.exit(3);`);
-  const r1 = await askProposer(exit.command, exit.dir, input);
-  assert.ok(r1.kind === "failed" && /code 3: boom/.test(r1.reason), JSON.stringify(r1));
+  const exit = problemWith(`console.error("boom"); process.exit(3);`);
+  assert.match(failed((await commandProposer(exit).propose(request)).reply), /exited with code 3: boom/);
 
-  const slow = script(`setTimeout(() => {}, 60000);`);
-  const r2 = await askProposer(slow.command, slow.dir, input, { timeoutMs: 300 });
-  assert.ok(r2.kind === "failed" && /did not finish/.test(r2.reason), JSON.stringify(r2));
+  const slow = problemWith(`setTimeout(() => {}, 60000);`);
+  assert.match(failed((await commandProposer(slow, { timeoutMs: 300 }).propose(request)).reply), /did not finish/);
 
-  const r3 = await askProposer("definitely-not-a-command-xyz", exit.dir, input);
-  assert.ok(r3.kind === "failed" && /exited with code/.test(r3.reason), JSON.stringify(r3));
+  const missing = { ...exit, proposer: { command: "definitely-not-a-command-xyz" } };
+  assert.match(failed((await commandProposer(missing).propose(request)).reply), /exited with code|could not start/);
 });
 
-test("a proposer that ignores stdin and exits still gives a reply", async () => {
-  const { dir, command } = script(`process.stdout.write('{"proposals":[]}');`);
-  assert.equal((await askProposer(command, dir, { ...input, files: [{ path: "big", text: "x".repeat(2_000_000) }] })).kind, "empty");
+test("a run function that throws still gives a failed reply", async () => {
+  const p = problemWith("");
+  const reply = (await commandProposer(p, { run: async () => { throw new Error("spawn EACCES"); } }).propose(request)).reply;
+  assert.match(failed(reply), /could not start: spawn EACCES/);
+});
+
+test("a proposer that ignores a large stdin and exits still gives a reply", async () => {
+  const p = problemWith(`process.stdout.write('{"proposals":[]}');`);
+  const big = { ...request, files: [{ path: "big", text: "x".repeat(2_000_000) }] };
+  assert.deepEqual((await commandProposer(p).propose(big)).reply, { proposals: [] });
 });
 
 test("log lines before the JSON answer are allowed", () => {
-  const reply = parseProposerReply("thinking...\n{\"proposals\":[]}\n");
-  assert.equal(reply.kind, "empty");
+  assert.deepEqual(parseReply("thinking...\n{\"proposals\":[]}\n"), { proposals: [] });
 });
 
-test("each malformed proposal fails alone with a reason; good ones in the same reply still count", () => {
-  const reply = parseProposerReply(JSON.stringify({ proposals: [
-    { summary: "good", edits: [{ path: "a", search: "x", replace: "y" }] },
-    { summary: "no edits" },
-    { summary: "bad edit", edits: [{ path: "a", search: "x" }] },
-    { summary: "empty search", edits: [{ path: "a", search: "", replace: "y" }] },
-    "just text",
-  ] }));
-  assert.ok(reply.kind === "proposals");
-  assert.deepEqual(reply.items.map((i) => i.ok), [true, false, false, false, false]);
-  const reasons = reply.items.flatMap((i) => (i.ok ? [] : [i.reason]));
-  assert.match(reasons[0], /"edits"/);
-  assert.match(reasons[1], /"replace"/);
-  assert.match(reasons[2], /empty "search"/);
-  assert.match(reasons[3], /not a JSON object/);
+test("a proposal with the wrong shape fails the reply with a reason that names it", () => {
+  const cases: Array<[unknown, RegExp]> = [
+    [{ summary: "no edits" }, /proposal 2 has no "edits"/],
+    [{ summary: "bad edit", edits: [{ path: "a", search: "x" }] }, /Edit 1 of the proposer's proposal 2 has no "replace"/],
+    [{ summary: "empty search", edits: [{ path: "a", search: "", replace: "y" }] }, /empty "search"/],
+    [{ summary: "no change", edits: [] }, /empty "edits"/],
+    [{ edits: [{ path: "a", search: "x", replace: "y" }] }, /no "summary"/],
+    ["just text", /proposal 2 is not a JSON object/],
+  ];
+  for (const [bad, reason] of cases) {
+    const reply = parseReply(JSON.stringify({ proposals: [{ summary: "good", edits: [{ path: "a", search: "x", replace: "y" }] }, bad] }));
+    assert.match(failed(reply), reason);
+  }
 });
 
 test("a reply that is JSON but not the right shape fails with a reason", () => {
-  for (const out of ["[]", "42", "{\"proposal\": []}", ""]) {
-    const reply = parseProposerReply(out);
-    assert.equal(reply.kind, "failed", out);
-  }
+  for (const out of ["[]", "42", "{\"proposal\": []}", "", "null"]) assert.ok(failed(parseReply(out)), out);
 });

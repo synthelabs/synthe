@@ -31411,7 +31411,8 @@ var package_default = {
     bench: "node scripts/bench.ts",
     "simulate:run": "node scripts/simulate-run.ts",
     "mutation:operators": "stryker run mutation/stryker.config.mjs",
-    "mutation:compare": "node mutation/compare.mjs"
+    "mutation:compare": "node mutation/compare.mjs",
+    milestones: "node scripts/swarm/milestones.mjs"
   },
   devDependencies: {
     "@anthropic-ai/sdk": "1.3.0",
