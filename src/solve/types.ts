@@ -8,7 +8,10 @@ export interface JudgeMeasure { judge: { cases: string; run: string; compare: st
 export type Measure = CommandMeasure | JudgeMeasure;
 export const isJudged = (m: Measure): m is JudgeMeasure => "judge" in m;
 
-export interface ModelConfig { base_url: string; model: string }
+// GOAL-2.md: provider defaults to "openai-compatible" when base_url is set, else "anthropic". base_url is set for
+// "openai-compatible" and optional for "anthropic" (unused: SYNTHE_ANTHROPIC_BASE_URL points tests at a fake).
+export interface ModelPrices { input_per_mtok: number; output_per_mtok: number }
+export interface ModelConfig { provider: "anthropic" | "openai-compatible"; base_url?: string; model: string; prices?: ModelPrices }
 
 // A validated problem file, with the defaults filled in. `dir` is the folder that holds the file and `file` is
 // its absolute path; every path and glob in the problem is relative to `dir`.

@@ -36,7 +36,7 @@ const input: ProposerRequest = {
 const problem = (model: { base_url: string; model: string }): Problem => ({
   version: 1, name: "p", goal: "Raise the score.", artifact: ["config.json"], protect: [],
   measure: { command: "true", direction: "higher", runs: 3 }, guards: [], split: { holdout: false },
-  proposer: "model", budget: { max_rounds: 6, max_calls: null }, model, candidates: 1, dir: "/tmp", file: "/tmp/p.json",
+  proposer: "model", budget: { max_rounds: 6, max_calls: null }, model: { provider: "openai-compatible", ...model }, candidates: 1, dir: "/tmp", file: "/tmp/p.json",
 });
 const make = () => modelProposer(problem({ base_url: base, model: "fake-1" }), { SYNTHE_API_KEY: KEY });
 const ask = async () => (await make().propose(input)).reply;
