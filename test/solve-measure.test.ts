@@ -66,3 +66,12 @@ test("a guard's reason names the failing test, not the totals", async () => {
   const quiet = await guardFailure(dir, problem("echo 1", 1, ["echo just this; exit 2"]));
   assert.match(quiet?.reason ?? "", /failed: just this\.$/);
 });
+
+test("lastNumber reads comma thousands separators as one number", () => {
+  assert.equal(lastNumber("Total size: 12,168,000 bytes\n"), 12168000);
+  assert.equal(lastNumber("score 1,234.5"), 1234.5);
+  assert.equal(lastNumber("pairs 3,4"), 4, "not groups of three digits: two numbers");
+  assert.equal(lastNumber("x 12,34"), 34);
+  assert.equal(lastNumber("-20"), -20);
+  assert.equal(lastNumber("tiny-lib 2.10.3\nscore 7"), 7);
+});

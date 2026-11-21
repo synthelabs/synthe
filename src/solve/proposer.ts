@@ -36,6 +36,10 @@ function parseJson(stdout: string): unknown {
 const isObject = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 
 // A plain reason when one proposal has the wrong shape, else the proposal.
+// The summary of a malformed proposal, when it has one, so its failed attempt is named in the history.
+const summaryOf = (raw: unknown): string | undefined =>
+  isObject(raw) && typeof raw.summary === "string" && raw.summary.trim() ? raw.summary.trim() : undefined;
+
 function checkProposal(raw: unknown, n: number): Proposal | string {
   const label = `proposal ${n}`;
   if (!isObject(raw)) return `The proposer's ${label} is not a JSON object.`;
@@ -51,7 +55,6 @@ function checkProposal(raw: unknown, n: number): Proposal | string {
     }
     const { path, search, replace } = e as unknown as Edit;
     if (!path.trim()) return `${where} has an empty "path".`;
-    if (search === "") return `${where} has an empty "search", so it can not match exactly once.`;
     edits.push({ path, search, replace });
   }
   return { summary: raw.summary.trim() || label, edits };
@@ -67,7 +70,7 @@ export function parseReply(stdout: string): ProposerReply {
   const proposals: Proposal[] = [];
   for (const [i, raw] of data.proposals.entries()) {
     const p = checkProposal(raw, i + 1);
-    if (typeof p === "string") return { failed: p };
+    if (typeof p === "string") { const summary = summaryOf(raw); return summary ? { failed: p, summary } : { failed: p }; }
     proposals.push(p);
   }
   return { proposals };

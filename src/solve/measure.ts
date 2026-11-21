@@ -4,13 +4,15 @@ import { isJudged, type Measurement, type Problem } from "./types.ts";
 export type Split = "train" | "holdout";
 export interface MeasureContext { seed?: number; split?: Split }
 
-const NUMBER = /[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g;
+// A number with comma thousands separators ("12,345.6") is one number: tools such as toLocaleString and du print
+// sizes and counts that way. Only exact groups of three digits count as separators, so "3,4" stays two numbers.
+const NUMBER = /[-+]?(?:\d{1,3}(?:,\d{3})+(?:\.\d*)?(?![\d,]\d)|\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g;
 
 /** The last number on stdout is the score (GOAL.md). null when there is none. */
 export function lastNumber(stdout: string): number | null {
   const all = stdout.match(NUMBER);
   if (!all) return null;
-  const n = Number(all[all.length - 1]);
+  const n = Number(all[all.length - 1].replace(/,/g, ""));
   return Number.isFinite(n) ? n : null;
 }
 

@@ -100,3 +100,11 @@ test("earlier history goes to the proposer", async () => {
   await runLoop(w.steps, { maxRounds: 1, history: [old] });
   assert.deepEqual(w.seen[0].history, [old]);
 });
+
+test("a failed proposal that has a summary is recorded under that summary", async () => {
+  const w = world([]);
+  w.steps.propose = async (round) => round === 1 ? { ok: false, reason: "Edit 1 has no \"replace\" text.", summary: "tidy the parser" } : { ok: true, proposals: [] };
+  const r = await runLoop(w.steps, { maxRounds: 3 });
+  assert.deepEqual(r.attempts.map((a) => [a.summary, a.kept]), [["tidy the parser", false]]);
+  assert.match(r.attempts[0].reason, /^The proposal failed: Edit 1/);
+});
