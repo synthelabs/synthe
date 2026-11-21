@@ -1,2 +1,3 @@
 {"at":"2026-11-21T06:57:41.946Z","by":"h08","milestone":"P12","text":"history.ts: attempts across runs in the git dir","pr":"https://github.com/synthelabs/synthe/pull/102"}
 {"at":"2026-11-21T06:57:46.483Z","by":"h08","milestone":"P16","text":"model-proposer.ts: OpenAI-compatible proposer","pr":"https://github.com/synthelabs/synthe/pull/110"}
+{"at":"2026-11-21T07:18:28.372Z","by":"h08","milestone":"P09","text":"compare \"model\" for judged measures","pr":"https://github.com/synthelabs/synthe/pull/118"}
