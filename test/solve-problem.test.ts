@@ -54,7 +54,25 @@ test("a judged measure and a model section are valid", () => {
   }, join(dir, "p.json"));
   assert.ok(r.ok, JSON.stringify(r));
   assert.ok(isJudged(r.problem.measure));
-  assert.deepEqual(r.problem.model, { base_url: "https://api.example.com/v1", model: "m-1" });
+  assert.deepEqual(r.problem.model, { provider: "openai-compatible", base_url: "https://api.example.com/v1", model: "m-1" });
+});
+
+test("model.provider defaults by base_url, and anthropic needs no base_url (GOAL-2.md)", () => {
+  const dir = repo();
+  const base = { version: 1, name: "m", goal: "g", artifact: ["x"], measure: { command: "echo 1", direction: "higher" } };
+  const check = (model: unknown) => validateProblem({ ...base, model }, join(dir, "p.json"));
+  const a = check({ model: "claude-x" });
+  assert.ok(a.ok, JSON.stringify(a));
+  assert.deepEqual(a.problem.model, { provider: "anthropic", model: "claude-x" });
+  const b = check({ provider: "anthropic", model: "claude-x", prices: { input_per_mtok: 3, output_per_mtok: 15 } });
+  assert.ok(b.ok, JSON.stringify(b));
+  assert.deepEqual(b.problem.model?.prices, { input_per_mtok: 3, output_per_mtok: 15 });
+  const lines = (r: ReturnType<typeof check>) => (r.ok ? [] : r.problems);
+  assert.match(lines(check({ provider: "openai-compatible", model: "m" })).join("\n"), /^model\.base_url:/m);
+  assert.match(lines(check({ provider: "gemini", model: "m" })).join("\n"), /^model\.provider:/m);
+  assert.match(lines(check({ model: "m", prices: { input_per_mtok: -1, output_per_mtok: 1 } })).join("\n"), /^model\.prices:/m);
+  assert.match(lines(check({ model: "m", prices: { input: 1 } })).join("\n"), /^model\.prices:/m);
+  assert.match(lines(check({ model: "m", api_key: "sk-ant-x" })).join("\n"), /^model\.api_key: never put a key/m);
 });
 
 const bad: [string, (p: Record<string, unknown>) => void][] = [

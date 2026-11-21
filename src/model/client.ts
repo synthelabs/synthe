@@ -55,8 +55,9 @@ export function providerHost(provider: Provider | undefined): string {
   try { return new URL(provider.base_url).host; } catch { return provider.base_url; }
 }
 
-export function anthropicModel(apiKey: string): Model {
-  const client = new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(), maxRetries: 4 });
+// `env` decides only the loopback test override (ownKeyBaseUrl); the key is always the one passed in.
+export function anthropicModel(apiKey: string, env: NodeJS.ProcessEnv = process.env): Model {
+  const client = new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(env), maxRetries: 4 });
   return sdkModel(client);
 }
 

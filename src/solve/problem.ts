@@ -155,22 +155,39 @@ export function validateProblem(raw: unknown, file: string): ProblemCheck {
 
   let model: Problem["model"];
   if (raw.model !== undefined) {
-    if (!isObject(raw.model)) errors.push(`model: must be an object with "base_url" and "model".`);
+    if (!isObject(raw.model)) errors.push(`model: must be an object with "model", and "base_url" for an OpenAI-compatible provider.`);
     else {
-      // Only base_url and model are allowed: a key in the file would end up in git. It comes from SYNTHE_API_KEY.
+      // A key in the file would end up in git. It comes from the environment (GOAL.md, GOAL-2.md).
       // The line names the field but never quotes its value.
+      const allowed = ["provider", "base_url", "model", "prices"];
       for (const k of Object.keys(raw.model)) {
-        if (k === "base_url" || k === "model") continue;
+        if (allowed.includes(k)) continue;
         errors.push(/key|token|secret|auth/i.test(k)
-          ? `model.${k}: never put a key in the problem file. Set the SYNTHE_API_KEY environment variable.`
-          : `model.${k}: unknown field. Allowed fields: base_url, model.`);
+          ? `model.${k}: never put a key in the problem file. Set SYNTHE_API_KEY (or SYNTHE_ANTHROPIC_KEY for Anthropic) in the environment.`
+          : `model.${k}: unknown field. Allowed fields: ${allowed.join(", ")}.`);
       }
+      const p = raw.model.provider;
+      if (p !== undefined && p !== "anthropic" && p !== "openai-compatible") errors.push(`model.provider: must be "anthropic" or "openai-compatible".`);
       const url = raw.model.base_url;
-      let urlOk = false;
+      // GOAL-2.md: the default provider is openai-compatible when base_url is set, else anthropic.
+      const provider: "anthropic" | "openai-compatible" = p === "anthropic" || p === "openai-compatible" ? p : url !== undefined ? "openai-compatible" : "anthropic";
+      let urlOk = url === undefined && provider === "anthropic";
       if (typeof url === "string") { try { urlOk = ["http:", "https:"].includes(new URL(url).protocol); } catch { urlOk = false; } }
       if (!urlOk) errors.push(`model.base_url: must be an http or https URL, such as "https://api.example.com/v1".`);
       if (!isText(raw.model.model)) errors.push(`model.model: must be a model name.`);
-      if (urlOk && isText(raw.model.model)) model = { base_url: url as string, model: raw.model.model };
+      let prices: { input_per_mtok: number; output_per_mtok: number } | undefined;
+      let pricesOk = true;
+      if (raw.model.prices !== undefined) {
+        const pr = raw.model.prices;
+        const usd = (v: unknown) => typeof v === "number" && Number.isFinite(v) && v >= 0;
+        if (!isObject(pr) || !usd(pr.input_per_mtok) || !usd(pr.output_per_mtok) || Object.keys(pr).some((k) => k !== "input_per_mtok" && k !== "output_per_mtok")) {
+          pricesOk = false;
+          errors.push(`model.prices: must be { "input_per_mtok": <dollars>, "output_per_mtok": <dollars> }, two numbers of 0 or more.`);
+        } else prices = { input_per_mtok: pr.input_per_mtok as number, output_per_mtok: pr.output_per_mtok as number };
+      }
+      if (urlOk && isText(raw.model.model) && pricesOk) {
+        model = { provider, model: raw.model.model, ...(typeof url === "string" ? { base_url: url } : {}), ...(prices ? { prices } : {}) };
+      }
     }
   }
 
