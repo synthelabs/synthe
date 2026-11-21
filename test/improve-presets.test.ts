@@ -102,11 +102,12 @@ test("measureOnce turns a run into a number or a plain reason", async () => {
 
 test("shellExec runs in the directory, times out, and hides Synthe secrets from the child", async () => {
   const dir = mkdtempSync(join(tmpdir(), "synthe-exec-"));
-  process.env.SYNTHE_EVENT_CODE = "secret-code";
+  const ownKey = process.env.SYNTHE_ANTHROPIC_KEY;
+  process.env.SYNTHE_ANTHROPIC_KEY = "sk-ant-secret-test";
   process.env.GH_TOKEN = "gh-secret";
   try {
     process.env.NODE_TEST_CONTEXT ??= "child-v8";
-    const out = await shellExec(dir, "pwd && echo \"${SYNTHE_EVENT_CODE:-unset}\" \"${GH_TOKEN:-unset}\" \"${NODE_TEST_CONTEXT:-unset}\"", 5_000);
+    const out = await shellExec(dir, "pwd && echo \"${SYNTHE_ANTHROPIC_KEY:-unset}\" \"${GH_TOKEN:-unset}\" \"${NODE_TEST_CONTEXT:-unset}\"", 5_000);
     assert.ok(out.ok && out.stdout.includes("unset unset unset") && !out.stdout.includes("secret"), out.stdout);
     assert.ok(out.stdout.includes(dir.split("/").at(-1)!));
     const slow = await shellExec(dir, "sleep 2", 200);
@@ -114,7 +115,7 @@ test("shellExec runs in the directory, times out, and hides Synthe secrets from 
     const failed = await shellExec(dir, "exit 3", 5_000);
     assert.ok(!failed.ok && !failed.timedOut);
   } finally {
-    delete process.env.SYNTHE_EVENT_CODE;
+    if (ownKey === undefined) delete process.env.SYNTHE_ANTHROPIC_KEY; else process.env.SYNTHE_ANTHROPIC_KEY = ownKey;
     delete process.env.GH_TOKEN;
   }
 });

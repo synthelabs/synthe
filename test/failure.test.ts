@@ -8,11 +8,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import { renderWorkflow } from "../src/cli/init.ts";
 import { runDecide } from "../src/loop/decide.ts";
 import { failureOf, type Failure } from "../src/loop/failure.ts";
-import { PROXY_AUTH_MESSAGE } from "../src/core/share.ts";
+import { configuredModel } from "../src/model/client.ts";
 import { MemoryRepo, goal } from "./helpers.ts";
 
 const BUSY: Failure = { step: "score", kind: "busy", message: "Anthropic's API is busy right now. Wait a few minutes and try again." };
-const KEY: Failure = { step: "write", kind: "key", message: "Your Synthe key has no credit left. Ask the Synthe table for a new key." };
+const KEY: Failure = { step: "write", kind: "key", message: "Your Synthe key has no credit left. Ask your admin for a new key." };
 const failedRound = (error: Failure | null) => ({ candidates: null, scores: null, costUsd: null, error });
 
 test("a model failure is sorted into busy (retry on backup), key (needs a person) or other", () => {
@@ -21,6 +21,9 @@ test("a model failure is sorted into busy (retry on backup), key (needs a person
   assert.equal(failureOf("write", { status: 500, message: "500 Internal server error" }).kind, "busy");
   assert.equal(failureOf("write", new Anthropic.APIConnectionError({ message: "fetch failed" })).kind, "busy");
   assert.equal(failureOf("write", { status: 401, message: "401 invalid x-api-key" }).kind, "key");
+  // A repo with no key secret (for example one set up on event credit) needs a person too, and the report says how.
+  const missing = (() => { try { configuredModel(undefined); } catch (e) { return failureOf("write", e); } })();
+  assert.deepEqual(missing, { step: "write", kind: "key", message: "No Anthropic key is set. Run `npx synthe key` to save one as the repo secret SYNTHE_ANTHROPIC_KEY." });
   assert.equal(failureOf("write", { status: 400, message: "400 Your credit balance is too low to access the Anthropic API." }).kind, "key");
   assert.equal(failureOf("write", { status: 400, message: "400 You have reached your specified workspace API usage limits." }).kind, "key");
   assert.equal(failureOf("write", { status: 403, message: "403 forbidden" }).kind, "key");
@@ -96,7 +99,7 @@ test("a key failure says what to do: get a new key and update the repo secret", 
   assert.equal(record!.failure, "key");
   assert.equal(repo.state.stalls, 1);
   assert.match(record!.plain!, /Your Synthe key has no credit left\. Run `npx synthe key`/);
-  assert.doesNotMatch(record!.plain!, /Ask the Synthe table/);
+  assert.doesNotMatch(record!.plain!, /Ask your admin/);
   assert.match(repo.issue, /## Synthe needs you to fix something/);
   assert.match(repo.issue, /Run `npx synthe restart` after replacing the key/);
   assert.doesNotMatch(repo.issue, /Nothing to do/);
@@ -153,15 +156,4 @@ test("every job has a time limit, and write and score failures reach decide with
   assert.equal(new Set(names).size, names.length);
   // Decide downloads every artifact into .synthe-out, where action.ts loads error.json.
   assert.match(jobs.decide, /with: \{ path: \.synthe-out, merge-multiple: true \}/);
-});
-
-test("a proxy that can't verify the run is reported as a workflow problem, not a bad key", async () => {
-  const repo = new MemoryRepo("Old prompt.");
-  const auth: Failure = { step: "write", kind: "key", message: PROXY_AUTH_MESSAGE };
-  await runDecide(goal(), repo, failedRound(auth));
-  assert.match(repo.issue, /Run `npx synthe restart` after that\./);
-  assert.doesNotMatch(repo.issue, /after replacing the key/);
-  for (let i = 0; i < 2; i++) await runDecide(goal(), repo, failedRound(auth));
-  assert.match(repo.issue, /## Stopped: the Synthe proxy couldn't verify this run/);
-  assert.doesNotMatch(repo.issue, /your Synthe key stopped working/);
 });

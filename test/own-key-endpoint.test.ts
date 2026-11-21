@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ANTHROPIC_API_URL, anthropicModel, ownKeyBaseUrl, type Ask } from "../src/model/client.ts";
+import { ANTHROPIC_API_URL, anthropicModel, configuredModel, ownKeyBaseUrl, type Ask } from "../src/model/client.ts";
 
 // Claude Code (and other tools) export ANTHROPIC_BASE_URL and sometimes ANTHROPIC_AUTH_TOKEN in the person's shell.
 // The SDK follows both by default, so a team running Synthe from such a terminal would send its own key to that
@@ -8,7 +8,7 @@ import { ANTHROPIC_API_URL, anthropicModel, ownKeyBaseUrl, type Ask } from "../s
 
 const ask: Ask = { model: "claude-haiku-5-5", user: "hi", maxTokens: 5 };
 
-async function capture(env: Record<string, string | undefined>): Promise<{ url: string; headers: Headers }[]> {
+async function capture(env: Record<string, string | undefined>, model = () => anthropicModel("sk-ant-test")): Promise<{ url: string; headers: Headers }[]> {
   const saved = { ...process.env };
   for (const [k, v] of Object.entries(env)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
   const seen: { url: string; headers: Headers }[] = [];
@@ -17,7 +17,7 @@ async function capture(env: Record<string, string | undefined>): Promise<{ url: 
     seen.push({ url: input instanceof Request ? input.url : String(input), headers: new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined)) });
     return new Response(JSON.stringify({ id: "msg_1", type: "message", role: "assistant", model: "claude-haiku-5-5", stop_reason: "end_turn", stop_sequence: null, content: [{ type: "text", text: "OK" }], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200, headers: { "content-type": "application/json" } });
   };
-  try { await anthropicModel("sk-ant-test").ask(ask); } finally { globalThis.fetch = real; process.env = saved; }
+  try { await model().ask(ask); } finally { globalThis.fetch = real; process.env = saved; }
   return seen;
 }
 
@@ -42,4 +42,11 @@ test("a loopback SYNTHE_ANTHROPIC_BASE_URL reaches a local fake; nothing else mo
   assert.equal(ownKeyBaseUrl({ SYNTHE_ANTHROPIC_BASE_URL: "file://127.0.0.1/x" }), ANTHROPIC_API_URL);
   assert.equal(ownKeyBaseUrl({ SYNTHE_ANTHROPIC_BASE_URL: "not a url" }), ANTHROPIC_API_URL);
   assert.equal(ownKeyBaseUrl({ ANTHROPIC_BASE_URL: "https://gateway.example.com" }), ANTHROPIC_API_URL);
+});
+
+test("with no key, configuredModel refuses and names `npx synthe key`; a key is trimmed and used", async () => {
+  for (const key of [undefined, "", "   "]) assert.throws(() => configuredModel(key), /No Anthropic key is set\. Run `npx synthe key`/);
+  const seen = await capture({ SYNTHE_ANTHROPIC_BASE_URL: undefined, ANTHROPIC_BASE_URL: undefined, ANTHROPIC_AUTH_TOKEN: undefined }, () => configuredModel(" sk-ant-test "));
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].headers.get("authorization"), "Bearer sk-ant-test");
 });

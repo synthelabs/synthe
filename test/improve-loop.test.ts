@@ -8,7 +8,7 @@ import { improve, improveOptions, type ImproveIo } from "../src/cli/improve.ts";
 import { improveFile, parseImproveConfig, type ImproveConfig } from "../src/improve/config.ts";
 import { shellExec } from "../src/improve/exec.ts";
 import { removeScratchCheckouts, runLoop } from "../src/improve/loop.ts";
-import { CreditError, type Ask, type Model } from "../src/model/client.ts";
+import { type Ask, type Model } from "../src/model/client.ts";
 
 // The improve loop on a small signup app shaped like synthelabs/builder-signup-demo: real git, a local bare
 // "origin", the real metric and test commands through shellExec, a scripted model and a recording `gh`.
@@ -70,7 +70,7 @@ const RIGHT = { summary: "email check accepts dots, plus signs and subdomains", 
 // Only matches the code as round 2 left it, so it proves round 3 starts from the kept win.
 const NOOP_ON_KEPT = { summary: "name the email pattern", edits: [{ path: "validate.js", search: "module.exports = (email) => /^[^\\s@]+@", replace: "// One signup email: something@something.tld, no spaces.\nmodule.exports = (email) => /^[^\\s@]+@" }] };
 
-function loopIo(app: ReturnType<typeof signupApp>, model: Model, env: Record<string, string> = { SYNTHE_EVENT_CODE: "event", SYNTHE_TEAM_CODE: "crim-abcd-efgh-jkmn-pqrs" }) {
+function loopIo(app: ReturnType<typeof signupApp>, model: Model, env: Record<string, string> = { SYNTHE_ANTHROPIC_KEY: "sk-ant-own-loop-1111" }) {
   const said: string[] = [];
   const gh: { args: string[]; stdin?: string }[] = [];
   const io: ImproveIo = {
@@ -99,7 +99,7 @@ test("the loop keeps the measured win, refuses the shortcut and the no-op, build
   const saved = { ...process.env };
   t.after(() => { process.env = saved; });
   // Present in Synthe's own environment; the metric must never see them.
-  Object.assign(process.env, { SYNTHE_EVENT_CODE: "event", SYNTHE_TEAM_CODE: "crim-abcd-efgh-jkmn-pqrs", ANTHROPIC_API_KEY: "sk-ant-app-key-0000" });
+  Object.assign(process.env, { SYNTHE_ANTHROPIC_KEY: "sk-ant-own-loop-1111", ANTHROPIC_API_KEY: "sk-ant-app-key-0000" });
   const { model, asks } = scriptedModel([{ propose: SHORTCUT }, { propose: RIGHT }, { propose: NOOP_ON_KEPT }]);
   const { io, said, gh } = loopIo(app, model);
   const start = app.git("rev-parse", "HEAD");
@@ -107,8 +107,8 @@ test("the loop keeps the measured win, refuses the shortcut and the no-op, build
   assert.equal(await improve(io, app.dir, improveOptions([...AGENT, "--mode", "review", "--rounds", "3", "--lessons", "claude"])), true, said.join("\n"));
   const out = said.join("\n");
   assert.equal(said.filter((l) => l.startsWith("Credential:")).length, 1);
-  assert.ok(out.includes("Credential: Crimson Hacks event credit, with your team code from SYNTHE_TEAM_CODE."));
-  assert.ok(!out.includes("crim-abcd") && !out.includes("sk-ant-app"), "no code or key is ever printed");
+  assert.ok(out.includes("Credential: your own key from SYNTHE_ANTHROPIC_KEY, charged to that Anthropic account."));
+  assert.ok(!out.includes("sk-ant-"), "no key is ever printed");
   assert.ok(out.includes("Current code: 3 valid signups (runs: 3, 3, 3)"), out);
   assert.ok(out.includes("Round 1: not kept (the regression check did not pass). Cost $0.01, total $0.01."), out);
   assert.ok(out.includes("Round 2: 3 → 12 valid signups, kept (email check accepts dots, plus signs and subdomains). Cost $0.01, total $0.02."), out);
@@ -124,7 +124,7 @@ test("the loop keeps the measured win, refuses the shortcut and the no-op, build
   assert.ok(proposes[2].user.includes("/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/"));
   assert.ok(asks.every((a) => ["claude-sonnet-5-5", "claude-haiku-5-5"].includes(a.model) && a.maxTokens <= 16000));
 
-  // The metric ran without Synthe's codes, the app's key or a GitHub token in its environment.
+  // The metric ran without Synthe's key, the app's key or a GitHub token in its environment.
   assert.deepEqual(JSON.parse(readFileSync(app.envDump, "utf8")), []);
 
   // One pull request: the kept change, then one commit that only writes lessons.
@@ -158,13 +158,13 @@ test("the loop keeps the measured win, refuses the shortcut and the no-op, build
 
 test("a credit stop mid-run keeps the earlier win, opens and merges the pull request in auto mode, with Synthe's identity when git has none", async () => {
   const app = signupApp({ identity: false });
-  const credit = new CreditError("Event credit is used up for your team. Ask at the Synthe table.");
+  const credit = Object.assign(new Error("400 Your credit balance is too low to access the Anthropic API."), { status: 400 });
   const { model } = scriptedModel([{ propose: RIGHT }, { error: credit }]);
   const { io, said, gh } = loopIo(app, model);
   assert.equal(await improve(io, app.dir, improveOptions([...AGENT, "--mode", "auto"])), true, said.join("\n"));
   const out = said.join("\n");
   assert.ok(out.includes("Round 1: 3 → 12 valid signups, kept"), out);
-  assert.ok(out.includes("Stopped in round 2: Event credit is used up for your team. Ask at the Synthe table."), out);
+  assert.ok(out.includes("Stopped in round 2: Your Anthropic key has no credit left. Run `npx synthe key` to replace it."), out);
   assert.ok(out.includes("Merged into main. Run git pull."));
   assert.deepEqual(gh.filter((c) => c.args[0] === "pr").map((c) => c.args.slice(0, 2).join(" ")), ["pr create", "pr merge"]);
   assert.ok(gh.find((c) => c.args[1] === "merge")!.args.includes("--squash"));
@@ -233,7 +233,7 @@ test("an unknown round cost counts as over budget", async () => {
   assert.ok(said.includes("Round 1: not kept (no change proposed). Cost unknown."));
 });
 
-test("a proxy or API error in the first round stops cleanly with nothing kept and no checkout left", async () => {
+test("an API error in the first round stops cleanly with nothing kept and no checkout left", async () => {
   const app = signupApp();
   const { model } = scriptedModel([{ error: Object.assign(new Error("Overloaded"), { status: 529 }) }]);
   const { run } = loopCtx(app, model, 1.5);
