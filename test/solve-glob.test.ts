@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { firstMatch, globProblem, listMatching, matchAny, matchGlob, normalizePath } from "../src/solve/glob.ts";
+import { firstMatch, globProblem, listMatching, matchAny, matchesAny, matchGlob, normalizePath } from "../src/solve/glob.ts";
 
 test("* stays inside one segment", () => {
   assert.equal(matchGlob("*.py", "a.py"), true);
@@ -93,4 +93,9 @@ test("listMatching walks the tree, skips .git and links, applies excludes", (t) 
   assert.deepEqual(listMatching(root, ["**/*.py", "config.json"], ["measure/**"]), ["config.json", "src/a.py", "src/deep/b.py"]);
   assert.deepEqual(listMatching(root, ["src/**"], ["src/deep/**"]), ["src/a.py", "src/c.txt"]);
   assert.deepEqual(listMatching(join(root, "missing"), ["**"]), []);
+});
+
+test("matchesAny takes the path first, as the other modules call it", () => {
+  assert.equal(matchesAny("src/a.py", ["src/**"]), true);
+  assert.equal(matchesAny("bench/a.ts", ["src/**"]), false);
 });

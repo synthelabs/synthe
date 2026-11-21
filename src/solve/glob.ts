@@ -168,3 +168,8 @@ export function listMatching(root: string, include: readonly string[], exclude: 
   walk(root, "");
   return found.sort();
 }
+
+/** The name the skeleton gave other modules: path first, then globs. Same as matchAny. */
+export function matchesAny(path: string, globs: readonly string[]): boolean {
+  return matchAny(globs, path);
+}
