@@ -1,1 +1,2 @@
 {"at":"2026-11-21T06:56:56.777Z","by":"h01","milestone":"P01","text":"problem.ts: problem file validation, one line per bad field; 'problem check' works","pr":"https://github.com/synthelabs/synthe/pull/109"}
+{"at":"2026-11-21T07:26:26.341Z","by":"h01","milestone":"P14","text":"zoo bench: npm run bench -- --zoo (temp-repo copy per problem, seeds 1-3, bench/zoo-results.json)","pr":"https://github.com/synthelabs/synthe/pull/119"}
