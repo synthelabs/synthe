@@ -1,0 +1,6 @@
+[
+  { "summary": "GAIN: set alpha to 2 (+2 sd)", "edits": [{ "path": "params.json", "search": "\"alpha\": 1", "replace": "\"alpha\": 2" }] },
+  { "summary": "NOOP: rename the set", "edits": [{ "path": "params.json", "search": "\"name\": \"base\"", "replace": "\"name\": \"tuned\"" }] },
+  { "summary": "GAIN: set beta to 2 (+2 sd)", "edits": [{ "path": "params.json", "search": "\"beta\": 1", "replace": "\"beta\": 2" }] },
+  { "summary": "GAIN: set gamma to 2 (+2 sd)", "edits": [{ "path": "params.json", "search": "\"gamma\": 1", "replace": "\"gamma\": 2" }] }
+]
