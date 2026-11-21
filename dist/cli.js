@@ -29651,6 +29651,7 @@ function validateProblem(raw, file) {
     else {
       unknownKeys(raw.split, ["holdout"], "split.", errors);
       if (raw.split.holdout !== void 0 && typeof raw.split.holdout !== "boolean") errors.push(`split.holdout: must be true or false.`);
+      else if (raw.split.holdout === true && measure2 && isJudged(measure2)) errors.push(`split.holdout: works only with measure.command, which runs with SYNTHE_SPLIT=train and holdout. A judged measure has no held-back split: remove split.holdout, or measure with a command.`);
       else split.holdout = raw.split.holdout === true;
     }
   }
