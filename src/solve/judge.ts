@@ -11,8 +11,8 @@ import { isJudged, type Decision, type Problem } from "./types.ts";
 // first position) is the judge's position bias, so it counts as a tie. A paired sign test across the cases decides.
 //
 // Length bias: a judge that likes long outputs prefers any longer output. So when the two outputs of a case differ
-// in length, the case is asked again with the shorter one padded to the same length with filler that adds no
-// content. The change is kept only when it also wins that length-matched test.
+// in length, the case is asked again with the shorter one padded with filler that adds no content, to the same
+// length. The change is kept only when it also wins that length-matched test.
 
 export interface JudgeCase { id: string; input: unknown; [key: string]: unknown }
 export type Winner = "a" | "b" | "tie";
@@ -85,12 +85,16 @@ export function commandCompare(problemDir: string, command: string): Compare {
   };
 }
 
-// Filler that adds length and words but no content: the shorter output padded to `length` characters.
+// Filler that adds length, letters and words but no content: `text` padded to exactly `length` characters. The
+// lengths must match exactly: a judge with a length bias then has nothing to prefer. The filler never ends in
+// white space, so a judge that trims its input still sees the same length.
+const FILLER = " lorem ipsum dolor sit amet";
 export function padTo(text: string, length: number): string {
   if (text.length >= length) return text;
-  const room = length - text.length;
-  const fill = room === 1 ? " " : `\n${". ".repeat(Math.ceil(room / 2))}`.slice(0, room);
-  return text + fill;
+  let fill = "";
+  while (text.length + fill.length < length) fill += FILLER;
+  fill = fill.slice(0, length - text.length);
+  return text + (/\s$/.test(fill) ? `${fill.slice(0, -1)}.` : fill);
 }
 
 // Exact one-sided sign test: the chance of `wins` or more out of `wins + losses` fair coin flips.

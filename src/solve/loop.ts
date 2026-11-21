@@ -328,15 +328,15 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
       await scratch.close(false);
       throw new SetupError(`The judged measure could not start: ${cases.failed}`);
     }
-    // compare "model" uses the problem's model; each question is one model call, counted against max_calls.
     let compareFn: Compare;
-    if (judged.compare === "model") {
-      let ask: Compare;
-      try { ask = modelCompare(problem, io.env); } catch (e) { await scratch.close(false); throw e; }
-      compareFn = (c, a, b) => { calls++; return ask(c, a, b); };
-    } else {
-      compareFn = commandCompare(scratch.dir, judged.compare);
+    try {
+      compareFn = judged.compare === "model" ? modelCompare(problem, io.env) : commandCompare(scratch.dir, judged.compare);
+    } catch (e) {
+      await scratch.close(false);
+      throw new SetupError(`The judged measure could not start: ${(e as Error).message}`);
     }
+    // A model judge's questions are model calls and count against budget.max_calls; a compare command's are not.
+    const judgeCalls = (d: { calls: number }) => { if (judged.compare === "model") calls += d.calls; };
     let baseOutputs: Outputs | null = null;
     steps.measure = async () => {
       const out = await runCases(scratch.dir, judged.run, cases);
@@ -346,13 +346,16 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     };
     steps.decide = async (kept, cand) => {
       const d = await judgeOutputs(cases, kept.samples as Outputs, cand.samples as Outputs, compareFn);
+      judgeCalls(d);
       return { keep: d.keep, reason: d.reason, strength: d.share, value: d.share };
     };
     judgeFinal = async () => {
       await scratch.reset();
       const out = await runCases(scratch.dir, judged.run, cases);
       if ("failed" in out || !baseOutputs) return 0.5;
-      return (await judgeOutputs(cases, baseOutputs, out, compareFn)).share;
+      const d = await judgeOutputs(cases, baseOutputs, out, compareFn);
+      judgeCalls(d);
+      return d.share;
     };
   }
   // A crash or a Ctrl-C must leave no scratch worktree and no empty branch. A branch that holds kept changes stays:
@@ -362,6 +365,7 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     ? `\nStopped. Synthe removed its scratch checkout. The ${keptCount === 1 ? "change" : `${keptCount} changes`} kept so far ${keptCount === 1 ? "is" : "are"} on the branch ${scratch.branch}. Your working tree did not change.`
     : "\nStopped. Synthe removed its scratch checkout and kept no change. Your working tree did not change."));
   let result: LoopResult;
+  let final: number;
   try {
     result = await runLoop(steps, {
       maxRounds: problem.budget.max_rounds, maxCalls: problem.budget.max_calls, candidates: problem.candidates, history,
@@ -371,15 +375,12 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
         writeRun(gitDir, problem.name, record);
       },
     });
+    final = judgeFinal && result.keptAny ? await judgeFinal() : result.final;
   } catch (e) {
     await cleanUp();
     throw e;
   } finally {
     unhook();
-  }
-  let final = result.final;
-  if (judgeFinal && result.keptAny) {
-    try { final = await judgeFinal(); } catch { /* the report keeps 0.5 */ }
   }
   await scratch.close(result.keptAny);
   const solved: SolveResult = {

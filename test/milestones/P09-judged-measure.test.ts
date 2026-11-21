@@ -11,6 +11,8 @@
 // has its swapped twin (case, y, x) as often. A simulation of 20000 runs: with both orders and a one-sided sign test
 // over cases at alpha 0.05, the real gain is kept in 99.99% and the length trap in 0.03%. A rule that asks once,
 // with the change as reply a, keeps the length trap in about 55% of runs.
+// The judge must also see the real outputs: every reply in a question must be text that the run command printed.
+// Synthe must not pad, cut or rewrite replies to fit a judge; a real model judge reads every word.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { randomBytes, randomInt } from "node:crypto";
@@ -29,7 +31,9 @@ const input = String(c.input);
 const name = (input.match(/name=([^;]+)/) || [])[1] || "";
 const ref = (input.match(/ref=([^;]+)/) || [])[1] || "";
 const lines = fs.readFileSync(path.join(__dirname, "template.txt"), "utf8").split("\\n").map((l) => l.trim()).filter(Boolean);
-console.log(lines.join(" ").split("{name}").join(name).split("{ref}").join(ref));
+const out = lines.join(" ").split("{name}").join(name).split("{ref}").join(ref);
+fs.appendFileSync(__OUTLOG__, require("crypto").createHash("sha256").update(out.trim()).digest("hex").slice(0, 16) + "\\n");
+console.log(out);
 `;
 
 // The judge. LOG and COUNTER are absolute paths outside the repository, set when the fixture is built.
@@ -74,7 +78,9 @@ test("P09: a judged measure asks each question both ways, keeps a true gain and 
   const repo = join(work, "repo");
   const log = join(work, "judge-log.jsonl");
   const counter = join(work, "judge-counter");
+  const outlog = join(work, "run-outputs.txt");
   writeFileSync(log, "");
+  writeFileSync(outlog, "");
   const tag = randomBytes(2).toString("hex");
   const cases = NAMES.map((name, i) => ({ id: `q${tag}-${i + 1}`, input: `name=${name};ref=R-${randomInt(1000, 9999)}${i}` }));
   const filler = "We value you as a customer and we are always here to help with anything at all, on any day of the year.";
@@ -94,7 +100,7 @@ test("P09: a judged measure asks each question both ways, keeps a true gain and 
   gitRepo(repo, {
     "problem.json": JSON.stringify(problem, null, 2) + "\n",
     "template.txt": "Hello {name},\nthanks for writing to us today.\n",
-    "run.cjs": RUN,
+    "run.cjs": RUN.replace("__OUTLOG__", JSON.stringify(outlog)),
     "judge.cjs": COMPARE.replace("__LOG__", JSON.stringify(log)).replace("__COUNTER__", JSON.stringify(counter)).replace("__SEED__", JSON.stringify(tag)),
     "cases.jsonl": cases.map((c) => JSON.stringify(c)).join("\n") + "\n",
     "menu.json": JSON.stringify(menu, null, 2) + "\n",
@@ -121,6 +127,10 @@ test("P09: a judged measure asks each question both ways, keeps a true gain and 
     const [id, a, b] = k.split("|");
     if (a === b) continue;
     assert.equal(count.get(`${id}|${b}|${a}`) ?? 0, n, `case ${id} was asked with one order of the two replies ${n} time(s), but not as often with a and b swapped`);
+  }
+  const printed = new Set(readFileSync(outlog, "utf8").split("\n").filter(Boolean));
+  for (const q of asked) {
+    assert.ok(printed.has(q.a) && printed.has(q.b), `case ${q.id}: the judge was shown a reply that the run command never printed. Synthe must show the judge the real outputs, not padded or changed text`);
   }
   const ids = new Set(asked.map((q) => q.id));
   for (const c of cases) assert.ok(ids.has(c.id), `case ${c.id} was never compared`);
