@@ -30768,7 +30768,10 @@ function measurePathsOf(problem) {
   if (problem.proposer !== "model") commands.push(problem.proposer.command);
   const file = relative2(problem.dir, problem.file).replace(/\\/g, "/");
   if (file && !file.startsWith("..")) extra.push(file);
-  return [.../* @__PURE__ */ new Set([...commandPaths2(commands), ...extra.map(normal)])];
+  const named = new Set(problem.artifact.filter((a) => !/[*?[\]{}]/.test(a)).map(normal));
+  const programs = new Set(commands.flatMap((c) => commandPaths2([c]).slice(0, 1)).map(normal));
+  const fromCommands = commandPaths2(commands).filter((p) => programs.has(normal(p)) || !named.has(normal(p)));
+  return [.../* @__PURE__ */ new Set([...fromCommands, ...extra.map(normal)])];
 }
 function rulesFor(problem) {
   return { artifact: problem.artifact, protect: problem.protect, measurePaths: measurePathsOf(problem) };
@@ -30961,7 +30964,7 @@ var init_history = __esm({
 function lastNumber2(stdout) {
   const all = stdout.match(NUMBER2);
   if (!all) return null;
-  const n = Number(all[all.length - 1]);
+  const n = Number(all[all.length - 1].replace(/,/g, ""));
   return Number.isFinite(n) ? n : null;
 }
 function tail(text4, lines = 3) {
@@ -31010,7 +31013,7 @@ var init_measure2 = __esm({
     "use strict";
     init_run2();
     init_types2();
-    NUMBER2 = /[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g;
+    NUMBER2 = /[-+]?(?:\d{1,3}(?:,\d{3})+(?:\.\d*)?(?![\d,]\d)|\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g;
     median2 = (xs) => {
       const s = [...xs].sort((a, b) => a - b);
       const mid = Math.floor(s.length / 2);
@@ -31673,7 +31676,7 @@ async function runLoop2(steps, options) {
     round++;
     let kept = false;
     if (!proposed.ok) {
-      await record({ round, summary: "", kept: false, reason: `The proposal failed: ${proposed.reason}` });
+      await record({ round, summary: proposed.summary ?? "", kept: false, reason: `The proposal failed: ${proposed.reason}` });
     } else {
       const next = await tryRound(steps, round, proposed.proposals.slice(0, candidates), current, record);
       if (next) {
@@ -31817,7 +31820,8 @@ async function solve(problem, proposer, options, io2) {
       const files = artifactFiles(scratch.root, problem);
       const { reply, calls: used } = await proposer.propose({ round, goal: problem.goal, files, history: past.map(entry), candidates });
       calls2 += used;
-      return "failed" in reply ? { ok: false, reason: reply.failed } : { ok: true, proposals: reply.proposals };
+      if ("failed" in reply) return { ok: false, reason: reply.failed, ...reply.summary ? { summary: reply.summary } : {} };
+      return { ok: true, proposals: reply.proposals };
     },
     reset: () => scratch.reset(),
     async apply(proposal) {
@@ -32023,7 +32027,6 @@ function checkProposal(raw, n) {
     }
     const { path: path4, search, replace } = e;
     if (!path4.trim()) return `${where} has an empty "path".`;
-    if (search === "") return `${where} has an empty "search", so it can not match exactly once.`;
     edits.push({ path: path4, search, replace });
   }
   return { summary: raw.summary.trim() || label, edits };
@@ -32037,7 +32040,10 @@ function parseReply(stdout) {
   const proposals = [];
   for (const [i, raw] of data.proposals.entries()) {
     const p = checkProposal(raw, i + 1);
-    if (typeof p === "string") return { failed: p };
+    if (typeof p === "string") {
+      const summary = summaryOf(raw);
+      return summary ? { failed: p, summary } : { failed: p };
+    }
     proposals.push(p);
   }
   return { proposals };
@@ -32071,7 +32077,7 @@ function commandProposer(problem, o = {}) {
 function proposerFor(problem, env = process.env) {
   return problem.proposer === "model" ? modelProposer(problem, env) : commandProposer(problem);
 }
-var PROPOSER_TIMEOUT_MS, short2, isObject2;
+var PROPOSER_TIMEOUT_MS, short2, isObject2, summaryOf;
 var init_proposer = __esm({
   "src/solve/proposer.ts"() {
     "use strict";
@@ -32083,6 +32089,7 @@ var init_proposer = __esm({
       return one2.length > n ? `${one2.slice(0, n)}...` : one2;
     };
     isObject2 = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
+    summaryOf = (raw) => isObject2(raw) && typeof raw.summary === "string" && raw.summary.trim() ? raw.summary.trim() : void 0;
   }
 });
 
