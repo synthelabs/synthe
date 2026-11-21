@@ -662,6 +662,42 @@ var init_merge_rule = __esm({
   }
 });
 
+// src/core/cost.ts
+function costUsd(model, usage) {
+  const base = PRICES[model];
+  if (!base || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
+  const totalInput = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
+  const price = model === "claude-haiku-5-5" && totalInput > 1e5 ? { input: 0.5, output: 2.5 } : base;
+  const input = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) * 1.25 + (usage.cache_read_input_tokens ?? 0) * 0.1;
+  return (input * price.input + usage.output_tokens * price.output) / 1e6;
+}
+function sumCosts(costs) {
+  let total = 0;
+  for (const c of costs) {
+    if (c === null) return null;
+    total += c;
+  }
+  return total;
+}
+function pricedCost(price, input, output) {
+  if (!price || typeof input !== "number" || typeof output !== "number" || !Number.isFinite(input) || !Number.isFinite(output)) return null;
+  return (input * price.input + output * price.output) / 1e6;
+}
+var PRICES, knownModels;
+var init_cost = __esm({
+  "src/core/cost.ts"() {
+    "use strict";
+    PRICES = {
+      "claude-haiku-5-5": { input: 0.1, output: 0.5 },
+      "claude-sonnet-5-5": { input: 2, output: 10 },
+      "claude-opus-5-5": { input: 4, output: 20 },
+      // Teams still on Sonnet 4.5 need a price to see what moving off it (it retires 2026-11-30) would cost.
+      "claude-sonnet-4-5": { input: 3, output: 15 }
+    };
+    knownModels = () => Object.keys(PRICES);
+  }
+});
+
 // node_modules/@anthropic-ai/sdk/internal/tslib.mjs
 function __classPrivateFieldSet(receiver, state, value, kind, f) {
   if (kind === "m")
@@ -15314,7 +15350,7 @@ var init_connectors = __esm({
 
 // node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost.mjs
 var Cost;
-var init_cost = __esm({
+var init_cost2 = __esm({
   "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost.mjs"() {
     init_resource();
     init_pagination();
@@ -16042,8 +16078,8 @@ var init_analytics = __esm({
     init_artifacts();
     init_connectors();
     init_connectors();
-    init_cost();
-    init_cost();
+    init_cost2();
+    init_cost2();
     init_cost_report();
     init_cost_report();
     init_plugins();
@@ -28668,6 +28704,214 @@ var init_sdk = __esm({
   }
 });
 
+// src/model/openai-compatible.ts
+function retryAfterMs(headers, now = Date.now()) {
+  const ms2 = Number(headers.get("retry-after-ms"));
+  if (headers.get("retry-after-ms") && Number.isFinite(ms2) && ms2 >= 0) return Math.min(ms2, MAX_WAIT_MS);
+  const raw = headers.get("retry-after");
+  if (!raw) return null;
+  const seconds2 = Number(raw);
+  if (Number.isFinite(seconds2) && seconds2 >= 0) return Math.min(seconds2 * 1e3, MAX_WAIT_MS);
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? Math.min(Math.max(0, at - now), MAX_WAIT_MS) : null;
+}
+function textOf(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((p) => p && typeof p === "object" && typeof p.text === "string" ? p.text : "").join("");
+  return null;
+}
+function openAiCompatibleModel(o) {
+  const base = o.baseUrl.trim().replace(/\/+$/, "");
+  const url = new URL(`${base}/chat/completions`);
+  const host = url.host;
+  const loopback = isLoopback(url);
+  const sleep2 = o.sleep ?? ((ms2) => new Promise((resolve9) => setTimeout(resolve9, ms2)));
+  const now = o.now ?? Date.now;
+  const gap = o.maxRequestsPerMinute ? 6e4 / o.maxRequestsPerMinute : 0;
+  let nextAt = 0;
+  const pace = async () => {
+    if (!gap) return;
+    const t = now(), at = Math.max(t, nextAt);
+    nextAt = at + gap;
+    if (at > t) await sleep2(at - t);
+  };
+  let active = 0;
+  const waiting2 = [];
+  const slot = async () => {
+    if (!gap) return () => {
+    };
+    while (active >= PACED_AT_ONCE) await new Promise((resolve9) => waiting2.push(resolve9));
+    active++;
+    return () => {
+      active--;
+      waiting2.shift()?.();
+    };
+  };
+  const hide = (text4) => o.apiKey ? text4.split(o.apiKey).join("[your key]") : text4;
+  const noSchema = /* @__PURE__ */ new Set();
+  const completionTokens = /* @__PURE__ */ new Set();
+  async function post(model, body) {
+    for (let attempt = 0; ; attempt++) {
+      let response;
+      await pace();
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}` },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+          redirect: "error"
+          // a redirect would carry the key to wherever it points
+        });
+      } catch (error) {
+        if (attempt < MAX_RETRIES) {
+          await sleep2(backoffMs(attempt));
+          continue;
+        }
+        throw new ProviderError(`Couldn't reach ${host}: ${hide(error instanceof Error ? error.message : String(error))}`, { status: null, host, model, loopback });
+      }
+      const text4 = await response.text();
+      let json = null;
+      try {
+        json = JSON.parse(text4);
+      } catch {
+      }
+      const credit = CREDIT.test(text4) || response.status === 402;
+      const daily = response.status === 429 && DAILY.test(text4);
+      const retryable = response.status === 429 && !credit && !daily || response.status === 408 || response.status >= 500;
+      if (retryable && attempt < MAX_RETRIES) {
+        await sleep2(retryAfterMs(response.headers) ?? backoffMs(attempt));
+        continue;
+      }
+      return { status: response.status, json, text: text4 };
+    }
+  }
+  const said = (r) => {
+    const m = r.json?.error?.message ?? r.json?.message ?? r.json?.error;
+    return (typeof m === "string" ? m : r.text).trim().slice(0, 300);
+  };
+  return {
+    async ask(a) {
+      const done = await slot();
+      try {
+        return await askOnce(a);
+      } finally {
+        done();
+      }
+    }
+  };
+  async function askOnce({ model, system, user: user2, maxTokens, schema, allowCutOff }) {
+    let jsonInPrompt = Boolean(schema) && noSchema.has(model);
+    let tokensField = completionTokens.has(model) ? "max_completion_tokens" : "max_tokens";
+    let retriedTokens = false, retriedSchema = false;
+    for (; ; ) {
+      const body = {
+        model,
+        messages: [...system === void 0 ? [] : [{ role: "system", content: system }], { role: "user", content: schema && jsonInPrompt ? `${user2}${JSON_ONLY(schema)}` : user2 }],
+        [tokensField]: maxTokens,
+        ...o.reasoningEffort ? { reasoning_effort: o.reasoningEffort } : {},
+        ...schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}
+      };
+      const r = await post(model, body);
+      if (r.status === 400) {
+        const why = said(r);
+        if (!retriedTokens && tokensField === "max_tokens" && /max_completion_tokens/.test(why)) {
+          retriedTokens = true;
+          tokensField = "max_completion_tokens";
+          completionTokens.add(model);
+          continue;
+        }
+        if (schema && !jsonInPrompt && !retriedSchema) {
+          retriedSchema = true;
+          jsonInPrompt = true;
+          noSchema.add(model);
+          continue;
+        }
+      }
+      if (r.status < 200 || r.status >= 300) {
+        const credit = CREDIT.test(r.text) || r.status === 402;
+        throw new ProviderError(`${host} answered ${r.status}: ${hide(said(r))}`, { status: r.status, host, model, loopback, credit, exhausted: r.status === 429 && !credit });
+      }
+      const choice = r.json?.choices?.[0];
+      const content = textOf(choice?.message?.content);
+      const refused = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim().length > 0;
+      const reason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
+      const raw = refused ? null : content;
+      const text4 = raw !== null && jsonInPrompt ? unfence(raw) : raw;
+      const finished = reason === "stop" && text4 !== null && text4.length > 0;
+      const cutOff = allowCutOff === true && reason === "length" && text4 !== null && text4.length > 0;
+      const usage = r.json?.usage;
+      const input = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
+      const output = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
+      const price = o.prices?.[model];
+      const costUsd2 = price ? pricedCost(price, input, output) : typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
+      return {
+        text: finished || cutOff ? text4 : null,
+        costUsd: costUsd2,
+        ...cutOff ? { truncated: true } : {},
+        ...input !== null && output !== null ? { usage: { input, output } } : {},
+        stopReason: refused ? "refusal" : reason
+      };
+    }
+  }
+}
+async function listModels(baseUrl, apiKey) {
+  const url = new URL(`${baseUrl.trim().replace(/\/+$/, "")}/models`);
+  const hide = (text4) => apiKey ? text4.split(apiKey).join("[your key]") : text4;
+  try {
+    const response = await fetch(url, { headers: { authorization: `Bearer ${apiKey}` }, redirect: "error", signal: AbortSignal.timeout(3e4) });
+    if (response.status === 404) return { ok: false, missing: true, why: "it has no /models route" };
+    if (!response.ok) return { ok: false, missing: false, why: `it answered ${response.status}` };
+    const body = await response.json();
+    const rows = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
+    if (!rows) return { ok: false, missing: false, why: "its answer had no list of models" };
+    const zero = (v) => (typeof v === "number" || typeof v === "string" && v.trim() !== "") && Number(v) === 0;
+    return { ok: true, models: rows.flatMap((m) => typeof m?.id === "string" && m.id ? [{ id: m.id.replace(/^models\//, ""), free: zero(m.pricing?.prompt) && zero(m.pricing?.completion) }] : []) };
+  } catch (error) {
+    return { ok: false, missing: false, why: hide(`it couldn't be reached (${error instanceof Error ? error.message : String(error)})`) };
+  }
+}
+var ProviderError, MAX_RETRIES, TIMEOUT_MS, MAX_WAIT_MS, CREDIT, DAILY, PACED_AT_ONCE, backoffMs, JSON_ONLY, unfence;
+var init_openai_compatible = __esm({
+  "src/model/openai-compatible.ts"() {
+    "use strict";
+    init_cost();
+    init_goal();
+    ProviderError = class extends Error {
+      status;
+      // null when the server couldn't be reached
+      host;
+      model;
+      loopback;
+      credit;
+      // out of credit or over a spending limit: a person has to act
+      exhausted;
+      // the free limit is used up for now: the next scheduled run tries again
+      constructor(message, a) {
+        super(message);
+        this.status = a.status;
+        this.host = a.host;
+        this.model = a.model;
+        this.loopback = a.loopback;
+        this.credit = a.credit ?? false;
+        this.exhausted = a.exhausted ?? false;
+      }
+    };
+    MAX_RETRIES = 4;
+    TIMEOUT_MS = 10 * 6e4;
+    MAX_WAIT_MS = 6e4;
+    CREDIT = /insufficient_quota|credit balance|out of credits?|insufficient (funds|balance)|spend(ing)? limit reached|payment required/i;
+    DAILY = /per[\s_-]?day|daily|requests_per_day|PerDay/i;
+    PACED_AT_ONCE = 2;
+    backoffMs = (attempt) => Math.min(500 * 2 ** attempt, 8e3) * (0.75 + Math.random() * 0.25);
+    JSON_ONLY = (schema) => `
+
+Reply with only a JSON object that matches this JSON schema, with no other text before or after it:
+${JSON.stringify(schema)}`;
+    unfence = (text4) => text4.match(/^\s*```(?:json)?\s*\n?([\s\S]*?)\n?\s*```\s*$/i)?.[1] ?? text4;
+  }
+});
+
 // src/core/evidence.ts
 import { execFileSync } from "node:child_process";
 import { existsSync as existsSync5, readdirSync, readFileSync as readFileSync6 } from "node:fs";
@@ -30214,12 +30458,120 @@ var init_loop = __esm({
 });
 
 // src/solve/model-proposer.ts
-function modelProposer(_problem, _env) {
-  throw new Error("model-proposer.ts is not built yet");
+function buildUser(input) {
+  const n = input.candidates;
+  return `Make ${n === 1 ? "1 proposal" : `up to ${n} proposals, each a different idea`}.
+
+${JSON.stringify(input, null, 2)}`;
 }
+function jsonIn(text4) {
+  const tries = [text4, text4.match(/```(?:json)?\s*\n?([\s\S]*?)```/i)?.[1], text4.slice(text4.indexOf("{"), text4.lastIndexOf("}") + 1)];
+  for (const t of tries) {
+    if (!t || !t.trim()) continue;
+    try {
+      return JSON.parse(t);
+    } catch {
+    }
+  }
+  throw new Error("not JSON");
+}
+function parseProposals(text4) {
+  let json;
+  try {
+    json = jsonIn(text4);
+  } catch {
+    return { failed: `The model's reply was not valid JSON: ${JSON.stringify(short(text4.trim()))}` };
+  }
+  const list = json?.proposals;
+  if (!json || typeof json !== "object" || !Array.isArray(list)) return { failed: `The model's reply had no "proposals" list.` };
+  const proposals = [];
+  for (const [i, p] of list.entries()) {
+    const at = `Proposal ${i + 1} in the model's reply`;
+    if (!p || typeof p !== "object") return { failed: `${at} is not an object.` };
+    const { summary, edits } = p;
+    if (typeof summary !== "string" || !summary.trim()) return { failed: `${at} has no "summary".` };
+    if (!Array.isArray(edits) || edits.length === 0) return { failed: `${at} has no "edits".` };
+    const out = [];
+    for (const [j, e] of edits.entries()) {
+      const { path: path4, search, replace } = e ?? {};
+      if (typeof path4 !== "string" || typeof search !== "string" || typeof replace !== "string") {
+        return { failed: `Edit ${j + 1} of proposal ${i + 1} in the model's reply needs "path", "search" and "replace" as text.` };
+      }
+      out.push({ path: path4, search, replace });
+    }
+    proposals.push({ summary: summary.trim(), edits: out });
+  }
+  return { proposals };
+}
+function modelProposer(problem, env = process.env, client) {
+  const key = env.SYNTHE_API_KEY?.trim() ?? "";
+  const config = problem.model;
+  if (!config?.model) throw new SetupError('proposer "model" needs model.model in the problem file.');
+  if (!client) {
+    if (!config.base_url) throw new SetupError('proposer "model" needs model.base_url in the problem file.');
+    if (!key) throw new SetupError('proposer "model" needs a key: set the SYNTHE_API_KEY environment variable.');
+  }
+  const model = client ?? openAiCompatibleModel({ baseUrl: config.base_url, apiKey: key });
+  const hide = (s) => key ? s.split(key).join("[your key]") : s;
+  const ask2 = async (request) => {
+    try {
+      const reply = await model.ask({ model: config.model, system: SYSTEM, user: buildUser(request), maxTokens: MAX_TOKENS, schema: PROPOSALS_SCHEMA });
+      if (reply.text === null) {
+        const why = reply.stopReason === "length" ? "it was cut off at the length limit" : reply.stopReason === "refusal" ? "the model refused" : `it ended with "${reply.stopReason ?? "no reason"}"`;
+        return { failed: hide(`The model gave no usable reply: ${why}.`) };
+      }
+      const parsed = parseProposals(reply.text);
+      return "failed" in parsed ? { failed: hide(parsed.failed) } : parsed;
+    } catch (error) {
+      return { failed: hide(`The model request failed: ${error instanceof Error ? error.message : String(error)}`) };
+    }
+  };
+  return { propose: async (request) => ({ reply: await ask2(request), calls: 1 }) };
+}
+var MAX_TOKENS, PROPOSALS_SCHEMA, SYSTEM, short;
 var init_model_proposer = __esm({
   "src/solve/model-proposer.ts"() {
     "use strict";
+    init_openai_compatible();
+    init_loop();
+    MAX_TOKENS = 16e3;
+    PROPOSALS_SCHEMA = {
+      type: "object",
+      additionalProperties: false,
+      required: ["proposals"],
+      properties: {
+        proposals: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["summary", "edits"],
+            properties: {
+              summary: { type: "string" },
+              edits: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["path", "search", "replace"],
+                  properties: { path: { type: "string" }, search: { type: "string" }, replace: { type: "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    };
+    SYSTEM = [
+      "You improve files so that a measured score gets better.",
+      "You get a JSON object: the goal, the files you may change with their current text, the history of earlier attempts with whether each was kept and why, and how many proposals to make.",
+      "Learn from the history: do not repeat an attempt that was not kept, and build on attempts that were kept.",
+      'Reply with only a JSON object: {"proposals": [{"summary": "...", "edits": [{"path": "...", "search": "...", "replace": "..."}]}]}.',
+      "Each proposal is one idea, with a one-sentence summary. Each edit replaces the search text with the replace text in the file at path.",
+      "The search text must occur exactly once in that file, copied exactly, with enough context to be unique.",
+      'Change only the files you were given. If you have nothing more worth trying, reply with {"proposals": []}.'
+    ].join("\n");
+    short = (s) => s.length > 200 ? `${s.slice(0, 200)}...` : s;
   }
 });
 
@@ -30269,7 +30621,7 @@ function checkProposal(raw, n) {
 function parseReply(stdout) {
   if (!stdout.trim()) return { failed: "The proposer printed nothing on stdout. It must print one JSON object." };
   const data = parseJson(stdout);
-  if (data === void 0) return { failed: `The proposer's reply is not valid JSON: ${short(stdout, 120)}` };
+  if (data === void 0) return { failed: `The proposer's reply is not valid JSON: ${short2(stdout, 120)}` };
   if (!isObject2(data)) return { failed: `The proposer's reply is not a JSON object with a "proposals" list.` };
   if (!Array.isArray(data.proposals)) return { failed: `The proposer's reply has no "proposals" list.` };
   const proposals = [];
@@ -30283,7 +30635,7 @@ function parseReply(stdout) {
 function replyFrom(result2, timeoutMs) {
   if (result2.timedOut) return { failed: `The proposer command did not finish in ${Math.round(timeoutMs / 1e3)} seconds and was stopped.` };
   if (!result2.ok) {
-    const detail = short(result2.stderr || result2.stdout);
+    const detail = short2(result2.stderr || result2.stdout);
     return { failed: `The proposer command ${result2.code === null ? "could not start" : `exited with code ${result2.code}`}${detail ? `: ${detail}` : "."}` };
   }
   return parseReply(result2.stdout);
@@ -30300,7 +30652,7 @@ function commandProposer(problem, o = {}) {
         result2 = await run2(problem.dir, command, { stdin: `${JSON.stringify(requestObject(request))}
 `, timeoutMs });
       } catch (e) {
-        return { reply: { failed: `The proposer command could not start: ${short(e instanceof Error ? e.message : String(e))}` }, calls: 0 };
+        return { reply: { failed: `The proposer command could not start: ${short2(e instanceof Error ? e.message : String(e))}` }, calls: 0 };
       }
       return { reply: replyFrom(result2, timeoutMs), calls: 0 };
     }
@@ -30309,14 +30661,14 @@ function commandProposer(problem, o = {}) {
 function proposerFor(problem, env = process.env) {
   return problem.proposer === "model" ? modelProposer(problem, env) : commandProposer(problem);
 }
-var PROPOSER_TIMEOUT_MS, short, isObject2;
+var PROPOSER_TIMEOUT_MS, short2, isObject2;
 var init_proposer = __esm({
   "src/solve/proposer.ts"() {
     "use strict";
     init_model_proposer();
     init_run2();
     PROPOSER_TIMEOUT_MS = 10 * 6e4;
-    short = (s, n = 200) => {
+    short2 = (s, n = 200) => {
       const one2 = s.trim().replace(/\s+/g, " ");
       return one2.length > n ? `${one2.slice(0, n)}...` : one2;
     };
@@ -37714,43 +38066,16 @@ var CHANGED = /* @__PURE__ */ new Set(["merged", "reverted", "proposed"]);
 
 // src/loop/vault.ts
 init_merge_rule();
-
-// src/core/cost.ts
-var PRICES = {
-  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
-  "claude-sonnet-5-5": { input: 2, output: 10 },
-  "claude-opus-5-5": { input: 4, output: 20 },
-  // Teams still on Sonnet 4.5 need a price to see what moving off it (it retires 2026-11-30) would cost.
-  "claude-sonnet-4-5": { input: 3, output: 15 }
-};
-var knownModels = () => Object.keys(PRICES);
-function costUsd(model, usage) {
-  const base = PRICES[model];
-  if (!base || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
-  const totalInput = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
-  const price = model === "claude-haiku-5-5" && totalInput > 1e5 ? { input: 0.5, output: 2.5 } : base;
-  const input = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) * 1.25 + (usage.cache_read_input_tokens ?? 0) * 0.1;
-  return (input * price.input + usage.output_tokens * price.output) / 1e6;
-}
-function sumCosts(costs) {
-  let total = 0;
-  for (const c of costs) {
-    if (c === null) return null;
-    total += c;
-  }
-  return total;
-}
-function pricedCost(price, input, output) {
-  if (!price || typeof input !== "number" || typeof output !== "number" || !Number.isFinite(input) || !Number.isFinite(output)) return null;
-  return (input * price.input + output * price.output) / 1e6;
-}
+init_cost();
 
 // src/loop/score.ts
 init_merge_rule();
 init_safety();
+init_cost();
 
 // src/model/client.ts
 init_sdk();
+init_cost();
 
 // src/model/cache.ts
 import { createHash as createHash2 } from "node:crypto";
@@ -37776,208 +38101,8 @@ ${system}`).digest("hex");
   };
 }
 
-// src/model/openai-compatible.ts
-init_goal();
-var ProviderError = class extends Error {
-  status;
-  // null when the server couldn't be reached
-  host;
-  model;
-  loopback;
-  credit;
-  // out of credit or over a spending limit: a person has to act
-  exhausted;
-  // the free limit is used up for now: the next scheduled run tries again
-  constructor(message, a) {
-    super(message);
-    this.status = a.status;
-    this.host = a.host;
-    this.model = a.model;
-    this.loopback = a.loopback;
-    this.credit = a.credit ?? false;
-    this.exhausted = a.exhausted ?? false;
-  }
-};
-var MAX_RETRIES = 4;
-var TIMEOUT_MS = 10 * 6e4;
-var MAX_WAIT_MS = 6e4;
-var CREDIT = /insufficient_quota|credit balance|out of credits?|insufficient (funds|balance)|spend(ing)? limit reached|payment required/i;
-var DAILY = /per[\s_-]?day|daily|requests_per_day|PerDay/i;
-var PACED_AT_ONCE = 2;
-function retryAfterMs(headers, now = Date.now()) {
-  const ms2 = Number(headers.get("retry-after-ms"));
-  if (headers.get("retry-after-ms") && Number.isFinite(ms2) && ms2 >= 0) return Math.min(ms2, MAX_WAIT_MS);
-  const raw = headers.get("retry-after");
-  if (!raw) return null;
-  const seconds2 = Number(raw);
-  if (Number.isFinite(seconds2) && seconds2 >= 0) return Math.min(seconds2 * 1e3, MAX_WAIT_MS);
-  const at = Date.parse(raw);
-  return Number.isFinite(at) ? Math.min(Math.max(0, at - now), MAX_WAIT_MS) : null;
-}
-var backoffMs = (attempt) => Math.min(500 * 2 ** attempt, 8e3) * (0.75 + Math.random() * 0.25);
-var JSON_ONLY = (schema) => `
-
-Reply with only a JSON object that matches this JSON schema, with no other text before or after it:
-${JSON.stringify(schema)}`;
-var unfence = (text4) => text4.match(/^\s*```(?:json)?\s*\n?([\s\S]*?)\n?\s*```\s*$/i)?.[1] ?? text4;
-function textOf(content) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((p) => p && typeof p === "object" && typeof p.text === "string" ? p.text : "").join("");
-  return null;
-}
-function openAiCompatibleModel(o) {
-  const base = o.baseUrl.trim().replace(/\/+$/, "");
-  const url = new URL(`${base}/chat/completions`);
-  const host = url.host;
-  const loopback = isLoopback(url);
-  const sleep2 = o.sleep ?? ((ms2) => new Promise((resolve9) => setTimeout(resolve9, ms2)));
-  const now = o.now ?? Date.now;
-  const gap = o.maxRequestsPerMinute ? 6e4 / o.maxRequestsPerMinute : 0;
-  let nextAt = 0;
-  const pace = async () => {
-    if (!gap) return;
-    const t = now(), at = Math.max(t, nextAt);
-    nextAt = at + gap;
-    if (at > t) await sleep2(at - t);
-  };
-  let active = 0;
-  const waiting2 = [];
-  const slot = async () => {
-    if (!gap) return () => {
-    };
-    while (active >= PACED_AT_ONCE) await new Promise((resolve9) => waiting2.push(resolve9));
-    active++;
-    return () => {
-      active--;
-      waiting2.shift()?.();
-    };
-  };
-  const hide = (text4) => o.apiKey ? text4.split(o.apiKey).join("[your key]") : text4;
-  const noSchema = /* @__PURE__ */ new Set();
-  const completionTokens = /* @__PURE__ */ new Set();
-  async function post(model, body) {
-    for (let attempt = 0; ; attempt++) {
-      let response;
-      await pace();
-      try {
-        response = await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}` },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(TIMEOUT_MS),
-          redirect: "error"
-          // a redirect would carry the key to wherever it points
-        });
-      } catch (error) {
-        if (attempt < MAX_RETRIES) {
-          await sleep2(backoffMs(attempt));
-          continue;
-        }
-        throw new ProviderError(`Couldn't reach ${host}: ${hide(error instanceof Error ? error.message : String(error))}`, { status: null, host, model, loopback });
-      }
-      const text4 = await response.text();
-      let json = null;
-      try {
-        json = JSON.parse(text4);
-      } catch {
-      }
-      const credit = CREDIT.test(text4) || response.status === 402;
-      const daily = response.status === 429 && DAILY.test(text4);
-      const retryable = response.status === 429 && !credit && !daily || response.status === 408 || response.status >= 500;
-      if (retryable && attempt < MAX_RETRIES) {
-        await sleep2(retryAfterMs(response.headers) ?? backoffMs(attempt));
-        continue;
-      }
-      return { status: response.status, json, text: text4 };
-    }
-  }
-  const said = (r) => {
-    const m = r.json?.error?.message ?? r.json?.message ?? r.json?.error;
-    return (typeof m === "string" ? m : r.text).trim().slice(0, 300);
-  };
-  return {
-    async ask(a) {
-      const done = await slot();
-      try {
-        return await askOnce(a);
-      } finally {
-        done();
-      }
-    }
-  };
-  async function askOnce({ model, system, user: user2, maxTokens, schema, allowCutOff }) {
-    let jsonInPrompt = Boolean(schema) && noSchema.has(model);
-    let tokensField = completionTokens.has(model) ? "max_completion_tokens" : "max_tokens";
-    let retriedTokens = false, retriedSchema = false;
-    for (; ; ) {
-      const body = {
-        model,
-        messages: [...system === void 0 ? [] : [{ role: "system", content: system }], { role: "user", content: schema && jsonInPrompt ? `${user2}${JSON_ONLY(schema)}` : user2 }],
-        [tokensField]: maxTokens,
-        ...o.reasoningEffort ? { reasoning_effort: o.reasoningEffort } : {},
-        ...schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}
-      };
-      const r = await post(model, body);
-      if (r.status === 400) {
-        const why = said(r);
-        if (!retriedTokens && tokensField === "max_tokens" && /max_completion_tokens/.test(why)) {
-          retriedTokens = true;
-          tokensField = "max_completion_tokens";
-          completionTokens.add(model);
-          continue;
-        }
-        if (schema && !jsonInPrompt && !retriedSchema) {
-          retriedSchema = true;
-          jsonInPrompt = true;
-          noSchema.add(model);
-          continue;
-        }
-      }
-      if (r.status < 200 || r.status >= 300) {
-        const credit = CREDIT.test(r.text) || r.status === 402;
-        throw new ProviderError(`${host} answered ${r.status}: ${hide(said(r))}`, { status: r.status, host, model, loopback, credit, exhausted: r.status === 429 && !credit });
-      }
-      const choice = r.json?.choices?.[0];
-      const content = textOf(choice?.message?.content);
-      const refused = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim().length > 0;
-      const reason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
-      const raw = refused ? null : content;
-      const text4 = raw !== null && jsonInPrompt ? unfence(raw) : raw;
-      const finished = reason === "stop" && text4 !== null && text4.length > 0;
-      const cutOff = allowCutOff === true && reason === "length" && text4 !== null && text4.length > 0;
-      const usage = r.json?.usage;
-      const input = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
-      const output = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
-      const price = o.prices?.[model];
-      const costUsd2 = price ? pricedCost(price, input, output) : typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
-      return {
-        text: finished || cutOff ? text4 : null,
-        costUsd: costUsd2,
-        ...cutOff ? { truncated: true } : {},
-        ...input !== null && output !== null ? { usage: { input, output } } : {},
-        stopReason: refused ? "refusal" : reason
-      };
-    }
-  }
-}
-async function listModels(baseUrl, apiKey) {
-  const url = new URL(`${baseUrl.trim().replace(/\/+$/, "")}/models`);
-  const hide = (text4) => apiKey ? text4.split(apiKey).join("[your key]") : text4;
-  try {
-    const response = await fetch(url, { headers: { authorization: `Bearer ${apiKey}` }, redirect: "error", signal: AbortSignal.timeout(3e4) });
-    if (response.status === 404) return { ok: false, missing: true, why: "it has no /models route" };
-    if (!response.ok) return { ok: false, missing: false, why: `it answered ${response.status}` };
-    const body = await response.json();
-    const rows = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
-    if (!rows) return { ok: false, missing: false, why: "its answer had no list of models" };
-    const zero = (v) => (typeof v === "number" || typeof v === "string" && v.trim() !== "") && Number(v) === 0;
-    return { ok: true, models: rows.flatMap((m) => typeof m?.id === "string" && m.id ? [{ id: m.id.replace(/^models\//, ""), free: zero(m.pricing?.prompt) && zero(m.pricing?.completion) }] : []) };
-  } catch (error) {
-    return { ok: false, missing: false, why: hide(`it couldn't be reached (${error instanceof Error ? error.message : String(error)})`) };
-  }
-}
-
 // src/model/client.ts
+init_openai_compatible();
 var MissingKeyError = class extends Error {
 };
 function configuredModel(key, provider) {
@@ -38093,6 +38218,7 @@ function providerProblem(e) {
 }
 
 // src/loop/write.ts
+init_cost();
 init_safety();
 
 // src/core/candidate-history.ts
@@ -39163,6 +39289,7 @@ var presetById = (id) => PRESETS.find((p) => p.id === id);
 var FREE_MAX_CALLS = 500;
 
 // src/cli/init.ts
+init_openai_compatible();
 init_prompt();
 init_safety();
 
@@ -39247,6 +39374,7 @@ function baseUrlOption(args) {
 }
 
 // src/cli/calibrate.ts
+init_cost();
 import { mkdirSync as mkdirSync2, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join3 } from "node:path";
 var CASES = 20;
@@ -40366,6 +40494,7 @@ Set up, but GitHub did not accept the first dispatch. Run \`gh workflow run synt
 }
 
 // src/cli/calibrate-judge.ts
+init_cost();
 var JUDGE_CASES = 10;
 var PAIRS = 6;
 var MIN_PAIRS = 3;
@@ -40503,11 +40632,12 @@ ${VARIANTS[i % VARIANTS.length]}` })), 6, async ({ s, variant }) => {
 }
 
 // src/cli/migrate.ts
-import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
-import { join as join5 } from "node:path";
+init_cost();
 init_goal();
 init_merge_rule();
 init_prompt();
+import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
+import { join as join5 } from "node:path";
 var MAX_DROP = 5;
 function parseArgs(args) {
   const out = { dryRun: false };
@@ -41159,6 +41289,7 @@ function parseImproveConfig(raw) {
 }
 
 // src/improve/loop.ts
+init_cost();
 import { execFileSync as execFileSync3 } from "node:child_process";
 import { existsSync as existsSync12, mkdirSync as mkdirSync5, mkdtempSync as mkdtempSync2, readFileSync as readFileSync13, realpathSync as realpathSync2, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
@@ -42314,6 +42445,8 @@ async function publish(io2, a) {
 init_goal();
 
 // src/core/calls.ts
+init_cost();
+init_openai_compatible();
 var CallLimitError = class extends Error {
   maxCalls;
   constructor(maxCalls) {
