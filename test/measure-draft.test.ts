@@ -7,7 +7,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkJudge, readExamples } from "../src/solve/draft.ts";
+import { checkJudge, compareEnv, readExamples } from "../src/solve/draft.ts";
 
 const CLI = join(import.meta.dirname, "..", "src/cli/main.ts");
 const KEY = "sk-ant-test-key-123456";
@@ -163,3 +163,15 @@ test("measure draft uses the OpenAI-compatible model of a problem file, for the 
 function spawnGitInit(dir: string) {
   execFileSync("git", ["init", "-q"], { cwd: dir });
 }
+
+test("compareEnv passes on only the provider's own key, never another provider's", () => {
+  const anthropic = { provider: "anthropic" as const, model: "m" };
+  const openai = { provider: "openai-compatible" as const, model: "m", base_url: "https://x.example/v1" };
+  // A non-Anthropic SYNTHE_API_KEY is not an Anthropic key: compare.js gets nothing, not that key.
+  assert.deepEqual(compareEnv(anthropic, { SYNTHE_API_KEY: "sk-other-1", SYNTHE_OTHER: "x" }), {});
+  assert.deepEqual(compareEnv(anthropic, { SYNTHE_API_KEY: "sk-ant-1" }), { SYNTHE_ANTHROPIC_KEY: "sk-ant-1" });
+  assert.deepEqual(compareEnv(anthropic, { SYNTHE_ANTHROPIC_KEY: "sk-ant-2", SYNTHE_API_KEY: "sk-other-1", SYNTHE_ANTHROPIC_BASE_URL: "http://127.0.0.1:9" }),
+    { SYNTHE_ANTHROPIC_KEY: "sk-ant-2", SYNTHE_ANTHROPIC_BASE_URL: "http://127.0.0.1:9" });
+  assert.deepEqual(compareEnv(openai, { SYNTHE_API_KEY: "sk-other-1", SYNTHE_ANTHROPIC_KEY: "sk-ant-2" }), { SYNTHE_API_KEY: "sk-other-1" });
+  assert.deepEqual(compareEnv(openai, {}), {});
+});

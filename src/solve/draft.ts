@@ -138,10 +138,29 @@ function winnerIn(text) {
 `;
 }
 
-/** The SYNTHE_* values compare.js needs, and nothing else: runCommand gives a command no SYNTHE_* value by itself. */
+/** The key for a provider. For Anthropic, SYNTHE_ANTHROPIC_KEY, or SYNTHE_API_KEY only when it is an Anthropic key. */
+export function providerKey(provider: Provider, env: NodeJS.ProcessEnv): string {
+  if (provider === "anthropic") {
+    const own = env.SYNTHE_ANTHROPIC_KEY?.trim();
+    if (own) return own;
+    const shared = env.SYNTHE_API_KEY?.trim() ?? "";
+    return shared.startsWith("sk-ant-") ? shared : "";
+  }
+  return env.SYNTHE_API_KEY?.trim() ?? "";
+}
+
+/**
+ * What `measure draft` gives the compare.js it just wrote, for its own agreement check: the one key for the
+ * provider, under the name compare.js reads for that provider, and for Anthropic the loopback test address. Nothing
+ * else. A key for another provider (a non-Anthropic SYNTHE_API_KEY with the Anthropic provider) is never passed on.
+ * `solve` never calls this: inside solve, problem commands never get a key (GOAL-2.md).
+ */
 export function compareEnv(m: DraftModel, env: NodeJS.ProcessEnv): Record<string, string> {
-  const names = m.provider === "anthropic" ? ["SYNTHE_ANTHROPIC_KEY", "SYNTHE_API_KEY", "SYNTHE_ANTHROPIC_BASE_URL"] : ["SYNTHE_API_KEY"];
-  return Object.fromEntries(names.flatMap((k) => (env[k] ? [[k, env[k] as string]] : [])));
+  const key = providerKey(m.provider, env);
+  if (!key) return {};
+  if (m.provider !== "anthropic") return { SYNTHE_API_KEY: key };
+  const base = env.SYNTHE_ANTHROPIC_BASE_URL?.trim();
+  return { SYNTHE_ANTHROPIC_KEY: key, ...(base ? { SYNTHE_ANTHROPIC_BASE_URL: base } : {}) };
 }
 
 export interface Verdict { id: string; input: string; goodFirst: string; badFirst: string; agrees: boolean }
