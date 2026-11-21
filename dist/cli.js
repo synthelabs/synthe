@@ -30878,23 +30878,29 @@ function parseProposals(text4) {
   }
   return { proposals };
 }
-function modelProposer(problem, env = process.env, client) {
+function problemModel(problem, env = process.env, client) {
   const key = env.SYNTHE_API_KEY?.trim() ?? "";
   const config = problem.model;
-  if (!config?.model) throw new SetupError('proposer "model" needs model.model in the problem file.');
+  if (!config?.model) throw new SetupError('A "model" proposer or judge needs model.model in the problem file.');
   if (!client) {
-    if (!config.base_url) throw new SetupError('proposer "model" needs model.base_url in the problem file.');
-    if (!key) throw new SetupError('proposer "model" needs a key: set the SYNTHE_API_KEY environment variable.');
+    if (!config.base_url) throw new SetupError('A "model" proposer or judge needs model.base_url in the problem file.');
+    if (!key) throw new SetupError('A "model" proposer or judge needs a key: set the SYNTHE_API_KEY environment variable.');
   }
-  const model = client ?? openAiCompatibleModel({ baseUrl: config.base_url, apiKey: key });
-  const hide = (s) => key ? s.split(key).join("[your key]") : s;
+  return {
+    client: client ?? openAiCompatibleModel({ baseUrl: config.base_url, apiKey: key }),
+    model: config.model,
+    hide: (text4) => key ? text4.split(key).join("[your key]") : text4
+  };
+}
+function noTextReason(stopReason) {
+  return stopReason === "length" ? "it was cut off at the length limit" : stopReason === "refusal" ? "the model refused" : `it ended with "${stopReason ?? "no reason"}"`;
+}
+function modelProposer(problem, env = process.env, client) {
+  const { client: model, model: id, hide } = problemModel(problem, env, client);
   const ask2 = async (request) => {
     try {
-      const reply = await model.ask({ model: config.model, system: SYSTEM, user: buildUser(request), maxTokens: MAX_TOKENS, schema: PROPOSALS_SCHEMA });
-      if (reply.text === null) {
-        const why = reply.stopReason === "length" ? "it was cut off at the length limit" : reply.stopReason === "refusal" ? "the model refused" : `it ended with "${reply.stopReason ?? "no reason"}"`;
-        return { failed: hide(`The model gave no usable reply: ${why}.`) };
-      }
+      const reply = await model.ask({ model: id, system: SYSTEM, user: buildUser(request), maxTokens: MAX_TOKENS, schema: PROPOSALS_SCHEMA });
+      if (reply.text === null) return { failed: hide(`The model gave no usable reply: ${noTextReason(reply.stopReason)}.`) };
       const parsed = parseProposals(reply.text);
       return "failed" in parsed ? { failed: hide(parsed.failed) } : parsed;
     } catch (error) {
