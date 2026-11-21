@@ -41,6 +41,116 @@ That output is from a test run with a fake model. A first real run on a small si
 - **No key?** `npx synthe improve --handoff` measures the current code and prints a task card for the coding agent you already use. Have it make ONE small change on the branch the card names, commit it, then run `npx synthe submit`. Nothing is sent to a model.
 - **With a coding agent**, tell it: Set up Synthe in this repo. Run `npx synthe@latest guide` and follow it. Give it your key in the same message. It asks you the four questions, runs `improve` for you and shows each round.
 
+## Solve mode (any problem with a number)
+
+`synthe solve` improves any files that a command can score: code in any language, a JSON configuration, a Markdown document, a CSV file. You write a problem file that says which files Synthe may change, how to measure them, and what must not break. Synthe asks a proposer for changes, measures each one in a scratch checkout, and keeps a change only when the score gets better by more than the noise explains. Kept changes go to a new branch. Your working tree and current branch do not change.
+
+The `problem` and `solve` commands need a Synthe release newer than 1.10.0. Until then, run them from a checkout of this repository: `node src/cli/main.ts solve <file>`.
+
+### The problem file
+
+A JSON file with any name, in a folder inside a git repository. Paths and globs in it are relative to the folder that holds it. Commit the files first: Synthe works only on committed files.
+
+```json
+{
+  "version": 1,
+  "name": "fast-parser",
+  "goal": "Make the parser faster without changing its output.",
+  "artifact": ["src/**/*.py"],
+  "protect": ["measure/**"],
+  "measure": { "command": "python3 measure/time.py", "direction": "lower", "unit": "ms", "runs": 5 },
+  "guards": ["python3 -m pytest -q"],
+  "split": { "holdout": false },
+  "proposer": { "command": "node propose.js" },
+  "budget": { "max_rounds": 6 },
+  "candidates": 1
+}
+```
+
+| Field | Required | What it does |
+| --- | --- | --- |
+| `version` | yes | Always `1`. |
+| `name` | yes | Letters, digits and `-`. It names the branch, the output folder and the history. |
+| `goal` | yes | One plain sentence. The proposer gets it. |
+| `artifact` | yes | Globs of the files Synthe may change. A change to any other file is refused. |
+| `protect` | no | Globs Synthe must never change, even inside `artifact`. |
+| `measure.command` | yes | A shell command that runs in the scratch checkout. The last number it prints on stdout is the score. |
+| `measure.direction` | yes | `higher` or `lower`: which way is better. |
+| `measure.unit` | no | Shown after each number in the report. |
+| `measure.runs` | no | Runs for each measurement. Default 3. Use 1 only when the command gives the same number each time. |
+| `guards` | no | Shell commands that must exit 0 after a change, or the change is refused. |
+| `split.holdout` | no | When `true`, the measure runs with `SYNTHE_SPLIT=train` to compare changes, and a change is kept only if it also wins with `SYNTHE_SPLIT=holdout`. The proposer never sees a holdout number. |
+| `proposer` | no | `{ "command": "..." }` for your own proposer, or `"model"` (the default) for a model. |
+| `model` | with `"model"` | `{ "base_url": "...", "model": "..." }` for an OpenAI-compatible chat completions endpoint. The key comes only from `SYNTHE_API_KEY` and goes only to `base_url`. |
+| `budget.max_rounds` | no | Default 6. |
+| `budget.max_calls` | no | The most model calls the run may make. |
+| `candidates` | no | Proposals to ask for in each round. Default 1. Each one is measured, and the round keeps at most one: the best that passes the keep rule. |
+
+When no command can print a number, such as for a reply's quality, measure with a judge instead of `measure.command`:
+
+```json
+"measure": { "judge": { "cases": "judge/cases.jsonl", "run": "node run.js", "compare": "model", "rubric": "judge/rubric.md" } }
+```
+
+`run` prints the output for one case. `compare` is `"model"` (the model in the `model` section judges, with the optional `rubric`) or your own command that prints `{"winner": "a" | "b" | "tie"}`. Synthe asks every question twice with the two outputs swapped. Commands never get your key.
+
+To write the rubric from examples (`{"input": "...", "good": "...", "bad": "..."}` on each line), run `npx synthe measure draft --examples examples.jsonl --out judge --model <model-id>`. It writes `judge/cases.jsonl`, `judge/rubric.md` and `judge/compare.js`, checks the judge against your labels in both orders, and prints `agreement N/M`. Below 80% it names the examples and exits 2: edit `rubric.md` and run it again. Then it prints the measure above, ready to paste.
+
+Check a problem file before you run it:
+
+```bash
+npx synthe problem check problem.json
+```
+
+It exits 0 and prints a summary when the file is valid. It exits 1 and prints one line for each problem, with the field name, when it is not.
+
+### Run it
+
+```bash
+npx synthe solve problem.json [--out DIR] [--seed N]
+```
+
+1. Synthe makes a scratch checkout of your HEAD on a new branch, `synthe/solve-<name>-<n>`.
+2. It runs the guards. If a guard fails before any change, the run stops with exit 1. Fix the guard first.
+3. It measures the starting score.
+4. Each round, it asks the proposer for changes, applies them, runs the guards, measures, and keeps or undoes each change.
+5. It stops when the proposer has nothing more, when `max_rounds` or `max_calls` is reached, or after 3 rounds in a row that keep nothing.
+
+`--seed N` sets `SYNTHE_SEED` for the measure command, so a measure that uses random cases can repeat a run.
+
+- **The keep rule.** With a noisy measure, a change must win on the first runs, then win again on fresh runs of both versions. A lucky no-op seldom passes twice. With an exact measure (the same number each run), any change in the right direction is kept.
+- **What it refuses.** A change to a file outside `artifact`, to a `protect` file, to a file that the measure, guard or proposer commands use, or to the problem file. The reason names the path, and no file changes.
+- **Interrupted?** Press Ctrl-C any time. Synthe stops the running commands and removes its scratch checkout. A branch stays only if it holds a kept change.
+- **Exit codes.** 0 when the run ends normally, with or without gains. 1 for a bad problem file or a failed setup.
+
+### Where results go
+
+- `result.json` and `report.md` go to `--out`, or to `.synthe/solve/<name>/` in the repository by default. Add `.synthe/` to `.gitignore`. `result.json` has the stop reason, the starting and final scores, the branch, and every attempt with its reason. `report.md` says the same in plain words.
+- Kept changes are commits on `synthe/solve-<name>-<n>`. Read them with `git diff HEAD...synthe/solve-<name>-<n>`. If you agree, merge the branch. If no change was kept, Synthe makes no branch.
+- Every attempt is saved in the git folder (`.git/synthe/solve/<name>/history.jsonl`), not in your working tree. The next run of the same problem sends it to the proposer, so it does not try the same idea again.
+
+### Your own proposer
+
+A proposer is any command. It runs in the folder that holds the problem file. Synthe writes one JSON object to its stdin:
+
+```json
+{
+  "round": 1,
+  "goal": "...",
+  "files": [{ "path": "config.json", "text": "..." }],
+  "history": [{ "round": 1, "summary": "...", "kept": false, "reason": "..." }],
+  "candidates": 1
+}
+```
+
+`files` holds every file that matches `artifact`, as it is now. `history` holds every earlier attempt, from this run and earlier runs. The command prints one JSON object:
+
+```json
+{ "proposals": [{ "summary": "...", "edits": [{ "path": "config.json", "search": "...", "replace": "..." }] }] }
+```
+
+Each `search` text must occur exactly once in its file. Paths are relative to the problem file's folder. An empty `proposals` list means "nothing more to try", and the run stops. A reply that is not valid JSON, or an edit whose `search` does not match, is a failed attempt with a plain reason in the history. It does not stop the run.
+
 ## Enterprise pilot (a production metric)
 
 `npx synthe pilot` is a review-first loop for one support agent and one business metric that your own telemetry measures. It replays recorded conversations offline as a gate, writes the plan for an experiment you run with your own rollout controls, and says keep, hold or revert from the outcome export you produce. Data leaves your machine in two ways only: publishing a review (a pull request, which needs a person's confirmation), and `--live` on `replay`, `discover` or `propose`, which sends redacted conversations to a model provider after the team's recorded approval. The `pilot` command needs a Synthe release newer than 1.10.0; until then run it from a checkout with `node src/pilot/cli.ts <command>`. Try it on invented data with `npx synthe pilot demo --out /tmp/synthe-pilot-demo` (no credentials, no network). Guide: [docs/PILOT.md](docs/PILOT.md).
@@ -148,6 +258,8 @@ The test cases are simulated single messages, not real users or full conversatio
 | `npx synthe improve` | Improve mode: Synthe proposes code changes, measures each, keeps only wins and opens one pull request (`--list` shows what this repo can measure) |
 | `npx synthe improve --handoff` | Improve mode without a credential: measure, then make the change with your own coding agent |
 | `npx synthe submit` | After `--handoff`: measure your committed change; open the pull request, or merge it in auto mode |
+| `npx synthe problem check FILE` | Check a problem file for solve mode; one line for each problem (see [Solve mode](#solve-mode-any-problem-with-a-number)) |
+| `npx synthe solve FILE` | Solve mode: propose changes to the files the problem file names, measure each one, keep only real gains on a new branch |
 | `npx synthe init --base-url URL` | Set up with another provider's models through its OpenAI-compatible API (see [Other model providers](#other-model-providers)) |
 | `npx synthe key` | Save or replace your own model key (Anthropic, or the provider in `synthe.json`); with no key yet, it offers the free providers too |
 | `npx synthe upgrade` | Update only the workflow for chained rounds; commit and push the changed workflow |

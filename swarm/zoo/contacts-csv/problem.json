@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "contacts-csv",
+  "goal": "Clean the contacts file so that more rows are valid.",
+  "artifact": [
+    "data/contacts.csv"
+  ],
+  "protect": [
+    "measure/**",
+    "checks/**"
+  ],
+  "measure": {
+    "command": "node measure/score.cjs",
+    "direction": "higher",
+    "unit": "%",
+    "runs": 2
+  },
+  "guards": [
+    "node checks/ids.cjs"
+  ],
+  "proposer": {
+    "command": "node propose.cjs"
+  },
+  "budget": {
+    "max_rounds": 9
+  }
+}

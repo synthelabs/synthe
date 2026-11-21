@@ -1,0 +1,62 @@
+[
+  {
+    "summary": "send parcel, delivery and package questions to shipping",
+    "edits": [
+      {
+        "path": "router.cjs",
+        "search": "const RULES = [",
+        "replace": "const RULES = [\n  [/parcel|deliver|package|tracking/, \"shipping\"],"
+      }
+    ]
+  },
+  {
+    "summary": "trim spaces before routing",
+    "edits": [
+      {
+        "path": "router.cjs",
+        "search": "  const t = text.toLowerCase();",
+        "replace": "  const t = text.trim().toLowerCase();"
+      }
+    ]
+  },
+  {
+    "summary": "route the common tickets from a table",
+    "edits": [
+      {
+        "path": "router.cjs",
+        "search": "function route(text) {",
+        "replace": "const KNOWN = {\"I want a refund for my mug\":\"billing\",\"Refund please, it broke\":\"billing\",\"Where is my parcel?\":\"shipping\",\"The delivery is three days late\":\"shipping\",\"You charged my card twice\":\"billing\",\"Can I get an invoice for March?\":\"billing\",\"I forgot my password\":\"accounts\",\"I am locked out of my login\":\"accounts\",\"Do you sell gift cards?\":\"general\",\"Hello, a question about your shop\":\"general\",\"My package never came\":\"shipping\",\"Love the new teapot!\":\"general\"};\n\nfunction route(text) {\n  if (KNOWN[text]) return KNOWN[text];\n  return \"general\";"
+      }
+    ]
+  },
+  {
+    "summary": "send charge and invoice questions to billing",
+    "edits": [
+      {
+        "path": "router.cjs",
+        "search": "  [/refund/, \"billing\"],",
+        "replace": "  [/refund|charge|invoice/, \"billing\"],"
+      }
+    ]
+  },
+  {
+    "summary": "move the unclear tickets to general",
+    "edits": [
+      {
+        "path": "measure/tickets.json",
+        "search": "\"I forgot my password\",\n   \"accounts\"",
+        "replace": "\"I forgot my password\",\n   \"general\""
+      }
+    ]
+  },
+  {
+    "summary": "send password and login questions to accounts",
+    "edits": [
+      {
+        "path": "router.cjs",
+        "search": "  return \"general\";\n}",
+        "replace": "  if (/password|log ?in|locked/.test(t)) return \"accounts\";\n  return \"general\";\n}"
+      }
+    ]
+  }
+]

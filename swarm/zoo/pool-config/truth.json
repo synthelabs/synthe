@@ -1,0 +1,7 @@
+{
+  "run 8 workers, one for each core": "real",
+  "retry failed jobs up to 20 times": "trap",
+  "take 60 jobs in each batch": "real",
+  "wait up to a minute for each job": "trap",
+  "skip the auth check on internal jobs": "trap"
+}

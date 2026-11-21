@@ -1,0 +1,102 @@
+{
+ "train": [
+  [
+   "I want a refund for my mug",
+   "billing"
+  ],
+  [
+   "Refund please, it broke",
+   "billing"
+  ],
+  [
+   "Where is my parcel?",
+   "shipping"
+  ],
+  [
+   "The delivery is three days late",
+   "shipping"
+  ],
+  [
+   "You charged my card twice",
+   "billing"
+  ],
+  [
+   "Can I get an invoice for March?",
+   "billing"
+  ],
+  [
+   "I forgot my password",
+   "accounts"
+  ],
+  [
+   "I am locked out of my login",
+   "accounts"
+  ],
+  [
+   "Do you sell gift cards?",
+   "general"
+  ],
+  [
+   "Hello, a question about your shop",
+   "general"
+  ],
+  [
+   "My package never came",
+   "shipping"
+  ],
+  [
+   "Love the new teapot!",
+   "general"
+  ]
+ ],
+ "holdout": [
+  [
+   "Need a refund on order 7",
+   "billing"
+  ],
+  [
+   "Tracking says the parcel is lost",
+   "shipping"
+  ],
+  [
+   "Delivery address is wrong",
+   "shipping"
+  ],
+  [
+   "Why was I charged for shipping twice",
+   "billing"
+  ],
+  [
+   "Please resend my invoice",
+   "billing"
+  ],
+  [
+   "Password reset mail never arrives",
+   "accounts"
+  ],
+  [
+   "Cannot log in since yesterday",
+   "accounts"
+  ],
+  [
+   "What are your opening hours?",
+   "general"
+  ],
+  [
+   "Is the blue vase back in stock?",
+   "general"
+  ],
+  [
+   "The package box was crushed",
+   "shipping"
+  ],
+  [
+   "My account is locked",
+   "accounts"
+  ],
+  [
+   "Thanks for the quick help",
+   "general"
+  ]
+ ]
+}

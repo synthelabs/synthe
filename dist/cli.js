@@ -387,12 +387,12 @@ function nonInferiorityP(wins, losses, margin = NON_INFERIORITY_MARGIN) {
   if (!Number.isSafeInteger(wins) || !Number.isSafeInteger(losses) || wins < 0 || losses < 0 || n === 0) return 1;
   const p = 0.5 + margin;
   let logTerm = n * Math.log(1 - p);
-  let tail = Math.exp(logTerm);
+  let tail2 = Math.exp(logTerm);
   for (let k = 0; k < losses; k++) {
     logTerm += Math.log(n - k) - Math.log(k + 1) + Math.log(p) - Math.log(1 - p);
-    tail += Math.exp(logTerm);
+    tail2 += Math.exp(logTerm);
   }
-  return Math.min(1, tail);
+  return Math.min(1, tail2);
 }
 function notWorseProblem(id, split, maxP, where) {
   if (split === null) return `${id}: ${where} could not be compared`;
@@ -455,13 +455,13 @@ function mean(rows) {
 function signP(wins, losses) {
   const n = wins + losses;
   if (n === 0) return 1;
-  let tail = 0;
+  let tail2 = 0;
   let ways = 1;
   for (let i = 0; i <= losses; i++) {
-    tail += ways;
+    tail2 += ways;
     ways = ways * (n - i) / (i + 1);
   }
-  return Math.min(1, tail / 2 ** n);
+  return Math.min(1, tail2 / 2 ** n);
 }
 function paired(after, before) {
   const scores = new Map(before.map((r) => [r.id, r.score]));
@@ -659,6 +659,42 @@ var init_merge_rule = __esm({
     };
     breaks = (rows) => rows.filter((r) => r.violation === true).length;
     judgedAsShorter = (c, goal) => c.kind === "shorter" && goal.merge_rule.allow_shorter === true;
+  }
+});
+
+// src/core/cost.ts
+function costUsd(model, usage) {
+  const base = PRICES[model];
+  if (!base || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
+  const totalInput = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
+  const price = model === "claude-haiku-5-5" && totalInput > 1e5 ? { input: 0.5, output: 2.5 } : base;
+  const input = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) * 1.25 + (usage.cache_read_input_tokens ?? 0) * 0.1;
+  return (input * price.input + usage.output_tokens * price.output) / 1e6;
+}
+function sumCosts(costs) {
+  let total = 0;
+  for (const c of costs) {
+    if (c === null) return null;
+    total += c;
+  }
+  return total;
+}
+function pricedCost(price, input, output) {
+  if (!price || typeof input !== "number" || typeof output !== "number" || !Number.isFinite(input) || !Number.isFinite(output)) return null;
+  return (input * price.input + output * price.output) / 1e6;
+}
+var PRICES, knownModels;
+var init_cost = __esm({
+  "src/core/cost.ts"() {
+    "use strict";
+    PRICES = {
+      "claude-haiku-5-5": { input: 0.1, output: 0.5 },
+      "claude-sonnet-5-5": { input: 2, output: 10 },
+      "claude-opus-5-5": { input: 4, output: 20 },
+      // Teams still on Sonnet 4.5 need a price to see what moving off it (it retires 2026-11-30) would cost.
+      "claude-sonnet-4-5": { input: 3, output: 15 }
+    };
+    knownModels = () => Object.keys(PRICES);
   }
 });
 
@@ -886,16 +922,16 @@ var init_values = __esm({
 var sleep;
 var init_sleep = __esm({
   "node_modules/@anthropic-ai/sdk/internal/utils/sleep.mjs"() {
-    sleep = (ms2, signal) => new Promise((resolve7) => {
+    sleep = (ms2, signal) => new Promise((resolve11) => {
       if (signal?.aborted)
-        return resolve7();
+        return resolve11();
       const onAbort = () => {
         clearTimeout(timer);
-        resolve7();
+        resolve11();
       };
       const timer = setTimeout(() => {
         signal?.removeEventListener("abort", onAbort);
-        resolve7();
+        resolve11();
       }, ms2);
       signal?.addEventListener("abort", onAbort, { once: true });
     });
@@ -1423,16 +1459,16 @@ var init_baggage_impl = __esm({
         this._entries = entries ? new Map(entries) : /* @__PURE__ */ new Map();
       }
       getEntry(key) {
-        const entry = this._entries.get(key);
-        if (!entry) return;
-        return Object.assign({}, entry);
+        const entry2 = this._entries.get(key);
+        if (!entry2) return;
+        return Object.assign({}, entry2);
       }
       getAllEntries() {
         return Array.from(this._entries.entries());
       }
-      setEntry(key, entry) {
+      setEntry(key, entry2) {
         const newBaggage = new BaggageImpl2(this._entries);
-        newBaggage._entries.set(key, entry);
+        newBaggage._entries.set(key, entry2);
         return newBaggage;
       }
       removeEntry(key) {
@@ -4239,9 +4275,9 @@ function recordMessagesCreateResponse(client, call, body, data) {
     loggerFor(client).debug("could not record the response on its span", problem);
   }
 }
-function recordCountTokensResponse(client, call, count2) {
+function recordCountTokensResponse(client, call, count3) {
   try {
-    call?.span.setAttribute(ATTR_ANTHROPIC_MESSAGE_COUNT_TOKENS_INPUT_TOKENS, count2.input_tokens);
+    call?.span.setAttribute(ATTR_ANTHROPIC_MESSAGE_COUNT_TOKENS_INPUT_TOKENS, count3.input_tokens);
   } catch (problem) {
     loggerFor(client).debug("could not record the response on its span", problem);
   }
@@ -5295,7 +5331,7 @@ function wrapFetchWithMiddleware(fetchFn, middleware, options, client) {
   };
 }
 function createMiddlewareContext(options, client) {
-  const cache = /* @__PURE__ */ new WeakMap();
+  const cache2 = /* @__PURE__ */ new WeakMap();
   return {
     options,
     // Resolved per chain, so changes to the client's `logLevel`/`logger`
@@ -5305,10 +5341,10 @@ function createMiddlewareContext(options, client) {
       if (options?.stream && response.ok) {
         return parseMiddlewareResponse(response, options, client);
       }
-      let parsed = cache.get(response);
+      let parsed = cache2.get(response);
       if (!parsed) {
         parsed = parseMiddlewareResponse(response, options, client);
-        cache.set(response, parsed);
+        cache2.set(response, parsed);
       }
       return parsed;
     }
@@ -5452,7 +5488,7 @@ var init_uploads = __esm({
         const name = isFile ? value.name : getName(value, stripFilenames);
         form.append(key, makeFile([value], name, { type: value.type }));
       } else if (Array.isArray(value)) {
-        await Promise.all(value.map((entry) => addFormValue(form, key + "[]", entry, stripFilenames)));
+        await Promise.all(value.map((entry2) => addFormValue(form, key + "[]", entry2, stripFilenames)));
       } else if (typeof value.then === "function") {
         throw new TypeError(`Received a Promise for "${key}"; await it first, e.g. \`await toFile(...)\``);
       } else if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
@@ -5478,8 +5514,8 @@ var init_api_promise = __esm({
     APIPromise = /* @__PURE__ */ (() => {
       class APIPromise2 extends Promise {
         constructor(client, responsePromise, parseResponse = defaultParseResponse) {
-          super((resolve7) => {
-            resolve7(null);
+          super((resolve11) => {
+            resolve11(null);
           });
           this.responsePromise = responsePromise;
           this.parseResponse = parseResponse;
@@ -6177,25 +6213,25 @@ var init_parser2 = __esm({
       return tokens2.slice(0, length);
     };
     unstrip = (tokens2) => {
-      let tail = [];
+      let tail2 = [];
       tokens2.map((token2) => {
         if (token2.type === "brace") {
           if (token2.value === "{") {
-            tail.push("}");
+            tail2.push("}");
           } else {
-            tail.splice(tail.lastIndexOf("}"), 1);
+            tail2.splice(tail2.lastIndexOf("}"), 1);
           }
         }
         if (token2.type === "paren") {
           if (token2.value === "[") {
-            tail.push("]");
+            tail2.push("]");
           } else {
-            tail.splice(tail.lastIndexOf("]"), 1);
+            tail2.splice(tail2.lastIndexOf("]"), 1);
           }
         }
       });
-      if (tail.length > 0) {
-        tail.reverse().map((item) => {
+      if (tail2.length > 0) {
+        tail2.reverse().map((item) => {
           if (item === "}") {
             tokens2.push({
               type: "brace",
@@ -6329,12 +6365,12 @@ var init_MessageStream = __esm({
             }
             return this._emit("error", new AnthropicError(String(error)));
           });
-          __classPrivateFieldSet(this, _MessageStream_connectedPromise, new Promise((resolve7, reject) => {
-            __classPrivateFieldSet(this, _MessageStream_resolveConnectedPromise, resolve7, "f");
+          __classPrivateFieldSet(this, _MessageStream_connectedPromise, new Promise((resolve11, reject) => {
+            __classPrivateFieldSet(this, _MessageStream_resolveConnectedPromise, resolve11, "f");
             __classPrivateFieldSet(this, _MessageStream_rejectConnectedPromise, reject, "f");
           }), "f");
-          __classPrivateFieldSet(this, _MessageStream_endPromise, new Promise((resolve7, reject) => {
-            __classPrivateFieldSet(this, _MessageStream_resolveEndPromise, resolve7, "f");
+          __classPrivateFieldSet(this, _MessageStream_endPromise, new Promise((resolve11, reject) => {
+            __classPrivateFieldSet(this, _MessageStream_resolveEndPromise, resolve11, "f");
             __classPrivateFieldSet(this, _MessageStream_rejectEndPromise, reject, "f");
           }), "f");
           __classPrivateFieldGet(this, _MessageStream_connectedPromise, "f").catch(() => {
@@ -6526,11 +6562,11 @@ var init_MessageStream = __esm({
          *   const message = await stream.emitted('message') // rejects if the stream errors
          */
         emitted(event) {
-          return new Promise((resolve7, reject) => {
+          return new Promise((resolve11, reject) => {
             __classPrivateFieldSet(this, _MessageStream_catchingPromiseCreated, true, "f");
             if (event !== "error")
               this.once("error", reject);
-            this.once(event, resolve7);
+            this.once(event, resolve11);
           });
         }
         async done() {
@@ -6865,7 +6901,7 @@ var init_MessageStream = __esm({
                 if (done) {
                   return { value: void 0, done: true };
                 }
-                return new Promise((resolve7, reject) => readQueue.push({ resolve: resolve7, reject })).then((chunk2) => chunk2 ? { value: chunk2, done: false } : { value: void 0, done: true });
+                return new Promise((resolve11, reject) => readQueue.push({ resolve: resolve11, reject })).then((chunk2) => chunk2 ? { value: chunk2, done: false } : { value: void 0, done: true });
               }
               const chunk = pushQueue.shift();
               return { value: chunk, done: false };
@@ -7382,9 +7418,9 @@ Please migrate to a newer model. Visit https://docs.anthropic.com/en/docs/resour
             __span: call,
             headers
           });
-          return call ? request._thenUnwrap((count2) => {
-            recordCountTokensResponse(this._client, call, count2);
-            return count2;
+          return call ? request._thenUnwrap((count3) => {
+            recordCountTokensResponse(this._client, call, count3);
+            return count3;
           }) : request;
         }
       }
@@ -9537,16 +9573,16 @@ var init_async_queue = __esm({
           if (__classPrivateFieldGet(this, _AsyncQueue_closed, "f") || signal?.aborted) {
             return Promise.resolve({ done: true, value: void 0 });
           }
-          return new Promise((resolve7) => {
+          return new Promise((resolve11) => {
             const waiter = (r) => {
               signal?.removeEventListener("abort", onAbort);
-              resolve7(r);
+              resolve11(r);
             };
             const onAbort = () => {
               const idx = __classPrivateFieldGet(this, _AsyncQueue_waiters, "f").indexOf(waiter);
               if (idx >= 0)
                 __classPrivateFieldGet(this, _AsyncQueue_waiters, "f").splice(idx, 1);
-              resolve7({ done: true, value: void 0 });
+              resolve11({ done: true, value: void 0 });
             };
             __classPrivateFieldGet(this, _AsyncQueue_waiters, "f").push(waiter);
             signal?.addEventListener("abort", onAbort, { once: true });
@@ -10273,13 +10309,13 @@ var init_json_schema = __esm({
 
 // node_modules/@anthropic-ai/sdk/internal/utils/promise.mjs
 function promiseWithResolvers() {
-  let resolve7;
+  let resolve11;
   let reject;
   const promise = new Promise((res, rej) => {
-    resolve7 = res;
+    resolve11 = res;
     reject = rej;
   });
-  return { promise, resolve: resolve7, reject };
+  return { promise, resolve: resolve11, reject };
 }
 var init_promise = __esm({
   "node_modules/@anthropic-ai/sdk/internal/utils/promise.mjs"() {
@@ -10303,7 +10339,7 @@ function errnoCode(err) {
   return typeof code === "string" ? code : void 0;
 }
 async function canonicalize(abs) {
-  const tail = [];
+  const tail2 = [];
   let prefix = abs;
   let hops = 0;
   for (; ; ) {
@@ -10321,7 +10357,7 @@ async function canonicalize(abs) {
         const parent = path.dirname(prefix);
         if (parent === prefix)
           throw lstatErr;
-        tail.push(path.basename(prefix));
+        tail2.push(path.basename(prefix));
         prefix = parent;
         continue;
       }
@@ -10333,7 +10369,7 @@ async function canonicalize(abs) {
       prefix = path.resolve(path.dirname(prefix), await fs2.readlink(prefix));
       continue;
     }
-    return tail.length ? path.join(real, ...tail.reverse()) : real;
+    return tail2.length ? path.join(real, ...tail2.reverse()) : real;
   }
 }
 async function confineToRoot(root, p, opts) {
@@ -10431,10 +10467,10 @@ async function setupSkills(ctx) {
   for (const skill of session.agent.skills) {
     try {
       const version = await client.beta.skills.versions.retrieve(skill.version, { skill_id: skill.skill_id });
-      let dirname10 = path.basename(version.name.trim());
-      if (dirname10 === "" || dirname10 === "." || dirname10 === "..")
-        dirname10 = skill.skill_id;
-      const dest = path.resolve(skillsRoot, dirname10);
+      let dirname13 = path.basename(version.name.trim());
+      if (dirname13 === "" || dirname13 === "." || dirname13 === "..")
+        dirname13 = skill.skill_id;
+      const dest = path.resolve(skillsRoot, dirname13);
       if (dest !== skillsRoot && !dest.startsWith(skillsRoot + path.sep)) {
         log.warn("skill name escapes the skills dir; skipping", {
           component: "agent-tool-context",
@@ -10471,11 +10507,11 @@ async function setupSkills(ctx) {
 }
 function assertSafeMemberNames(names2) {
   for (const raw of names2) {
-    const entry = raw.trim();
-    if (!entry)
+    const entry2 = raw.trim();
+    if (!entry2)
       continue;
-    if (path.isAbsolute(entry) || entry.split(/[\\/]/).includes("..")) {
-      throw new AnthropicError(`refusing to extract unsafe archive member: ${entry}`);
+    if (path.isAbsolute(entry2) || entry2.split(/[\\/]/).includes("..")) {
+      throw new AnthropicError(`refusing to extract unsafe archive member: ${entry2}`);
     }
   }
 }
@@ -10508,10 +10544,10 @@ function classifyArchiveListing(cmd, names2, typed) {
   return { plain, special };
 }
 async function assertOnlyPlainEntries(dir) {
-  for (const entry of await fs3.readdir(dir, { withFileTypes: true })) {
-    if (entry.isDirectory())
-      await assertOnlyPlainEntries(path.join(dir, entry.name));
-    else if (!entry.isFile())
+  for (const entry2 of await fs3.readdir(dir, { withFileTypes: true })) {
+    if (entry2.isDirectory())
+      await assertOnlyPlainEntries(path.join(dir, entry2.name));
+    else if (!entry2.isFile())
       throw new AnthropicError(INCONSISTENT_LISTING);
   }
 }
@@ -10569,8 +10605,8 @@ async function extractSkillArchive(resp, dest) {
     const entries = await fs3.readdir(srcRoot).catch((e) => {
       throw errnoCode(e) === "ENOENT" ? new AnthropicError(INCONSISTENT_LISTING) : e;
     });
-    for (const entry of entries) {
-      await fs3.rename(path.join(srcRoot, entry), path.join(dest, entry));
+    for (const entry2 of entries) {
+      await fs3.rename(path.join(srcRoot, entry2), path.join(dest, entry2));
     }
   } finally {
     await fs3.rm(tmp, { force: true });
@@ -10718,18 +10754,18 @@ async function hashFile(full) {
   }
   return digest.digest("hex");
 }
-async function filenamesInDir(root, under2, base) {
-  if (!await requireDir(under2, base))
+async function filenamesInDir(root, under3, base) {
+  if (!await requireDir(under3, base))
     return [];
   const out = [];
-  await walk(base, (full, entry) => {
-    if (entry.isFile())
+  await walk(base, (full, entry2) => {
+    if (entry2.isFile())
       out.push([path.relative(root, full).split(path.sep).join("/"), full]);
   });
   out.sort();
   return out;
 }
-async function symlinksInDir(root, under2, base) {
+async function symlinksInDir(root, under3, base) {
   const relOf = (full) => path.relative(root, full).split(path.sep).join("/");
   let st;
   try {
@@ -10743,15 +10779,15 @@ async function symlinksInDir(root, under2, base) {
   if (st.isSymbolicLink())
     return /* @__PURE__ */ new Set([relOf(base)]);
   if (!st.isDirectory())
-    throw new FileStoreError(FileStoreError.NOT_A_DIRECTORY, under2);
+    throw new FileStoreError(FileStoreError.NOT_A_DIRECTORY, under3);
   const out = /* @__PURE__ */ new Set();
-  await walk(base, (full, entry) => {
-    if (entry.isSymbolicLink())
+  await walk(base, (full, entry2) => {
+    if (entry2.isSymbolicLink())
       out.add(relOf(full));
   });
   return out;
 }
-async function requireDir(under2, base) {
+async function requireDir(under3, base) {
   let st;
   try {
     st = await fsp.lstat(base, { bigint: true });
@@ -10762,7 +10798,7 @@ async function requireDir(under2, base) {
     throw e;
   }
   if (!st.isDirectory())
-    throw new FileStoreError(FileStoreError.NOT_A_DIRECTORY, under2);
+    throw new FileStoreError(FileStoreError.NOT_A_DIRECTORY, under3);
   return true;
 }
 async function walk(base, visit) {
@@ -10777,10 +10813,10 @@ async function walk(base, visit) {
         continue;
       throw e;
     }
-    for (const entry of entries) {
-      const full = path.join(dir, entry.name);
-      visit(full, entry);
-      if (entry.isDirectory() && !entry.isSymbolicLink())
+    for (const entry2 of entries) {
+      const full = path.join(dir, entry2.name);
+      visit(full, entry2);
+      if (entry2.isDirectory() && !entry2.isSymbolicLink())
         stack.push(full);
     }
   }
@@ -10871,8 +10907,8 @@ var init_file_store = __esm({
          * the write fails with `ENOENT`.
          */
         async put(relPath, data, opts) {
-          const tail = relPath.replace(/\\/g, "/");
-          if (tail.endsWith("/") || tail.endsWith("/.") || tail === "" || tail === ".") {
+          const tail2 = relPath.replace(/\\/g, "/");
+          if (tail2.endsWith("/") || tail2.endsWith("/.") || tail2 === "" || tail2 === ".") {
             throw new FileStoreError(FileStoreError.NOT_A_FILE, relPath);
           }
           const dest = this.resolveUnderRoot(relPath);
@@ -10903,17 +10939,17 @@ var init_file_store = __esm({
           return data;
         }
         /** The relative path of every file under the directory `under`. */
-        async ls(under2 = "/") {
-          const base = this.resolveUnderRoot(under2);
-          return new Set((await filenamesInDir(this.rootPath, under2, base)).map(([rel]) => rel));
+        async ls(under3 = "/") {
+          const base = this.resolveUnderRoot(under3);
+          return new Set((await filenamesInDir(this.rootPath, under3, base)).map(([rel]) => rel));
         }
         /**
          * Every symlink under `under` — listings skip them and reads refuse them,
          * so a caller that must know they exist asks here.
          */
-        async findSymlinks(under2 = "/") {
-          const base = this.resolveUnderRoot(under2);
-          return symlinksInDir(this.rootPath, under2, base);
+        async findSymlinks(under3 = "/") {
+          const base = this.resolveUnderRoot(under3);
+          return symlinksInDir(this.rootPath, under3, base);
         }
         /**
          * `{relPath: sha256Hex}` of every file under the directory `under`.
@@ -10921,11 +10957,11 @@ var init_file_store = __esm({
          * Unchanged files — same size, mtime, and ctime since the last call —
          * reuse their recorded hash instead of being re-read.
          */
-        async hashtree(under2 = "/") {
-          const base = this.resolveUnderRoot(under2);
+        async hashtree(under3 = "/") {
+          const base = this.resolveUnderRoot(under3);
           const walkStartNs = _internals.nowNs();
           const out = /* @__PURE__ */ Object.create(null);
-          for (const [rel, full] of await filenamesInDir(this.rootPath, under2, base)) {
+          for (const [rel, full] of await filenamesInDir(this.rootPath, under3, base)) {
             const sha = await this.hashViaCache(rel, full, walkStartNs);
             if (sha !== null)
               out[rel] = sha;
@@ -11074,10 +11110,10 @@ async function settledOrAborted(p, signal) {
     return;
   }
   let onAbort;
-  const aborted = new Promise((resolve7) => {
-    onAbort = resolve7;
+  const aborted = new Promise((resolve11) => {
+    onAbort = resolve11;
     if (signal.aborted)
-      resolve7();
+      resolve11();
   });
   signal.addEventListener("abort", onAbort, { once: true });
   try {
@@ -11859,7 +11895,7 @@ function scrubbedShellEnv() {
 function betaBashTool(ctx) {
   rejectUnrestrictedPaths(ctx.unrestrictedPaths);
   let session;
-  let tail = Promise.resolve();
+  let tail2 = Promise.resolve();
   return betaTool({
     name: "bash",
     description: "Run a bash command in a persistent shell. State (cwd, env vars) persists across calls.",
@@ -11872,9 +11908,9 @@ function betaBashTool(ctx) {
       }
     },
     run: async ({ command, restart: restart2, timeout_ms }, context2) => {
-      const prev = tail;
+      const prev = tail2;
       const gate = promiseWithResolvers();
-      tail = gate.promise;
+      tail2 = gate.promise;
       try {
         await prev;
       } catch {
@@ -12054,15 +12090,15 @@ function betaEditTool(ctx) {
           throw e;
         throw new ToolError(`edit: ${fsErrorMessage(e, file_path)}`);
       }
-      const count2 = data.split(old_string).length - 1;
-      if (count2 === 0)
+      const count3 = data.split(old_string).length - 1;
+      if (count3 === 0)
         throw new ToolError(`edit: old_string not found in ${file_path}`);
       let updated;
       if (replace_all) {
         updated = data.split(old_string).join(new_string);
       } else {
-        if (count2 > 1)
-          throw new ToolError(`edit: old_string appears ${count2} times in ${file_path} (must be unique)`);
+        if (count3 > 1)
+          throw new ToolError(`edit: old_string appears ${count3} times in ${file_path} (must be unique)`);
         updated = data.replace(old_string, () => new_string);
       }
       try {
@@ -12070,7 +12106,7 @@ function betaEditTool(ctx) {
       } catch (e) {
         throw new ToolError(`edit: write: ${fsErrorMessage(e, file_path)}`);
       }
-      return `edited ${file_path} (${replace_all ? count2 : 1} replacement(s))`;
+      return `edited ${file_path} (${replace_all ? count3 : 1} replacement(s))`;
     }
   });
 }
@@ -12104,16 +12140,16 @@ function betaGlobTool(ctx) {
       const matches = [];
       let remaining = WALK_MAX_ENTRIES;
       try {
-        for await (const entry of fsGlob(pattern, {
+        for await (const entry2 of fsGlob(pattern, {
           cwd: root,
           withFileTypes: true,
           exclude: (d) => d.name === ".git" || d.name === "node_modules"
         })) {
           if (remaining-- <= 0)
             break;
-          if (!entry.isFile())
+          if (!entry2.isFile())
             continue;
-          const full = path3.join(entry.parentPath, entry.name);
+          const full = path3.join(entry2.parentPath, entry2.name);
           let real;
           try {
             real = await fs4.realpath(full);
@@ -12161,7 +12197,7 @@ function betaGrepTool(ctx) {
   });
 }
 function runRipgrep(rg, pattern, searchPath, signal) {
-  return new Promise((resolve7, reject) => {
+  return new Promise((resolve11, reject) => {
     const proc = cp.spawn(rg, ["-n", "--no-heading", "-e", pattern, "--", searchPath], {
       ...signal ? { signal } : {}
     });
@@ -12183,12 +12219,12 @@ function runRipgrep(rg, pattern, searchPath, signal) {
       if (signal?.aborted)
         return reject(new ToolError("grep: aborted"));
       if (truncated)
-        return resolve7(out + `
+        return resolve11(out + `
 [output truncated at ${GREP_OUTPUT_LIMIT} bytes]`);
       if (code === 0)
-        return resolve7(out);
+        return resolve11(out);
       if (code === 1)
-        return resolve7("no matches");
+        return resolve11("no matches");
       reject(new ToolError(`grep: rg failed: ${errOut || `exit ${code}`}`));
     });
     proc.on("error", (e) => {
@@ -12370,8 +12406,8 @@ var init_node2 = __esm({
 `;
           __classPrivateFieldGet(this, _BashSession_proc, "f").stdin.write(wrapped);
           if (__classPrivateFieldGet(this, _BashSession_buf, "f").indexOf(sentinel2) < 0) {
-            const { promise: sentinelSeen, resolve: resolve7 } = promiseWithResolvers();
-            __classPrivateFieldSet(this, _BashSession_waiting, { sentinel: sentinel2, resolve: resolve7 }, "f");
+            const { promise: sentinelSeen, resolve: resolve11 } = promiseWithResolvers();
+            __classPrivateFieldSet(this, _BashSession_waiting, { sentinel: sentinel2, resolve: resolve11 }, "f");
             let timer;
             let onAbort;
             try {
@@ -12399,8 +12435,8 @@ var init_node2 = __esm({
           if (idx < 0) {
             throw new AnthropicError("bash session terminated");
           }
-          const tail = __classPrivateFieldGet(this, _BashSession_buf, "f").slice(idx + sentinel2.length);
-          const m = tail.match(/^(-?\d+)/);
+          const tail2 = __classPrivateFieldGet(this, _BashSession_buf, "f").slice(idx + sentinel2.length);
+          const m = tail2.match(/^(-?\d+)/);
           const exitCode = m ? parseInt(m[1], 10) : -1;
           let out = __classPrivateFieldGet(this, _BashSession_buf, "f").slice(0, idx).replace(ANSI_RE, "").replace(/\n+$/, "");
           if (__classPrivateFieldGet(this, _BashSession_truncated, "f")) {
@@ -12533,8 +12569,8 @@ async function withTimeout(p, ms2) {
   try {
     return await Promise.race([
       p.then(() => false, () => false),
-      new Promise((resolve7) => {
-        timer = setTimeout(() => resolve7(true), ms2);
+      new Promise((resolve11) => {
+        timer = setTimeout(() => resolve11(true), ms2);
       })
     ]);
   } finally {
@@ -14409,12 +14445,12 @@ var init_BetaMessageStream = __esm({
             }
             return this._emit("error", new AnthropicError(String(error)));
           });
-          __classPrivateFieldSet(this, _BetaMessageStream_connectedPromise, new Promise((resolve7, reject) => {
-            __classPrivateFieldSet(this, _BetaMessageStream_resolveConnectedPromise, resolve7, "f");
+          __classPrivateFieldSet(this, _BetaMessageStream_connectedPromise, new Promise((resolve11, reject) => {
+            __classPrivateFieldSet(this, _BetaMessageStream_resolveConnectedPromise, resolve11, "f");
             __classPrivateFieldSet(this, _BetaMessageStream_rejectConnectedPromise, reject, "f");
           }), "f");
-          __classPrivateFieldSet(this, _BetaMessageStream_endPromise, new Promise((resolve7, reject) => {
-            __classPrivateFieldSet(this, _BetaMessageStream_resolveEndPromise, resolve7, "f");
+          __classPrivateFieldSet(this, _BetaMessageStream_endPromise, new Promise((resolve11, reject) => {
+            __classPrivateFieldSet(this, _BetaMessageStream_resolveEndPromise, resolve11, "f");
             __classPrivateFieldSet(this, _BetaMessageStream_rejectEndPromise, reject, "f");
           }), "f");
           __classPrivateFieldGet(this, _BetaMessageStream_connectedPromise, "f").catch(() => {
@@ -14627,11 +14663,11 @@ var init_BetaMessageStream = __esm({
          *   const message = await stream.emitted('message') // rejects if the stream errors
          */
         emitted(event) {
-          return new Promise((resolve7, reject) => {
+          return new Promise((resolve11, reject) => {
             __classPrivateFieldSet(this, _BetaMessageStream_catchingPromiseCreated, true, "f");
             if (event !== "error")
               this.once("error", reject);
-            this.once(event, resolve7);
+            this.once(event, resolve11);
           });
         }
         async done() {
@@ -15019,7 +15055,7 @@ var init_BetaMessageStream = __esm({
                 if (done) {
                   return { value: void 0, done: true };
                 }
-                return new Promise((resolve7, reject) => readQueue.push({ resolve: resolve7, reject })).then((chunk2) => chunk2 ? { value: chunk2, done: false } : { value: void 0, done: true });
+                return new Promise((resolve11, reject) => readQueue.push({ resolve: resolve11, reject })).then((chunk2) => chunk2 ? { value: chunk2, done: false } : { value: void 0, done: true });
               }
               const chunk = pushQueue.shift();
               return { value: chunk, done: false };
@@ -15314,7 +15350,7 @@ var init_connectors = __esm({
 
 // node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost.mjs
 var Cost;
-var init_cost = __esm({
+var init_cost2 = __esm({
   "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost.mjs"() {
     init_resource();
     init_pagination();
@@ -16042,8 +16078,8 @@ var init_analytics = __esm({
     init_artifacts();
     init_connectors();
     init_connectors();
-    init_cost();
-    init_cost();
+    init_cost2();
+    init_cost2();
     init_cost_report();
     init_cost_report();
     init_plugins();
@@ -23462,7 +23498,7 @@ var init_ThreadState = __esm({
          * already applied.
          */
         get messages() {
-          const messages = __classPrivateFieldGet(this, _ThreadState_turn, "f")?.replacementHistory?.slice() ?? [...__classPrivateFieldGet(this, _ThreadState_stored, "f"), ...__classPrivateFieldGet(this, _ThreadState_staged, "f")].map((entry) => entry.param);
+          const messages = __classPrivateFieldGet(this, _ThreadState_turn, "f")?.replacementHistory?.slice() ?? [...__classPrivateFieldGet(this, _ThreadState_stored, "f"), ...__classPrivateFieldGet(this, _ThreadState_staged, "f")].map((entry2) => entry2.param);
           if (__classPrivateFieldGet(this, _ThreadState_turn, "f"))
             messages.push(...__classPrivateFieldGet(this, _ThreadState_turn, "f").deferredMessages.map(toMessageParam));
           return messages;
@@ -23534,7 +23570,7 @@ var init_ThreadState = __esm({
         setMessages(messages) {
           const entries = [...__classPrivateFieldGet(this, _ThreadState_stored, "f"), ...__classPrivateFieldGet(this, _ThreadState_staged, "f")];
           if (__classPrivateFieldGet(this, _ThreadState_turn, "f")) {
-            const sent = entries.map((entry) => entry.param);
+            const sent = entries.map((entry2) => entry2.param);
             if (startsWith(messages, sent)) {
               __classPrivateFieldGet(this, _ThreadState_turn, "f").replacementHistory = null;
               __classPrivateFieldGet(this, _ThreadState_turn, "f").deferredMessages = messages.slice(sent.length);
@@ -23544,13 +23580,13 @@ var init_ThreadState = __esm({
             }
             return;
           }
-          if (!startsWith(messages, __classPrivateFieldGet(this, _ThreadState_stored, "f").map((entry) => entry.param))) {
+          if (!startsWith(messages, __classPrivateFieldGet(this, _ThreadState_stored, "f").map((entry2) => entry2.param))) {
             __classPrivateFieldSet(this, _ThreadState_stored, [], "f");
             if (this.threading)
               __classPrivateFieldSet(this, _ThreadState_anchor, { type: "create", replacesLostThread: false }, "f");
           }
           __classPrivateFieldSet(this, _ThreadState_staged, [], "f");
-          const replies = new Map(entries.filter((entry) => entry.reply).map((entry) => [entry.param.content, entry]));
+          const replies = new Map(entries.filter((entry2) => entry2.reply).map((entry2) => [entry2.param.content, entry2]));
           for (const message of messages.slice(__classPrivateFieldGet(this, _ThreadState_stored, "f").length)) {
             if (__classPrivateFieldGet(this, _ThreadState_instances, "m", _ThreadState_repeatsLastReply).call(this, message))
               continue;
@@ -23587,7 +23623,7 @@ var init_ThreadState = __esm({
          */
         endTurn(turn) {
           __classPrivateFieldSet(this, _ThreadState_turn, null, "f");
-          __classPrivateFieldSet(this, _ThreadState_staged, __classPrivateFieldGet(this, _ThreadState_staged, "f").filter((entry) => !turn.ownMessages.includes(entry)), "f");
+          __classPrivateFieldSet(this, _ThreadState_staged, __classPrivateFieldGet(this, _ThreadState_staged, "f").filter((entry2) => !turn.ownMessages.includes(entry2)), "f");
           if (turn.replacementHistory)
             this.setMessages(turn.replacementHistory);
           this.push(turn.deferredMessages);
@@ -23670,14 +23706,14 @@ var init_ThreadState = __esm({
         buildCreateArguments(turn, options, { stream: stream2 }) {
           __classPrivateFieldGet(this, _ThreadState_instances, "m", _ThreadState_checkCreateOnly).call(this, turn.createOnly);
           const anchor = __classPrivateFieldGet(this, _ThreadState_anchor, "f");
-          let stored = anchor.type === "continue" ? [] : __classPrivateFieldGet(this, _ThreadState_stored, "f").map((entry) => entry.param);
+          let stored = anchor.type === "continue" ? [] : __classPrivateFieldGet(this, _ThreadState_stored, "f").map((entry2) => entry2.param);
           if (anchor.type !== "never_threaded") {
-            const answered = __classPrivateFieldGet(this, _ThreadState_stored, "f").map((entry) => entry.reply !== null).lastIndexOf(true) + 1;
+            const answered = __classPrivateFieldGet(this, _ThreadState_stored, "f").map((entry2) => entry2.reply !== null).lastIndexOf(true) + 1;
             stored = stored.map((message, i) => i < answered ? withoutCacheControl(message) : message);
           }
           const params = {
             ...turn.fields,
-            messages: [...stored, ...__classPrivateFieldGet(this, _ThreadState_staged, "f").map((entry) => entry.param)]
+            messages: [...stored, ...__classPrivateFieldGet(this, _ThreadState_staged, "f").map((entry2) => entry2.param)]
           };
           if (this.threading && !params.betas?.includes(MESSAGE_THREADS_BETA)) {
             params.betas = [...params.betas ?? [], MESSAGE_THREADS_BETA];
@@ -23713,16 +23749,16 @@ var init_ThreadState = __esm({
         __classPrivateFieldGet(this, _ThreadState_logger, "f").info(`Replaying the full message history under a new thread: reason=${reason} previous_message_id=${this.previousMessageId}`);
         __classPrivateFieldSet(this, _ThreadState_anchor, { type: "create", replacesLostThread: reason === "thread_not_found" }, "f");
       }, _ThreadState_retryPartialTurn = function _ThreadState_retryPartialTurn2() {
-        const tail = __classPrivateFieldGet(this, _ThreadState_stored, "f").at(-1);
-        if (__classPrivateFieldGet(this, _ThreadState_staged, "f").length || !tail || tail.reply && !tail.partial)
+        const tail2 = __classPrivateFieldGet(this, _ThreadState_stored, "f").at(-1);
+        if (__classPrivateFieldGet(this, _ThreadState_staged, "f").length || !tail2 || tail2.reply && !tail2.partial)
           return;
-        if (tail.reply)
+        if (tail2.reply)
           __classPrivateFieldGet(this, _ThreadState_stored, "f").pop();
         let turnStart = __classPrivateFieldGet(this, _ThreadState_stored, "f").length;
         while (turnStart > 0 && !__classPrivateFieldGet(this, _ThreadState_stored, "f")[turnStart - 1].reply)
           turnStart -= 1;
         __classPrivateFieldSet(this, _ThreadState_staged, __classPrivateFieldGet(this, _ThreadState_stored, "f").splice(turnStart), "f");
-        __classPrivateFieldGet(this, _ThreadState_logger, "f").info(`Re-sending the turn whose reply ended before \`message_stop\`: partial_reply_id=${tail.reply?.id ?? null}`);
+        __classPrivateFieldGet(this, _ThreadState_logger, "f").info(`Re-sending the turn whose reply ended before \`message_stop\`: partial_reply_id=${tail2.reply?.id ?? null}`);
       }, _ThreadState_dropsRefusedTurn = function _ThreadState_dropsRefusedTurn2(reply) {
         if (reply.stop_reason !== "refusal" || __classPrivateFieldGet(this, _ThreadState_anchor, "f").type === "never_threaded")
           return false;
@@ -23982,8 +24018,8 @@ function malformedActions(input) {
   if (actions.length === 0)
     return ": the 'actions' list is empty";
   const names2 = [];
-  for (const [i, entry] of actions.entries()) {
-    const action = typeof entry === "object" && entry !== null && "action" in entry ? entry.action : void 0;
+  for (const [i, entry2] of actions.entries()) {
+    const action = typeof entry2 === "object" && entry2 !== null && "action" in entry2 ? entry2.action : void 0;
     if (typeof action !== "string")
       return `: action ${i} must be an object with a string 'action' field`;
     names2.push(`'${quotedName(action)}'`);
@@ -24733,7 +24769,7 @@ var init_BetaMessageThread = __esm({
         }));
       }
       /** @internal */
-      _send(messages, params, options, parseReply) {
+      _send(messages, params, options, parseReply2) {
         const turn = this._state.startTurn(toMessageList(messages), params);
         const received = (async () => {
           try {
@@ -24747,7 +24783,7 @@ var init_BetaMessageThread = __esm({
         })();
         return new APIPromise(this._client, received.then(({ props }) => props), async () => {
           const { props, reply } = await received;
-          return addResponseIDs(parseReply(reply), props.response);
+          return addResponseIDs(parseReply2(reply), props.response);
         });
       }
       /** Like `send()`, and returns the reply's stream. The turn is in progress until the stream ends or is aborted. */
@@ -24966,9 +25002,9 @@ Please migrate to a newer model. Visit https://docs.anthropic.com/en/docs/resour
             __span: call,
             headers
           });
-          return call ? request._thenUnwrap((count2) => {
-            recordCountTokensResponse(this._client, call, count2);
-            return count2;
+          return call ? request._thenUnwrap((count3) => {
+            recordCountTokensResponse(this._client, call, count3);
+            return count3;
           }) : request;
         }
         /**
@@ -28668,6 +28704,369 @@ var init_sdk = __esm({
   }
 });
 
+// src/model/cache.ts
+import { createHash as createHash2 } from "node:crypto";
+function cachedSystem(system) {
+  return system === void 0 ? void 0 : [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
+}
+function firstAlone() {
+  const first = /* @__PURE__ */ new Map();
+  return async (model, system, send) => {
+    if (system === void 0 || system.length < WARM_MIN_CHARS) return send();
+    const key = createHash2("sha256").update(`${model}
+${system}`).digest("hex");
+    const ahead = first.get(key);
+    if (ahead && Date.now() - ahead.at < WARM_FOR_MS) {
+      await ahead.sent.catch(() => void 0);
+      return send();
+    }
+    const sent = send();
+    first.set(key, { sent, at: Date.now() });
+    return sent;
+  };
+}
+var WARM_MIN_CHARS, WARM_FOR_MS;
+var init_cache = __esm({
+  "src/model/cache.ts"() {
+    "use strict";
+    WARM_MIN_CHARS = 2048;
+    WARM_FOR_MS = 4 * 6e4;
+  }
+});
+
+// src/model/openai-compatible.ts
+function retryAfterMs(headers, now = Date.now()) {
+  const ms2 = Number(headers.get("retry-after-ms"));
+  if (headers.get("retry-after-ms") && Number.isFinite(ms2) && ms2 >= 0) return Math.min(ms2, MAX_WAIT_MS);
+  const raw = headers.get("retry-after");
+  if (!raw) return null;
+  const seconds2 = Number(raw);
+  if (Number.isFinite(seconds2) && seconds2 >= 0) return Math.min(seconds2 * 1e3, MAX_WAIT_MS);
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? Math.min(Math.max(0, at - now), MAX_WAIT_MS) : null;
+}
+function textOf(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((p) => p && typeof p === "object" && typeof p.text === "string" ? p.text : "").join("");
+  return null;
+}
+function openAiCompatibleModel(o) {
+  const base = o.baseUrl.trim().replace(/\/+$/, "");
+  const url = new URL(`${base}/chat/completions`);
+  const host = url.host;
+  const loopback = isLoopback(url);
+  const sleep2 = o.sleep ?? ((ms2) => new Promise((resolve11) => setTimeout(resolve11, ms2)));
+  const now = o.now ?? Date.now;
+  const gap = o.maxRequestsPerMinute ? 6e4 / o.maxRequestsPerMinute : 0;
+  let nextAt = 0;
+  const pace = async () => {
+    if (!gap) return;
+    const t = now(), at = Math.max(t, nextAt);
+    nextAt = at + gap;
+    if (at > t) await sleep2(at - t);
+  };
+  let active = 0;
+  const waiting2 = [];
+  const slot = async () => {
+    if (!gap) return () => {
+    };
+    while (active >= PACED_AT_ONCE) await new Promise((resolve11) => waiting2.push(resolve11));
+    active++;
+    return () => {
+      active--;
+      waiting2.shift()?.();
+    };
+  };
+  const hide = (text4) => o.apiKey ? text4.split(o.apiKey).join("[your key]") : text4;
+  const noSchema = /* @__PURE__ */ new Set();
+  const completionTokens = /* @__PURE__ */ new Set();
+  async function post(model, body) {
+    for (let attempt = 0; ; attempt++) {
+      let response;
+      await pace();
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}` },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+          redirect: "error"
+          // a redirect would carry the key to wherever it points
+        });
+      } catch (error) {
+        if (attempt < MAX_RETRIES) {
+          await sleep2(backoffMs(attempt));
+          continue;
+        }
+        throw new ProviderError(`Couldn't reach ${host}: ${hide(error instanceof Error ? error.message : String(error))}`, { status: null, host, model, loopback });
+      }
+      const text4 = await response.text();
+      let json = null;
+      try {
+        json = JSON.parse(text4);
+      } catch {
+      }
+      const credit = CREDIT.test(text4) || response.status === 402;
+      const daily = response.status === 429 && DAILY.test(text4);
+      const retryable = response.status === 429 && !credit && !daily || response.status === 408 || response.status >= 500;
+      if (retryable && attempt < MAX_RETRIES) {
+        await sleep2(retryAfterMs(response.headers) ?? backoffMs(attempt));
+        continue;
+      }
+      return { status: response.status, json, text: text4 };
+    }
+  }
+  const said = (r) => {
+    const m = r.json?.error?.message ?? r.json?.message ?? r.json?.error;
+    return (typeof m === "string" ? m : r.text).trim().slice(0, 300);
+  };
+  return {
+    async ask(a) {
+      const done = await slot();
+      try {
+        return await askOnce(a);
+      } finally {
+        done();
+      }
+    }
+  };
+  async function askOnce({ model, system, user: user2, maxTokens, schema, allowCutOff }) {
+    let jsonInPrompt = Boolean(schema) && noSchema.has(model);
+    let tokensField = completionTokens.has(model) ? "max_completion_tokens" : "max_tokens";
+    let retriedTokens = false, retriedSchema = false;
+    for (; ; ) {
+      const body = {
+        model,
+        messages: [...system === void 0 ? [] : [{ role: "system", content: system }], { role: "user", content: schema && jsonInPrompt ? `${user2}${JSON_ONLY(schema)}` : user2 }],
+        [tokensField]: maxTokens,
+        ...o.reasoningEffort ? { reasoning_effort: o.reasoningEffort } : {},
+        ...schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}
+      };
+      const r = await post(model, body);
+      if (r.status === 400) {
+        const why = said(r);
+        if (!retriedTokens && tokensField === "max_tokens" && /max_completion_tokens/.test(why)) {
+          retriedTokens = true;
+          tokensField = "max_completion_tokens";
+          completionTokens.add(model);
+          continue;
+        }
+        if (schema && !jsonInPrompt && !retriedSchema) {
+          retriedSchema = true;
+          jsonInPrompt = true;
+          noSchema.add(model);
+          continue;
+        }
+      }
+      if (r.status < 200 || r.status >= 300) {
+        const credit = CREDIT.test(r.text) || r.status === 402;
+        throw new ProviderError(`${host} answered ${r.status}: ${hide(said(r))}`, { status: r.status, host, model, loopback, credit, exhausted: r.status === 429 && !credit });
+      }
+      const choice = r.json?.choices?.[0];
+      const content = textOf(choice?.message?.content);
+      const refused = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim().length > 0;
+      const reason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
+      const raw = refused ? null : content;
+      const text4 = raw !== null && jsonInPrompt ? unfence(raw) : raw;
+      const finished = reason === "stop" && text4 !== null && text4.length > 0;
+      const cutOff = allowCutOff === true && reason === "length" && text4 !== null && text4.length > 0;
+      const usage = r.json?.usage;
+      const input = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
+      const output = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
+      const price = o.prices?.[model];
+      const costUsd2 = price ? pricedCost(price, input, output) : typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
+      return {
+        text: finished || cutOff ? text4 : null,
+        costUsd: costUsd2,
+        ...cutOff ? { truncated: true } : {},
+        ...input !== null && output !== null ? { usage: { input, output } } : {},
+        stopReason: refused ? "refusal" : reason
+      };
+    }
+  }
+}
+async function listModels(baseUrl, apiKey) {
+  const url = new URL(`${baseUrl.trim().replace(/\/+$/, "")}/models`);
+  const hide = (text4) => apiKey ? text4.split(apiKey).join("[your key]") : text4;
+  try {
+    const response = await fetch(url, { headers: { authorization: `Bearer ${apiKey}` }, redirect: "error", signal: AbortSignal.timeout(3e4) });
+    if (response.status === 404) return { ok: false, missing: true, why: "it has no /models route" };
+    if (!response.ok) return { ok: false, missing: false, why: `it answered ${response.status}` };
+    const body = await response.json();
+    const rows = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
+    if (!rows) return { ok: false, missing: false, why: "its answer had no list of models" };
+    const zero = (v) => (typeof v === "number" || typeof v === "string" && v.trim() !== "") && Number(v) === 0;
+    return { ok: true, models: rows.flatMap((m) => typeof m?.id === "string" && m.id ? [{ id: m.id.replace(/^models\//, ""), free: zero(m.pricing?.prompt) && zero(m.pricing?.completion) }] : []) };
+  } catch (error) {
+    return { ok: false, missing: false, why: hide(`it couldn't be reached (${error instanceof Error ? error.message : String(error)})`) };
+  }
+}
+var ProviderError, MAX_RETRIES, TIMEOUT_MS, MAX_WAIT_MS, CREDIT, DAILY, PACED_AT_ONCE, backoffMs, JSON_ONLY, unfence;
+var init_openai_compatible = __esm({
+  "src/model/openai-compatible.ts"() {
+    "use strict";
+    init_cost();
+    init_goal();
+    ProviderError = class extends Error {
+      status;
+      // null when the server couldn't be reached
+      host;
+      model;
+      loopback;
+      credit;
+      // out of credit or over a spending limit: a person has to act
+      exhausted;
+      // the free limit is used up for now: the next scheduled run tries again
+      constructor(message, a) {
+        super(message);
+        this.status = a.status;
+        this.host = a.host;
+        this.model = a.model;
+        this.loopback = a.loopback;
+        this.credit = a.credit ?? false;
+        this.exhausted = a.exhausted ?? false;
+      }
+    };
+    MAX_RETRIES = 4;
+    TIMEOUT_MS = 10 * 6e4;
+    MAX_WAIT_MS = 6e4;
+    CREDIT = /insufficient_quota|credit balance|out of credits?|insufficient (funds|balance)|spend(ing)? limit reached|payment required/i;
+    DAILY = /per[\s_-]?day|daily|requests_per_day|PerDay/i;
+    PACED_AT_ONCE = 2;
+    backoffMs = (attempt) => Math.min(500 * 2 ** attempt, 8e3) * (0.75 + Math.random() * 0.25);
+    JSON_ONLY = (schema) => `
+
+Reply with only a JSON object that matches this JSON schema, with no other text before or after it:
+${JSON.stringify(schema)}`;
+    unfence = (text4) => text4.match(/^\s*```(?:json)?\s*\n?([\s\S]*?)\n?\s*```\s*$/i)?.[1] ?? text4;
+  }
+});
+
+// src/model/client.ts
+function configuredModel(key, provider) {
+  if (provider?.kind === "openai-compatible") {
+    if (key?.trim()) return providerModel(provider, key.trim());
+    throw new MissingKeyError(`synthe.json sends model calls to ${providerHost(provider)}, and no key for it is set. On this computer, set SYNTHE_API_KEY. For the GitHub workflow, run \`npx synthe key\` to save it as the SYNTHE_API_KEY secret, and \`npx synthe upgrade\` if your workflow file doesn't pass api-key yet.`);
+  }
+  if (key?.trim()) return anthropicModel(key.trim());
+  throw new MissingKeyError("No Anthropic key is set. Run `npx synthe key` to save one as the repo secret SYNTHE_ANTHROPIC_KEY.");
+}
+function ownKeyBaseUrl(env = process.env) {
+  const override = env.SYNTHE_ANTHROPIC_BASE_URL?.trim();
+  if (!override) return ANTHROPIC_API_URL;
+  try {
+    const url = new URL(override);
+    if ((url.protocol === "http:" || url.protocol === "https:") && LOOPBACK.has(url.hostname)) return override;
+  } catch {
+  }
+  return ANTHROPIC_API_URL;
+}
+function providerModel(provider, apiKey) {
+  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices, maxRequestsPerMinute: provider.max_requests_per_minute, reasoningEffort: provider.reasoning_effort });
+  return anthropicModel(apiKey);
+}
+function onModel(model, id) {
+  return { ask: (a) => model.ask({ ...a, model: id }) };
+}
+function providerHost(provider) {
+  if (provider?.kind !== "openai-compatible") return "Anthropic";
+  try {
+    return new URL(provider.base_url).host;
+  } catch {
+    return provider.base_url;
+  }
+}
+function anthropicModel(apiKey, env = process.env) {
+  const client = new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(env), maxRetries: 4 });
+  return sdkModel(client);
+}
+function sdkModel(client) {
+  const warm = firstAlone();
+  return {
+    async ask({ model, system, user: user2, maxTokens, schema, allowCutOff }) {
+      const send = () => client.messages.create({
+        model,
+        max_tokens: maxTokens,
+        system: cachedSystem(system),
+        messages: [{ role: "user", content: user2 }],
+        // Haiku's thinking would spend the output limit on short scoring calls.
+        ...model.startsWith("claude-haiku") ? { thinking: { type: "disabled" } } : {},
+        output_config: { effort: "low", ...schema ? { format: { type: "json_schema", schema } } : {} }
+      });
+      const res = await warm(model, system, send);
+      const text4 = res.content.flatMap((b) => b.type === "text" ? [b.text] : []).join("");
+      const finished = res.stop_reason === "end_turn" && text4.length > 0;
+      const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text4.length > 0;
+      return {
+        text: finished || cutOff ? text4 : null,
+        costUsd: costUsd(model, res.usage),
+        ...cutOff ? { truncated: true } : {},
+        usage: { input: res.usage.input_tokens, output: res.usage.output_tokens },
+        stopReason: res.stop_reason ?? null
+      };
+    }
+  };
+}
+async function askJson(model, a) {
+  const reply = await model.ask(a);
+  if (reply.text === null) return { value: null, costUsd: reply.costUsd };
+  try {
+    return { value: JSON.parse(reply.text), costUsd: reply.costUsd };
+  } catch {
+    return { value: null, costUsd: reply.costUsd };
+  }
+}
+async function pool(items, limit2, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit2, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i]);
+    }
+  }));
+  return results;
+}
+function modelProblem(e) {
+  if (e instanceof ProviderError) return providerProblem(e);
+  const err = e;
+  const status3 = typeof err?.status === "number" ? err.status : null;
+  const text4 = typeof err?.message === "string" ? err.message : "";
+  if (status3 === 401) return "Your Anthropic key was rejected. Run `npx synthe key` to replace it.";
+  if (/credit balance is too low/i.test(text4)) return "Your Anthropic key has no credit left. Run `npx synthe key` to replace it.";
+  if (/usage limit|spend limit/i.test(text4)) return "Your Anthropic key has reached its spending limit. Run `npx synthe key` to replace it.";
+  if (status3 === 403) return "Your Anthropic key isn't allowed to use this model. Run `npx synthe key` to replace it.";
+  if (status3 === 429 || status3 === 529 || status3 !== null && status3 >= 500) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
+  if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
+  return null;
+}
+function providerProblem(e) {
+  const host = e.host;
+  if (e.status === null) return e.loopback ? `Couldn't reach the model server at ${host}. Start it (for example \`ollama serve\`), or fix provider.base_url in synthe.json, and try again.` : `Couldn't reach ${host}. Check your internet connection and provider.base_url in synthe.json, then try again.`;
+  if (e.credit) return `Your key for ${host} has no credit left or has reached its spending limit. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
+  if (e.exhausted) return "Your provider's free limit is used up for now. Run the command again later.";
+  if (e.status === 401) return `Your key for ${host} was rejected. Run \`npx synthe key\` to replace it.`;
+  if (e.status === 402) return `Your key for ${host} has no credit left. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
+  if (e.status === 403) return `Your key for ${host} isn't allowed to use ${e.model}. Check "models" in synthe.json, or run \`npx synthe key\` to replace the key.`;
+  if (e.status === 404) return `${host} doesn't have the model ${e.model}, or provider.base_url doesn't point at its OpenAI-compatible API (it usually ends in /v1). Check "models" and "provider" in synthe.json. ${e.message}`;
+  if (e.status === 429 || e.status === 408 || e.status >= 500) return `${host} is busy or rate-limiting this key right now. Wait a few minutes and try again.`;
+  return `${host} refused the request for ${e.model}. Check "models" and "provider" in synthe.json. ${e.message}`;
+}
+var MissingKeyError, ANTHROPIC_API_URL, LOOPBACK;
+var init_client2 = __esm({
+  "src/model/client.ts"() {
+    "use strict";
+    init_sdk();
+    init_cost();
+    init_cache();
+    init_openai_compatible();
+    MissingKeyError = class extends Error {
+    };
+    ANTHROPIC_API_URL = "https://api.anthropic.com";
+    LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
+  }
+});
+
 // src/core/evidence.ts
 import { execFileSync } from "node:child_process";
 import { existsSync as existsSync5, readdirSync, readFileSync as readFileSync6 } from "node:fs";
@@ -28687,7 +29086,7 @@ function recomputeProblem(r, goal, splits) {
   if (dropped) return `the record has no scores for scenario ${dropped}, so it is incomplete and the verdict can't be rechecked`;
   if (r.holdoutMaxP !== void 0 && !(typeof r.holdoutMaxP === "number" && r.holdoutMaxP > 0 && r.holdoutMaxP <= 1)) return "the record's held-back limit (holdoutMaxP) is not a number above 0 and at most 1";
   if (r.mergeMode === "propose" && r.verdict === "merge") return "the record says the round ran in review mode, where Synthe never merges by itself, but the verdict says it merged";
-  const rowOf = (s, score, guard2) => ({ id: s.id, score, violation: guard2 === void 0 ? null : guard2 > 0 });
+  const rowOf = (s, score2, guard2) => ({ id: s.id, score: score2, violation: guard2 === void 0 ? null : guard2 > 0 });
   const side = (split, pick2) => r.scenarioScores.filter((s) => splits.get(s.id) === split).map(pick2);
   const base = (s) => rowOf(s, s.baselineScore, s.baselineGuardFailed);
   const cand = (s) => rowOf(s, s.candidateScore, s.guardFailed);
@@ -29017,16 +29416,704 @@ var init_repo = __esm({
   }
 });
 
+// src/improve/verdict.ts
+function brokenTests(baseline2, candidate) {
+  if (candidate.failing === void 0) return null;
+  if (candidate.failing !== null && candidate.failing.length === 0) return null;
+  if (baseline2.failing === void 0) return "Some tests still fail, and the current code was measured before Synthe recorded which tests fail, so a fixed test could be hiding a newly broken one. Run npx synthe improve again to measure it.";
+  if (candidate.failing === null || baseline2.failing === null) return "Some tests still fail, and Synthe could not tell which ones from the test output, so a fixed test could be hiding a newly broken one.";
+  const before = new Set(baseline2.failing);
+  const broken = candidate.failing.filter((t) => !before.has(t));
+  if (!broken.length) return null;
+  const named = broken.slice(0, MAX_NAMED).join("; ") + (broken.length > MAX_NAMED ? `; and ${broken.length - MAX_NAMED} more` : "");
+  return `It breaks ${broken.length === 1 ? "a test that" : `${broken.length} tests that`} passed in every run before: ${named}.`;
+}
+function verdict(direction, baseline2, candidate, guardPassed) {
+  const delta = candidate.median - baseline2.median;
+  const noise = Math.max(range(baseline2.runs), range(candidate.runs));
+  const result2 = (win3, why, reason) => ({ win: win3, why, delta, noise, ...reason && { reason } });
+  if (guardPassed === false) return result2(false, "The regression check did not pass.", "guard");
+  const better = direction === "higher" ? delta : -delta;
+  if (better <= 0) return result2(false, `Not better than the current code (${plainNumber(candidate.median)} vs ${plainNumber(baseline2.median)}).`, "worse");
+  const broken = brokenTests(baseline2, candidate);
+  if (broken) return result2(false, broken, "tests");
+  const d = plainNumber(Math.abs(delta));
+  if (Math.abs(delta) <= noise) return result2(false, `Within noise: changed by ${d}, but runs vary by up to ${plainNumber(noise)}.`, "noise");
+  return result2(true, `Better by ${d}, more than the run-to-run noise of ${plainNumber(noise)}${guardPassed ? "; the regression check passed." : "."}`);
+}
+var median, range, plainNumber, MAX_NAMED;
+var init_verdict = __esm({
+  "src/improve/verdict.ts"() {
+    "use strict";
+    median = (xs) => {
+      const s = [...xs].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    };
+    range = (xs) => xs.length ? Math.max(...xs) - Math.min(...xs) : 0;
+    plainNumber = (n) => String(Number.isInteger(n) ? n : Number(n.toFixed(2)));
+    MAX_NAMED = 3;
+  }
+});
+
+// src/improve/exec.ts
+import { spawn as spawn2 } from "node:child_process";
+import { performance } from "node:perf_hooks";
+function childEnv(env = process.env) {
+  return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("SYNTHE_") && !HIDDEN.includes(k)));
+}
+function killRunning() {
+  for (const pid of live) {
+    try {
+      process.kill(process.platform === "win32" ? pid : -pid, "SIGKILL");
+    } catch {
+    }
+  }
+  live.clear();
+}
+var MAX_OUTPUT, HIDDEN, live, shellExec;
+var init_exec = __esm({
+  "src/improve/exec.ts"() {
+    "use strict";
+    MAX_OUTPUT = 4 * 1024 * 1024;
+    HIDDEN = ["ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "NODE_TEST_CONTEXT"];
+    live = /* @__PURE__ */ new Set();
+    shellExec = (cwd, command, timeoutMs) => new Promise((resolve11) => {
+      const win3 = process.platform === "win32";
+      const started = performance.now();
+      const child = spawn2(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: childEnv(), stdio: ["ignore", "pipe", "pipe"], detached: !win3 });
+      if (child.pid) live.add(child.pid);
+      let stdout = "", stderr = "", timedOut = false, done = false;
+      const take = (into) => (d) => {
+        if (into === "out" && stdout.length < MAX_OUTPUT) stdout += d.toString().slice(0, MAX_OUTPUT - stdout.length);
+        if (into === "err" && stderr.length < MAX_OUTPUT) stderr += d.toString().slice(0, MAX_OUTPUT - stderr.length);
+      };
+      child.stdout.on("data", take("out"));
+      child.stderr.on("data", take("err"));
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try {
+          if (win3) child.kill("SIGKILL");
+          else process.kill(-child.pid, "SIGKILL");
+        } catch {
+        }
+      }, timeoutMs);
+      const finish = (code) => {
+        if (done) return;
+        done = true;
+        if (child.pid) live.delete(child.pid);
+        clearTimeout(timer);
+        resolve11({ ok: code === 0 && !timedOut, stdout, stderr, ms: Math.round(performance.now() - started), timedOut });
+      };
+      child.on("error", (e) => {
+        stderr += e.message;
+        finish(null);
+      });
+      child.on("close", finish);
+    });
+  }
+});
+
+// src/solve/glob.ts
+function normalizePath(path4) {
+  let out = path4.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+  while (out.startsWith("./")) out = out.slice(2);
+  if (out.length > 1 && out.endsWith("/")) out = out.slice(0, -1);
+  return out;
+}
+function globProblem(glob2) {
+  if (typeof glob2 !== "string" || glob2.trim() === "") return "is empty";
+  const g = normalizePath(glob2);
+  if (g.startsWith("/")) return "must be relative to the problem folder, not absolute";
+  if (g.split("/").includes("..")) return "must not use '..' to leave the problem folder";
+  let braces = 0;
+  let inClass = false;
+  for (let i = 0; i < g.length; i++) {
+    const c = g[i];
+    if (c === "\\") {
+      i++;
+      continue;
+    }
+    if (inClass) {
+      if (c === "]") inClass = false;
+      continue;
+    }
+    if (c === "[") inClass = true;
+    else if (c === "{") braces++;
+    else if (c === "}") {
+      braces--;
+      if (braces < 0) return "has a '}' with no '{'";
+    }
+  }
+  if (inClass) return "has a '[' with no ']'";
+  if (braces > 0) return "has a '{' with no '}'";
+  return null;
+}
+function globToRegExp(glob2) {
+  const key = normalizePath(glob2);
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const problem = globProblem(key);
+  if (problem) throw new Error(`glob "${glob2}" ${problem}`);
+  const re2 = new RegExp(`^${translate(key)}$`);
+  cache.set(key, re2);
+  return re2;
+}
+function translate(g) {
+  let out = "";
+  let i = 0;
+  while (i < g.length) {
+    const c = g[i];
+    const atSegStart = i === 0 || g[i - 1] === "/";
+    if (c === "*" && g[i + 1] === "*" && atSegStart && (i + 2 === g.length || g[i + 2] === "/")) {
+      if (i + 2 === g.length) {
+        out += ".*";
+        i += 2;
+      } else {
+        out += "(?:[^/]*/)*";
+        i += 3;
+      }
+      continue;
+    }
+    if (c === "*") {
+      out += "[^/]*";
+      i++;
+      continue;
+    }
+    if (c === "?") {
+      out += "[^/]";
+      i++;
+      continue;
+    }
+    if (c === "\\" && i + 1 < g.length) {
+      out += escape2(g[i + 1]);
+      i += 2;
+      continue;
+    }
+    if (c === "[") {
+      const end = g.indexOf("]", i + 2);
+      let body = g.slice(i + 1, end);
+      let neg = false;
+      if (body.startsWith("!") || body.startsWith("^")) {
+        neg = true;
+        body = body.slice(1);
+      }
+      body = body.replace(/[\\\]^]/g, (m) => `\\${m}`);
+      out += neg ? `[^/${body}]` : `[${body}]`;
+      i = end + 1;
+      continue;
+    }
+    if (c === "{") {
+      const end = matchingBrace(g, i);
+      const parts = splitTopLevel(g.slice(i + 1, end));
+      out += `(?:${parts.map(translate).join("|")})`;
+      i = end + 1;
+      continue;
+    }
+    out += escape2(c);
+    i++;
+  }
+  return out;
+}
+function matchingBrace(g, open) {
+  let depth = 0;
+  for (let i = open; i < g.length; i++) {
+    if (g[i] === "\\") {
+      i++;
+      continue;
+    }
+    if (g[i] === "{") depth++;
+    else if (g[i] === "}" && --depth === 0) return i;
+  }
+  return g.length - 1;
+}
+function splitTopLevel(body) {
+  const parts = [];
+  let depth = 0;
+  let start2 = 0;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === "\\") {
+      i++;
+      continue;
+    }
+    if (c === "{") depth++;
+    else if (c === "}") depth--;
+    else if (c === "," && depth === 0) {
+      parts.push(body.slice(start2, i));
+      start2 = i + 1;
+    }
+  }
+  parts.push(body.slice(start2));
+  return parts;
+}
+function escape2(c) {
+  return c.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+}
+function matchAny(globs, path4) {
+  const p = normalizePath(path4);
+  return globs.some((g) => globToRegExp(g).test(p));
+}
+function matchesAny(path4, globs) {
+  return matchAny(globs, path4);
+}
+var cache;
+var init_glob = __esm({
+  "src/solve/glob.ts"() {
+    "use strict";
+    cache = /* @__PURE__ */ new Map();
+  }
+});
+
+// src/solve/types.ts
+var isJudged, DEFAULT_RUNS2, DEFAULT_MAX_ROUNDS, MAX_MISSES2;
+var init_types2 = __esm({
+  "src/solve/types.ts"() {
+    "use strict";
+    isJudged = (m) => "judge" in m;
+    DEFAULT_RUNS2 = 3;
+    DEFAULT_MAX_ROUNDS = 6;
+    MAX_MISSES2 = 3;
+  }
+});
+
+// src/solve/edits.ts
+import { execFileSync as execFileSync4 } from "node:child_process";
+import { existsSync as existsSync14, lstatSync as lstatSync3, mkdirSync as mkdirSync6, readFileSync as readFileSync16, writeFileSync as writeFileSync8 } from "node:fs";
+import { dirname as dirname5, join as join19, posix as posix2, relative as relative2 } from "node:path";
+function commandPaths2(commands) {
+  const words2 = commands.flatMap((c) => c.split(/\s+/)).map((w) => w.replace(/^['"]|['"]$/g, "").replace(/\\/g, "/").replace(/^\.\//, "")).filter((w) => /[/.]/.test(w) && !w.startsWith("-") && !w.startsWith("/") && !/^[a-z]+:/i.test(w) && !w.split("/").includes(".."));
+  return [...new Set(words2.map((w) => w.replace(/\/$/, "")).filter(Boolean))];
+}
+function pathProblem(path4, rules) {
+  const p = normal(path4);
+  if (!p || p.startsWith("/") || /^[a-z]:/i.test(p) || p.split("/").includes("..")) return `${path4} is not a path inside the problem folder.`;
+  if (p.split("/").includes(".git")) return `${p} is inside git's own folder; a proposal may not change it.`;
+  if (matchesAny(p, rules.protect)) return `${p} is protected by the problem file (protect); a proposal may not change it.`;
+  const measured = rules.measurePaths.map(normal).find((m) => under2(p, m));
+  if (measured) return `${p} is used by the measure or a guard (${measured}); Synthe measures with it as it is.`;
+  if (!matchesAny(p, rules.artifact)) return `${p} is outside the artifact globs; a proposal may change only files that match artifact.`;
+  return null;
+}
+function checkEdits2(edits, rules) {
+  const paths = [...new Set(edits.map((e) => e.path))].sort();
+  return paths.flatMap((p) => pathProblem(p, rules) ?? []);
+}
+function count2(text4, search) {
+  let n = 0;
+  for (let i = text4.indexOf(search); i !== -1 && n < 2; i = text4.indexOf(search, i + 1)) n++;
+  return n;
+}
+function linkedParent(dir, path4) {
+  const parts = path4.split("/").slice(0, -1);
+  for (let i = 1; i <= parts.length; i++) {
+    const sub = parts.slice(0, i).join("/");
+    try {
+      if (lstatSync3(join19(dir, sub)).isSymbolicLink()) return sub;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+function applyEdits2(dir, edits, rules) {
+  if (!Array.isArray(edits) || edits.length === 0) return { ok: false, reason: "The proposal has no edits." };
+  for (const e of edits) {
+    if (!e || typeof e.path !== "string" || typeof e.search !== "string" || typeof e.replace !== "string") {
+      return { ok: false, reason: "An edit needs a path, a search and a replace, each a string." };
+    }
+  }
+  const refused = checkEdits2(edits, rules);
+  if (refused.length) return { ok: false, reason: refused.join(" ") };
+  const texts = /* @__PURE__ */ new Map();
+  for (const e of edits) {
+    const p = normal(e.path);
+    const file = join19(dir, p);
+    if (!texts.has(p)) {
+      const link = linkedParent(dir, p);
+      if (link) return { ok: false, reason: `${p} is under ${link}, a symbolic link; a proposal may change only plain files in the folder.` };
+      if (existsSync14(file)) {
+        const stat2 = lstatSync3(file);
+        if (stat2.isSymbolicLink()) return { ok: false, reason: `${p} is a symbolic link; a proposal may change only plain files.` };
+        if (!stat2.isFile()) return { ok: false, reason: `${p} is not a file.` };
+        texts.set(p, readFileSync16(file, "utf8"));
+      } else if (e.search === "") {
+        texts.set(p, "");
+      } else {
+        return { ok: false, reason: `${p} does not exist, so the search text ${preview(e.search)} cannot match.` };
+      }
+    }
+    const text4 = texts.get(p);
+    if (e.search === "") {
+      if (text4 !== "") return { ok: false, reason: `${p}: the search text is empty; an empty search can only create a new file.` };
+      texts.set(p, e.replace);
+      continue;
+    }
+    const n = count2(text4, e.search);
+    if (n !== 1) {
+      return { ok: false, reason: `${p}: the search text ${preview(e.search)} occurs ${n === 0 ? "nowhere" : "more than once"} in the file; it must occur exactly once.` };
+    }
+    const at = text4.indexOf(e.search);
+    texts.set(p, text4.slice(0, at) + e.replace + text4.slice(at + e.search.length));
+  }
+  for (const [p, text4] of texts) {
+    const file = join19(dir, p);
+    mkdirSync6(dirname5(file), { recursive: true });
+    writeFileSync8(file, text4);
+  }
+  return { ok: true, changed: [...texts.keys()].sort() };
+}
+function problemPrefix(problem) {
+  return git(problem.dir, "rev-parse", "--show-prefix").trim();
+}
+function folderIn(checkout, problem) {
+  const top = git(checkout, "rev-parse", "--show-toplevel").trim();
+  const prefix = problemPrefix(problem);
+  return { top, prefix, dir: join19(top, prefix) };
+}
+function commandsOf(problem) {
+  const commands = [...problem.guards];
+  if (isJudged(problem.measure)) {
+    commands.push(problem.measure.judge.run);
+    if (problem.measure.judge.compare !== "model") commands.push(problem.measure.judge.compare);
+  } else {
+    commands.push(problem.measure.command);
+  }
+  if (problem.proposer !== "model") commands.push(problem.proposer.command);
+  return commands;
+}
+function editableCommandInputs(problem) {
+  const commands = commandsOf(problem);
+  const named = new Set(problem.artifact.filter((a) => !/[*?[\]{}]/.test(a)).map(normal));
+  const programs = new Set(commands.flatMap((c) => commandPaths2([c]).slice(0, 1)).map(normal));
+  return commandPaths2(commands).map(normal).filter((p) => named.has(p) && !programs.has(p));
+}
+function measurePathsOf(problem) {
+  const commands = [...problem.guards];
+  const extra = [];
+  if (isJudged(problem.measure)) {
+    const j = problem.measure.judge;
+    commands.push(j.run);
+    if (j.compare !== "model") commands.push(j.compare);
+    extra.push(j.cases);
+    if (j.rubric) extra.push(j.rubric);
+  } else {
+    commands.push(problem.measure.command);
+  }
+  if (problem.proposer !== "model") commands.push(problem.proposer.command);
+  const file = relative2(problem.dir, problem.file).replace(/\\/g, "/");
+  if (file && !file.startsWith("..")) extra.push(file);
+  const editable = new Set(editableCommandInputs(problem));
+  const fromCommands = commandPaths2(commands).filter((p) => !editable.has(normal(p)));
+  return [.../* @__PURE__ */ new Set([...fromCommands, ...extra.map(normal)])];
+}
+function rulesFor(problem) {
+  return { artifact: problem.artifact, protect: problem.protect, measurePaths: measurePathsOf(problem) };
+}
+function artifactFiles(checkout, problem) {
+  const { dir } = folderIn(checkout, problem);
+  const tracked = git(dir, "ls-files", "-z", "--", ".").split("\0").filter(Boolean);
+  const files = [];
+  for (const path4 of tracked.sort()) {
+    if (!matchesAny(path4, problem.artifact) || matchesAny(path4, problem.protect)) continue;
+    const file = join19(dir, path4);
+    try {
+      const stat2 = lstatSync3(file);
+      if (!stat2.isFile() || stat2.size > MAX_FILE_BYTES2 || linkedParent(dir, path4)) continue;
+      const bytes = readFileSync16(file);
+      if (bytes.includes(0)) continue;
+      files.push({ path: path4, text: bytes.toString("utf8") });
+    } catch {
+    }
+  }
+  return files;
+}
+function applyProposal(checkout, problem, proposal) {
+  let where;
+  try {
+    where = folderIn(checkout, problem);
+  } catch (e) {
+    return { refused: `Could not find the problem folder in the scratch checkout: ${e.message.split("\n")[0]}` };
+  }
+  const r = applyEdits2(where.dir, proposal?.edits, rulesFor(problem));
+  if (!r.ok) return { refused: r.reason };
+  return { paths: r.changed.map((p) => posix2.join(where.prefix, p)) };
+}
+var normal, under2, preview, git, MAX_FILE_BYTES2;
+var init_edits = __esm({
+  "src/solve/edits.ts"() {
+    "use strict";
+    init_glob();
+    init_types2();
+    normal = (path4) => path4.replace(/\\/g, "/").replace(/^\.\//, "");
+    under2 = (path4, entry2) => path4 === entry2 || path4.startsWith(`${entry2}/`);
+    preview = (s) => JSON.stringify(s.length > 60 ? `${s.slice(0, 57)}...` : s);
+    git = (cwd, ...args) => execFileSync4("git", ["-C", cwd, ...args], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    MAX_FILE_BYTES2 = 1024 * 1024;
+  }
+});
+
 // src/solve/problem.ts
-function checkProblem(_raw, _file) {
-  return { ok: false, problems: ["problem check is not built yet"] };
+import { execFileSync as execFileSync5 } from "node:child_process";
+import { existsSync as existsSync15, readFileSync as readFileSync17, statSync as statSync4 } from "node:fs";
+import { dirname as dirname6, isAbsolute as isAbsolute2, join as join20 } from "node:path";
+function unknownKeys(obj, allowed, prefix, errors) {
+  for (const k of Object.keys(obj)) {
+    if (!allowed.includes(k)) errors.push(`${prefix}${k}: unknown field. Allowed fields: ${allowed.join(", ")}.`);
+  }
 }
-function problemSummary(_check) {
-  return "";
+function pathProblem2(field2, g) {
+  if (!isText(g)) return `${field2}: each entry must be a non-empty glob, such as "src/**/*.py".`;
+  if (isAbsolute2(g) || /^[A-Za-z]:[\\/]/.test(g)) return `${field2}: "${g}" is an absolute path. Use a path relative to the problem file's folder.`;
+  if (g.split(/[\\/]/).includes("..")) return `${field2}: "${g}" uses "..". Keep paths inside the problem file's folder.`;
+  return null;
 }
+function globList(field2, v, required, errors) {
+  if (v === void 0 && !required) return [];
+  if (!Array.isArray(v) || required && v.length === 0) {
+    errors.push(`${field2}: must be a ${required ? "non-empty " : ""}list of globs, such as ["src/**/*.py"].`);
+    return [];
+  }
+  const bad5 = v.map((g, i) => pathProblem2(`${field2}[${i}]`, g)).filter((p) => p !== null);
+  errors.push(...bad5);
+  return bad5.length ? [] : v;
+}
+function commandList(field2, v, errors) {
+  if (v === void 0) return [];
+  if (!Array.isArray(v) || !v.every(isText)) {
+    errors.push(`${field2}: must be a list of shell commands, such as ["python3 -m pytest -q"].`);
+    return [];
+  }
+  return v;
+}
+function countOf(field2, v, fallback, errors) {
+  if (v === void 0) return fallback;
+  if (!isCount(v)) {
+    errors.push(`${field2}: must be a whole number of 1 or more.`);
+    return fallback;
+  }
+  return v;
+}
+function measureOf(v, dir, errors) {
+  if (!isObject(v)) {
+    errors.push(`measure: must be an object with "command" or "judge".`);
+    return null;
+  }
+  const hasCommand = v.command !== void 0, hasJudge = v.judge !== void 0;
+  if (hasCommand === hasJudge) {
+    errors.push(`measure: give exactly one of "command" or "judge"${hasCommand ? ", not both" : ""}.`);
+    return null;
+  }
+  const before = errors.length;
+  if (hasCommand) {
+    unknownKeys(v, ["command", "direction", "unit", "runs"], "measure.", errors);
+    if (!isText(v.command)) errors.push(`measure.command: must be a non-empty shell command.`);
+    if (v.direction !== "higher" && v.direction !== "lower") errors.push(`measure.direction: must be "higher" or "lower".`);
+    if (v.unit !== void 0 && typeof v.unit !== "string") errors.push(`measure.unit: must be text, such as "points".`);
+    const runs2 = countOf("measure.runs", v.runs, DEFAULT_RUNS2, errors);
+    if (errors.length > before) return null;
+    return { command: v.command, direction: v.direction, ...v.unit !== void 0 ? { unit: v.unit } : {}, runs: runs2 };
+  }
+  unknownKeys(v, ["judge", "runs"], "measure.", errors);
+  const runs = countOf("measure.runs", v.runs, DEFAULT_RUNS2, errors);
+  const j = v.judge;
+  if (!isObject(j)) {
+    errors.push(`measure.judge: must be an object with "cases", "run" and "compare".`);
+    return null;
+  }
+  unknownKeys(j, ["cases", "run", "compare", "rubric"], "measure.judge.", errors);
+  if (!isText(j.cases)) errors.push(`measure.judge.cases: must be the path of a JSONL file of cases.`);
+  else {
+    const p = pathProblem2("measure.judge.cases", j.cases);
+    const casesError = p ?? casesProblem(j.cases, join20(dir, j.cases));
+    if (casesError) errors.push(p ?? `measure.judge.cases: ${casesError}`);
+  }
+  if (!isText(j.run)) errors.push(`measure.judge.run: must be a non-empty shell command.`);
+  if (!isText(j.compare)) errors.push(`measure.judge.compare: must be a shell command or "model".`);
+  let rubric;
+  if (j.rubric !== void 0) {
+    const p = isText(j.rubric) ? pathProblem2("measure.judge.rubric", j.rubric) : `measure.judge.rubric: must be the path of a rubric file, such as "judge/rubric.md".`;
+    if (p) errors.push(p);
+    else if (j.compare !== "model") errors.push(`measure.judge.rubric: works only with "compare": "model". A compare command reads its own rubric.`);
+    else if (!existsSync15(join20(dir, j.rubric)) || !statSync4(join20(dir, j.rubric)).isFile()) errors.push(`measure.judge.rubric: Synthe can't find ${j.rubric} next to the problem file.`);
+    else rubric = j.rubric;
+  }
+  if (errors.length > before) return null;
+  return { judge: { cases: j.cases, run: j.run, compare: j.compare, ...rubric ? { rubric } : {} }, runs };
+}
+function casesProblem(name, path4) {
+  if (!existsSync15(path4) || !statSync4(path4).isFile()) return `Synthe can't find ${name} next to the problem file.`;
+  const lines = readFileSync17(path4, "utf8").split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return `${name} has no cases. Write one JSON object per line.`;
+  const seen = /* @__PURE__ */ new Set();
+  for (const [i, line] of lines.entries()) {
+    let c;
+    try {
+      c = JSON.parse(line);
+    } catch {
+      return `line ${i + 1} of ${name} is not valid JSON.`;
+    }
+    if (!isObject(c) || typeof c.id !== "string" && typeof c.id !== "number" || !("input" in c)) return `line ${i + 1} of ${name} needs an "id" and an "input".`;
+    if (seen.has(String(c.id))) return `line ${i + 1} of ${name} repeats the id "${c.id}". Each id must be unique.`;
+    seen.add(String(c.id));
+  }
+  return null;
+}
+function inGitRepo(dir) {
+  try {
+    execFileSync5("git", ["rev-parse", "--show-toplevel"], { cwd: dir, stdio: ["ignore", "pipe", "ignore"] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function validateProblem(raw, file) {
+  const dir = dirname6(file);
+  const errors = [];
+  if (!isObject(raw)) return { ok: false, problems: ['file: must be a JSON object, such as { "version": 1, ... }.'] };
+  unknownKeys(raw, TOP_KEYS, "", errors);
+  if (raw.version !== 1) errors.push(`version: must be 1.`);
+  if (typeof raw.name !== "string" || !/^[A-Za-z0-9-]+$/.test(raw.name)) errors.push(`name: must use only letters, digits and "-", such as "my-problem".`);
+  if (!isText(raw.goal)) errors.push(`goal: must be one plain sentence that says what should get better.`);
+  const artifact = globList("artifact", raw.artifact, true, errors);
+  const protect = globList("protect", raw.protect, false, errors);
+  const measure2 = raw.measure === void 0 ? (errors.push(`measure: is required. Give "command" or "judge".`), null) : measureOf(raw.measure, dir, errors);
+  const guards = commandList("guards", raw.guards, errors);
+  const candidates = countOf("candidates", raw.candidates, 1, errors);
+  const split = { holdout: false };
+  if (raw.split !== void 0) {
+    if (!isObject(raw.split)) errors.push(`split: must be an object, such as { "holdout": true }.`);
+    else {
+      unknownKeys(raw.split, ["holdout"], "split.", errors);
+      if (raw.split.holdout !== void 0 && typeof raw.split.holdout !== "boolean") errors.push(`split.holdout: must be true or false.`);
+      else if (raw.split.holdout === true && measure2 && isJudged(measure2)) errors.push(`split.holdout: works only with measure.command, which runs with SYNTHE_SPLIT=train and holdout. A judged measure has no held-back split: remove split.holdout, or measure with a command.`);
+      else split.holdout = raw.split.holdout === true;
+    }
+  }
+  let proposer = "model";
+  if (raw.proposer !== void 0 && raw.proposer !== "model") {
+    if (!isObject(raw.proposer)) errors.push(`proposer: must be "model" or { "command": "..." }.`);
+    else {
+      unknownKeys(raw.proposer, ["command"], "proposer.", errors);
+      if (!isText(raw.proposer.command)) errors.push(`proposer.command: must be a non-empty shell command.`);
+      else proposer = { command: raw.proposer.command };
+    }
+  }
+  const budget = { max_rounds: DEFAULT_MAX_ROUNDS, max_calls: null };
+  if (raw.budget !== void 0) {
+    if (!isObject(raw.budget)) errors.push(`budget: must be an object, such as { "max_rounds": 6 }.`);
+    else {
+      unknownKeys(raw.budget, ["max_rounds", "max_calls", "max_usd"], "budget.", errors);
+      budget.max_rounds = countOf("budget.max_rounds", raw.budget.max_rounds, DEFAULT_MAX_ROUNDS, errors);
+      if (raw.budget.max_calls !== void 0) budget.max_calls = countOf("budget.max_calls", raw.budget.max_calls, 1, errors);
+      const usd = raw.budget.max_usd;
+      if (usd !== void 0) {
+        if (typeof usd !== "number" || !Number.isFinite(usd) || usd <= 0) errors.push(`budget.max_usd: must be a number of US dollars above 0, such as 2.5.`);
+        else if (!isObject(raw.model) || raw.model.prices === void 0) errors.push(`budget.max_usd: needs model.prices, so Synthe knows what each call costs. Add "prices": { "input_per_mtok": ..., "output_per_mtok": ... } to model, or remove max_usd.`);
+        else budget.max_usd = usd;
+      }
+    }
+  }
+  let model;
+  if (raw.model !== void 0) {
+    if (!isObject(raw.model)) errors.push(`model: must be an object with "model", and "base_url" for an OpenAI-compatible provider.`);
+    else {
+      const allowed = ["provider", "base_url", "model", "prices"];
+      for (const k of Object.keys(raw.model)) {
+        if (allowed.includes(k)) continue;
+        errors.push(/key|token|secret|auth/i.test(k) ? `model.${k}: never put a key in the problem file. Set SYNTHE_API_KEY (or SYNTHE_ANTHROPIC_KEY for Anthropic) in the environment.` : `model.${k}: unknown field. Allowed fields: ${allowed.join(", ")}.`);
+      }
+      const p = raw.model.provider;
+      if (p !== void 0 && p !== "anthropic" && p !== "openai-compatible") errors.push(`model.provider: must be "anthropic" or "openai-compatible".`);
+      const url = raw.model.base_url;
+      const provider = p === "anthropic" || p === "openai-compatible" ? p : url !== void 0 ? "openai-compatible" : "anthropic";
+      let urlOk = url === void 0 && provider === "anthropic";
+      if (typeof url === "string") {
+        try {
+          urlOk = ["http:", "https:"].includes(new URL(url).protocol);
+        } catch {
+          urlOk = false;
+        }
+      }
+      if (!urlOk) errors.push(`model.base_url: must be an http or https URL, such as "https://api.example.com/v1".`);
+      if (!isText(raw.model.model)) errors.push(`model.model: must be a model name.`);
+      let prices;
+      let pricesOk = true;
+      if (raw.model.prices !== void 0) {
+        const pr = raw.model.prices;
+        const usd = (v) => typeof v === "number" && Number.isFinite(v) && v >= 0;
+        if (!isObject(pr) || !usd(pr.input_per_mtok) || !usd(pr.output_per_mtok) || Object.keys(pr).some((k) => k !== "input_per_mtok" && k !== "output_per_mtok")) {
+          pricesOk = false;
+          errors.push(`model.prices: must be { "input_per_mtok": <dollars>, "output_per_mtok": <dollars> }, two numbers of 0 or more.`);
+        } else prices = { input_per_mtok: pr.input_per_mtok, output_per_mtok: pr.output_per_mtok };
+      }
+      if (urlOk && isText(raw.model.model) && pricesOk) {
+        model = { provider, model: raw.model.model, ...typeof url === "string" ? { base_url: url } : {}, ...prices ? { prices } : {} };
+      }
+    }
+  }
+  if (!inGitRepo(dir)) errors.push(`file: the folder ${dir} is not inside a git repository. Synthe works in scratch checkouts of a git repository.`);
+  if (errors.length || !measure2) return { ok: false, problems: errors };
+  return {
+    ok: true,
+    problem: {
+      version: 1,
+      name: raw.name,
+      goal: raw.goal,
+      artifact,
+      protect,
+      measure: measure2,
+      guards,
+      split,
+      proposer,
+      budget,
+      ...model ? { model } : {},
+      candidates,
+      dir,
+      file
+    }
+  };
+}
+function checkProblem(raw, file) {
+  let json;
+  try {
+    json = JSON.parse(raw);
+  } catch (e) {
+    return { ok: false, problems: [`file: not valid JSON (${e.message}). Fix the JSON and run the check again.`] };
+  }
+  return validateProblem(json, file);
+}
+function problemSummary(check) {
+  const p = check.problem, m = p.measure;
+  const lines = [
+    `Problem "${p.name}" is valid.`,
+    `Goal: ${p.goal}`,
+    `May change: ${p.artifact.join(", ")}`
+  ];
+  if (p.protect.length) lines.push(`Never changes: ${p.protect.join(", ")}`);
+  lines.push(isJudged(m) ? `Measure: judged on ${m.judge.cases}; run "${m.judge.run}", compare with ${m.judge.compare === "model" ? "the model" : `"${m.judge.compare}"`}` : `Measure: ${m.command} (${m.direction} is better${m.unit ? `, in ${m.unit}` : ""}, ${m.runs} run${m.runs === 1 ? "" : "s"} each)`);
+  lines.push(p.guards.length ? `Guards: ${p.guards.join("; ")}` : `Guards: none`);
+  if (p.split.holdout) lines.push(`Holdout: on. A change is kept only if it also wins on the holdout split.`);
+  lines.push(`Proposer: ${p.proposer === "model" ? "the configured model" : p.proposer.command}`);
+  if (p.candidates > 1) lines.push(`Candidates: ${p.candidates} in each round`);
+  const usdLimit = p.budget.max_usd !== void 0 ? `, at most ${p.budget.max_usd} US dollars` : "";
+  lines.push(`Budget: ${p.budget.max_rounds} rounds${p.budget.max_calls ? `, ${p.budget.max_calls} model calls` : ""}${usdLimit}`);
+  for (const f of editableCommandInputs(p)) {
+    lines.push(`Warning: ${f} is named in a command and listed exactly in artifact, so Synthe may change it. That is right when the command reads it as input. If it is part of the measure, list it in protect instead.`);
+  }
+  lines.push(`Next: run "npx synthe solve ${p.file}".`);
+  return lines.join("\n");
+}
+var TOP_KEYS, isObject, isText, isCount;
 var init_problem = __esm({
   "src/solve/problem.ts"() {
     "use strict";
+    init_edits();
+    init_types2();
+    TOP_KEYS = ["version", "name", "goal", "artifact", "protect", "measure", "guards", "split", "proposer", "budget", "model", "candidates"];
+    isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+    isText = (v) => typeof v === "string" && v.trim() !== "";
+    isCount = (v) => typeof v === "number" && Number.isInteger(v) && v >= 1;
   }
 });
 
@@ -29036,13 +30123,13 @@ __export(problem_exports, {
   loadProblem: () => loadProblem,
   problemCommand: () => problemCommand
 });
-import { readFileSync as readFileSync16 } from "node:fs";
+import { readFileSync as readFileSync18 } from "node:fs";
 import { resolve as resolve2 } from "node:path";
 function loadProblem(path4, cwd) {
   const file = resolve2(cwd, path4);
   let raw;
   try {
-    raw = readFileSync16(file, "utf8");
+    raw = readFileSync18(file, "utf8");
   } catch {
     return { ok: false, problems: [`${path4}: Synthe can't read this file. Check the path.`] };
   }
@@ -29068,1352 +30155,394 @@ var init_problem2 = __esm({
   }
 });
 
-// src/solve/loop.ts
-async function solve(_problem, _proposer, _options, _io) {
-  throw new Error("solve is not built yet");
+// src/solve/run.ts
+import { spawn as spawn3 } from "node:child_process";
+function stopRunning() {
+  const win3 = process.platform === "win32";
+  for (const pid of live2) {
+    try {
+      process.kill(win3 ? pid : -pid, "SIGKILL");
+    } catch {
+    }
+  }
+  live2.clear();
 }
-var SetupError;
-var init_loop = __esm({
-  "src/solve/loop.ts"() {
-    "use strict";
-    SetupError = class extends Error {
+function runCommand(cwd, command, o = {}) {
+  return new Promise((resolve11) => {
+    const win3 = process.platform === "win32";
+    const child = spawn3(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: { ...childEnv(), ...o.env }, stdio: ["pipe", "pipe", "pipe"], detached: !win3 });
+    if (child.pid) live2.add(child.pid);
+    let stdout = "", stderr = "", timedOut = false, done = false;
+    child.stdout.on("data", (d) => {
+      if (stdout.length < MAX_OUTPUT2) stdout += d.toString().slice(0, MAX_OUTPUT2 - stdout.length);
+    });
+    child.stderr.on("data", (d) => {
+      if (stderr.length < MAX_OUTPUT2) stderr += d.toString().slice(0, MAX_OUTPUT2 - stderr.length);
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        if (win3) child.kill("SIGKILL");
+        else process.kill(-child.pid, "SIGKILL");
+      } catch {
+      }
+    }, o.timeoutMs ?? COMMAND_TIMEOUT_MS2);
+    const finish = (code) => {
+      if (done) return;
+      done = true;
+      if (child.pid) live2.delete(child.pid);
+      clearTimeout(timer);
+      resolve11({ ok: code === 0 && !timedOut, code, stdout, stderr, timedOut });
     };
-  }
-});
-
-// src/solve/proposer.ts
-function commandProposer(_problem) {
-  throw new Error("proposer.ts is not built yet");
+    child.on("error", (e) => {
+      stderr += e.message;
+      finish(null);
+    });
+    child.on("close", finish);
+    child.stdin.on("error", () => {
+    });
+    child.stdin.end(o.stdin ?? "");
+  });
 }
-function proposerFor(problem) {
-  return commandProposer(problem);
-}
-var init_proposer = __esm({
-  "src/solve/proposer.ts"() {
+var COMMAND_TIMEOUT_MS2, MAX_OUTPUT2, live2;
+var init_run2 = __esm({
+  "src/solve/run.ts"() {
     "use strict";
+    init_exec();
+    COMMAND_TIMEOUT_MS2 = 6e5;
+    MAX_OUTPUT2 = 4 * 1024 * 1024;
+    live2 = /* @__PURE__ */ new Set();
   }
 });
 
-// src/cli/solve.ts
-var solve_exports = {};
-__export(solve_exports, {
-  solveCommand: () => solveCommand
+// src/solve/draft.ts
+import { existsSync as existsSync16, mkdirSync as mkdirSync7, readFileSync as readFileSync19, writeFileSync as writeFileSync9 } from "node:fs";
+import { join as join21, relative as relative3, resolve as resolve3, sep as sep2 } from "node:path";
+function readExamples(text4) {
+  const problems = [];
+  const examples = [];
+  const lines = text4.split("\n");
+  for (const [i, line] of lines.entries()) {
+    if (!line.trim()) continue;
+    let e;
+    try {
+      e = JSON.parse(line);
+    } catch {
+      problems.push(`line ${i + 1}: not valid JSON.`);
+      continue;
+    }
+    const o = e;
+    const missing2 = ["input", "good", "bad"].filter((k) => !o || typeof o[k] !== "string" || !o[k].trim());
+    if (missing2.length) {
+      problems.push(`line ${i + 1}: needs ${missing2.map((k) => `"${k}"`).join(", ")} as text.`);
+      continue;
+    }
+    if (o.good === o.bad) {
+      problems.push(`line ${i + 1}: "good" and "bad" are the same text, so they cannot show a difference.`);
+      continue;
+    }
+    examples.push({ input: o.input, good: o.good, bad: o.bad });
+  }
+  if (!problems.length && examples.length === 0) problems.push('The examples file has no examples. Write one JSON object per line: {"input": "...", "good": "...", "bad": "..."}.');
+  return problems.length ? { ok: false, problems } : { ok: true, examples };
+}
+function rubricUser(examples) {
+  return examples.map((e, i) => `## Example ${i + 1}
+
+Input:
+${e.input}
+
+Better output:
+${e.good}
+
+Worse output:
+${e.bad}`).join("\n\n");
+}
+function compareScript(m) {
+  return `// Written by \`synthe measure draft\`. The compare command for a judged measure (swarm/GOAL.md, "The judged measure").
+// stdin: {"case": {...}, "a": "...", "b": "..."}. stdout: {"winner": "a" | "b" | "tie"}.
+// It asks ${m.provider === "anthropic" ? "Anthropic" : m.base_url} (model ${m.model}) to judge with the rubric in rubric.md next to this file.
+// Key: ${m.provider === "anthropic" ? "SYNTHE_ANTHROPIC_KEY, or SYNTHE_API_KEY when it starts with sk-ant-" : "SYNTHE_API_KEY"}.
+const PROVIDER = ${JSON.stringify(m.provider)};
+const MODEL = ${JSON.stringify(m.model)};
+const BASE_URL = ${JSON.stringify(m.base_url ?? null)};
+const SYSTEM = "You compare two outputs for the same input, using the rubric you are given. Judge the content, not the length and not which output comes first. Reply with only a JSON object: {\\"winner\\": \\"a\\"}, {\\"winner\\": \\"b\\"} or {\\"winner\\": \\"tie\\"}.";
+
+function fail(message) {
+  process.stderr.write(message + "\\n");
+  process.exit(1);
+}
+
+function anthropicBase(env) {
+  const override = (env.SYNTHE_ANTHROPIC_BASE_URL || "").trim();
+  if (override) {
+    try {
+      const u = new URL(override);
+      if ((u.protocol === "http:" || u.protocol === "https:") && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname)) return override.replace(/\\/+$/, "");
+    } catch {}
+  }
+  return "https://api.anthropic.com";
+}
+
+async function ask(user) {
+  const env = process.env;
+  if (PROVIDER === "anthropic") {
+    const apiKey = (env.SYNTHE_ANTHROPIC_KEY || "").trim() || ((env.SYNTHE_API_KEY || "").trim().startsWith("sk-ant-") ? env.SYNTHE_API_KEY.trim() : "");
+    if (!apiKey) fail("compare.js needs a key: set SYNTHE_ANTHROPIC_KEY.");
+    const res = await fetch(anthropicBase(env) + "/v1/messages", {
+      method: "POST", redirect: "error",
+      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({ model: MODEL, max_tokens: 300, system: SYSTEM, messages: [{ role: "user", content: user }] }),
+    });
+    if (!res.ok) fail("The model call failed with HTTP " + res.status + ".");
+    const body = await res.json();
+    return (body.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+  }
+  const apiKey = (env.SYNTHE_API_KEY || "").trim();
+  if (!apiKey) fail("compare.js needs a key: set SYNTHE_API_KEY.");
+  const res = await fetch(BASE_URL.replace(/\\/+$/, "") + "/chat/completions", {
+    method: "POST", redirect: "error",
+    headers: { "content-type": "application/json", authorization: "Bearer " + apiKey },
+    body: JSON.stringify({ model: MODEL, messages: [{ role: "system", content: SYSTEM }, { role: "user", content: user }] }),
+  });
+  if (!res.ok) fail("The model call failed with HTTP " + res.status + ".");
+  const body = await res.json();
+  return (body.choices && body.choices[0] && body.choices[0].message && body.choices[0].message.content) || "";
+}
+
+// The winner in a reply: a JSON object with "winner", or a reply that is only a, b or tie.
+function winnerIn(text) {
+  const tries = [text, (text.match(/\\{[\\s\\S]*\\}/) || [])[0]];
+  for (const t of tries) {
+    if (!t) continue;
+    try {
+      const w = String(JSON.parse(t).winner || "").trim().toLowerCase();
+      if (w === "a" || w === "b" || w === "tie") return w;
+    } catch {}
+  }
+  const bare = text.trim().toLowerCase().replace(/[^a-z]/g, "");
+  return bare === "a" || bare === "b" || bare === "tie" ? bare : null;
+}
+
+(async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const rubric = fs.readFileSync(path.join(path.dirname(path.resolve(process.argv[1])), "rubric.md"), "utf8");
+  let raw = "";
+  for await (const chunk of process.stdin) raw += chunk;
+  let q;
+  try { q = JSON.parse(raw); } catch { fail("compare.js needs a JSON object on stdin."); }
+  const input = typeof q.case?.input === "string" ? q.case.input : JSON.stringify(q.case?.input ?? null);
+  const user = "Rubric:\\n" + rubric + "\\n\\nInput:\\n" + input + "\\n\\nOutput A:\\n" + q.a + "\\n\\nOutput B:\\n" + q.b + "\\n\\nWhich output is better by the rubric?";
+  const text = await ask(user);
+  const winner = winnerIn(text);
+  if (!winner) fail("The model's reply did not name a winner.");
+  process.stdout.write(JSON.stringify({ winner }) + "\\n");
+})().catch((e) => fail("compare.js failed: " + (e && e.message ? e.message : String(e))));
+`;
+}
+function providerKey(provider, env) {
+  if (provider === "anthropic") {
+    const own = env.SYNTHE_ANTHROPIC_KEY?.trim();
+    if (own) return own;
+    const shared = env.SYNTHE_API_KEY?.trim() ?? "";
+    return shared.startsWith("sk-ant-") ? shared : "";
+  }
+  return env.SYNTHE_API_KEY?.trim() ?? "";
+}
+function compareEnv(m, env) {
+  const key = providerKey(m.provider, env);
+  if (!key) return {};
+  if (m.provider !== "anthropic") return { SYNTHE_API_KEY: key };
+  const base = env.SYNTHE_ANTHROPIC_BASE_URL?.trim();
+  return { SYNTHE_ANTHROPIC_KEY: key, ...base ? { SYNTHE_ANTHROPIC_BASE_URL: base } : {} };
+}
+async function checkJudge(examples, ask2, limit2 = 4) {
+  const out = new Array(examples.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(limit2, examples.length) }, async () => {
+    while (next < examples.length) {
+      const i = next++;
+      const e = examples[i];
+      const c = { id: caseId(i), input: e.input };
+      const [goodFirst, badFirst] = await Promise.all([ask2({ case: c, a: e.good, b: e.bad }), ask2({ case: c, a: e.bad, b: e.good })]);
+      out[i] = { id: c.id, input: e.input, goodFirst, badFirst, agrees: goodFirst === "a" && badFirst === "b" };
+    }
+  }));
+  return out;
+}
+async function runCompare(script, question, env, hide) {
+  const file = resolve3(script);
+  const r = await runCommand(resolve3(file, ".."), `node ${JSON.stringify(file)}`, { stdin: JSON.stringify(question), env, timeoutMs: 12e4 });
+  if (!r.ok) return `failed: ${hide((r.stderr || r.stdout).trim().split("\n").slice(-1)[0] || `exit ${r.code}`)}`;
+  try {
+    const w = JSON.parse(r.stdout.trim().split("\n").filter(Boolean).at(-1) ?? "").winner;
+    return w === "a" || w === "b" || w === "tie" ? w : "failed: no winner";
+  } catch {
+    return "failed: the output was not JSON";
+  }
+}
+function draftModelFrom(raw) {
+  const config = raw && typeof raw === "object" && !Array.isArray(raw) ? raw.model : void 0;
+  if (config === void 0) return { ok: false, problems: ["model: measure draft needs a model section with model.model in the problem file, or use --model <model-id>."] };
+  if (!config || typeof config !== "object" || Array.isArray(config)) return { ok: false, problems: ['model: must be an object with "model", and "base_url" for an OpenAI-compatible provider.'] };
+  const c = config;
+  const problems = [];
+  for (const k of Object.keys(c)) if (/key|token|secret|auth/i.test(k)) problems.push(`model.${k}: never put a key in the problem file. Set the key in the environment.`);
+  const p = c.provider;
+  if (p !== void 0 && p !== "anthropic" && p !== "openai-compatible") problems.push(`model.provider: must be "anthropic" or "openai-compatible".`);
+  if (typeof c.model !== "string" || !c.model.trim()) problems.push("model.model: must be a model name.");
+  const provider = p === "anthropic" || p === "openai-compatible" ? p : c.base_url !== void 0 ? "openai-compatible" : "anthropic";
+  let urlOk = c.base_url === void 0 && provider === "anthropic";
+  if (typeof c.base_url === "string") {
+    try {
+      urlOk = ["http:", "https:"].includes(new URL(c.base_url).protocol);
+    } catch {
+      urlOk = false;
+    }
+  }
+  if (!urlOk) problems.push(provider === "openai-compatible" && c.base_url === void 0 ? "model.base_url: the openai-compatible provider needs model.base_url." : 'model.base_url: must be an http or https URL, such as "https://api.example.com/v1".');
+  if (problems.length) return { ok: false, problems };
+  return { ok: true, model: { provider, model: c.model.trim(), ...typeof c.base_url === "string" ? { base_url: c.base_url } : {} } };
+}
+function hintPath(path4, base) {
+  if (!base) return path4;
+  const r = relative3(base, path4);
+  return (r || ".").split(sep2).join("/");
+}
+async function draftMeasure(examples, m, client, outDir, io2) {
+  const reply = await client.ask({ model: m.model, system: RUBRIC_SYSTEM, user: rubricUser(examples), maxTokens: RUBRIC_MAX_TOKENS });
+  const rubric = reply.text?.trim();
+  if (!rubric) {
+    io2.say("The model gave no rubric. Nothing was written. Run the command again, or try another model.");
+    return 1;
+  }
+  mkdirSync7(outDir, { recursive: true });
+  const cases4 = examples.map((e, i) => JSON.stringify({ id: caseId(i), input: e.input })).join("\n") + "\n";
+  writeFileSync9(join21(outDir, "cases.jsonl"), cases4);
+  writeFileSync9(join21(outDir, "rubric.md"), rubric + "\n");
+  const script = join21(outDir, "compare.js");
+  writeFileSync9(script, compareScript(m));
+  io2.say(`Wrote ${join21(outDir, "cases.jsonl")} (${examples.length} cases), ${join21(outDir, "rubric.md")} and ${script}.`);
+  const env = compareEnv(m, io2.env);
+  const verdicts = await checkJudge(examples, (q) => runCompare(script, q, env, io2.hide));
+  const agree = verdicts.filter((v) => v.agrees).length;
+  io2.say(`agreement ${agree}/${examples.length}`);
+  const failures = verdicts.filter((v) => v.goodFirst.startsWith("failed") || v.badFirst.startsWith("failed"));
+  if (failures.length) io2.say(`compare.js gave no answer for ${failures.length} example${failures.length === 1 ? "" : "s"}, for example: ${(failures[0].goodFirst.startsWith("failed") ? failures[0].goodFirst : failures[0].badFirst).replace(/^failed: /, "")}`);
+  if (agree / examples.length < AGREEMENT_NEEDED) {
+    io2.say(`The judge agreed with your labels on ${agree} of ${examples.length} examples. Synthe needs at least ${Math.round(AGREEMENT_NEEDED * 100)}% before a measure is fair to use.`);
+    io2.say("The judge disagreed on:");
+    for (const v of verdicts.filter((x) => !x.agrees)) {
+      io2.say(`  ${v.id}: with good first it said ${v.goodFirst}; with good second it said ${v.badFirst}. Input:`);
+      io2.say(`    ${v.input}`);
+    }
+    io2.say(`Next: edit ${join21(outDir, "rubric.md")} so it explains why the good outputs are better, then run the command again.`);
+    return 2;
+  }
+  const where = io2.hintBase ? `paths relative to ${io2.hintBase}` : "these paths";
+  io2.say(`The judge agrees with you often enough. To use it in solve, put this measure in your problem file (${where}; change them if your problem file is in another folder), and keep the model section that you drafted with:`);
+  io2.say(`  "measure": { "judge": { "cases": "${hintPath(join21(outDir, "cases.jsonl"), io2.hintBase)}", "run": "<the command that prints the output for one case>", "compare": "model", "rubric": "${hintPath(join21(outDir, "rubric.md"), io2.hintBase)}" } }`);
+  io2.say(`To try the judge by hand, run: echo '{"case": {...}, "a": "...", "b": "..."}' | node ${script}`);
+  return 0;
+}
+function examplesFile(path4) {
+  if (!existsSync16(path4)) return { ok: false, problems: [`--examples: Synthe can't find ${path4}.`] };
+  return readExamples(readFileSync19(path4, "utf8"));
+}
+var AGREEMENT_NEEDED, RUBRIC_MAX_TOKENS, RUBRIC_SYSTEM, caseId;
+var init_draft = __esm({
+  "src/solve/draft.ts"() {
+    "use strict";
+    init_run2();
+    AGREEMENT_NEEDED = 0.8;
+    RUBRIC_MAX_TOKENS = 4e3;
+    RUBRIC_SYSTEM = [
+      "You write a judging rubric. A judge will use it to compare two outputs for the same input and pick the better one.",
+      "You get examples. Each has an input, a better output and a worse output, as a person judged them.",
+      "Find what makes the better outputs better. Write criteria that a judge can apply to new inputs, not only to these examples.",
+      "Do not reward an output only for being longer, or only for coming first.",
+      "Reply with only the rubric, in Markdown: a short title, then numbered criteria, most important first."
+    ].join("\n");
+    caseId = (i) => `ex-${i + 1}`;
+  }
 });
-async function solveCommand(args, cwd, say, env) {
+
+// src/cli/measure.ts
+var measure_exports = {};
+__export(measure_exports, {
+  measureCommand: () => measureCommand,
+  providerKey: () => providerKey
+});
+import { readFileSync as readFileSync20 } from "node:fs";
+import { dirname as dirname7, resolve as resolve4 } from "node:path";
+async function measureCommand(args, cwd, say, env, client) {
+  const takesValue = ["--examples", "--out", "--problem", "--model"];
   const value = (flag) => {
     const i = args.indexOf(flag);
     return i >= 0 ? args[i + 1] : void 0;
   };
-  const file = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--out" && args[i - 1] !== "--seed");
-  if (!file) {
-    say("Usage: npx synthe solve <problem-file> [--out DIR] [--seed N]");
+  const stray = args.slice(1).filter((a, i, rest) => a.startsWith("--") ? !takesValue.includes(a) : !takesValue.includes(rest[i - 1] ?? ""));
+  const examplesPath = value("--examples"), out = value("--out"), problemPath = value("--problem"), modelId = value("--model");
+  if (args[0] !== "draft" || stray.length || !examplesPath || !out) {
+    say(USAGE);
     return 1;
   }
-  const options = {};
-  const out = value("--out");
-  if (out) options.out = out;
-  const seed = value("--seed");
-  if (seed !== void 0) {
-    if (!/^\d+$/.test(seed)) {
-      say("--seed must be a whole number, such as --seed 1.");
-      return 1;
-    }
-    options.seed = Number(seed);
-  }
-  const check = loadProblem(file, cwd);
-  if (!check.ok) {
-    for (const p of check.problems) say(p);
+  if (problemPath && modelId) {
+    say("Give --problem or --model, not both.");
     return 1;
   }
-  try {
-    const result2 = await solve(check.problem, proposerFor(check.problem), options, { say, env });
-    say(result2.stopped);
-    return 0;
-  } catch (e) {
-    if (e instanceof SetupError) {
-      say(e.message);
-      return 1;
-    }
-    throw e;
+  if (!problemPath && !modelId) {
+    say("measure draft asks a model for the rubric. Give --model <model-id> for Anthropic, or --problem <file> to use the model in a problem file.");
+    return 1;
   }
-}
-var init_solve = __esm({
-  "src/cli/solve.ts"() {
-    "use strict";
-    init_problem2();
-    init_loop();
-    init_proposer();
-  }
-});
-
-// src/pilot/errors.ts
-var PilotError;
-var init_errors3 = __esm({
-  "src/pilot/errors.ts"() {
-    "use strict";
-    PilotError = class extends Error {
-      code;
-      constructor(code, message) {
-        super(message);
-        this.name = "PilotError";
-        this.code = code;
-      }
-    };
-  }
-});
-
-// src/pilot/github.ts
-function pilotGithubRepo(slug, token2, api) {
-  const repo = githubRepo(slug, token2, api);
-  const request = (method, path4, body) => fetch(`${api}/repos/${slug}${path4}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token2}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "synthe",
-      ...body ? { "Content-Type": "application/json" } : {}
-    },
-    body: body ? JSON.stringify(body) : void 0,
-    redirect: "error",
-    signal: AbortSignal.timeout(3e4)
-  });
-  const json = async (res) => {
-    if (!res.ok) throw new PilotError("conflict", `GitHub could not verify or publish the review (HTTP ${res.status}). Check the review branch before retrying.`);
-    return res.json();
-  };
-  const isAncestor = async (ancestor, descendant) => {
-    if (ancestor === descendant) return true;
-    const compare = await json(await request("GET", `/compare/${encodeURIComponent(ancestor)}...${encodeURIComponent(descendant)}`));
-    return compare.status === "ahead" || compare.status === "identical";
-  };
-  const matchesReview = async (sha, file) => {
-    const commit = await json(await request("GET", `/commits/${encodeURIComponent(sha)}`));
-    return commit.sha === sha && commit.parents?.length === 1 && await isAncestor(commit.parents[0].sha, file.baseSha) && commit.files?.length === 1 && commit.files[0].filename === file.path && commit.files[0].status === "modified" && await repo.readFile(file.path, sha) === file.content;
-  };
-  return {
-    slug,
-    headSha: repo.headSha,
-    readFile: repo.readFile,
-    openPr: repo.openPr,
-    async findReviewPr(branch) {
-      const owner = slug.split("/")[0];
-      const pulls = await json(await request("GET", `/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`));
-      if (!Array.isArray(pulls) || pulls.length > 1) throw new PilotError("conflict", "The review branch has ambiguous pull request history. Check it before retrying.");
-      const pr = pulls[0];
-      if (!pr) return null;
-      if ([pr.base, pr.head].some((side) => side?.repo?.full_name?.toLowerCase() !== slug.toLowerCase())) {
-        throw new PilotError("conflict", "The existing pull request points to another repository or its branch is unavailable.");
-      }
-      return { number: pr.number, state: pr.state, base: pr.base.ref, head: pr.head.ref, headSha: pr.head.sha, body: pr.body };
-    },
-    async commitReview(file) {
-      const { branch, baseSha, path: path4, content, message } = file;
-      const created = await request("POST", "/git/refs", { ref: `refs/heads/${branch}`, sha: baseSha });
-      if (created.status !== 422) await json(created);
-      const head = await repo.headSha(branch);
-      if (head !== baseSha) {
-        if (await matchesReview(head, file)) return head;
-        throw new PilotError("wrong_revision", "The review branch contains an unexpected commit. It was left in place.");
-      }
-      const encoded = path4.split("/").map(encodeURIComponent).join("/");
-      const blob = await json(await request("GET", `/contents/${encoded}?ref=${encodeURIComponent(baseSha)}`));
-      const result2 = await json(await request("PUT", `/contents/${encoded}`, {
-        branch,
-        message,
-        sha: blob.sha,
-        content: Buffer.from(content, "utf8").toString("base64")
-      }));
-      return result2.commit.sha;
-    },
-    matchesReview
-  };
-}
-var init_github = __esm({
-  "src/pilot/github.ts"() {
-    "use strict";
-    init_repo();
-    init_errors3();
-  }
-});
-
-// src/pilot/ids.ts
-var contentId, promptId, shortId, candidateTag, reviewBranch, isSha256, ms, DAY_MS, addDays;
-var init_ids = __esm({
-  "src/pilot/ids.ts"() {
-    "use strict";
-    init_evidence();
-    init_safety();
-    contentId = (value) => sha256(canonicalJson(value));
-    promptId = (text4) => sha256(text4);
-    shortId = (id) => id.slice(0, 12);
-    candidateTag = (candidateId) => `synthe-${shortId(candidateId)}`;
-    reviewBranch = (candidateId) => `synthe-pilot/${shortId(candidateId)}`;
-    isSha256 = (value) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
-    ms = (iso3) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(iso3) ? Date.parse(iso3) : NaN;
-    DAY_MS = 864e5;
-    addDays = (iso3, days) => new Date(ms(iso3) + days * DAY_MS).toISOString().replace(".000Z", "Z");
-  }
-});
-
-// src/pilot/approval.ts
-function makeApproval(input) {
-  const b = input.bundle.value;
-  if (input.candidate_id !== b.candidate_id || input.experiment_id !== b.experiment_id || input.pilot_id !== b.pilot_id) {
-    throw new PilotError("unknown_approval", "An approval must name the exact pilot, candidate and experiment in the review bundle. Copy the ids from the approve command in REVIEW.md.");
-  }
-  if (typeof input.approver !== "string" || input.approver.trim() === "") throw new PilotError("usage", "Say who is approving: pass --approver with your name.");
-  if (input.decision !== "approved" && input.decision !== "rejected") throw new PilotError("usage", "The decision must be approved or rejected.");
-  if (typeof input.at !== "string" || Number.isNaN(ms(input.at))) throw new PilotError("usage", "The approval time must be a UTC time like 2026-10-01T00:00:00Z.");
-  return {
-    version: 1,
-    pilot_id: b.pilot_id,
-    candidate_id: b.candidate_id,
-    experiment_id: b.experiment_id,
-    review_id: input.bundle.id,
-    scope: "experiment",
-    decision: input.decision,
-    approver: input.approver.trim(),
-    at: input.at
-  };
-}
-function requireApproval(approvals2, candidateId, experimentId) {
-  const latest = approvals2.filter((a) => a.value.candidate_id === candidateId && a.value.experiment_id === experimentId).at(-1);
-  if (latest === void 0) throw new PilotError("unknown_approval", "No approval names this exact candidate and experiment. Run the approve command from REVIEW.md with the full ids.");
-  if (latest.value.decision === "rejected") throw new PilotError("unknown_approval", `The latest decision for this candidate and experiment is a rejection (by ${latest.value.approver}). Approve it again to go ahead.`);
-  return latest;
-}
-var init_approval = __esm({
-  "src/pilot/approval.ts"() {
-    "use strict";
-    init_errors3();
-    init_ids();
-  }
-});
-
-// src/pilot/io.ts
-import { existsSync as existsSync14, linkSync, lstatSync as lstatSync3, mkdirSync as mkdirSync6, readFileSync as readFileSync17, realpathSync as realpathSync3, renameSync as renameSync3, statSync as statSync4, unlinkSync as unlinkSync3, writeFileSync as writeFileSync8 } from "node:fs";
-import { dirname as dirname5, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve3 } from "node:path";
-function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
-  let size2;
-  try {
-    const stat2 = statSync4(path4);
-    if (!stat2.isFile()) throw new PilotError("not_found", `${path4} is not a file.`);
-    size2 = stat2.size;
-  } catch (e) {
-    if (e instanceof PilotError) throw e;
-    throw new PilotError("not_found", `${path4} does not exist or cannot be read.`);
-  }
-  if (size2 > maxBytes) throw new PilotError("too_large", `${path4} is ${size2} bytes; the limit is ${maxBytes}. Export a smaller, bounded file.`);
-  return readFileSync17(path4, "utf8");
-}
-function inside(root, name) {
-  const full = resolve3(root, name);
-  const rel = relative2(resolve3(root), full);
-  if (isAbsolute2(name) || rel === "" || rel.startsWith("..") || isAbsolute2(rel)) throw new PilotError("usage", `${name} must be a file inside ${root}.`);
-  let link = false;
-  try {
-    link = lstatSync3(full).isSymbolicLink();
-  } catch {
-    return full;
-  }
-  if (link) throw new PilotError("usage", `${name} is a symbolic link. Put the file itself inside ${root}.`);
-  try {
-    const real = relative2(realpathSync3(root), realpathSync3(full));
-    if (real === "" || real.startsWith("..") || isAbsolute2(real)) throw new PilotError("usage", `${name} must be a file inside ${root}.`);
-  } catch (e) {
-    if (e instanceof PilotError) throw e;
-    throw new PilotError("not_found", `${name} cannot be read from ${root}.`);
-  }
-  return full;
-}
-function writeOnce(path4, content) {
-  mkdirSync6(dirname5(path4), { recursive: true });
-  const tmp = `${path4}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync8(tmp, content, { mode: 384 });
-  try {
+  let m;
+  if (modelId) m = { provider: "anthropic", model: modelId };
+  else {
+    let raw;
     try {
-      linkSync(tmp, path4);
-      return "written";
+      raw = JSON.parse(readFileSync20(resolve4(cwd, problemPath), "utf8"));
     } catch (e) {
-      const code = e.code;
-      if (code !== "EEXIST" && !existsSync14(path4)) {
-        renameSync3(tmp, path4);
-        return "written";
-      }
-      if (code !== "EEXIST" && code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV") throw e;
+      say(`${problemPath}: Synthe can't read this problem file as JSON (${e.message}).`);
+      return 1;
     }
-    if (readFileSync17(path4, "utf8") === content) return "already there";
-    throw new PilotError("conflict", `${path4} already exists with different content. Stored pilot records are never replaced.`);
-  } finally {
-    if (existsSync14(tmp)) unlinkSync3(tmp);
-  }
-}
-function unsafeKey(value) {
-  if (Array.isArray(value)) {
-    for (const v of value) {
-      const hit = unsafeKey(v);
-      if (hit) return hit;
+    const found = draftModelFrom(raw);
+    if (!found.ok) {
+      for (const p of found.problems) say(`${problemPath}: ${p}`);
+      return 1;
     }
-    return null;
+    m = found.model;
   }
-  if (value === null || typeof value !== "object") return null;
-  for (const [k, v] of Object.entries(value)) {
-    if (UNSAFE_KEYS.has(k)) return k;
-    const hit = unsafeKey(v);
-    if (hit) return hit;
+  const examples = examplesFile(resolve4(cwd, examplesPath));
+  if (!examples.ok) {
+    for (const p of examples.problems) say(p);
+    return 1;
   }
-  return null;
-}
-function writeAtomic(path4, content) {
-  mkdirSync6(dirname5(path4), { recursive: true });
-  const tmp = `${path4}.${process.pid}.tmp`;
+  const key = providerKey(m.provider, env);
+  if (!client && !key) {
+    say(m.provider === "anthropic" ? "measure draft needs an Anthropic key: set SYNTHE_ANTHROPIC_KEY." : `measure draft needs a key for ${m.base_url}: set SYNTHE_API_KEY.`);
+    return 1;
+  }
+  const keys = [env.SYNTHE_ANTHROPIC_KEY, env.SYNTHE_API_KEY].map((k) => k?.trim() ?? "").filter(Boolean);
+  const hide = (text4) => keys.reduce((t, k) => t.split(k).join("[your key]"), text4);
+  const model = client ?? (m.provider === "anthropic" ? anthropicModel(key) : openAiCompatibleModel({ baseUrl: m.base_url, apiKey: key }));
   try {
-    writeFileSync8(tmp, content, { mode: 384 });
-    renameSync3(tmp, path4);
-  } finally {
-    if (existsSync14(tmp)) unlinkSync3(tmp);
+    const hintBase = problemPath ? dirname7(resolve4(cwd, problemPath)) : cwd;
+    return await draftMeasure(examples.examples, m, model, resolve4(cwd, out), { say, env, hide, hintBase });
+  } catch (e) {
+    say(`The model call failed: ${hide(e instanceof Error ? e.message : String(e))}`);
+    return 1;
   }
 }
-function printable2(text4, max = 80) {
-  const flat2 = text4.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, " ").replace(/ {2,}/g, " ").trim();
-  return flat2.length > max ? `${flat2.slice(0, max)}... (cut at ${max} characters)` : flat2;
-}
-var MAX_INPUT_BYTES, UNSAFE_KEYS, isObject, isNonEmpty, isInt;
-var init_io = __esm({
-  "src/pilot/io.ts"() {
+var USAGE;
+var init_measure = __esm({
+  "src/cli/measure.ts"() {
     "use strict";
-    init_errors3();
-    MAX_INPUT_BYTES = 32 * 1024 * 1024;
-    UNSAFE_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
-    isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
-    isNonEmpty = (v) => typeof v === "string" && v.trim() !== "";
-    isInt = (v) => typeof v === "number" && Number.isInteger(v);
-  }
-});
-
-// src/pilot/metric.ts
-function onlyKeys(value, allowed, where) {
-  const unknown = Object.keys(value).filter((k) => !allowed.includes(k));
-  if (unknown.length > 0) {
-    bad(`metric${where} has an unknown field "${unknown[0]}". Allowed fields: ${allowed.join(", ")}. Check the spelling in pilot.json.`);
-  }
-}
-function metricSpec(value, where) {
-  const { name, kind, unit, direction } = value;
-  if (!isNonEmpty(name) || !NAME.test(name)) bad(`metric.${where}.name must be lowercase letters, digits and underscores, starting with a letter (at most 64 characters).`);
-  if (RESERVED_METRIC_NAMES.includes(name)) bad(`metric.${where}.name "${name}" is reserved for a telemetry field. Choose another name.`);
-  if (kind !== "rate" && kind !== "mean") bad(`metric.${where}.kind must be "rate" or "mean".`);
-  if (!isNonEmpty(unit)) bad(`metric.${where}.unit must be a non-empty string, word for word as the telemetry export declares it.`);
-  if (direction !== "higher_is_better" && direction !== "lower_is_better") bad(`metric.${where}.direction must be "higher_is_better" or "lower_is_better".`);
-  return { name, kind, unit, direction };
-}
-function inRange(v, lo, hi, loOpen, hiOpen) {
-  if (!isFiniteNumber(v)) return false;
-  return (loOpen ? v > lo : v >= lo) && (hiOpen ? v < hi : v <= hi);
-}
-function parseMetricContract(value) {
-  if (!isObject(value)) return bad("metric must be an object.");
-  onlyKeys(value, [
-    "version",
-    "primary",
-    "guards",
-    "denominator",
-    "randomization_unit",
-    "alpha",
-    "power",
-    "min_samples_per_arm",
-    "analysis_window_days",
-    "outcome_lag_days",
-    "max_missing_rate",
-    "max_unattributed_rate",
-    "query_hash",
-    "signed_off"
-  ], "");
-  if (value.version !== 1) bad("metric.version must be 1.");
-  if (!isObject(value.primary)) return bad("metric.primary must be an object.");
-  onlyKeys(value.primary, ["name", "kind", "unit", "direction", "min_effect"], ".primary");
-  const primarySpec = metricSpec(value.primary, "primary");
-  const minEffect = value.primary.min_effect;
-  if (!isFiniteNumber(minEffect) || minEffect <= 0) bad("metric.primary.min_effect must be a number greater than 0 (the smallest change in the good direction worth acting on).");
-  if (primarySpec.kind === "rate" && minEffect >= 1) bad("metric.primary.min_effect must be less than 1 for a rate (a rate is a fraction: 0.02 is two percentage points).");
-  const primary2 = { ...primarySpec, min_effect: minEffect };
-  if (!Array.isArray(value.guards)) return bad("metric.guards must be an array (it may be empty).");
-  const seen = /* @__PURE__ */ new Set([primary2.name]);
-  const guards = value.guards.map((g, i) => {
-    const where = `guards[${i}]`;
-    if (!isObject(g)) return bad(`metric.${where} must be an object.`);
-    onlyKeys(g, ["name", "kind", "unit", "direction", "max_harm", "critical", "early_stop", "range"], `.${where}`);
-    const spec = metricSpec(g, where);
-    if (spec.name === primary2.name) bad(`metric.${where}.name "${spec.name}" is the primary metric. A guard must be a different metric.`);
-    if (seen.has(spec.name)) bad(`metric.${where}.name "${spec.name}" appears more than once. Each guard needs its own name.`);
-    seen.add(spec.name);
-    const maxHarm = g.max_harm;
-    if (maxHarm === 0) bad(`metric.${where}.max_harm is 0. A zero margin can never be shown to pass, so the guard could never let a change be kept. Set the largest harm the team tolerates.`);
-    if (!isFiniteNumber(maxHarm) || maxHarm <= 0) bad(`metric.${where}.max_harm must be a number greater than 0.`);
-    if (spec.kind === "rate" && maxHarm >= 1) bad(`metric.${where}.max_harm must be less than 1 for a rate (0.02 is two percentage points).`);
-    if (typeof g.critical !== "boolean") bad(`metric.${where}.critical must be true or false.`);
-    const guard2 = { ...spec, max_harm: maxHarm, critical: g.critical };
-    if (g.range !== void 0) {
-      if (spec.kind !== "mean") bad(`metric.${where}.range is only for a mean guard. A rate is always between 0 and 1.`);
-      if (!isObject(g.range)) return bad(`metric.${where}.range must be an object with min and max.`);
-      onlyKeys(g.range, ["min", "max"], `.${where}.range`);
-      if (!isFiniteNumber(g.range.min) || !isFiniteNumber(g.range.max) || g.range.min >= g.range.max) bad(`metric.${where}.range needs finite numbers with min below max: the smallest and largest value one conversation can have.`);
-      guard2.range = { min: g.range.min, max: g.range.max };
-    }
-    if (g.early_stop !== void 0) {
-      if (!isObject(g.early_stop)) return bad(`metric.${where}.early_stop must be an object with min_per_arm.`);
-      onlyKeys(g.early_stop, ["min_per_arm"], `.${where}.early_stop`);
-      if (!isInt(g.early_stop.min_per_arm) || g.early_stop.min_per_arm < 1) bad(`metric.${where}.early_stop.min_per_arm must be a whole number of at least 1.`);
-      if (g.critical !== true) bad(`metric.${where}.early_stop is only allowed on a critical guard. Set critical to true or remove early_stop.`);
-      guard2.early_stop = { min_per_arm: g.early_stop.min_per_arm };
-    }
-    return guard2;
-  });
-  if (!isNonEmpty(value.denominator)) bad("metric.denominator must be a non-empty string naming the population, e.g. completed_conversations.");
-  if (value.randomization_unit !== "conversation") bad('metric.randomization_unit must be "conversation". Other units are not analysed in this version.');
-  if (!inRange(value.alpha, 0, 0.2, true, false)) bad("metric.alpha must be greater than 0 and at most 0.2 (0.05 gives 95% intervals).");
-  if (!inRange(value.power, 0.5, 1, false, true)) bad("metric.power must be at least 0.5 and less than 1 (0.8 is usual).");
-  if (!isInt(value.min_samples_per_arm) || value.min_samples_per_arm < 2) bad("metric.min_samples_per_arm must be a whole number of at least 2.");
-  if (!isInt(value.analysis_window_days)) bad(`metric.analysis_window_days must be a whole number of at least ${MIN_WINDOW_DAYS}.`);
-  if (value.analysis_window_days < MIN_WINDOW_DAYS) bad(`metric.analysis_window_days is ${value.analysis_window_days}. The window must be at least ${MIN_WINDOW_DAYS} days so that each weekday is seen once: traffic and outcomes differ by weekday, and a shorter window can show a calendar effect as a result.`);
-  if (!isInt(value.outcome_lag_days) || value.outcome_lag_days < 0) bad("metric.outcome_lag_days must be a whole number of 0 or more.");
-  if (value.outcome_lag_days > value.analysis_window_days) {
-    bad(`metric.outcome_lag_days (${value.outcome_lag_days}) is longer than analysis_window_days (${value.analysis_window_days}). An outcome slower than the window cannot be attributed in the pilot. Lengthen the window or choose a faster outcome.`);
-  }
-  if (!inRange(value.max_missing_rate, 0, 0.5, false, false)) bad("metric.max_missing_rate must be between 0 and 0.5.");
-  if (!inRange(value.max_unattributed_rate, 0, 0.5, false, false)) bad("metric.max_unattributed_rate must be between 0 and 0.5.");
-  if (value.query_hash !== void 0 && !isSha256(value.query_hash)) bad("metric.query_hash must be 64 lowercase hex characters (the SHA-256 of the metric query).");
-  if (!isObject(value.signed_off)) return bad("metric.signed_off must be an object with by and at.");
-  onlyKeys(value.signed_off, ["by", "at"], ".signed_off");
-  if (!isNonEmpty(value.signed_off.by)) bad("metric.signed_off.by must name the person who signed off the metric.");
-  if (typeof value.signed_off.at !== "string" || Number.isNaN(ms(value.signed_off.at))) bad("metric.signed_off.at must be a UTC time like 2026-09-01T12:00:00Z.");
-  const out = {
-    version: 1,
-    primary: primary2,
-    guards,
-    denominator: value.denominator,
-    randomization_unit: "conversation",
-    alpha: value.alpha,
-    power: value.power,
-    min_samples_per_arm: value.min_samples_per_arm,
-    analysis_window_days: value.analysis_window_days,
-    outcome_lag_days: value.outcome_lag_days,
-    max_missing_rate: value.max_missing_rate,
-    max_unattributed_rate: value.max_unattributed_rate,
-    signed_off: { by: value.signed_off.by, at: value.signed_off.at }
-  };
-  if (value.query_hash !== void 0) out.query_hash = value.query_hash;
-  return out;
-}
-var bad, isFiniteNumber, MIN_WINDOW_DAYS, NAME, RESERVED_METRIC_NAMES;
-var init_metric = __esm({
-  "src/pilot/metric.ts"() {
-    "use strict";
-    init_errors3();
-    init_ids();
-    init_io();
-    bad = (message) => {
-      throw new PilotError("invalid_metric", message);
-    };
-    isFiniteNumber = (v) => typeof v === "number" && Number.isFinite(v);
-    MIN_WINDOW_DAYS = 7;
-    NAME = /^[a-z][a-z0-9_]{0,63}$/;
-    RESERVED_METRIC_NAMES = ["conversation_id", "prompt_version", "started_at", "segment", "unit_id", "model_id", "values"];
-  }
-});
-
-// src/pilot/config.ts
-function onlyKeys2(value, allowed, where) {
-  const extra = Object.keys(value).find((k) => !allowed.includes(k));
-  if (extra !== void 0) bad2(`${where} has an unknown field "${extra}"`);
-}
-function parseReplay(v) {
-  if (!isObject(v)) return bad2("replay is required");
-  onlyKeys2(v, ["model", "max_tokens", "temperature", "max_steps_per_turn", "gate", "min_recurring_cases", "max_changed_lines"], "replay");
-  const gate = v.gate;
-  if (!isObject(gate)) return bad2("replay.gate is required");
-  onlyKeys2(gate, ["min_paired_cases", "min_paired_coverage", "min_net_wins", "max_unchecked_blocking_guards"], "replay.gate");
-  const temperature = v.temperature === null ? null : fraction(v.temperature, "replay.temperature");
-  return {
-    model: text2(v.model, "replay.model"),
-    max_tokens: int(v.max_tokens, "replay.max_tokens", 1, 16e3),
-    temperature,
-    max_steps_per_turn: int(v.max_steps_per_turn, "replay.max_steps_per_turn", 1, 12),
-    gate: {
-      min_paired_cases: int(gate.min_paired_cases, "replay.gate.min_paired_cases", 1, 1e5),
-      min_paired_coverage: fraction(gate.min_paired_coverage, "replay.gate.min_paired_coverage"),
-      min_net_wins: int(gate.min_net_wins, "replay.gate.min_net_wins", 1, 1e5),
-      max_unchecked_blocking_guards: int(gate.max_unchecked_blocking_guards, "replay.gate.max_unchecked_blocking_guards", 0, 1e5)
-    },
-    min_recurring_cases: int(v.min_recurring_cases, "replay.min_recurring_cases", 2, 1e5),
-    max_changed_lines: int(v.max_changed_lines, "replay.max_changed_lines", 1, 200)
-  };
-}
-function parseProvider(v) {
-  if (v === null) return null;
-  if (!isObject(v)) return bad2("provider must be null (scripted models only) or an approval object");
-  onlyKeys2(v, ["provider", "endpoint", "model", "key_env", "data_class", "approved_by", "approved_at", "max_calls", "max_input_chars"], "provider");
-  if (v.provider !== "anthropic") bad2('provider.provider must be "anthropic"');
-  const endpoint = text2(v.endpoint, "provider.endpoint");
-  let url;
-  try {
-    url = new URL(endpoint);
-  } catch {
-    return bad2("provider.endpoint must be a URL");
-  }
-  if (url.protocol !== "https:" && !isLoopback2(endpoint)) bad2("provider.endpoint must be https");
-  if (url.username || url.password || url.search || url.hash) bad2("provider.endpoint must be a plain base URL with no credentials or query");
-  const keyEnv = text2(v.key_env, "provider.key_env");
-  if (!/^[A-Z][A-Z0-9_]{0,50}_PILOT_KEY$/.test(keyEnv)) bad2("provider.key_env must be the name of one environment variable made for this pilot, in capitals and ending in _PILOT_KEY (for example FERNHILL_PILOT_KEY)");
-  const approvedAt = text2(v.approved_at, "provider.approved_at");
-  if (Number.isNaN(ms(approvedAt))) bad2("provider.approved_at must be a UTC time like 2026-10-01T00:00:00Z");
-  return {
-    provider: "anthropic",
-    endpoint,
-    model: text2(v.model, "provider.model"),
-    key_env: keyEnv,
-    data_class: text2(v.data_class, "provider.data_class"),
-    approved_by: text2(v.approved_by, "provider.approved_by"),
-    approved_at: approvedAt,
-    max_calls: int(v.max_calls, "provider.max_calls", 1, 1e5),
-    max_input_chars: int(v.max_input_chars, "provider.max_input_chars", 1, 5e8)
-  };
-}
-function parsePilotConfig(source) {
-  let v;
-  try {
-    v = JSON.parse(source);
-  } catch {
-    return bad2("not valid JSON");
-  }
-  if (!isObject(v)) return bad2("must be a JSON object");
-  const unsafe = unsafeKey(v);
-  if (unsafe) bad2(`has a field named "${unsafe}", which is not allowed`);
-  onlyKeys2(v, ["version", "pilot_id", "agent", "repo", "metric", "replay", "provider"], "the file");
-  if (v.version !== 1) bad2("version must be 1");
-  const pilotId = text2(v.pilot_id, "pilot_id");
-  if (!/^[a-z0-9][a-z0-9-]{2,39}$/.test(pilotId)) bad2("pilot_id must be 3 to 40 lowercase letters, digits or dashes");
-  const agent = v.agent;
-  if (!isObject(agent)) return bad2("agent is required");
-  onlyKeys2(agent, ["name", "prompt_path", "baseline_tag"], "agent");
-  const promptPath = text2(agent.prompt_path, "agent.prompt_path");
-  const pathProblem = promptPathProblem(promptPath);
-  if (pathProblem) bad2(`agent.prompt_path: ${pathProblem}`);
-  const baselineTag = text2(agent.baseline_tag, "agent.baseline_tag");
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(baselineTag)) bad2("agent.baseline_tag must be 1 to 64 letters, digits, dots, dashes or underscores");
-  const repo = v.repo;
-  if (!isObject(repo)) return bad2("repo is required");
-  onlyKeys2(repo, ["slug", "base", "api"], "repo");
-  const slug = text2(repo.slug, "repo.slug");
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(slug)) bad2("repo.slug must look like owner/name");
-  const base = text2(repo.base, "repo.base");
-  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/.test(base) || base.includes("..")) bad2("repo.base must be a branch name");
-  let api;
-  if (repo.api !== void 0) {
-    api = text2(repo.api, "repo.api");
-    if (api !== GITHUB_API && !isLoopback2(api)) bad2(`repo.api must be ${GITHUB_API} or a loopback address`);
-  }
-  if (!("provider" in v)) bad2("provider is required: null means only scripted models run and nothing is sent to a model provider");
-  return {
-    version: 1,
-    pilot_id: pilotId,
-    agent: { name: text2(agent.name, "agent.name"), prompt_path: promptPath, baseline_tag: baselineTag },
-    repo: { slug, base, ...api !== void 0 ? { api } : {} },
-    metric: parseMetricContract(v.metric),
-    replay: parseReplay(v.replay),
-    provider: parseProvider(v.provider)
-  };
-}
-var CONFIG_FILE, GITHUB_API, LOOPBACK2, bad2, text2, int, fraction, isLoopback2;
-var init_config = __esm({
-  "src/pilot/config.ts"() {
-    "use strict";
-    init_safety();
-    init_errors3();
-    init_ids();
-    init_io();
-    init_metric();
-    CONFIG_FILE = "pilot.json";
-    GITHUB_API = "https://api.github.com";
-    LOOPBACK2 = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
-    bad2 = (why) => {
-      throw new PilotError("invalid_config", `${CONFIG_FILE}: ${why}`);
-    };
-    text2 = (v, name) => typeof v === "string" && v.trim() ? v : bad2(`${name} is required`);
-    int = (v, name, min, max) => typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : bad2(`${name} must be a whole number from ${min} to ${max}`);
-    fraction = (v, name) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1 ? v : bad2(`${name} must be a number from 0 to 1`);
-    isLoopback2 = (url) => {
-      try {
-        const u = new URL(url);
-        return (u.protocol === "http:" || u.protocol === "https:") && LOOPBACK2.has(u.hostname);
-      } catch {
-        return false;
-      }
-    };
-  }
-});
-
-// src/pilot/safety.ts
-function addedLineProblem(baseline2, candidate) {
-  const had = new Set(linesOf(baseline2).map((l) => l.trim()));
-  const checks = [
-    [URL_SCHEME, "a link or web address"],
-    [SCHEME_RELATIVE, "a link or web address"],
-    [WEB_ADDRESS, "a link or web address"],
-    [MARKDOWN_IMAGE, "a markdown image"],
-    [ACTIVE_HTML, "an HTML tag that loads or links something"],
-    [PLACEHOLDER, "a {placeholder} that would be filled with conversation text"],
-    [ENCODED_RUN, "a long run of encoded-looking characters"]
-  ];
-  const lines = linesOf(candidate);
-  for (let i = 0; i < lines.length; i++) {
-    if (had.has(lines[i].trim())) continue;
-    for (const [pattern, what] of checks) if (pattern.test(lines[i])) return `it adds ${what} on line ${i + 1}, which a candidate may not do`;
-  }
-  return null;
-}
-var URL_SCHEME, SCHEME_RELATIVE, WEB_ADDRESS, MARKDOWN_IMAGE, PLACEHOLDER, ACTIVE_HTML, ENCODED_RUN, linesOf;
-var init_safety2 = __esm({
-  "src/pilot/safety.ts"() {
-    "use strict";
-    URL_SCHEME = /\b[a-z][a-z0-9+.-]*:\/\/\S/i;
-    SCHEME_RELATIVE = /(^|[\s(<[`"'])\/\/[a-z0-9][a-z0-9.-]*\.[a-z]/i;
-    WEB_ADDRESS = /\b(?:www\.|(?:data|javascript|mailto|file):)\S/i;
-    MARKDOWN_IMAGE = /!\[/;
-    PLACEHOLDER = /\$?\{\{?\s*[A-Za-z_][\w.-]*\s*\}?\}/;
-    ACTIVE_HTML = /<\s*(?:img|script|iframe|a|link|svg|object|embed|video|audio|source|meta|style|form|input|base)\b/i;
-    ENCODED_RUN = /[A-Za-z0-9+/]{32,}|(?<![0-9a-fA-F])[0-9a-fA-F]{24,}(?![0-9a-fA-F])/;
-    linesOf = (text4) => text4.split(/\r\n|[\n\r\u2028\u2029]/);
-  }
-});
-
-// src/pilot/pii.ts
-function luhn(digits) {
-  let sum = 0;
-  for (let i = 0; i < digits.length; i++) {
-    let d = digits.charCodeAt(digits.length - 1 - i) - 48;
-    if (i % 2 === 1) {
-      d *= 2;
-      if (d > 9) d -= 9;
-    }
-    sum += d;
-  }
-  return sum % 10 === 0;
-}
-function hasCardNumber(text4) {
-  for (const match of text4.matchAll(DIGIT_RUN)) {
-    const digits = match[2].replace(/[ -]/g, "");
-    if (digits.length >= 13 && digits.length <= 19 && !/^0+$/.test(digits) && luhn(digits)) return true;
-  }
-  return false;
-}
-function personalDataKinds(text4) {
-  const kinds = [];
-  if (EMAIL.test(text4)) kinds.push("email address");
-  if (hasCardNumber(text4)) kinds.push("payment card number");
-  if (SSN.test(text4)) kinds.push("national identity number");
-  if (redactSecrets(text4) !== text4) kinds.push("credential");
-  return kinds;
-}
-var EMAIL, SSN, DIGIT_RUN;
-var init_pii = __esm({
-  "src/pilot/pii.ts"() {
-    "use strict";
-    init_safety();
-    EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/;
-    SSN = /(^|[^0-9])\d{3}-\d{2}-\d{4}([^0-9]|$)/;
-    DIGIT_RUN = /(^|[^0-9])((?:\d[ -]?){12,18}\d)(?=[^0-9]|$)/g;
-  }
-});
-
-// src/pilot/pack.ts
-function onlyKeys3(o, allowed, where) {
-  for (const key of Object.keys(o)) if (!allowed.includes(key)) bad3(`${where} has a field this pack format does not allow (${NAME2.test(key) ? key : "unnamed"}). Remove it and export again.`);
-}
-function parsePack(text4) {
-  let raw;
-  try {
-    raw = JSON.parse(text4);
-  } catch {
-    return bad3("The pack file is not valid JSON.");
-  }
-  if (!isObject(raw)) return bad3("The pack file must be a JSON object.");
-  if (unsafeKey(raw) !== null) bad3("The pack has a field named __proto__, constructor or prototype, which no pack needs. Rename it and export again.");
-  onlyKeys3(raw, ["version", "name", "pack_version", "parent_pack_id", "source", "tools", "check_catalog", "cases"], "The pack");
-  if (raw.version !== 1) bad3("The pack version field must be 1.");
-  if (!isNonEmpty(raw.name)) bad3("The pack needs a non-empty name.");
-  if (!isInt(raw.pack_version) || raw.pack_version < 1) bad3("pack_version must be a whole number of at least 1.");
-  const packVersion = raw.pack_version;
-  if (raw.parent_pack_id !== null && !isSha256(raw.parent_pack_id)) bad3("parent_pack_id must be null or a 64-character hex pack id.");
-  if (raw.parent_pack_id === null !== (packVersion === 1)) bad3("parent_pack_id must be null for pack_version 1 and a pack id for every later version.");
-  checkApproval(raw.source);
-  if (!Array.isArray(raw.tools)) bad3("tools must be an array.");
-  if (raw.tools.length > PACK_LIMITS.tools) throw new PilotError("too_large", `The pack lists ${raw.tools.length} tools; the limit is ${PACK_LIMITS.tools}.`);
-  const toolNames = /* @__PURE__ */ new Set();
-  for (const [i, t] of raw.tools.entries()) {
-    if (!isObject(t)) {
-      bad3(`Tool #${i + 1} must be an object.`);
-      continue;
-    }
-    onlyKeys3(t, ["name", "description", "input_schema"], `Tool #${i + 1}`);
-    if (!isNonEmpty(t.name)) bad3(`Tool #${i + 1} needs a name.`);
-    if (typeof t.description !== "string") bad3(`Tool ${safeName(t.name)} needs a description.`);
-    if (!isObject(t.input_schema)) bad3(`Tool ${safeName(t.name)} needs an input_schema object.`);
-    if (toolNames.has(t.name)) bad3(`Tool ${safeName(t.name)} is listed twice.`);
-    toolNames.add(t.name);
-  }
-  if (!isObject(raw.check_catalog)) bad3("check_catalog must be an object of check id to sentence.");
-  const catalog = raw.check_catalog;
-  for (const [id, sentence] of Object.entries(catalog)) {
-    if (!isNonEmpty(sentence)) bad3(`check_catalog entry ${safeName(id)} must be a non-empty sentence.`);
-    if (!isNonEmpty(id)) bad3("check_catalog has an empty check id.");
-  }
-  if (!Array.isArray(raw.cases) || raw.cases.length === 0) bad3("The pack needs at least one case.");
-  const cases4 = raw.cases;
-  if (cases4.length > PACK_LIMITS.cases) throw new PilotError("too_large", `The pack has ${cases4.length} cases; the limit is ${PACK_LIMITS.cases}.`);
-  const seen = /* @__PURE__ */ new Set();
-  const ctx = { packVersion, toolNames, catalog, seen };
-  cases4.forEach((c, i) => checkCase(c, i, ctx));
-  scanForPersonalData(raw);
-  return raw;
-}
-function checkApproval(source) {
-  const refuse2 = (what) => {
-    throw new PilotError("pack_not_approved", `The pack has no recorded approval: ${what}. Ask the data owner to complete the source block and export again.`);
-  };
-  if (!isObject(source)) return refuse2("the source block is missing");
-  for (const key of ["exported_by", "exported_at"]) if (!isNonEmpty(source[key])) refuse2(`source.${key} is missing`);
-  if (Number.isNaN(ms(source.exported_at))) refuse2("source.exported_at is not a UTC time like 2026-10-01T00:00:00Z");
-  const red = source.redaction;
-  if (!isObject(red)) return refuse2("source.redaction is missing");
-  for (const key of ["method", "approved_by", "approved_at"]) if (!isNonEmpty(red[key])) refuse2(`source.redaction.${key} is missing`);
-  if (Number.isNaN(ms(red.approved_at))) refuse2("source.redaction.approved_at is not a UTC time like 2026-10-01T00:00:00Z");
-  if (!Array.isArray(source.approved_uses) || !source.approved_uses.includes("replay")) refuse2('source.approved_uses does not include "replay"');
-  onlyKeys3(source, ["exported_by", "exported_at", "redaction", "approved_uses", "policy_version"], "source");
-  onlyKeys3(red, ["method", "approved_by", "approved_at"], "source.redaction");
-  if (source.policy_version !== void 0 && typeof source.policy_version !== "string") bad3("source.policy_version must be a string.");
-}
-function checkCase(c, index, ctx) {
-  if (!isObject(c)) {
-    bad3(`Case #${index + 1} must be an object.`);
-    return;
-  }
-  const label = typeof c.id === "string" && CASE_ID.test(c.id) ? `Case ${c.id}` : `Case #${index + 1}`;
-  onlyKeys3(c, ["id", "split", "provenance", "intent", "messages", "checks", "observed", "regression"], label);
-  if (typeof c.id !== "string" || !CASE_ID.test(c.id)) bad3(`${label} needs an id of letters, digits, dot, dash or underscore (at most 64 characters).`);
-  if (ctx.seen.has(c.id)) bad3(`${label} has an id that is used by another case.`);
-  ctx.seen.add(c.id);
-  if (c.split !== "discovery" && c.split !== "heldout") bad3(`${label} needs split "discovery" or "heldout".`);
-  const prov = c.provenance;
-  if (!isObject(prov)) {
-    bad3(`${label} needs a provenance block.`);
-    return;
-  }
-  onlyKeys3(prov, ["kind", "ref", "added_in_pack_version"], `${label} provenance`);
-  if (prov.kind !== "export" && prov.kind !== "promoted") bad3(`${label} provenance.kind must be "export" or "promoted".`);
-  if (!isNonEmpty(prov.ref)) bad3(`${label} provenance.ref is missing.`);
-  if (!isInt(prov.added_in_pack_version) || prov.added_in_pack_version < 1 || prov.added_in_pack_version > ctx.packVersion) bad3(`${label} provenance.added_in_pack_version must be a whole number from 1 to the pack version.`);
-  if (c.intent !== void 0 && !isNonEmpty(c.intent)) bad3(`${label} intent must be a non-empty string when present.`);
-  const turns = checkMessages(c, label, ctx);
-  checkChecks(c, label, turns, ctx);
-  if (c.observed !== void 0) {
-    if (!isObject(c.observed)) bad3(`${label} observed must be an object.`);
-    for (const [k, v] of Object.entries(c.observed)) {
-      if (!(v === null || typeof v === "boolean" || typeof v === "number" && Number.isFinite(v))) bad3(`${label} observed value ${safeName(k)} must be a number, true, false or null.`);
-    }
-  }
-  if (c.regression !== void 0) {
-    const r = c.regression;
-    if (!isObject(r)) {
-      bad3(`${label} regression must be an object.`);
-      return;
-    }
-    onlyKeys3(r, ["approved_by", "approved_at", "reason", "promotion_ref"], `${label} regression`);
-    for (const k of ["approved_by", "approved_at", "reason", "promotion_ref"]) if (!isNonEmpty(r[k])) bad3(`${label} regression.${k} must be a non-empty string.`);
-  }
-}
-function checkMessages(c, label, ctx) {
-  if (!Array.isArray(c.messages) || c.messages.length === 0) bad3(`${label} needs messages.`);
-  const messages = c.messages;
-  if (messages.length > PACK_LIMITS.messages_per_case) throw new PilotError("too_large", `${label} has ${messages.length} messages; the limit is ${PACK_LIMITS.messages_per_case}.`);
-  const tooLong = (n, what) => {
-    if (n > PACK_LIMITS.message_chars) throw new PilotError("too_large", `${label} ${what} is ${n} characters; the limit is ${PACK_LIMITS.message_chars}.`);
-  };
-  messages.forEach((m, i2) => {
-    const at = `${label} message ${i2 + 1}`;
-    if (!isObject(m)) {
-      bad3(`${at} must be an object.`);
-      return;
-    }
-    const role = m.role;
-    if (role !== "user" && role !== "assistant" && role !== "tool") bad3(`${at} needs role user, assistant or tool.`);
-    onlyKeys3(m, MESSAGE_KEYS[role], at);
-    if (role === "tool") {
-      if (!isNonEmpty(m.tool_call_id)) bad3(`${at} needs a tool_call_id.`);
-      if (!isNonEmpty(m.name)) bad3(`${at} needs the tool name.`);
-      if (typeof m.result !== "string") bad3(`${at} needs a result string.`);
-      tooLong(m.result.length, `message ${i2 + 1} result`);
-      if (m.is_error !== void 0 && typeof m.is_error !== "boolean") bad3(`${at} is_error must be true or false.`);
-      return;
-    }
-    if (typeof m.text !== "string") bad3(`${at} needs a text string.`);
-    tooLong(m.text.length, `message ${i2 + 1} text`);
-    if (role === "assistant" && m.tool_calls !== void 0) {
-      if (!Array.isArray(m.tool_calls)) bad3(`${at} tool_calls must be an array.`);
-      for (const tc of m.tool_calls) {
-        if (!isObject(tc)) {
-          bad3(`${at} has a tool call that is not an object.`);
-          continue;
-        }
-        onlyKeys3(tc, ["id", "name", "input"], `${at} tool call`);
-        if (!isNonEmpty(tc.id)) bad3(`${at} has a tool call without an id.`);
-        if (!isNonEmpty(tc.name)) bad3(`${at} has a tool call without a name.`);
-        if (!ctx.toolNames.has(tc.name)) bad3(`${at} calls tool ${safeName(tc.name)}, which the pack does not list in tools.`);
-        if (!isObject(tc.input)) bad3(`${at} has a tool call for ${safeName(tc.name)} whose input is not an object.`);
-        tooLong(canonicalJson(tc.input).length, `message ${i2 + 1} tool input`);
-      }
-    }
-  });
-  const list = messages;
-  if (list[0].role !== "user") bad3(`${label} must start with a user message.`);
-  const callIds = /* @__PURE__ */ new Set();
-  let turns = 0;
-  let i = 0;
-  while (i < list.length) {
-    let j = i + 1;
-    while (j < list.length && list[j].role !== "user") j++;
-    turns++;
-    if (j === i + 1) bad3(`${label} user message ${i + 1} is not followed by an assistant turn.`);
-    const pending = /* @__PURE__ */ new Map();
-    for (let k = i + 1; k < j; k++) {
-      const m = list[k];
-      if (m.role === "assistant") {
-        for (const tc of m.tool_calls ?? []) {
-          const id = tc.id;
-          if (callIds.has(id)) bad3(`${label} tool call id ${safeName(id)} is used more than once.`);
-          callIds.add(id);
-          pending.set(id, tc.name);
-        }
-      } else {
-        const want = pending.get(m.tool_call_id);
-        if (want === void 0) bad3(`${label} message ${k + 1} is a tool result with no matching call earlier in the same turn.`);
-        else if (want !== m.name) bad3(`${label} message ${k + 1} answers call ${safeName(m.tool_call_id)} under a different tool name.`);
-        pending.delete(m.tool_call_id);
-      }
-    }
-    if (pending.size > 0) bad3(`${label} turn ${turns} has a tool call (${[...pending.keys()].map(safeName).join(", ")}) with no result in the same turn.`);
-    const end = list[j - 1];
-    if (end.role !== "assistant" || (end.tool_calls?.length ?? 0) > 0 || end.text.trim() === "") {
-      bad3(`${label} turn ${turns} must end with an assistant message that has text and no tool calls.`);
-    }
-    i = j;
-  }
-  return turns;
-}
-function checkChecks(c, label, turns, ctx) {
-  if (!Array.isArray(c.checks)) bad3(`${label} needs a checks array.`);
-  const checks = c.checks;
-  if (checks.length > PACK_LIMITS.checks_per_case) throw new PilotError("too_large", `${label} has ${checks.length} checks; the limit is ${PACK_LIMITS.checks_per_case}.`);
-  const pairs = /* @__PURE__ */ new Set();
-  checks.forEach((k, i) => {
-    const at = `${label} check #${i + 1}`;
-    if (!isObject(k)) {
-      bad3(`${at} must be an object.`);
-      return;
-    }
-    const kind = k.kind;
-    if (typeof kind !== "string" || !Object.hasOwn(CHECK_KEYS, kind)) bad3(`${at} needs a kind of reply_includes, reply_excludes, calls_tool, avoids_tool or tool_requires.`);
-    onlyKeys3(k, ["id", "turn", "role", "blocking", "kind", ...CHECK_KEYS[kind]], at);
-    if (typeof k.id !== "string" || !Object.hasOwn(ctx.catalog, k.id)) bad3(`${at} uses check id ${safeName(k.id)}, which is not in check_catalog.`);
-    if (!isInt(k.turn) || k.turn < 1 || k.turn > turns) bad3(`${label} check ${safeName(k.id)} names a turn outside 1 to ${turns}.`);
-    if (k.role !== "primary" && k.role !== "guard") bad3(`${label} check ${safeName(k.id)} needs role primary or guard.`);
-    if (k.blocking !== void 0 && (k.role !== "guard" || typeof k.blocking !== "boolean")) bad3(`${label} check ${safeName(k.id)}: blocking is only allowed on guard checks, and must be true or false.`);
-    if (kind === "reply_includes" || kind === "reply_excludes") {
-      const phrases = k.any_of;
-      if (!Array.isArray(phrases) || phrases.length === 0 || phrases.some((p) => !isNonEmpty(p) || p.length > 200)) bad3(`${label} check ${safeName(k.id)} needs any_of: a non-empty list of phrases of at most 200 characters.`);
-    } else {
-      const names2 = kind === "tool_requires" ? ["tool", "after"] : ["tool"];
-      for (const field2 of names2) if (typeof k[field2] !== "string" || !ctx.toolNames.has(k[field2])) bad3(`${label} check ${safeName(k.id)} names a ${field2} that the pack does not list in tools.`);
-    }
-    const pair = `${k.id}\0${k.turn}`;
-    if (pairs.has(pair)) bad3(`${label} has check ${safeName(k.id)} twice on turn ${k.turn}.`);
-    pairs.add(pair);
-  });
-}
-function scanForPersonalData(pack2) {
-  const hit = (text4, where) => {
-    const kinds = personalDataKinds(text4);
-    if (kinds.length > 0) throw new PilotError("pack_not_redacted", `${where} contains what looks like personal data (${kinds.join(", ")}). Replace it with a token such as [EMAIL_1] and export again.`);
-  };
-  const walk3 = (value, where) => {
-    if (typeof value === "string") hit(value, where);
-    else if (Array.isArray(value)) for (const v of value) walk3(v, where);
-    else if (isObject(value)) for (const [k, v] of Object.entries(value)) {
-      hit(k, where);
-      walk3(v, where);
-    }
-  };
-  for (const sentence of Object.values(pack2.check_catalog)) hit(sentence, "check_catalog");
-  for (const c of pack2.cases) {
-    hit(c.provenance.ref, `Case ${c.id} provenance.ref`);
-    if (c.intent !== void 0) hit(c.intent, `Case ${c.id} intent`);
-    c.messages.forEach((m, i) => {
-      const where = `Case ${c.id} message number ${i + 1} (counting from 1)`;
-      if (m.role === "tool") hit(m.result, where);
-      else {
-        hit(m.text, where);
-        if (m.role === "assistant") for (const tc of m.tool_calls ?? []) walk3(tc.input, where);
-      }
-    });
-    for (const k of c.checks) if ("any_of" in k) for (const p of k.any_of) hit(p, `Case ${c.id} check ${k.id}`);
-  }
-}
-function packSummary(pack2, packId) {
-  const by_split = { discovery: 0, heldout: 0 };
-  let regression_cases = 0;
-  let assistant_turns = 0;
-  let checks = 0;
-  for (const c of pack2.cases) {
-    by_split[c.split]++;
-    if (c.regression) regression_cases++;
-    assistant_turns += turnCount(c);
-    checks += c.checks.length;
-  }
-  return { pack_id: packId, name: pack2.name, pack_version: pack2.pack_version, parent_pack_id: pack2.parent_pack_id, cases: pack2.cases.length, by_split, regression_cases, assistant_turns, checks };
-}
-function turnCount(c) {
-  return c.messages.filter((m) => m.role === "user").length;
-}
-function discoveryCases(pack2) {
-  return pack2.cases.filter((c) => c.split === "discovery");
-}
-var PACK_LIMITS, CASE_ID, NAME2, bad3, safeName, MESSAGE_KEYS, CHECK_KEYS;
-var init_pack = __esm({
-  "src/pilot/pack.ts"() {
-    "use strict";
-    init_evidence();
-    init_errors3();
-    init_ids();
-    init_io();
-    init_pii();
-    PACK_LIMITS = { cases: 2e3, messages_per_case: 200, message_chars: 2e4, checks_per_case: 60, tools: 50 };
-    CASE_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
-    NAME2 = /^[A-Za-z0-9_.-]{1,64}$/;
-    bad3 = (message) => {
-      throw new PilotError("invalid_pack", message);
-    };
-    safeName = (v) => typeof v === "string" && NAME2.test(v) ? v : "(unnamed)";
-    MESSAGE_KEYS = { user: ["role", "text"], assistant: ["role", "text", "tool_calls"], tool: ["role", "tool_call_id", "name", "result", "is_error"] };
-    CHECK_KEYS = {
-      reply_includes: ["any_of"],
-      reply_excludes: ["any_of"],
-      calls_tool: ["tool"],
-      avoids_tool: ["tool"],
-      tool_requires: ["tool", "after"]
-    };
-  }
-});
-
-// src/pilot/discover.ts
-function discoverFailures(input) {
-  const { pack: pack2, baseline: baseline2 } = input;
-  const min = Math.max(1, input.min_recurring_cases);
-  const split = new Map(pack2.cases.map((c) => [c.id, c.split]));
-  for (const run2 of baseline2.cases) {
-    if (split.get(run2.case_id) !== run2.split) throw new PilotError("conflict", "The baseline replay does not match the pack's cases. Replay the baseline on this pack again.");
-  }
-  const have = new Set(baseline2.cases.map((c) => c.case_id));
-  if (discoveryCases(pack2).some((c) => !have.has(c.id))) throw new PilotError("conflict", "The baseline replay is missing discovery cases from the pack. Replay the baseline on this pack again.");
-  const failing = /* @__PURE__ */ new Map();
-  const discovery = new Set(discoveryCases(pack2).map((c) => c.id));
-  const runs = new Map(baseline2.cases.map((c) => [c.case_id, c]));
-  for (const pc of pack2.cases) {
-    if (!discovery.has(pc.id)) continue;
-    for (const t of runs.get(pc.id)?.turns ?? []) {
-      for (const r of t.checks) {
-        if (r.role === "primary" && r.pass === false) {
-          const list = failing.get(r.id) ?? [];
-          list.push({ case_id: pc.id, turn: t.turn });
-          failing.set(r.id, list);
-        }
-      }
-    }
-  }
-  const findings = [];
-  for (const [check_id, list] of failing) {
-    const distinct = new Set(list.map((x) => x.case_id)).size;
-    if (distinct < min) continue;
-    findings.push({
-      version: 1,
-      pack_id: baseline2.pack_id,
-      baseline_prompt_id: baseline2.prompt_id,
-      check_id,
-      description: pack2.check_catalog[check_id] ?? "",
-      failing: list,
-      discovery_cases_with_check: discoveryCases(pack2).filter((c) => c.checks.some((k) => k.id === check_id)).length
-    });
-  }
-  const count2 = (f) => new Set(f.failing.map((x) => x.case_id)).size;
-  return findings.sort((a, b) => count2(b) - count2(a) || (a.check_id < b.check_id ? -1 : a.check_id > b.check_id ? 1 : 0));
-}
-function proposerContext(input) {
-  const { pack: pack2, finding } = input;
-  const allowed = new Map(discoveryCases(pack2).map((c) => [c.id, c]));
-  for (const f of finding.failing) {
-    if (!allowed.has(f.case_id)) throw new PilotError("holdout_leak", "The finding names a case that is not a discovery case of this pack. Nothing was sent to the proposer. Rebuild the finding from the baseline replay.");
-  }
-  const examples = finding.failing.slice(0, MAX_EXAMPLES2).map((f) => {
-    const c = allowed.get(f.case_id);
-    if (!Number.isInteger(f.turn) || f.turn < 1 || f.turn > turnCount(c)) throw new PilotError("conflict", `The finding names turn ${f.turn} of case ${f.case_id}, which has ${turnCount(c)} turns.`);
-    let seen = 0;
-    let end = c.messages.length;
-    for (const [i, m] of c.messages.entries()) {
-      if (m.role === "user" && ++seen === f.turn) {
-        end = i + 1;
-        break;
-      }
-    }
-    return { case_id: f.case_id, turn: f.turn, messages: c.messages.slice(0, end) };
-  });
-  return { baseline_prompt: input.baseline_prompt, finding, examples, attempt: input.attempt, feedback: input.feedback, max_changed_lines: input.max_changed_lines };
-}
-function changedLines2(before, after) {
-  const a = before.split("\n");
-  const b = after.split("\n");
-  let lo = 0;
-  while (lo < a.length && lo < b.length && a[lo] === b[lo]) lo++;
-  let hiA = a.length;
-  let hiB = b.length;
-  while (hiA > lo && hiB > lo && a[hiA - 1] === b[hiB - 1]) {
-    hiA--;
-    hiB--;
-  }
-  const x = a.slice(lo, hiA);
-  const y = b.slice(lo, hiB);
-  if (x.length === 0 || y.length === 0) return x.length + y.length;
-  if (x.length * y.length > MAX_DIFF_CELLS) return x.length + y.length;
-  let prev = new Array(y.length + 1).fill(0);
-  let cur = new Array(y.length + 1).fill(0);
-  for (let i = 1; i <= x.length; i++) {
-    for (let j = 1; j <= y.length; j++) cur[j] = x[i - 1] === y[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
-    [prev, cur] = [cur, prev];
-  }
-  const common = prev[y.length];
-  return x.length - common + (y.length - common);
-}
-function makeCandidate(input) {
-  const invalid2 = (why) => {
-    throw new PilotError("invalid_candidate", `The candidate was refused: ${why}.`);
-  };
-  if (typeof input.author !== "string" || input.author.trim() === "") invalid2("it has no author");
-  if (typeof input.rationale !== "string" || input.rationale.trim() === "") invalid2("it has no rationale");
-  const problem = candidateProblem(input.prompt, { kind: "file", path: "prompt.md" });
-  if (problem) invalid2(problem);
-  const added = addedLineProblem(input.baseline_prompt, input.prompt);
-  if (added) invalid2(added);
-  if (input.prompt === input.baseline_prompt) invalid2("it is identical to the current prompt");
-  const changed = changedLines2(input.baseline_prompt, input.prompt);
-  if (changed > input.max_changed_lines) throw new PilotError("candidate_not_narrow", `The candidate changes ${changed} lines; the limit is ${input.max_changed_lines}. Make a smaller change.`);
-  return {
-    version: 1,
-    pilot_id: input.pilot_id,
-    baseline_prompt_id: promptId(input.baseline_prompt),
-    prompt_id: promptId(input.prompt),
-    origin: input.origin,
-    author: input.author,
-    rationale: input.rationale,
-    finding_id: input.finding_id,
-    target_check_id: input.target_check_id,
-    changed_lines: changed
-  };
-}
-function renderFindings(findings, pack2) {
-  if (findings.length === 0) return "No check failed in enough discovery cases to count as a recurring failure.\n";
-  const out = ["# Recurring failures on discovery cases", ""];
-  for (const f of findings) {
-    const cases4 = new Set(f.failing.map((x) => x.case_id)).size;
-    out.push(`## ${f.check_id}`, "", pack2.check_catalog[f.check_id] ?? f.description, "");
-    out.push(`- Fails in ${cases4} of ${f.discovery_cases_with_check} discovery cases that test it`);
-    out.push(`- Failing: ${f.failing.map((x) => `${x.case_id} (turn ${x.turn})`).join(", ")}`, "");
-  }
-  return out.join("\n");
-}
-var MAX_EXAMPLES2, MAX_DIFF_CELLS;
-var init_discover = __esm({
-  "src/pilot/discover.ts"() {
-    "use strict";
-    init_safety();
-    init_safety2();
-    init_errors3();
-    init_ids();
-    init_pack();
-    MAX_EXAMPLES2 = 8;
-    MAX_DIFF_CELLS = 25e6;
-  }
-});
-
-// src/pilot/egress.ts
-function tokens(text4) {
-  const t = normal(text4);
-  const out = [];
-  let end = 0;
-  for (const m of t.matchAll(/[\p{L}\p{N}]+/gu)) {
-    const prev = out.at(-1);
-    const between = t.slice(end, m.index);
-    const abbreviation = prev !== void 0 && prev.word.length <= 3 && prev.word !== prev.lower && /^\.\s*$/.test(between);
-    out.push({ word: m[0], lower: m[0].toLowerCase(), starts: prev === void 0 || /[.!?]/.test(between) && !abbreviation });
-    end = m.index + m[0].length;
-  }
-  return out;
-}
-function words(text4) {
-  return tokens(text4).map((t) => t.lower);
-}
-function stringsIn(value, out) {
-  if (typeof value === "string") out.push(value);
-  else if (Array.isArray(value)) for (const v of value) stringsIn(v, out);
-  else if (value !== null && typeof value === "object") for (const [k, v] of Object.entries(value)) {
-    out.push(k);
-    stringsIn(v, out);
-  }
-}
-function rendered(text4) {
-  return text4.replace(/&#(\d{1,7});/g, (_, d) => codePoint(Number(d))).replace(/&#[xX]([0-9a-fA-F]{1,6});/g, (_, h) => codePoint(parseInt(h, 16))).replace(/&([A-Za-z])(?:acute|grave|circ|uml|tilde|ring|cedil|caron|slash|macr|breve|ogon|dot|strok);/g, "$1").replace(/&(?:amp|lt|gt|quot|apos|nbsp|ensp|emsp|thinsp);/g, " ").replace(/&[A-Za-z][A-Za-z0-9]{1,31};/g, "").replace(/<[^<>\n]{0,300}>/g, "").replace(/\]\([^)\n]{0,2000}\)/g, "").replace(/%([2-7][0-9a-fA-F])/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
-}
-function identifierPattern(packs, clean) {
-  const ids = /* @__PURE__ */ new Set();
-  const add = (text4, cap) => {
-    if (text4.length <= cap && clean(text4)) ids.add(text4);
-  };
-  for (const pack2 of packs) {
-    for (const [id, sentence] of Object.entries(pack2.check_catalog)) {
-      add(id, MAX_ID_CHARS);
-      add(sentence, MAX_SENTENCE_CHARS);
-    }
-    for (const tool of pack2.tools) add(tool.name, MAX_ID_CHARS);
-    for (const c of pack2.cases) add(c.id, MAX_ID_CHARS);
-  }
-  const list = [...ids].filter((s) => s.trim() !== "").sort((a, b) => b.length - a.length || (a < b ? -1 : 1));
-  if (list.length === 0) return null;
-  return new RegExp(`(?<![\\p{L}\\p{N}_-])(?:${list.map(escapeRegExp).join("|")})(?![\\p{L}\\p{N}_-])`, "gu");
-}
-function sensitiveIndex(packs, allow = [], telemetryIds = []) {
-  const byCase = /* @__PURE__ */ new Map();
-  const always = /* @__PURE__ */ new Set();
-  const capital = /* @__PURE__ */ new Set();
-  const lower2 = /* @__PURE__ */ new Set();
-  for (const pack2 of packs) {
-    for (const c of pack2.cases) {
-      const items = byCase.get(c.id) ?? /* @__PURE__ */ new Set();
-      byCase.set(c.id, items);
-      const prose = [];
-      const values = [];
-      for (const m of c.messages) {
-        if (m.role === "tool") prose.push(m.result);
-        else {
-          prose.push(m.text);
-          if (m.role === "assistant") for (const call of m.tool_calls ?? []) stringsIn(call.input, values);
-        }
-      }
-      if (c.intent !== void 0) values.push(c.intent);
-      values.push(c.provenance.ref);
-      values.push(...Object.keys(c.observed ?? {}));
-      for (const [texts, isProse] of [[prose, true], [values, false]]) {
-        for (const t of texts) {
-          const toks = tokens(t.replace(PLACEHOLDER2, " "));
-          for (const run2 of runsOf(toks.map((x) => x.lower))) items.add(run2);
-          for (const tok of toks) {
-            if (new RegExp("\\p{N}", "u").test(tok.lower)) {
-              if (tok.lower.length >= TOKEN_MIN) always.add(tok.lower);
-              continue;
-            }
-            if (tok.lower.length >= WORD_MIN) items.add(tok.lower);
-            if (tok.word === tok.lower) lower2.add(tok.lower);
-            else if ((!isProse || !tok.starts) && tok.lower.length >= NAME_MIN) capital.add(tok.lower);
-          }
-        }
-      }
-    }
-  }
-  const cases4 = /* @__PURE__ */ new Map();
-  for (const items of byCase.values()) for (const item of items) cases4.set(item, (cases4.get(item) ?? 0) + 1);
-  const few = Math.max(2, Math.ceil(byCase.size * 0.02));
-  const all = /* @__PURE__ */ new Set();
-  for (const [item, count2] of cases4) if (count2 <= few) all.add(item);
-  for (const word of always) all.add(word);
-  const allNames = /* @__PURE__ */ new Set();
-  for (const word of capital) if (!lower2.has(word)) {
-    all.add(word);
-    allNames.add(word);
-  }
-  const identifiers = identifierPattern(packs, (text4) => !carriesConversation(text4, all, allNames));
-  const allowed = /* @__PURE__ */ new Set();
-  for (const t of allow) {
-    const w = words(withoutIdentifiers(t, identifiers));
-    for (const word of w) allowed.add(word);
-    for (const run2 of runsOf(w)) allowed.add(run2);
-  }
-  const phrases = new Set([...all].filter((x) => !allowed.has(x)));
-  const names2 = new Set([...allNames].filter((x) => !allowed.has(x)));
-  const sequences = /* @__PURE__ */ new Set();
-  let maxSequence = 0;
-  for (const id of telemetryIds) {
-    const w = words(id);
-    if (w.join("").length < SEQUENCE_MIN) continue;
-    sequences.add(w.join(" "));
-    maxSequence = Math.max(maxSequence, w.length);
-  }
-  return { phrases, names: names2, identifiers, conversation: { phrases: all, names: allNames }, sequences, maxSequence };
-}
-function telemetryIdentifiers(rows) {
-  const ids = /* @__PURE__ */ new Set();
-  for (const r of rows) {
-    ids.add(r.conversation_id);
-    if (r.unit_id !== void 0) ids.add(r.unit_id);
-  }
-  return [...ids];
-}
-function carriesConversation(text4, phrases, names2, byName = true) {
-  for (const form of /* @__PURE__ */ new Set([text4, rendered(text4)])) {
-    const w = words(form);
-    for (const run2 of runsOf(w)) if (phrases.has(run2)) return true;
-    for (const word of w) if ((byName && names2.has(word) || new RegExp("\\p{N}", "u").test(word)) && phrases.has(word)) return true;
-    if (!byName) continue;
-    for (let i = 0; i < w.length; i++) {
-      if (new RegExp("\\p{N}", "u").test(w[i])) continue;
-      let joined = w[i];
-      for (let j = i + 1; j < w.length && j < i + JOIN_WORDS && !new RegExp("\\p{N}", "u").test(w[j]); j++) {
-        joined += w[j];
-        if (joined.length > JOIN_CHARS) break;
-        if (joined.length >= JOIN_MIN && names2.has(joined)) return true;
-      }
-    }
-  }
-  return false;
-}
-function carriesConversationContent(text4, index, byName = true) {
-  return carriesConversation(text4, index.conversation.phrases, index.conversation.names, byName);
-}
-function decodedForms(text4) {
-  const out = [];
-  for (const m of text4.matchAll(/[A-Za-z0-9+/_-]{8,}={0,2}/g)) {
-    const bytes = Buffer.from(m[0], "base64");
-    if (printable3(bytes)) out.push(bytes.toString("utf8"));
-  }
-  for (const m of text4.matchAll(/(?<![0-9a-fA-F])(?:[0-9a-fA-F]{2}){4,}(?![0-9a-fA-F])/g)) {
-    const bytes = Buffer.from(m[0], "hex");
-    if (printable3(bytes)) out.push(bytes.toString("utf8"));
-  }
-  return out;
-}
-function egressProblems(text4, index) {
-  const problems = personalDataKinds(text4).map((kind) => `contains what looks like ${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}`);
-  if (MIXED.test(rendered(text4).normalize("NFKD").replace(new RegExp("\\p{Cf}", "gu"), ""))) problems.push("contains a word that mixes alphabets, which is how a look-alike letter hides a name");
-  if (index !== null) {
-    const rest = withoutIdentifiers(text4, index.identifiers);
-    const hits = (part) => {
-      const single = /* @__PURE__ */ new Set();
-      const copied = /* @__PURE__ */ new Set();
-      const scan = (form, strict) => {
-        const w = words(form);
-        for (const run2 of runsOf(w)) if (index.phrases.has(run2)) copied.add(run2);
-        for (const word of w) if (index.phrases.has(word) && (strict || word.length >= 6)) single.add(word);
-        for (let i = 0; i < w.length; i++) {
-          if (new RegExp("\\p{N}", "u").test(w[i])) continue;
-          let joined = w[i];
-          for (let j = i + 1; j < w.length && j < i + JOIN_WORDS && !new RegExp("\\p{N}", "u").test(w[j]); j++) {
-            joined += w[j];
-            if (joined.length > JOIN_CHARS) break;
-            if (strict && joined.length >= JOIN_MIN && index.names.has(joined)) single.add(joined);
-          }
-        }
-        for (let i = 0; i < w.length && index.maxSequence > 0; i++) {
-          for (let n = 1; n <= index.maxSequence && i + n <= w.length; n++) if (index.sequences.has(w.slice(i, i + n).join(" "))) single.add(w.slice(i, i + n).join(" "));
-        }
-      };
-      const forms = /* @__PURE__ */ new Set([part, rendered(part)]);
-      for (const form of forms) scan(form, true);
-      const before = copied.size + single.size;
-      for (const form of forms) {
-        for (const decoded of decodedForms(form)) scan(decoded, true);
-        scan(rot13(form), false);
-      }
-      return { copied, single, encoded: copied.size + single.size - before };
-    };
-    const all = hits(rest);
-    if (all.copied.size > 0 || all.single.size > 0) {
-      const copiedOn = [];
-      const singleOn = [];
-      rest.split("\n").forEach((line, i) => {
-        const h = hits(line);
-        if (h.copied.size > 0) copiedOn.push(i + 1);
-        if (h.single.size > 0) singleOn.push(i + 1);
-      });
-      if (all.copied.size > 0) problems.push(`contains wording copied from pack conversations (${all.copied.size} matches${listed(copiedOn)})`);
-      if (all.single.size > 0) problems.push(`contains a name, identifier or word that belongs to particular pack conversations (${all.single.size} matches${listed(singleOn)})`);
-      if (all.encoded > 0) problems.push(`contains encoded or scrambled text (base64, hex or rot13) that decodes to content from pack conversations (${all.encoded} matches)`);
-    }
-  }
-  return problems;
-}
-function assertEgressSafe(text4, index, what) {
-  const problems = egressProblems(text4, index);
-  if (problems.length === 0) return;
-  throw new PilotError("egress_blocked", `Nothing was sent: the ${what} ${problems.join("; ")}. Remove that content and try again.`);
-}
-function modelTextProblem(text4, cap = MAX_MODEL_TEXT_CHARS) {
-  if (text4.trim() === "") return "it is empty";
-  if (text4.length > cap) return `it is longer than ${cap} characters`;
-  if (!/^[\p{Script=Latin}\p{N} .,;:!?'"()\/%&+_-]+$/u.test(text4)) return "it has characters other than plain words and sentence punctuation";
-  if (MIXED.test(text4.normalize("NFKD"))) return "it has a word that mixes alphabets";
-  for (const token2 of text4.split(/[ .,;:!?'"()\/%&+_-]+/)) {
-    if (token2.length >= 20) return "it has a very long unbroken word, which may be an encoded run";
-    if (token2.length >= 8 && new RegExp("\\p{L}", "u").test(token2) && new RegExp("\\p{N}", "u").test(token2)) return "it has a word that mixes letters and digits, which may be an encoded run";
-    if (token2.length >= 8 && /[a-z][A-Z]/.test(token2)) return "it has a word with capitals inside it, which may be an encoded run";
-    if (token2.length >= 8 && !/[aeiouyAEIOUY]/.test(token2)) return "it has a word with no vowels, which may be an encoded run";
-  }
-  return null;
-}
-var RUN, WORD_MIN, TOKEN_MIN, NAME_MIN, JOIN_MIN, JOIN_WORDS, JOIN_CHARS, SEQUENCE_MIN, LOOKALIKES, normal, PLACEHOLDER2, runsOf, MIXED, codePoint, escapeRegExp, MAX_SENTENCE_CHARS, MAX_ID_CHARS, withoutIdentifiers, printable3, rot13, listed, MAX_MODEL_TEXT_CHARS;
-var init_egress = __esm({
-  "src/pilot/egress.ts"() {
-    "use strict";
-    init_errors3();
-    init_pii();
-    RUN = 3;
-    WORD_MIN = 5;
-    TOKEN_MIN = 3;
-    NAME_MIN = 2;
-    JOIN_MIN = 4;
-    JOIN_WORDS = 16;
-    JOIN_CHARS = 40;
-    SEQUENCE_MIN = 6;
-    LOOKALIKES = new Map(
-      "\u0410A \u0412B \u0415E \u041AK \u041CM \u041DH \u041EO \u0420P \u0421C \u0422T \u0423Y \u0425X \u0405S \u0406I \u0408J \u0430a \u0435e \u043Eo \u0440p \u0441c \u0443y \u0445x \u0455s \u0456i \u0458j \u0501d \u051Bq \u051Dw \u04BBh \u0391A \u0392B \u0395E \u0396Z \u0397H \u0399I \u039AK \u039CM \u039DN \u039FO \u03A1P \u03A4T \u03A5Y \u03A7X \u03BFo \u03BDv \u03B9i \u03BAk \u03C1p \u1D00A \u0299B \u1D04C \u1D05D \u1D07E \uA730F \u0262G \u029CH \u026AI \u1D0AJ \u1D0BK \u029FL \u1D0DM \u0274N \u1D0FO \u1D18P \u0280R \uA731S \u1D1BT \u1D1CU \u1D20V \u1D21W \u028FY \u1D22Z \u0131i \u0130I \u0251a \u0261g \u0269i \u01C0l \u04CFl \u212Ee \uA793c \u0275o \u0585o \u057Du \u0581g \u0570h \u0578n \u057Cn \u0511e \u050Dg \u0455s \u13AAA \u13F4B \u13DFC \u13A0D \u13ACE \u13C0G \u13BBH \u13ABJ \u13E6K \u13DEL \u13B7M \u13DAS \u13A2T \u13D9V \u13D4W \u13C3Z".split(" ").map((p) => [p[0], p[1]])
-    );
-    normal = (text4) => text4.normalize("NFKD").replace(/[\p{M}\p{Cf}]/gu, "").replace(/[^\x00-\x7f]/g, (ch) => LOOKALIKES.get(ch) ?? ch);
-    PLACEHOLDER2 = /[[<{]{1,2}[A-Z][A-Z0-9_]{1,40}[\]>}]{1,2}/g;
-    runsOf = (w) => {
-      const out = [];
-      for (let i = 0; i + RUN <= w.length; i++) out.push(w.slice(i, i + RUN).join(" "));
-      return out;
-    };
-    MIXED = new RegExp("(?=[\\p{L}\\p{M}]*\\p{Script=Latin})(?=[\\p{L}\\p{M}]*[\\p{Script=Cyrillic}\\p{Script=Greek}\\p{Script=Armenian}\\p{Script=Cherokee}\\p{Script=Coptic}])[\\p{L}\\p{M}]+", "u");
-    codePoint = (n) => Number.isInteger(n) && n > 0 && n <= 1114111 && !(n >= 55296 && n <= 57343) ? String.fromCodePoint(n) : " ";
-    escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    MAX_SENTENCE_CHARS = 200;
-    MAX_ID_CHARS = 80;
-    withoutIdentifiers = (text4, identifiers) => identifiers === null ? text4 : text4.replace(identifiers, " ");
-    printable3 = (b) => {
-      if (b.length < 4) return false;
-      let ok = 0;
-      for (const byte of b) if (byte >= 32 && byte < 127 || byte === 10 || byte === 9) ok++;
-      return ok / b.length >= 0.95;
-    };
-    rot13 = (text4) => text4.replace(/[a-z]/gi, (c) => String.fromCharCode((c <= "Z" ? 65 : 97) + (c.charCodeAt(0) - (c <= "Z" ? 65 : 97) + 13) % 26));
-    listed = (lines) => lines.length === 0 ? "" : `; line${lines.length === 1 ? "" : "s"} ${lines.slice(0, 8).join(", ")}${lines.length > 8 ? " and more" : ""}`;
-    MAX_MODEL_TEXT_CHARS = 300;
+    init_client2();
+    init_openai_compatible();
+    init_draft();
+    init_draft();
+    USAGE = "Usage: npx synthe measure draft --examples <file.jsonl> --out <dir> [--problem <problem-file> | --model <model-id>]";
   }
 });
 
@@ -30520,8 +30649,8 @@ function normalQuantile(p) {
 }
 function studentTCdf(t, df) {
   if (!finite(t) || !finite(df) || df <= 0) return null;
-  const tail = 0.5 * incompleteBeta(df / 2, 0.5, df / (df + t * t));
-  return t > 0 ? 1 - tail : tail;
+  const tail2 = 0.5 * incompleteBeta(df / 2, 0.5, df / (df + t * t));
+  return t > 0 ? 1 - tail2 : tail2;
 }
 function studentTQuantile(p, df) {
   if (!finite(p) || p <= 0 || p >= 1 || !finite(df) || df <= 0) return null;
@@ -30679,10 +30808,2666 @@ var init_stats = __esm({
   }
 });
 
+// src/solve/decide.ts
+function compare(direction, before, after) {
+  const a = meanSummary(after), b = meanSummary(before);
+  if (a.mean === null || b.mean === null) return { better: false, p: null };
+  const gain = direction === "higher" ? a.mean - b.mean : b.mean - a.mean;
+  const scale = Math.max(1, Math.abs(a.mean), Math.abs(b.mean));
+  const better = gain > DUST * scale;
+  if (a.sd === null || b.sd === null) return { better, p: null };
+  const va = a.sd * a.sd / a.n, vb = b.sd * b.sd / b.n;
+  const se2 = va + vb;
+  if (se2 <= (DUST * scale) ** 2) return { better, p: better ? 0 : 1 };
+  const df = se2 * se2 / (va * va / (a.n - 1) + vb * vb / (b.n - 1));
+  const cdf = studentTCdf(gain / Math.sqrt(se2), df);
+  return { better, p: cdf === null ? 1 : 1 - cdf };
+}
+function look(direction, before, after, alpha, second) {
+  const c = compare(direction, before.runs, after.runs);
+  const nums = `${plainNumber(before.value)} -> ${plainNumber(after.value)}`;
+  const exact = c.p === null || c.p === 0;
+  if (!c.better) return { keep: false, exact, reason: `Not better: the score went ${nums}, and ${direction} is better.` };
+  if (c.p === null) return { keep: true, exact, reason: `Better: the score went ${nums}.` };
+  const p = `p = ${plainNumber(c.p)}${second ? ` on ${after.runs.length} runs each` : ""}`;
+  if (c.p >= alpha) return { keep: false, exact, reason: `Within noise: the score went ${nums}, but a move this size happens by chance (${p}).` };
+  return { keep: true, exact, reason: `Better: the score went ${nums}, more than the noise explains (${p}).` };
+}
+function decide(direction, before, after) {
+  const { keep, reason } = look(direction, before, after, SCREEN_ALPHA, false);
+  return { keep, reason };
+}
+async function decideWithConfirm(direction, before, after, remeasure) {
+  const first = look(direction, before, after, SCREEN_ALPHA, false);
+  if (!first.keep || first.exact) return { keep: first.keep, reason: first.reason, before, after };
+  const more = await remeasure();
+  if ("failed" in more) return { keep: false, reason: `Could not measure again to confirm the gain: ${more.failed}`, before, after };
+  const b = join22(before, more.before), a = join22(after, more.after);
+  const second = look(direction, b, a, CONFIRM_ALPHA, true);
+  return { keep: second.keep, reason: second.reason, before: b, after: a };
+}
+var SCREEN_ALPHA, CONFIRM_ALPHA, DUST, join22;
+var init_decide = __esm({
+  "src/solve/decide.ts"() {
+    "use strict";
+    init_stats();
+    init_verdict();
+    SCREEN_ALPHA = 0.1;
+    CONFIRM_ALPHA = 5e-3;
+    DUST = 1e-9;
+    join22 = (a, b) => {
+      const runs = [...a.runs, ...b.runs];
+      const s = [...runs].sort((x, y) => x - y), mid = Math.floor(s.length / 2);
+      return { runs, value: s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2 };
+    };
+  }
+});
+
+// src/solve/cost.ts
+function meterFor(problem) {
+  let m = meters.get(problem);
+  if (!m) {
+    m = new CostMeter(problem.model?.prices, problem.budget.max_usd ?? null);
+    meters.set(problem, m);
+  }
+  return m;
+}
+var BudgetError, dollars, CostMeter, meters;
+var init_cost3 = __esm({
+  "src/solve/cost.ts"() {
+    "use strict";
+    BudgetError = class extends Error {
+    };
+    dollars = (usd) => "$" + usd.toFixed(usd < 1 ? 4 : 2);
+    CostMeter = class {
+      calls = 0;
+      inputTokens = 0;
+      outputTokens = 0;
+      usd = 0;
+      dearest = 0;
+      reserved = 0;
+      inFlight = 0;
+      finished = [];
+      prices;
+      maxUsd;
+      constructor(prices, maxUsd) {
+        this.prices = prices;
+        this.maxUsd = maxUsd;
+      }
+      costOf(input, output) {
+        return this.prices ? (input * this.prices.input_per_mtok + output * this.prices.output_per_mtok) / 1e6 : 0;
+      }
+      // A plain stop reason when the next call would take the known cost above budget.max_usd, else null.
+      stopReason() {
+        if (this.maxUsd === null || !this.prices) return null;
+        if (this.usd >= this.maxUsd || this.usd + this.reserved + this.dearest > this.maxUsd) {
+          return `Reached the cost limit: ${dollars(this.usd)} spent, and the next model call could take it above ${dollars(this.maxUsd)}.`;
+        }
+        return null;
+      }
+      // Counts one finished call. Tokens the provider did not report count as 0.
+      add(usage) {
+        this.calls++;
+        const input = usage?.input ?? 0, output = usage?.output ?? 0;
+        this.inputTokens += input;
+        this.outputTokens += output;
+        const cost = this.costOf(input, output);
+        this.usd += cost;
+        this.dearest = Math.max(this.dearest, cost);
+      }
+      // usd is null when model calls were made without model.prices; with no calls it is 0.
+      summary() {
+        const usd = this.prices || this.calls === 0 ? Math.round(this.usd * 1e6) / 1e6 : null;
+        return { calls: this.calls, input_tokens: this.inputTokens, output_tokens: this.outputTokens, usd };
+      }
+      // The client that every model call of the run goes through. A call the budget refuses throws BudgetError and is
+      // not counted. A call that fails after it was sent still counts: the provider may have charged for it.
+      wrap(model) {
+        return {
+          ask: async (a) => {
+            const capped = this.maxUsd !== null && this.prices !== void 0;
+            while (capped && this.calls === 0 && this.inFlight > 0) await new Promise((resolve11) => this.finished.push(resolve11));
+            const why = this.stopReason();
+            if (why) throw new BudgetError(why);
+            const hold = this.dearest;
+            this.reserved += hold;
+            this.inFlight++;
+            const release = () => {
+              this.reserved -= hold;
+              this.inFlight--;
+              for (const wake of this.finished.splice(0)) wake();
+            };
+            let reply;
+            try {
+              reply = await model.ask(a);
+            } catch (e) {
+              this.add(void 0);
+              release();
+              throw e;
+            }
+            this.add(reply.usage);
+            release();
+            return reply;
+          }
+        };
+      }
+    };
+    meters = /* @__PURE__ */ new WeakMap();
+  }
+});
+
+// src/solve/history.ts
+import { execFileSync as execFileSync6 } from "node:child_process";
+import { appendFileSync as appendFileSync2, existsSync as existsSync17, mkdirSync as mkdirSync8, readFileSync as readFileSync21 } from "node:fs";
+import { isAbsolute as isAbsolute3, join as join23, resolve as resolve5 } from "node:path";
+function gitCommonDir(dir) {
+  const out = execFileSync6("git", ["rev-parse", "--git-common-dir"], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return isAbsolute3(out) ? out : resolve5(dir, out);
+}
+function historyFile(dir, name) {
+  if (!NAME.test(name)) throw new Error(`The problem name "${name}" can hold only letters, digits and "-".`);
+  return join23(gitCommonDir(dir), "synthe", "solve", name, "history.jsonl");
+}
+function parse(line) {
+  try {
+    const e = JSON.parse(line);
+    if (!e || typeof e !== "object" || typeof e.round !== "number" || typeof e.summary !== "string" || typeof e.kept !== "boolean" || typeof e.reason !== "string") return null;
+    return { round: e.round, summary: e.summary, kept: e.kept, reason: e.reason, run: typeof e.run === "number" ? e.run : 0, at: typeof e.at === "string" ? e.at : "" };
+  } catch {
+    return null;
+  }
+}
+function readStored(dir, name) {
+  const file = historyFile(dir, name);
+  if (!existsSync17(file)) return [];
+  return readFileSync21(file, "utf8").split("\n").filter((l) => l.trim()).map(parse).filter((e) => e !== null);
+}
+function readHistory(dir, name) {
+  return readStored(dir, name).map(({ round, summary, kept, reason }) => ({ round, summary, kept, reason }));
+}
+function nextRun(dir, name) {
+  return readStored(dir, name).reduce((max, e) => Math.max(max, e.run), 0) + 1;
+}
+function appendHistory(dir, name, entries, run2 = nextRun(dir, name)) {
+  if (entries.length === 0) return;
+  const file = historyFile(dir, name);
+  mkdirSync8(join23(file, ".."), { recursive: true });
+  const at = (/* @__PURE__ */ new Date()).toISOString();
+  const lines = entries.map((e) => JSON.stringify({ round: e.round, summary: e.summary, kept: e.kept, reason: e.reason, run: run2, at }));
+  appendFileSync2(file, lines.join("\n") + "\n");
+}
+var NAME;
+var init_history = __esm({
+  "src/solve/history.ts"() {
+    "use strict";
+    NAME = /^[A-Za-z0-9-]+$/;
+  }
+});
+
+// src/solve/measure.ts
+function lastNumber2(stdout) {
+  const all = stdout.match(NUMBER2);
+  if (!all) return null;
+  const n = Number(all[all.length - 1].replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+function tail(text4, lines = 3) {
+  const t = text4.trim().split("\n").slice(-lines).join(" | ").trim();
+  return t.length > 300 ? `...${t.slice(-300)}` : t;
+}
+function failureLines(text4) {
+  const lines = text4.split("\n").map((l) => l.trim()).filter((l) => l && !/^npm (error|ERR!)/i.test(l));
+  const notOk = lines.filter((l) => /^not ok\b/.test(l));
+  const picked = notOk.length ? notOk : lines.filter((l) => /\b(error|fail(ed|ure|s)?|assert)/i.test(l) && !/^# (fail|pass|tests)\b/.test(l));
+  const t = picked.slice(0, 3).join(" | ");
+  return t.length > 300 ? `${t.slice(0, 300)}...` : t;
+}
+function commandFailure(what, command, r) {
+  if (r.timedOut) return `${what} \`${command}\` did not finish in time.`;
+  const said = failureLines(`${r.stdout}
+${r.stderr}`) || tail(r.stderr) || tail(r.stdout);
+  return `${what} \`${command}\` failed${said ? `: ${said}` : " and printed nothing"}.`;
+}
+async function measure(checkout, problem, ctx = {}) {
+  const m = problem.measure;
+  if (isJudged(m)) return { failed: "A judged measure has no command to run; judge.ts compares judged versions." };
+  const env = {};
+  if (ctx.split) env.SYNTHE_SPLIT = ctx.split;
+  if (ctx.seed !== void 0) env.SYNTHE_SEED = String(ctx.seed);
+  const runs = [];
+  for (let i = 0; i < Math.max(1, m.runs); i++) {
+    const r = await runCommand(checkout, m.command, { env });
+    if (!r.ok) return { failed: commandFailure("The measure command", m.command, r) };
+    const n = lastNumber2(r.stdout);
+    if (n === null) return { failed: `The measure command \`${m.command}\` printed no number. Its last number on stdout is the score.` };
+    runs.push(n);
+  }
+  return { value: median2(runs), runs };
+}
+async function guardFailure(checkout, problem) {
+  for (const guard2 of problem.guards) {
+    const r = await runCommand(checkout, guard2);
+    if (!r.ok) return { guard: guard2, reason: commandFailure("The guard", guard2, r) };
+  }
+  return null;
+}
+var NUMBER2, median2;
+var init_measure2 = __esm({
+  "src/solve/measure.ts"() {
+    "use strict";
+    init_run2();
+    init_types2();
+    NUMBER2 = /[-+]?(?:\d{1,3}(?:,\d{3})+(?:\.\d*)?(?![\d,]\d)|\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g;
+    median2 = (xs) => {
+      const s = [...xs].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    };
+  }
+});
+
+// src/solve/model-proposer.ts
+function buildUser(input) {
+  const n = input.candidates;
+  return `Make ${n === 1 ? "1 proposal" : `up to ${n} proposals, each a different idea`}.
+
+${JSON.stringify(input, null, 2)}`;
+}
+function jsonIn(text4) {
+  const tries = [text4, text4.match(/```(?:json)?\s*\n?([\s\S]*?)```/i)?.[1], text4.slice(text4.indexOf("{"), text4.lastIndexOf("}") + 1)];
+  for (const t of tries) {
+    if (!t || !t.trim()) continue;
+    try {
+      return JSON.parse(t);
+    } catch {
+    }
+  }
+  throw new Error("not JSON");
+}
+function parseProposals(text4) {
+  let json;
+  try {
+    json = jsonIn(text4);
+  } catch {
+    return { failed: `The model's reply was not valid JSON: ${JSON.stringify(short(text4.trim()))}` };
+  }
+  const list = json?.proposals;
+  if (!json || typeof json !== "object" || !Array.isArray(list)) return { failed: `The model's reply had no "proposals" list.` };
+  const proposals = [];
+  for (const [i, p] of list.entries()) {
+    const at = `Proposal ${i + 1} in the model's reply`;
+    if (!p || typeof p !== "object") return { failed: `${at} is not an object.` };
+    const { summary, edits } = p;
+    if (typeof summary !== "string" || !summary.trim()) return { failed: `${at} has no "summary".` };
+    if (!Array.isArray(edits) || edits.length === 0) return { failed: `${at} has no "edits".` };
+    const out = [];
+    for (const [j, e] of edits.entries()) {
+      const { path: path4, search, replace } = e ?? {};
+      if (typeof path4 !== "string" || typeof search !== "string" || typeof replace !== "string") {
+        return { failed: `Edit ${j + 1} of proposal ${i + 1} in the model's reply needs "path", "search" and "replace" as text.` };
+      }
+      out.push({ path: path4, search, replace });
+    }
+    proposals.push({ summary: summary.trim(), edits: out });
+  }
+  return { proposals };
+}
+function anthropicKey(env) {
+  const own = env.SYNTHE_ANTHROPIC_KEY?.trim();
+  if (own) return own;
+  const shared = env.SYNTHE_API_KEY?.trim() ?? "";
+  return shared.startsWith("sk-ant-") ? shared : "";
+}
+function problemModel(problem, env = process.env, client) {
+  const config = problem.model;
+  if (!config?.model) throw new SetupError('A "model" proposer or judge needs model.model in the problem file.');
+  const anthropic = config.provider === "anthropic";
+  const key = anthropic ? anthropicKey(env) : env.SYNTHE_API_KEY?.trim() ?? "";
+  if (!client) {
+    if (anthropic && !key) throw new SetupError('A "model" proposer or judge with provider "anthropic" needs a key: set SYNTHE_ANTHROPIC_KEY (or an sk-ant- key in SYNTHE_API_KEY).');
+    if (!anthropic && !config.base_url) throw new SetupError('A "model" proposer or judge needs model.base_url in the problem file.');
+    if (!anthropic && !key) throw new SetupError('A "model" proposer or judge needs a key: set the SYNTHE_API_KEY environment variable.');
+  }
+  const raw = client ?? (anthropic ? anthropicModel(key, env) : openAiCompatibleModel({ baseUrl: config.base_url ?? "", apiKey: key }));
+  return {
+    client: meterFor(problem).wrap(raw),
+    model: config.model,
+    hide: (text4) => key ? text4.split(key).join("[your key]") : text4
+  };
+}
+function noTextReason(stopReason) {
+  return stopReason === "length" || stopReason === "max_tokens" ? "it was cut off at the length limit" : stopReason === "refusal" ? "the model refused" : `it ended with "${stopReason ?? "no reason"}"`;
+}
+function modelProposer(problem, env = process.env, client) {
+  const { client: model, model: id, hide } = problemModel(problem, env, client);
+  const ask2 = async (request) => {
+    try {
+      const reply = await model.ask({ model: id, system: SYSTEM, user: buildUser(request), maxTokens: MAX_TOKENS, schema: PROPOSALS_SCHEMA });
+      if (reply.text === null) return { failed: hide(`The model gave no usable reply: ${noTextReason(reply.stopReason)}.`) };
+      const parsed = parseProposals(reply.text);
+      return "failed" in parsed ? { failed: hide(parsed.failed) } : parsed;
+    } catch (error) {
+      return { failed: hide(`The model request failed: ${error instanceof Error ? error.message : String(error)}`) };
+    }
+  };
+  return { propose: async (request) => ({ reply: await ask2(request), calls: 1 }) };
+}
+var MAX_TOKENS, PROPOSALS_SCHEMA, SYSTEM, short;
+var init_model_proposer = __esm({
+  "src/solve/model-proposer.ts"() {
+    "use strict";
+    init_client2();
+    init_openai_compatible();
+    init_cost3();
+    init_loop();
+    MAX_TOKENS = 16e3;
+    PROPOSALS_SCHEMA = {
+      type: "object",
+      additionalProperties: false,
+      required: ["proposals"],
+      properties: {
+        proposals: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["summary", "edits"],
+            properties: {
+              summary: { type: "string" },
+              edits: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["path", "search", "replace"],
+                  properties: { path: { type: "string" }, search: { type: "string" }, replace: { type: "string" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    };
+    SYSTEM = [
+      "You improve files so that a measured score gets better.",
+      "You get a JSON object: the goal, the files you may change with their current text, the history of earlier attempts with whether each was kept and why, and how many proposals to make.",
+      "Learn from the history: do not repeat an attempt that was not kept, and build on attempts that were kept.",
+      'Reply with only a JSON object: {"proposals": [{"summary": "...", "edits": [{"path": "...", "search": "...", "replace": "..."}]}]}.',
+      "Each proposal is one idea, with a one-sentence summary. Each edit replaces the search text with the replace text in the file at path.",
+      "The search text must occur exactly once in that file, copied exactly, with enough context to be unique.",
+      'Change only the files you were given. If you have nothing more worth trying, reply with {"proposals": []}.'
+    ].join("\n");
+    short = (s) => s.length > 200 ? `${s.slice(0, 200)}...` : s;
+  }
+});
+
+// src/solve/model-compare.ts
+import { readFileSync as readFileSync22 } from "node:fs";
+import { join as join24 } from "node:path";
+function winnerIn(text4) {
+  for (const t of [text4.trim(), text4.match(/\{[^{}]*\}(?![\s\S]*\{)/)?.[0] ?? ""]) {
+    try {
+      const w = JSON.parse(t)?.winner;
+      if (w === "a" || w === "b" || w === "tie") return w;
+    } catch {
+    }
+  }
+  return null;
+}
+function rubricText(problem) {
+  const m = problem.measure;
+  if (!isJudged(m) || !m.judge.rubric) return void 0;
+  try {
+    return readFileSync22(join24(problem.dir, m.judge.rubric), "utf8").trim() || void 0;
+  } catch {
+    throw new SetupError(`Synthe can't read the rubric ${m.judge.rubric} (measure.judge.rubric).`);
+  }
+}
+function modelCompare(problem, env = process.env, client) {
+  const { client: model, model: id, hide } = problemModel(problem, env, client);
+  const rubric = rubricText(problem);
+  return async (c, a, b) => {
+    try {
+      const user2 = JSON.stringify({ goal: problem.goal, ...rubric ? { rubric } : {}, case: c, a, b }, null, 2);
+      const reply = await model.ask({ model: id, system: JUDGE_SYSTEM, user: user2, maxTokens: MAX_TOKENS2, schema: WINNER_SCHEMA });
+      if (reply.text === null) return { failed: hide(`The model judge gave no usable reply: ${noTextReason(reply.stopReason)}.`) };
+      const w = winnerIn(reply.text);
+      return w ?? { failed: hide(`The model judge did not answer {"winner": "a" | "b" | "tie"}: ${JSON.stringify(reply.text.trim().slice(0, 200))}`) };
+    } catch (error) {
+      return { failed: hide(`The model judge request failed: ${error instanceof Error ? error.message : String(error)}`) };
+    }
+  };
+}
+var MAX_TOKENS2, WINNER_SCHEMA, JUDGE_SYSTEM;
+var init_model_compare = __esm({
+  "src/solve/model-compare.ts"() {
+    "use strict";
+    init_loop();
+    init_model_proposer();
+    init_types2();
+    MAX_TOKENS2 = 2e3;
+    WINNER_SCHEMA = {
+      type: "object",
+      additionalProperties: false,
+      required: ["winner"],
+      properties: { winner: { type: "string", enum: ["a", "b", "tie"] } }
+    };
+    JUDGE_SYSTEM = [
+      "You judge which of two outputs better meets the goal for one input.",
+      "You get a JSON object: the goal, maybe a rubric, the case with its input, and two outputs, a and b.",
+      "When there is a rubric, judge by its criteria, most important first.",
+      "Judge only the quality of the output for the goal. The order of a and b means nothing, and a longer output is not better for being longer.",
+      'Reply with only a JSON object: {"winner": "a"}, {"winner": "b"}, or {"winner": "tie"} when neither is better.'
+    ].join("\n");
+  }
+});
+
+// src/solve/judge.ts
+import { readFileSync as readFileSync23 } from "node:fs";
+import { join as join25 } from "node:path";
+function readCases(problemDir, casesPath) {
+  let text4;
+  try {
+    text4 = readFileSync23(join25(problemDir, casesPath), "utf8");
+  } catch {
+    return { failed: `Could not read the cases file ${casesPath}.` };
+  }
+  const cases4 = [];
+  const seen = /* @__PURE__ */ new Set();
+  const lines = text4.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    let c;
+    try {
+      c = JSON.parse(lines[i]);
+    } catch {
+      return { failed: `Line ${i + 1} of ${casesPath} is not valid JSON.` };
+    }
+    if (!c || typeof c !== "object" || Array.isArray(c) || !("id" in c) || !("input" in c)) {
+      return { failed: `Line ${i + 1} of ${casesPath} needs an "id" and an "input".` };
+    }
+    const id = String(c.id);
+    if (seen.has(id)) return { failed: `The case id ${id} occurs more than once in ${casesPath}.` };
+    seen.add(id);
+    cases4.push({ ...c, id });
+  }
+  if (cases4.length === 0) return { failed: `${casesPath} has no cases.` };
+  return cases4;
+}
+async function eachLimited(items, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PARALLEL, items.length) }, worker));
+  return out;
+}
+async function runCases(checkoutDir, run2, cases4) {
+  const results = await eachLimited(cases4, async (c) => ({ c, r: await runCommand(checkoutDir, run2, { stdin: JSON.stringify(c) + "\n" }) }));
+  const outputs = {};
+  for (const { c, r } of results) {
+    if (!r.ok) return { failed: `For case ${c.id}: ${commandFailure("The run command", run2, r)}` };
+    outputs[c.id] = r.stdout.replace(/\s+$/, "");
+  }
+  return outputs;
+}
+function parseWinner(stdout) {
+  const lines = stdout.trim().split("\n").reverse();
+  for (const text4 of [stdout.trim(), ...lines]) {
+    try {
+      const w = JSON.parse(text4)?.winner;
+      if (w === "a" || w === "b" || w === "tie") return w;
+    } catch {
+    }
+  }
+  return null;
+}
+function commandCompare(problemDir, command) {
+  return async (c, a, b) => {
+    const r = await runCommand(problemDir, command, { stdin: JSON.stringify({ case: c, a, b }) + "\n" });
+    if (!r.ok) return { failed: commandFailure("The compare command", command, r) };
+    const w = parseWinner(r.stdout);
+    return w ?? { failed: `The compare command \`${command}\` did not print {"winner": "a" | "b" | "tie"}.` };
+  };
+}
+function signTestP(wins, losses) {
+  const n = wins + losses;
+  if (n === 0) return 1;
+  let p = 0;
+  let term = Math.pow(0.5, n);
+  for (let k = 0; k <= n; k++) {
+    if (k >= wins) p += term;
+    term = term * (n - k) / (k + 1);
+  }
+  return Math.min(1, p);
+}
+async function askTwice(compare2, c, kept, cand) {
+  const first = await compare2(c, kept, cand);
+  if (typeof first !== "string") return first;
+  const second = await compare2(c, cand, kept);
+  if (typeof second !== "string") return second;
+  const candFirst = first === "b" ? 1 : first === "a" ? -1 : 0;
+  const candSecond = second === "a" ? 1 : second === "b" ? -1 : 0;
+  const sum = candFirst + candSecond;
+  return { score: sum === 2 ? 1 : sum === -2 ? -1 : 0, split: candFirst * candSecond === -1 };
+}
+function tally2(scores) {
+  const wins = scores.filter((s) => s.score > 0).length;
+  const losses = scores.filter((s) => s.score < 0).length;
+  const splits = scores.filter((s) => s.split).length;
+  return { wins, losses, ties: scores.length - wins - losses, splits, p: signTestP(wins, losses) };
+}
+async function judgeOutputs(cases4, kept, cand, compare2, alpha = JUDGE_ALPHA) {
+  let calls2 = 0;
+  const counted = async (c, a, b) => {
+    calls2++;
+    return compare2(c, a, b);
+  };
+  const raw = await eachLimited(cases4, (c) => askTwice(counted, c, kept[c.id] ?? "", cand[c.id] ?? ""));
+  const failed = raw.find((r2) => "failed" in r2);
+  if (failed) return { keep: false, reason: `The judge failed: ${failed.failed}`, calls: calls2, share: 0.5 };
+  const rawScores = raw;
+  const r = tally2(rawScores);
+  const share = (r.wins + r.ties / 2) / cases4.length;
+  const n = cases4.length;
+  if (r.wins <= r.losses || r.p >= alpha) {
+    let reason = `The judge did not clearly prefer it: of ${plural2(n, "case")} it ${score(r)} (sign test p = ${r.p.toFixed(3)}, needs < ${alpha}).`;
+    if (r.splits > 0 && r.splits >= r.wins + r.losses) {
+      reason += ` In ${plural2(r.splits, "case")} the judge picked whichever output came first or second, so its choice followed the position, not the output.`;
+    }
+    return { keep: false, reason, calls: calls2, share, raw: r };
+  }
+  const longerWins = cases4.filter((c, i) => rawScores[i].score > 0 && (cand[c.id] ?? "").length > (kept[c.id] ?? "").length).length;
+  const note = longerWins === r.wins ? " Every output it preferred was also longer, so check that your judge does not favour length." : "";
+  return {
+    keep: true,
+    reason: `The judge preferred it in both orders: of ${plural2(n, "case")} it ${score(r)} (sign test p = ${r.p.toFixed(3)}).${note}`,
+    calls: calls2,
+    share,
+    raw: r
+  };
+}
+var JUDGE_ALPHA, PARALLEL, plural2, score;
+var init_judge = __esm({
+  "src/solve/judge.ts"() {
+    "use strict";
+    init_measure2();
+    init_model_compare();
+    init_run2();
+    init_types2();
+    JUDGE_ALPHA = 0.05;
+    PARALLEL = 4;
+    plural2 = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+    score = (t) => `won ${t.wins}, lost ${t.losses}, tied ${t.ties}`;
+  }
+});
+
+// src/solve/report.ts
+import { mkdirSync as mkdirSync9, writeFileSync as writeFileSync10 } from "node:fs";
+import { join as join26 } from "node:path";
+function writeReport(outDir, result2, extras = {}) {
+  mkdirSync9(outDir, { recursive: true });
+  const json = join26(outDir, "result.json");
+  const md = join26(outDir, "report.md");
+  const ordered = {
+    problem: result2.problem,
+    stopped: result2.stopped,
+    baseline: result2.baseline,
+    final: result2.final,
+    branch: result2.branch,
+    attempts: result2.attempts.map((a) => ({ round: a.round, summary: a.summary, kept: a.kept, reason: a.reason, ...a.before === void 0 ? {} : { before: a.before }, ...a.after === void 0 ? {} : { after: a.after } })),
+    ...result2.cost ? { cost: result2.cost } : {}
+  };
+  writeFileSync10(json, JSON.stringify(ordered, null, 2) + "\n");
+  writeFileSync10(md, renderReport(ordered, extras));
+  return { json, md };
+}
+function formatNumber(n, unit) {
+  if (n === null || n === void 0 || !Number.isFinite(n)) return "-";
+  const rounded = Math.abs(n) >= 100 ? n.toFixed(1) : Number(n.toPrecision(4)).toString();
+  return unit ? `${rounded} ${unit}` : rounded;
+}
+function cell2(text4) {
+  return text4.replace(/\r?\n+/g, " ").replace(/\|/g, "\\|").trim() || "-";
+}
+function renderReport(r, extras = {}) {
+  const u = extras.unit;
+  const kept = r.attempts.filter((a) => a.kept);
+  const lines = [`# Synthe solve: ${r.problem}`, ""];
+  if (extras.goal) lines.push(`Goal: ${extras.goal}`, "");
+  const better = extras.direction === "lower" ? "lower is better" : extras.direction === "higher" ? "higher is better" : "";
+  lines.push(`- Baseline: ${formatNumber(r.baseline, u)}${better ? ` (${better})` : ""}`);
+  lines.push(`- Final: ${formatNumber(r.final, u)}`);
+  lines.push(`- Attempts: ${r.attempts.length}, kept: ${kept.length}`);
+  lines.push(`- Stopped: ${r.stopped}`);
+  if (r.cost && r.cost.calls > 0) {
+    const usd = r.cost.usd === null ? "cost unknown (set model.prices to see it)" : `${r.cost.usd.toFixed(4)} US dollars`;
+    lines.push(`- Model calls: ${r.cost.calls} (${r.cost.input_tokens} input tokens, ${r.cost.output_tokens} output tokens), ${usd}`);
+  }
+  lines.push(r.branch ? `- Kept changes are on branch \`${r.branch}\`. Your working tree and current branch did not change.` : "- No change was kept, so Synthe made no branch. Your working tree and current branch did not change.");
+  lines.push("");
+  if (r.attempts.length) {
+    lines.push("## Attempts", "", "| Round | Change | Kept | Before | After | Reason |", "|---|---|---|---|---|---|");
+    for (const a of r.attempts) {
+      lines.push(`| ${a.round} | ${cell2(a.summary)} | ${a.kept ? "kept" : "not kept"} | ${formatNumber(a.before, u)} | ${formatNumber(a.after, u)} | ${cell2(a.reason)} |`);
+    }
+    lines.push("");
+  } else {
+    lines.push("No attempts were made.", "");
+  }
+  lines.push("## Next step", "");
+  if (r.branch) lines.push(`Read the diff with \`git diff HEAD...${r.branch}\`. If you agree with it, merge the branch.`);
+  else lines.push("Read the reasons above. Then change the goal, the measure or the proposer, and run `synthe solve` again.");
+  lines.push("");
+  return lines.join("\n");
+}
+var init_report = __esm({
+  "src/solve/report.ts"() {
+    "use strict";
+  }
+});
+
+// src/solve/resume.ts
+import { existsSync as existsSync18, mkdirSync as mkdirSync10, readFileSync as readFileSync24, renameSync as renameSync3, writeFileSync as writeFileSync11 } from "node:fs";
+import { join as join27 } from "node:path";
+function readRun(gitDir, name) {
+  const file = fileOf(gitDir, name);
+  if (!existsSync18(file)) return null;
+  try {
+    const r = JSON.parse(readFileSync24(file, "utf8"));
+    const ok = r && typeof r.run === "number" && (r.status === "running" || r.status === "ended") && typeof r.branch === "string" && typeof r.base === "string" && typeof r.head === "string" && typeof r.rounds === "number" && Array.isArray(r.attempts);
+    if (!ok) return null;
+    return {
+      run: r.run,
+      status: r.status,
+      branch: r.branch,
+      base: r.base,
+      head: r.head,
+      root: typeof r.root === "string" ? r.root : "",
+      pid: typeof r.pid === "number" ? r.pid : 0,
+      rounds: r.rounds,
+      calls: typeof r.calls === "number" ? r.calls : 0,
+      baseline: typeof r.baseline === "number" ? r.baseline : null,
+      attempts: r.attempts
+    };
+  } catch {
+    return null;
+  }
+}
+function writeRun(gitDir, name, record) {
+  const file = fileOf(gitDir, name);
+  mkdirSync10(join27(file, ".."), { recursive: true });
+  writeFileSync11(`${file}.tmp`, JSON.stringify(record, null, 2) + "\n");
+  renameSync3(`${file}.tmp`, file);
+}
+function stillRunning(record) {
+  if (!record.pid || record.pid === process.pid) return false;
+  try {
+    process.kill(record.pid, 0);
+  } catch {
+    return false;
+  }
+  try {
+    return !/^\d+ \(.*\) Z/.test(readFileSync24(`/proc/${record.pid}/stat`, "utf8"));
+  } catch {
+    return true;
+  }
+}
+function idleRounds(record) {
+  let idle = 0;
+  for (let round = record.rounds; round >= 1; round--) {
+    if (record.attempts.some((a) => a.round === round && a.kept)) break;
+    idle++;
+  }
+  return idle;
+}
+var fileOf;
+var init_resume = __esm({
+  "src/solve/resume.ts"() {
+    "use strict";
+    fileOf = (gitDir, name) => join27(gitDir, "synthe", "solve", name, "run.json");
+  }
+});
+
+// src/solve/scratch.ts
+import { execFileSync as execFileSync7 } from "node:child_process";
+import { existsSync as existsSync19, lstatSync as lstatSync4, mkdtempSync as mkdtempSync3, realpathSync as realpathSync3, rmSync as rmSync4, symlinkSync as symlinkSync2, unlinkSync as unlinkSync3 } from "node:fs";
+import { tmpdir as tmpdir3 } from "node:os";
+import { join as join28, relative as relative4 } from "node:path";
+function git2(cwd, args, input) {
+  return execFileSync7("git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+    input,
+    stdio: [input === void 0 ? "ignore" : "pipe", "pipe", "pipe"],
+    maxBuffer: 64 * 1024 * 1024
+  });
+}
+function tryGit(cwd, args) {
+  try {
+    return git2(cwd, args);
+  } catch {
+    return null;
+  }
+}
+function firstLine4(e) {
+  const err = e;
+  const text4 = String(err.stderr ?? "").trim() || String(err.message ?? e);
+  return text4.split("\n")[0];
+}
+function nextBranch2(top, name) {
+  const prefix = `synthe/solve-${name}-`;
+  const listed2 = tryGit(top, ["for-each-ref", "--format=%(refname:short)", `refs/heads/${prefix}*`]) ?? "";
+  let max = 0;
+  for (const ref of listed2.split("\n")) {
+    const n = Number(ref.trim().slice(prefix.length));
+    if (ref.trim().startsWith(prefix) && Number.isInteger(n) && n > max) max = n;
+  }
+  return `${prefix}${max + 1}`;
+}
+async function openScratch(repoRoot, problemDir, name, resume) {
+  const s = openState(repoRoot, problemDir, name, resume);
+  let closed = false;
+  return {
+    root: s.root,
+    dir: s.dir,
+    branch: s.branch,
+    base: s.base,
+    commit: async (paths, message) => commitKept(s, paths, message),
+    reset: async () => resetScratch(s),
+    close: async (keepBranch) => {
+      if (closed) return;
+      closed = true;
+      closeScratch(s, keepBranch);
+    }
+  };
+}
+function openState(repoRoot, problemDir, name, resume) {
+  const real = realpathSync3(problemDir);
+  const topOut = tryGit(repoRoot || real, ["rev-parse", "--show-toplevel"]);
+  if (!topOut) throw new Error(`${problemDir} is not inside a git repository. Run git init and commit the files first.`);
+  const top = realpathSync3(topOut.trim());
+  const base = resume ? tryGit(top, ["rev-parse", "--verify", `${resume.base}^{commit}`])?.trim() : tryGit(top, ["rev-parse", "--verify", "HEAD^{commit}"])?.trim();
+  if (resume && !base) throw new Error(`The stopped run started from commit ${resume.base.slice(0, 7)}, which is no longer in the repository.`);
+  if (!base) throw new Error(`The repository at ${top} has no commit yet. Commit the files first.`);
+  const rel = relative4(top, real);
+  if (rel && !tryGit(top, ["ls-tree", "-d", "--name-only", base, rel])?.trim()) {
+    throw new Error(`The folder ${rel} is not committed in ${top}. Commit it first: Synthe works only on committed files.`);
+  }
+  const branch = resume ? resume.branch : nextBranch2(top, name);
+  if (resume) releaseBranch(top, resume);
+  const dir = realpathSync3(mkdtempSync3(join28(tmpdir3(), "synthe-solve-")));
+  try {
+    const start2 = resume ? resume.head : base;
+    git2(top, ["worktree", "add", "--quiet", resume ? "-B" : "-b", branch, dir, start2]);
+  } catch (e) {
+    rmSync4(dir, { recursive: true, force: true });
+    throw new Error(`Could not make a scratch checkout on ${branch}: ${firstLine4(e)}`);
+  }
+  const scratch = { top, root: dir, dir: join28(dir, rel), branch, base, links: [] };
+  for (const from of /* @__PURE__ */ new Set([top, real])) {
+    const to = join28(scratch.root, relative4(top, from));
+    for (const name2 of LINKED2) {
+      const source = join28(from, name2);
+      const link = join28(to, name2);
+      if (existsSync19(source) && existsSync19(to) && !existsSync19(link)) {
+        try {
+          symlinkSync2(source, link, process.platform === "win32" ? "junction" : "dir");
+          scratch.links.push(link);
+        } catch {
+        }
+      }
+    }
+  }
+  return scratch;
+}
+function releaseBranch(top, resume) {
+  const list = tryGit(top, ["worktree", "list", "--porcelain"]) ?? "";
+  for (const block of list.split("\n\n")) {
+    const path4 = /^worktree (.+)$/m.exec(block)?.[1];
+    const ref = /^branch (.+)$/m.exec(block)?.[1];
+    if (!path4 || ref !== `refs/heads/${resume.branch}`) continue;
+    if (!/synthe-solve-[^/\\]*$/.test(path4)) throw new Error(`The branch ${resume.branch} is checked out in ${path4}. Switch that checkout to another branch first.`);
+    tryGit(top, ["worktree", "remove", "--force", path4]);
+    rmSync4(path4, { recursive: true, force: true });
+  }
+  tryGit(top, ["worktree", "prune"]);
+}
+function headOf(s) {
+  return git2(s.root, ["rev-parse", "HEAD"]).trim();
+}
+function commitKept(s, paths, message) {
+  if (paths.length) git2(s.root, ["add", "-A", "--", ...paths]);
+  const hasName = tryGit(s.root, ["config", "user.name"])?.trim();
+  const hasEmail = tryGit(s.root, ["config", "user.email"])?.trim();
+  const identity = hasName && hasEmail ? [] : IDENTITY;
+  git2(s.root, [...identity, "-c", "commit.gpgsign=false", "commit", "--no-verify", "--quiet", "--allow-empty", "-F", "-"], message);
+  return headOf(s);
+}
+function resetScratch(s) {
+  git2(s.root, ["reset", "--hard", "--quiet", "HEAD"]);
+  git2(s.root, ["clean", "-fdq", ...LINKED2.flatMap((n) => ["-e", n])]);
+}
+function closeScratch(s, keepBranch) {
+  for (const link of s.links) try {
+    if (lstatSync4(link).isSymbolicLink()) unlinkSync3(link);
+  } catch {
+  }
+  tryGit(s.top, ["worktree", "remove", "--force", s.root]);
+  rmSync4(s.root, { recursive: true, force: true });
+  tryGit(s.top, ["worktree", "prune"]);
+  if (!keepBranch) tryGit(s.top, ["branch", "-D", "--quiet", s.branch]);
+}
+var LINKED2, IDENTITY;
+var init_scratch = __esm({
+  "src/solve/scratch.ts"() {
+    "use strict";
+    LINKED2 = ["node_modules", ".venv", "venv"];
+    IDENTITY = ["-c", "user.name=Synthe", "-c", "user.email=synthe@users.noreply.github.com"];
+  }
+});
+
+// src/solve/loop.ts
+import { execFileSync as execFileSync8 } from "node:child_process";
+import { isAbsolute as isAbsolute4, join as join29, resolve as resolve6 } from "node:path";
+async function runLoop2(steps, options) {
+  const say = steps.say ?? (() => {
+  });
+  const candidates = Math.max(1, options.candidates ?? 1);
+  const patience = options.patience ?? MAX_MISSES2;
+  const earlier = options.history ?? [];
+  const attempts = [];
+  const prior = options.resume?.attempts ?? [];
+  const start2 = await steps.guards();
+  if (!start2.ok) throw new SetupError(`${start2.reason} This is before any change, so no change can be judged. Fix the guard first.`);
+  const first = await steps.measure();
+  if (!first.ok) throw new SetupError(`Could not measure the starting point: ${first.reason}`);
+  let current = first;
+  const baseline2 = options.resume?.baseline ?? first.value;
+  say(options.resume ? `Resuming after round ${options.resume.rounds}. Score now: ${first.value} (baseline ${baseline2}).` : `Starting score: ${first.value}.`);
+  const record = async (attempt) => {
+    attempts.push(attempt);
+    await steps.record?.(attempt);
+    say(`Round ${attempt.round}: ${attempt.summary || "(no summary)"}: ${attempt.kept ? "kept" : "not kept"}. ${attempt.reason}`);
+  };
+  let stopped = `Reached the round limit (${plural3(options.maxRounds, "round")}).`;
+  let idle = options.resume?.idle ?? 0;
+  let round = options.resume?.rounds ?? 0;
+  let keptAny = prior.some((a) => a.kept);
+  while (true) {
+    if (round >= options.maxRounds) break;
+    if (idle >= patience) {
+      stopped = `${plural3(patience, "round")} in a row kept nothing.`;
+      break;
+    }
+    if (options.maxCalls != null && steps.calls && steps.calls() >= options.maxCalls) {
+      stopped = `Reached the model call limit (${plural3(options.maxCalls, "call")}).`;
+      break;
+    }
+    const overBudget = steps.budget?.() ?? null;
+    if (overBudget) {
+      stopped = overBudget;
+      break;
+    }
+    const proposed = await steps.propose(round + 1, [...earlier, ...attempts], candidates);
+    if (proposed.ok && proposed.proposals.length === 0) {
+      stopped = "The proposer had nothing more to try.";
+      break;
+    }
+    round++;
+    let kept = false;
+    if (!proposed.ok) {
+      await record({ round, summary: proposed.summary ?? "", kept: false, reason: `The proposal failed: ${proposed.reason}` });
+    } else {
+      const next = await tryRound(steps, round, proposed.proposals.slice(0, candidates), current, record);
+      if (next) {
+        current = next;
+        kept = true;
+        keptAny = true;
+      }
+    }
+    idle = kept ? 0 : idle + 1;
+    await options.onRound?.(round, [...prior, ...attempts]);
+    if (idle >= patience) {
+      stopped = `${plural3(patience, "round")} in a row kept nothing.`;
+      break;
+    }
+  }
+  return { stopped, baseline: baseline2, final: current.value, attempts: [...prior, ...attempts], rounds: round, keptAny };
+}
+async function tryRound(steps, round, proposals, current, record) {
+  const tried = [];
+  const passed = [];
+  let best = null;
+  for (const proposal of proposals) {
+    const attempt = { round, summary: typeof proposal?.summary === "string" ? proposal.summary : "", kept: false, reason: "" };
+    tried.push(attempt);
+    await steps.reset();
+    const applied = await steps.apply(proposal);
+    if (!applied.ok) {
+      attempt.reason = applied.reason;
+      continue;
+    }
+    const guarded = await steps.guards();
+    if (!guarded.ok) {
+      attempt.reason = guarded.reason;
+      continue;
+    }
+    const measured = await steps.measure();
+    if (!measured.ok) {
+      attempt.reason = `Could not measure the change: ${measured.reason}`;
+      continue;
+    }
+    attempt.before = current.value;
+    attempt.after = measured.value;
+    const decision = await steps.decide(current, measured);
+    attempt.reason = decision.reason;
+    if (decision.value !== void 0) attempt.after = decision.value;
+    if (!decision.keep) continue;
+    passed.push(attempt);
+    const strength = decision.strength ?? 0;
+    if (!best || strength > best.strength) best = { proposal, measured, strength, attempt };
+  }
+  await steps.reset();
+  let next = null;
+  if (best) {
+    const applied = await steps.apply(best.proposal);
+    if (applied.ok) {
+      await steps.keep(best.proposal, round);
+      best.attempt.kept = true;
+      next = best.measured;
+      for (const a of passed) if (a !== best.attempt) a.reason += " A stronger change in the same round was kept instead.";
+    } else {
+      best.attempt.reason += ` It could not be applied again: ${applied.reason}`;
+      await steps.reset();
+    }
+  }
+  for (const a of tried) await record(a);
+  return next;
+}
+function onInterrupt(cleanUp, say) {
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
+  const stop2 = () => {
+    const exit = () => {
+      say();
+      process.exit(130);
+    };
+    cleanUp().then(exit, exit);
+  };
+  for (const s of signals) process.once(s, stop2);
+  return () => {
+    for (const s of signals) process.off(s, stop2);
+  };
+}
+async function solve(problem, proposer, options, io2) {
+  const judged = isJudged(problem.measure) ? problem.measure.judge : null;
+  const direction = isJudged(problem.measure) ? "higher" : problem.measure.direction;
+  let repoRoot, gitDir;
+  try {
+    repoRoot = git3(problem.dir, "rev-parse", "--show-toplevel");
+    gitDir = resolve6(problem.dir, git3(problem.dir, "rev-parse", "--git-common-dir"));
+  } catch {
+    throw new SetupError(`${problem.dir} is not inside a git repository. Synthe works in a scratch checkout of a git repository.`);
+  }
+  const outDir = options.out ? isAbsolute4(options.out) ? options.out : resolve6(process.cwd(), options.out) : join29(repoRoot, ".synthe", "solve", problem.name);
+  const history = readHistory(gitDir, problem.name).map((h) => ({ ...h }));
+  const last = readRun(gitDir, problem.name);
+  let from = null;
+  if (options.resume) {
+    if (last?.status === "running") {
+      if (stillRunning(last)) throw new SetupError(`The last run of ${problem.name} is still going (process ${last.pid}). Stop it or let it end, then resume.`);
+      from = last;
+    } else {
+      io2.say(last ? `The last run of ${problem.name} ended normally, so --resume starts a new run.` : `There is no earlier run of ${problem.name}, so --resume starts a new run.`);
+    }
+  }
+  const run2 = from ? from.run : Math.max(nextRun(gitDir, problem.name), (last?.run ?? 0) + 1);
+  let scratch;
+  try {
+    scratch = await openScratch(repoRoot, problem.dir, problem.name, from ? { branch: from.branch, base: from.base, head: from.head, staleRoot: from.root } : void 0);
+  } catch (e) {
+    throw new SetupError(`Could not ${from ? "resume on" : "make"} the scratch checkout: ${e.message}`);
+  }
+  if (from) io2.say(`Resuming run ${run2} of ${problem.name} on ${scratch.branch} after round ${from.rounds}.`);
+  const record = {
+    run: run2,
+    status: "running",
+    branch: scratch.branch,
+    base: from?.base ?? scratch.base,
+    head: git3(scratch.root, "rev-parse", "HEAD"),
+    root: scratch.root,
+    pid: process.pid,
+    rounds: from?.rounds ?? 0,
+    calls: from?.calls ?? 0,
+    baseline: from?.baseline ?? null,
+    attempts: from?.attempts ?? []
+  };
+  writeRun(gitDir, problem.name, record);
+  let calls2 = record.calls;
+  const meter = meterFor(problem);
+  let keptCount = record.attempts.filter((a) => a.kept).length;
+  let lastPaths = [];
+  let lastProposal = null;
+  const measureAt2 = async (split) => measure(scratch.dir, problem, { ...options.seed !== void 0 ? { seed: options.seed } : {}, ...split ? { split } : {} });
+  const holdout = problem.split.holdout;
+  const sign = direction === "higher" ? 1 : -1;
+  let first = true;
+  const steps = {
+    say: io2.say,
+    // The meter also counts judge calls (compare "model"), which the proposer's own count does not see.
+    calls: () => Math.max(calls2, meter.calls),
+    budget: () => meter.stopReason(),
+    async propose(round, past, candidates) {
+      const files = artifactFiles(scratch.root, problem);
+      const { reply, calls: used } = await proposer.propose({ round, goal: problem.goal, files, history: past.map(entry), candidates });
+      calls2 += used;
+      if ("failed" in reply) return { ok: false, reason: reply.failed, ...reply.summary ? { summary: reply.summary } : {} };
+      return { ok: true, proposals: reply.proposals };
+    },
+    reset: () => scratch.reset(),
+    async apply(proposal) {
+      const applied = applyProposal(scratch.root, problem, proposal);
+      if ("refused" in applied) return { ok: false, reason: applied.refused };
+      if (applied.paths.length === 0) return { ok: false, reason: "The proposal changed no file." };
+      lastPaths = applied.paths;
+      lastProposal = proposal;
+      return { ok: true };
+    },
+    async guards() {
+      const failed = await guardFailure(scratch.dir, problem);
+      return failed === null ? { ok: true } : { ok: false, reason: failed.reason };
+    },
+    async measure() {
+      const train = await measureAt2(holdout ? "train" : void 0);
+      if ("failed" in train) return { ok: false, reason: train.failed };
+      const sample = { train };
+      if (holdout && first) {
+        const held = await measureAt2("holdout");
+        if ("failed" in held) return { ok: false, reason: `the held-back split gave no number: ${held.failed}` };
+        sample.holdout = held;
+      }
+      if (first && record.baseline === null) record.baseline = train.value;
+      first = false;
+      return { ok: true, value: train.value, samples: sample };
+    },
+    async decide(kept, cand) {
+      const k = kept.samples, c = cand.samples;
+      const proposal = lastProposal;
+      const remeasure = async () => {
+        const after = await measureAt2(holdout ? "train" : void 0);
+        if ("failed" in after) return after;
+        await scratch.reset();
+        const before = await measureAt2(holdout ? "train" : void 0);
+        const back = applyProposal(scratch.root, problem, proposal);
+        if ("refused" in back) return { failed: `the change could not be applied again: ${back.refused}` };
+        lastPaths = back.paths;
+        return "failed" in before ? before : { before, after };
+      };
+      const confirmed = await decideWithConfirm(direction, k.train, c.train, remeasure);
+      k.train = confirmed.before;
+      c.train = confirmed.after;
+      const onTrain = { keep: confirmed.keep, reason: confirmed.reason };
+      const strength = sign * (c.train.value - k.train.value);
+      if (!onTrain.keep || !holdout) return { ...onTrain, strength };
+      const now = await measureAt2("holdout");
+      if ("failed" in now) {
+        io2.say(`The held-back measure failed for this change: ${now.failed}`);
+        return { keep: false, reason: "It won on the train split, but the held-back measure failed for it, so it is not kept. Synthe's output has the details; the proposer never sees held-back output." };
+      }
+      c.holdout = now;
+      const onHoldout = decide(direction, k.holdout, now);
+      if (!onHoldout.keep) return { keep: false, reason: "It won on the train split but not on the held-back split, so it does not generalize." };
+      return { keep: true, reason: `${onTrain.reason} It also won on the held-back split.`, strength };
+    },
+    async keep(proposal, round) {
+      await scratch.commit(lastPaths, `synthe solve ${problem.name}, round ${round}: ${proposal.summary || "change"}`.slice(0, 200));
+      keptCount++;
+    },
+    record(attempt) {
+      appendHistory(gitDir, problem.name, [entry(attempt)], run2);
+    }
+  };
+  let judgeFinal = null;
+  const withCallLimit = (ask2) => async (c, a, b) => {
+    const max = problem.budget.max_calls;
+    if (max != null && calls2 >= max) return { failed: `the model call limit (${max} calls) was reached, so the model judge was not asked.` };
+    calls2++;
+    return ask2(c, a, b);
+  };
+  if (judged) {
+    const cases4 = readCases(scratch.dir, judged.cases);
+    if ("failed" in cases4) {
+      await scratch.close(false);
+      throw new SetupError(`The judged measure could not start: ${cases4.failed}`);
+    }
+    let compareFn;
+    try {
+      compareFn = judged.compare === "model" ? withCallLimit(modelCompare(problem, io2.env)) : commandCompare(scratch.dir, judged.compare);
+    } catch (e) {
+      await scratch.close(false);
+      throw new SetupError(`The judged measure could not start: ${e.message}`);
+    }
+    let baseOutputs = null;
+    steps.measure = async () => {
+      const out = await runCases(scratch.dir, judged.run, cases4);
+      if ("failed" in out) return { ok: false, reason: out.failed };
+      baseOutputs ??= out;
+      return { ok: true, value: 0.5, samples: out };
+    };
+    steps.decide = async (kept, cand) => {
+      const d = await judgeOutputs(cases4, kept.samples, cand.samples, compareFn);
+      return { keep: d.keep, reason: d.reason, strength: d.share, value: d.share };
+    };
+    judgeFinal = async () => {
+      await scratch.reset();
+      const out = await runCases(scratch.dir, judged.run, cases4);
+      if ("failed" in out || !baseOutputs) return 0.5;
+      return (await judgeOutputs(cases4, baseOutputs, out, compareFn)).share;
+    };
+  }
+  const cleanUp = async () => {
+    stopRunning();
+    await scratch.close(keptCount > 0);
+  };
+  const unhook = onInterrupt(cleanUp, () => io2.say(keptCount > 0 ? `
+Stopped. Synthe removed its scratch checkout. The ${keptCount === 1 ? "change" : `${keptCount} changes`} kept so far ${keptCount === 1 ? "is" : "are"} on the branch ${scratch.branch}. Your working tree did not change.` : "\nStopped. Synthe removed its scratch checkout and kept no change. Your working tree did not change."));
+  let result2;
+  let final;
+  try {
+    result2 = await runLoop2(steps, {
+      maxRounds: problem.budget.max_rounds,
+      maxCalls: problem.budget.max_calls,
+      candidates: problem.candidates,
+      history,
+      ...from ? { resume: { rounds: from.rounds, attempts: from.attempts, idle: idleRounds(from), baseline: from.baseline } } : {},
+      onRound(round, attempts) {
+        Object.assign(record, { rounds: round, calls: calls2, attempts, head: git3(scratch.root, "rev-parse", "HEAD") });
+        writeRun(gitDir, problem.name, record);
+      }
+    });
+    final = judgeFinal && result2.keptAny ? await judgeFinal() : result2.final;
+  } catch (e) {
+    await cleanUp();
+    throw e;
+  } finally {
+    unhook();
+  }
+  await scratch.close(result2.keptAny);
+  const solved = {
+    problem: problem.name,
+    stopped: result2.stopped,
+    baseline: result2.baseline,
+    final,
+    branch: result2.keptAny ? scratch.branch : null,
+    attempts: result2.attempts,
+    cost: meter.summary()
+  };
+  const unit = judged ? "share of cases won" : isJudged(problem.measure) ? void 0 : problem.measure.unit;
+  writeReport(outDir, solved, { goal: problem.goal, direction, ...unit ? { unit } : {} });
+  writeRun(gitDir, problem.name, { ...record, status: "ended" });
+  io2.say(`Wrote ${join29(outDir, "result.json")} and report.md.`);
+  if (solved.branch) io2.say(`Kept changes are on the branch ${solved.branch}.`);
+  return solved;
+}
+var SetupError, plural3, git3, entry;
+var init_loop = __esm({
+  "src/solve/loop.ts"() {
+    "use strict";
+    init_decide();
+    init_edits();
+    init_cost3();
+    init_history();
+    init_measure2();
+    init_judge();
+    init_model_compare();
+    init_report();
+    init_run2();
+    init_resume();
+    init_scratch();
+    init_types2();
+    SetupError = class extends Error {
+    };
+    plural3 = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+    git3 = (cwd, ...args) => execFileSync8("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    entry = (a) => ({ round: a.round, summary: a.summary, kept: a.kept, reason: a.reason });
+  }
+});
+
+// src/solve/proposer.ts
+function requestObject(r) {
+  return {
+    round: r.round,
+    goal: r.goal,
+    files: r.files.map((f) => ({ path: f.path, text: f.text })),
+    history: r.history.map((h) => ({ round: h.round, summary: h.summary, kept: h.kept, reason: h.reason })),
+    candidates: r.candidates
+  };
+}
+function parseJson(stdout) {
+  const text4 = stdout.trim();
+  try {
+    return JSON.parse(text4);
+  } catch {
+  }
+  const last = text4.split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? "";
+  try {
+    return JSON.parse(last);
+  } catch {
+    return void 0;
+  }
+}
+function checkProposal(raw, n) {
+  const label = `proposal ${n}`;
+  if (!isObject2(raw)) return `The proposer's ${label} is not a JSON object.`;
+  if (typeof raw.summary !== "string") return `The proposer's ${label} has no "summary" text.`;
+  if (!Array.isArray(raw.edits)) return `The proposer's ${label} has no "edits" list.`;
+  if (raw.edits.length === 0) return `The proposer's ${label} has an empty "edits" list, so it changes nothing.`;
+  const edits = [];
+  for (const [i, e] of raw.edits.entries()) {
+    const where = `Edit ${i + 1} of the proposer's ${label}`;
+    if (!isObject2(e)) return `${where} is not a JSON object.`;
+    for (const field2 of ["path", "search", "replace"]) {
+      if (typeof e[field2] !== "string") return `${where} has no "${field2}" text.`;
+    }
+    const { path: path4, search, replace } = e;
+    if (!path4.trim()) return `${where} has an empty "path".`;
+    edits.push({ path: path4, search, replace });
+  }
+  return { summary: raw.summary.trim() || label, edits };
+}
+function parseReply(stdout) {
+  if (!stdout.trim()) return { failed: "The proposer printed nothing on stdout. It must print one JSON object." };
+  const data = parseJson(stdout);
+  if (data === void 0) return { failed: `The proposer's reply is not valid JSON: ${short2(stdout, 120)}` };
+  if (!isObject2(data)) return { failed: `The proposer's reply is not a JSON object with a "proposals" list.` };
+  if (!Array.isArray(data.proposals)) return { failed: `The proposer's reply has no "proposals" list.` };
+  const proposals = [];
+  for (const [i, raw] of data.proposals.entries()) {
+    const p = checkProposal(raw, i + 1);
+    if (typeof p === "string") {
+      const summary = summaryOf(raw);
+      return summary ? { failed: p, summary } : { failed: p };
+    }
+    proposals.push(p);
+  }
+  return { proposals };
+}
+function replyFrom(result2, timeoutMs) {
+  if (result2.timedOut) return { failed: `The proposer command did not finish in ${Math.round(timeoutMs / 1e3)} seconds and was stopped.` };
+  if (!result2.ok) {
+    const detail = short2(result2.stderr || result2.stdout);
+    return { failed: `The proposer command ${result2.code === null ? "could not start" : `exited with code ${result2.code}`}${detail ? `: ${detail}` : "."}` };
+  }
+  return parseReply(result2.stdout);
+}
+function commandProposer(problem, o = {}) {
+  if (problem.proposer === "model") throw new Error("commandProposer needs a problem with a proposer command.");
+  const command = problem.proposer.command;
+  const timeoutMs = o.timeoutMs ?? PROPOSER_TIMEOUT_MS;
+  const run2 = o.run ?? runCommand;
+  return {
+    async propose(request) {
+      let result2;
+      try {
+        result2 = await run2(problem.dir, command, { stdin: `${JSON.stringify(requestObject(request))}
+`, timeoutMs });
+      } catch (e) {
+        return { reply: { failed: `The proposer command could not start: ${short2(e instanceof Error ? e.message : String(e))}` }, calls: 0 };
+      }
+      return { reply: replyFrom(result2, timeoutMs), calls: 0 };
+    }
+  };
+}
+function proposerFor(problem, env = process.env) {
+  return problem.proposer === "model" ? modelProposer(problem, env) : commandProposer(problem);
+}
+var PROPOSER_TIMEOUT_MS, short2, isObject2, summaryOf;
+var init_proposer = __esm({
+  "src/solve/proposer.ts"() {
+    "use strict";
+    init_model_proposer();
+    init_run2();
+    PROPOSER_TIMEOUT_MS = 10 * 6e4;
+    short2 = (s, n = 200) => {
+      const one2 = s.trim().replace(/\s+/g, " ");
+      return one2.length > n ? `${one2.slice(0, n)}...` : one2;
+    };
+    isObject2 = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
+    summaryOf = (raw) => isObject2(raw) && typeof raw.summary === "string" && raw.summary.trim() ? raw.summary.trim() : void 0;
+  }
+});
+
+// src/cli/solve.ts
+var solve_exports = {};
+__export(solve_exports, {
+  solveCommand: () => solveCommand
+});
+async function solveCommand(args, cwd, say, env) {
+  const value = (flag) => {
+    const i = args.indexOf(flag);
+    return i >= 0 ? args[i + 1] : void 0;
+  };
+  const file = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--out" && args[i - 1] !== "--seed");
+  if (!file) {
+    say("Usage: npx synthe solve <problem-file> [--out DIR] [--seed N] [--resume]");
+    return 1;
+  }
+  const options = {};
+  if (args.includes("--resume")) options.resume = true;
+  const out = value("--out");
+  if (out) options.out = out;
+  const seed = value("--seed");
+  if (seed !== void 0) {
+    if (!/^\d+$/.test(seed)) {
+      say("--seed must be a whole number, such as --seed 1.");
+      return 1;
+    }
+    options.seed = Number(seed);
+  }
+  const check = loadProblem(file, cwd);
+  if (!check.ok) {
+    for (const p of check.problems) say(p);
+    return 1;
+  }
+  try {
+    const result2 = await solve(check.problem, proposerFor(check.problem), options, { say, env });
+    say(result2.stopped);
+    return 0;
+  } catch (e) {
+    if (e instanceof SetupError) {
+      say(e.message);
+      return 1;
+    }
+    throw e;
+  }
+}
+var init_solve = __esm({
+  "src/cli/solve.ts"() {
+    "use strict";
+    init_problem2();
+    init_loop();
+    init_proposer();
+  }
+});
+
+// src/pilot/errors.ts
+var PilotError;
+var init_errors3 = __esm({
+  "src/pilot/errors.ts"() {
+    "use strict";
+    PilotError = class extends Error {
+      code;
+      constructor(code, message) {
+        super(message);
+        this.name = "PilotError";
+        this.code = code;
+      }
+    };
+  }
+});
+
+// src/pilot/github.ts
+function pilotGithubRepo(slug, token2, api) {
+  const repo = githubRepo(slug, token2, api);
+  const request = (method, path4, body) => fetch(`${api}/repos/${slug}${path4}`, {
+    method,
+    headers: {
+      Authorization: `Bearer ${token2}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "synthe",
+      ...body ? { "Content-Type": "application/json" } : {}
+    },
+    body: body ? JSON.stringify(body) : void 0,
+    redirect: "error",
+    signal: AbortSignal.timeout(3e4)
+  });
+  const json = async (res) => {
+    if (!res.ok) throw new PilotError("conflict", `GitHub could not verify or publish the review (HTTP ${res.status}). Check the review branch before retrying.`);
+    return res.json();
+  };
+  const isAncestor = async (ancestor, descendant) => {
+    if (ancestor === descendant) return true;
+    const compare2 = await json(await request("GET", `/compare/${encodeURIComponent(ancestor)}...${encodeURIComponent(descendant)}`));
+    return compare2.status === "ahead" || compare2.status === "identical";
+  };
+  const matchesReview = async (sha, file) => {
+    const commit = await json(await request("GET", `/commits/${encodeURIComponent(sha)}`));
+    return commit.sha === sha && commit.parents?.length === 1 && await isAncestor(commit.parents[0].sha, file.baseSha) && commit.files?.length === 1 && commit.files[0].filename === file.path && commit.files[0].status === "modified" && await repo.readFile(file.path, sha) === file.content;
+  };
+  return {
+    slug,
+    headSha: repo.headSha,
+    readFile: repo.readFile,
+    openPr: repo.openPr,
+    async findReviewPr(branch) {
+      const owner = slug.split("/")[0];
+      const pulls = await json(await request("GET", `/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`));
+      if (!Array.isArray(pulls) || pulls.length > 1) throw new PilotError("conflict", "The review branch has ambiguous pull request history. Check it before retrying.");
+      const pr = pulls[0];
+      if (!pr) return null;
+      if ([pr.base, pr.head].some((side) => side?.repo?.full_name?.toLowerCase() !== slug.toLowerCase())) {
+        throw new PilotError("conflict", "The existing pull request points to another repository or its branch is unavailable.");
+      }
+      return { number: pr.number, state: pr.state, base: pr.base.ref, head: pr.head.ref, headSha: pr.head.sha, body: pr.body };
+    },
+    async commitReview(file) {
+      const { branch, baseSha, path: path4, content, message } = file;
+      const created = await request("POST", "/git/refs", { ref: `refs/heads/${branch}`, sha: baseSha });
+      if (created.status !== 422) await json(created);
+      const head = await repo.headSha(branch);
+      if (head !== baseSha) {
+        if (await matchesReview(head, file)) return head;
+        throw new PilotError("wrong_revision", "The review branch contains an unexpected commit. It was left in place.");
+      }
+      const encoded = path4.split("/").map(encodeURIComponent).join("/");
+      const blob = await json(await request("GET", `/contents/${encoded}?ref=${encodeURIComponent(baseSha)}`));
+      const result2 = await json(await request("PUT", `/contents/${encoded}`, {
+        branch,
+        message,
+        sha: blob.sha,
+        content: Buffer.from(content, "utf8").toString("base64")
+      }));
+      return result2.commit.sha;
+    },
+    matchesReview
+  };
+}
+var init_github = __esm({
+  "src/pilot/github.ts"() {
+    "use strict";
+    init_repo();
+    init_errors3();
+  }
+});
+
+// src/pilot/ids.ts
+var contentId, promptId, shortId, candidateTag, reviewBranch, isSha256, ms, DAY_MS, addDays;
+var init_ids = __esm({
+  "src/pilot/ids.ts"() {
+    "use strict";
+    init_evidence();
+    init_safety();
+    contentId = (value) => sha256(canonicalJson(value));
+    promptId = (text4) => sha256(text4);
+    shortId = (id) => id.slice(0, 12);
+    candidateTag = (candidateId) => `synthe-${shortId(candidateId)}`;
+    reviewBranch = (candidateId) => `synthe-pilot/${shortId(candidateId)}`;
+    isSha256 = (value) => typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
+    ms = (iso3) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(iso3) ? Date.parse(iso3) : NaN;
+    DAY_MS = 864e5;
+    addDays = (iso3, days) => new Date(ms(iso3) + days * DAY_MS).toISOString().replace(".000Z", "Z");
+  }
+});
+
+// src/pilot/approval.ts
+function makeApproval(input) {
+  const b = input.bundle.value;
+  if (input.candidate_id !== b.candidate_id || input.experiment_id !== b.experiment_id || input.pilot_id !== b.pilot_id) {
+    throw new PilotError("unknown_approval", "An approval must name the exact pilot, candidate and experiment in the review bundle. Copy the ids from the approve command in REVIEW.md.");
+  }
+  if (typeof input.approver !== "string" || input.approver.trim() === "") throw new PilotError("usage", "Say who is approving: pass --approver with your name.");
+  if (input.decision !== "approved" && input.decision !== "rejected") throw new PilotError("usage", "The decision must be approved or rejected.");
+  if (typeof input.at !== "string" || Number.isNaN(ms(input.at))) throw new PilotError("usage", "The approval time must be a UTC time like 2026-10-01T00:00:00Z.");
+  return {
+    version: 1,
+    pilot_id: b.pilot_id,
+    candidate_id: b.candidate_id,
+    experiment_id: b.experiment_id,
+    review_id: input.bundle.id,
+    scope: "experiment",
+    decision: input.decision,
+    approver: input.approver.trim(),
+    at: input.at
+  };
+}
+function requireApproval(approvals2, candidateId, experimentId) {
+  const latest = approvals2.filter((a) => a.value.candidate_id === candidateId && a.value.experiment_id === experimentId).at(-1);
+  if (latest === void 0) throw new PilotError("unknown_approval", "No approval names this exact candidate and experiment. Run the approve command from REVIEW.md with the full ids.");
+  if (latest.value.decision === "rejected") throw new PilotError("unknown_approval", `The latest decision for this candidate and experiment is a rejection (by ${latest.value.approver}). Approve it again to go ahead.`);
+  return latest;
+}
+var init_approval = __esm({
+  "src/pilot/approval.ts"() {
+    "use strict";
+    init_errors3();
+    init_ids();
+  }
+});
+
+// src/pilot/io.ts
+import { existsSync as existsSync20, linkSync, lstatSync as lstatSync5, mkdirSync as mkdirSync11, readFileSync as readFileSync25, realpathSync as realpathSync4, renameSync as renameSync4, statSync as statSync5, unlinkSync as unlinkSync4, writeFileSync as writeFileSync12 } from "node:fs";
+import { dirname as dirname8, isAbsolute as isAbsolute5, relative as relative5, resolve as resolve7 } from "node:path";
+function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
+  let size2;
+  try {
+    const stat2 = statSync5(path4);
+    if (!stat2.isFile()) throw new PilotError("not_found", `${path4} is not a file.`);
+    size2 = stat2.size;
+  } catch (e) {
+    if (e instanceof PilotError) throw e;
+    throw new PilotError("not_found", `${path4} does not exist or cannot be read.`);
+  }
+  if (size2 > maxBytes) throw new PilotError("too_large", `${path4} is ${size2} bytes; the limit is ${maxBytes}. Export a smaller, bounded file.`);
+  return readFileSync25(path4, "utf8");
+}
+function inside(root, name) {
+  const full = resolve7(root, name);
+  const rel = relative5(resolve7(root), full);
+  if (isAbsolute5(name) || rel === "" || rel.startsWith("..") || isAbsolute5(rel)) throw new PilotError("usage", `${name} must be a file inside ${root}.`);
+  let link = false;
+  try {
+    link = lstatSync5(full).isSymbolicLink();
+  } catch {
+    return full;
+  }
+  if (link) throw new PilotError("usage", `${name} is a symbolic link. Put the file itself inside ${root}.`);
+  try {
+    const real = relative5(realpathSync4(root), realpathSync4(full));
+    if (real === "" || real.startsWith("..") || isAbsolute5(real)) throw new PilotError("usage", `${name} must be a file inside ${root}.`);
+  } catch (e) {
+    if (e instanceof PilotError) throw e;
+    throw new PilotError("not_found", `${name} cannot be read from ${root}.`);
+  }
+  return full;
+}
+function writeOnce(path4, content) {
+  mkdirSync11(dirname8(path4), { recursive: true });
+  const tmp = `${path4}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync12(tmp, content, { mode: 384 });
+  try {
+    try {
+      linkSync(tmp, path4);
+      return "written";
+    } catch (e) {
+      const code = e.code;
+      if (code !== "EEXIST" && !existsSync20(path4)) {
+        renameSync4(tmp, path4);
+        return "written";
+      }
+      if (code !== "EEXIST" && code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV") throw e;
+    }
+    if (readFileSync25(path4, "utf8") === content) return "already there";
+    throw new PilotError("conflict", `${path4} already exists with different content. Stored pilot records are never replaced.`);
+  } finally {
+    if (existsSync20(tmp)) unlinkSync4(tmp);
+  }
+}
+function unsafeKey(value) {
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const hit = unsafeKey(v);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (value === null || typeof value !== "object") return null;
+  for (const [k, v] of Object.entries(value)) {
+    if (UNSAFE_KEYS.has(k)) return k;
+    const hit = unsafeKey(v);
+    if (hit) return hit;
+  }
+  return null;
+}
+function writeAtomic(path4, content) {
+  mkdirSync11(dirname8(path4), { recursive: true });
+  const tmp = `${path4}.${process.pid}.tmp`;
+  try {
+    writeFileSync12(tmp, content, { mode: 384 });
+    renameSync4(tmp, path4);
+  } finally {
+    if (existsSync20(tmp)) unlinkSync4(tmp);
+  }
+}
+function printable2(text4, max = 80) {
+  const flat2 = text4.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, " ").replace(/ {2,}/g, " ").trim();
+  return flat2.length > max ? `${flat2.slice(0, max)}... (cut at ${max} characters)` : flat2;
+}
+var MAX_INPUT_BYTES, UNSAFE_KEYS, isObject3, isNonEmpty, isInt;
+var init_io = __esm({
+  "src/pilot/io.ts"() {
+    "use strict";
+    init_errors3();
+    MAX_INPUT_BYTES = 32 * 1024 * 1024;
+    UNSAFE_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
+    isObject3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+    isNonEmpty = (v) => typeof v === "string" && v.trim() !== "";
+    isInt = (v) => typeof v === "number" && Number.isInteger(v);
+  }
+});
+
+// src/pilot/metric.ts
+function onlyKeys(value, allowed, where) {
+  const unknown = Object.keys(value).filter((k) => !allowed.includes(k));
+  if (unknown.length > 0) {
+    bad(`metric${where} has an unknown field "${unknown[0]}". Allowed fields: ${allowed.join(", ")}. Check the spelling in pilot.json.`);
+  }
+}
+function metricSpec(value, where) {
+  const { name, kind, unit, direction } = value;
+  if (!isNonEmpty(name) || !NAME2.test(name)) bad(`metric.${where}.name must be lowercase letters, digits and underscores, starting with a letter (at most 64 characters).`);
+  if (RESERVED_METRIC_NAMES.includes(name)) bad(`metric.${where}.name "${name}" is reserved for a telemetry field. Choose another name.`);
+  if (kind !== "rate" && kind !== "mean") bad(`metric.${where}.kind must be "rate" or "mean".`);
+  if (!isNonEmpty(unit)) bad(`metric.${where}.unit must be a non-empty string, word for word as the telemetry export declares it.`);
+  if (direction !== "higher_is_better" && direction !== "lower_is_better") bad(`metric.${where}.direction must be "higher_is_better" or "lower_is_better".`);
+  return { name, kind, unit, direction };
+}
+function inRange(v, lo, hi, loOpen, hiOpen) {
+  if (!isFiniteNumber(v)) return false;
+  return (loOpen ? v > lo : v >= lo) && (hiOpen ? v < hi : v <= hi);
+}
+function parseMetricContract(value) {
+  if (!isObject3(value)) return bad("metric must be an object.");
+  onlyKeys(value, [
+    "version",
+    "primary",
+    "guards",
+    "denominator",
+    "randomization_unit",
+    "alpha",
+    "power",
+    "min_samples_per_arm",
+    "analysis_window_days",
+    "outcome_lag_days",
+    "max_missing_rate",
+    "max_unattributed_rate",
+    "query_hash",
+    "signed_off"
+  ], "");
+  if (value.version !== 1) bad("metric.version must be 1.");
+  if (!isObject3(value.primary)) return bad("metric.primary must be an object.");
+  onlyKeys(value.primary, ["name", "kind", "unit", "direction", "min_effect"], ".primary");
+  const primarySpec = metricSpec(value.primary, "primary");
+  const minEffect = value.primary.min_effect;
+  if (!isFiniteNumber(minEffect) || minEffect <= 0) bad("metric.primary.min_effect must be a number greater than 0 (the smallest change in the good direction worth acting on).");
+  if (primarySpec.kind === "rate" && minEffect >= 1) bad("metric.primary.min_effect must be less than 1 for a rate (a rate is a fraction: 0.02 is two percentage points).");
+  const primary2 = { ...primarySpec, min_effect: minEffect };
+  if (!Array.isArray(value.guards)) return bad("metric.guards must be an array (it may be empty).");
+  const seen = /* @__PURE__ */ new Set([primary2.name]);
+  const guards = value.guards.map((g, i) => {
+    const where = `guards[${i}]`;
+    if (!isObject3(g)) return bad(`metric.${where} must be an object.`);
+    onlyKeys(g, ["name", "kind", "unit", "direction", "max_harm", "critical", "early_stop", "range"], `.${where}`);
+    const spec = metricSpec(g, where);
+    if (spec.name === primary2.name) bad(`metric.${where}.name "${spec.name}" is the primary metric. A guard must be a different metric.`);
+    if (seen.has(spec.name)) bad(`metric.${where}.name "${spec.name}" appears more than once. Each guard needs its own name.`);
+    seen.add(spec.name);
+    const maxHarm = g.max_harm;
+    if (maxHarm === 0) bad(`metric.${where}.max_harm is 0. A zero margin can never be shown to pass, so the guard could never let a change be kept. Set the largest harm the team tolerates.`);
+    if (!isFiniteNumber(maxHarm) || maxHarm <= 0) bad(`metric.${where}.max_harm must be a number greater than 0.`);
+    if (spec.kind === "rate" && maxHarm >= 1) bad(`metric.${where}.max_harm must be less than 1 for a rate (0.02 is two percentage points).`);
+    if (typeof g.critical !== "boolean") bad(`metric.${where}.critical must be true or false.`);
+    const guard2 = { ...spec, max_harm: maxHarm, critical: g.critical };
+    if (g.range !== void 0) {
+      if (spec.kind !== "mean") bad(`metric.${where}.range is only for a mean guard. A rate is always between 0 and 1.`);
+      if (!isObject3(g.range)) return bad(`metric.${where}.range must be an object with min and max.`);
+      onlyKeys(g.range, ["min", "max"], `.${where}.range`);
+      if (!isFiniteNumber(g.range.min) || !isFiniteNumber(g.range.max) || g.range.min >= g.range.max) bad(`metric.${where}.range needs finite numbers with min below max: the smallest and largest value one conversation can have.`);
+      guard2.range = { min: g.range.min, max: g.range.max };
+    }
+    if (g.early_stop !== void 0) {
+      if (!isObject3(g.early_stop)) return bad(`metric.${where}.early_stop must be an object with min_per_arm.`);
+      onlyKeys(g.early_stop, ["min_per_arm"], `.${where}.early_stop`);
+      if (!isInt(g.early_stop.min_per_arm) || g.early_stop.min_per_arm < 1) bad(`metric.${where}.early_stop.min_per_arm must be a whole number of at least 1.`);
+      if (g.critical !== true) bad(`metric.${where}.early_stop is only allowed on a critical guard. Set critical to true or remove early_stop.`);
+      guard2.early_stop = { min_per_arm: g.early_stop.min_per_arm };
+    }
+    return guard2;
+  });
+  if (!isNonEmpty(value.denominator)) bad("metric.denominator must be a non-empty string naming the population, e.g. completed_conversations.");
+  if (value.randomization_unit !== "conversation") bad('metric.randomization_unit must be "conversation". Other units are not analysed in this version.');
+  if (!inRange(value.alpha, 0, 0.2, true, false)) bad("metric.alpha must be greater than 0 and at most 0.2 (0.05 gives 95% intervals).");
+  if (!inRange(value.power, 0.5, 1, false, true)) bad("metric.power must be at least 0.5 and less than 1 (0.8 is usual).");
+  if (!isInt(value.min_samples_per_arm) || value.min_samples_per_arm < 2) bad("metric.min_samples_per_arm must be a whole number of at least 2.");
+  if (!isInt(value.analysis_window_days)) bad(`metric.analysis_window_days must be a whole number of at least ${MIN_WINDOW_DAYS}.`);
+  if (value.analysis_window_days < MIN_WINDOW_DAYS) bad(`metric.analysis_window_days is ${value.analysis_window_days}. The window must be at least ${MIN_WINDOW_DAYS} days so that each weekday is seen once: traffic and outcomes differ by weekday, and a shorter window can show a calendar effect as a result.`);
+  if (!isInt(value.outcome_lag_days) || value.outcome_lag_days < 0) bad("metric.outcome_lag_days must be a whole number of 0 or more.");
+  if (value.outcome_lag_days > value.analysis_window_days) {
+    bad(`metric.outcome_lag_days (${value.outcome_lag_days}) is longer than analysis_window_days (${value.analysis_window_days}). An outcome slower than the window cannot be attributed in the pilot. Lengthen the window or choose a faster outcome.`);
+  }
+  if (!inRange(value.max_missing_rate, 0, 0.5, false, false)) bad("metric.max_missing_rate must be between 0 and 0.5.");
+  if (!inRange(value.max_unattributed_rate, 0, 0.5, false, false)) bad("metric.max_unattributed_rate must be between 0 and 0.5.");
+  if (value.query_hash !== void 0 && !isSha256(value.query_hash)) bad("metric.query_hash must be 64 lowercase hex characters (the SHA-256 of the metric query).");
+  if (!isObject3(value.signed_off)) return bad("metric.signed_off must be an object with by and at.");
+  onlyKeys(value.signed_off, ["by", "at"], ".signed_off");
+  if (!isNonEmpty(value.signed_off.by)) bad("metric.signed_off.by must name the person who signed off the metric.");
+  if (typeof value.signed_off.at !== "string" || Number.isNaN(ms(value.signed_off.at))) bad("metric.signed_off.at must be a UTC time like 2026-09-01T12:00:00Z.");
+  const out = {
+    version: 1,
+    primary: primary2,
+    guards,
+    denominator: value.denominator,
+    randomization_unit: "conversation",
+    alpha: value.alpha,
+    power: value.power,
+    min_samples_per_arm: value.min_samples_per_arm,
+    analysis_window_days: value.analysis_window_days,
+    outcome_lag_days: value.outcome_lag_days,
+    max_missing_rate: value.max_missing_rate,
+    max_unattributed_rate: value.max_unattributed_rate,
+    signed_off: { by: value.signed_off.by, at: value.signed_off.at }
+  };
+  if (value.query_hash !== void 0) out.query_hash = value.query_hash;
+  return out;
+}
+var bad, isFiniteNumber, MIN_WINDOW_DAYS, NAME2, RESERVED_METRIC_NAMES;
+var init_metric = __esm({
+  "src/pilot/metric.ts"() {
+    "use strict";
+    init_errors3();
+    init_ids();
+    init_io();
+    bad = (message) => {
+      throw new PilotError("invalid_metric", message);
+    };
+    isFiniteNumber = (v) => typeof v === "number" && Number.isFinite(v);
+    MIN_WINDOW_DAYS = 7;
+    NAME2 = /^[a-z][a-z0-9_]{0,63}$/;
+    RESERVED_METRIC_NAMES = ["conversation_id", "prompt_version", "started_at", "segment", "unit_id", "model_id", "values"];
+  }
+});
+
+// src/pilot/config.ts
+function onlyKeys2(value, allowed, where) {
+  const extra = Object.keys(value).find((k) => !allowed.includes(k));
+  if (extra !== void 0) bad2(`${where} has an unknown field "${extra}"`);
+}
+function parseReplay(v) {
+  if (!isObject3(v)) return bad2("replay is required");
+  onlyKeys2(v, ["model", "max_tokens", "temperature", "max_steps_per_turn", "gate", "min_recurring_cases", "max_changed_lines"], "replay");
+  const gate = v.gate;
+  if (!isObject3(gate)) return bad2("replay.gate is required");
+  onlyKeys2(gate, ["min_paired_cases", "min_paired_coverage", "min_net_wins", "max_unchecked_blocking_guards"], "replay.gate");
+  const temperature = v.temperature === null ? null : fraction(v.temperature, "replay.temperature");
+  return {
+    model: text2(v.model, "replay.model"),
+    max_tokens: int(v.max_tokens, "replay.max_tokens", 1, 16e3),
+    temperature,
+    max_steps_per_turn: int(v.max_steps_per_turn, "replay.max_steps_per_turn", 1, 12),
+    gate: {
+      min_paired_cases: int(gate.min_paired_cases, "replay.gate.min_paired_cases", 1, 1e5),
+      min_paired_coverage: fraction(gate.min_paired_coverage, "replay.gate.min_paired_coverage"),
+      min_net_wins: int(gate.min_net_wins, "replay.gate.min_net_wins", 1, 1e5),
+      max_unchecked_blocking_guards: int(gate.max_unchecked_blocking_guards, "replay.gate.max_unchecked_blocking_guards", 0, 1e5)
+    },
+    min_recurring_cases: int(v.min_recurring_cases, "replay.min_recurring_cases", 2, 1e5),
+    max_changed_lines: int(v.max_changed_lines, "replay.max_changed_lines", 1, 200)
+  };
+}
+function parseProvider(v) {
+  if (v === null) return null;
+  if (!isObject3(v)) return bad2("provider must be null (scripted models only) or an approval object");
+  onlyKeys2(v, ["provider", "endpoint", "model", "key_env", "data_class", "approved_by", "approved_at", "max_calls", "max_input_chars"], "provider");
+  if (v.provider !== "anthropic") bad2('provider.provider must be "anthropic"');
+  const endpoint = text2(v.endpoint, "provider.endpoint");
+  let url;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return bad2("provider.endpoint must be a URL");
+  }
+  if (url.protocol !== "https:" && !isLoopback2(endpoint)) bad2("provider.endpoint must be https");
+  if (url.username || url.password || url.search || url.hash) bad2("provider.endpoint must be a plain base URL with no credentials or query");
+  const keyEnv = text2(v.key_env, "provider.key_env");
+  if (!/^[A-Z][A-Z0-9_]{0,50}_PILOT_KEY$/.test(keyEnv)) bad2("provider.key_env must be the name of one environment variable made for this pilot, in capitals and ending in _PILOT_KEY (for example FERNHILL_PILOT_KEY)");
+  const approvedAt = text2(v.approved_at, "provider.approved_at");
+  if (Number.isNaN(ms(approvedAt))) bad2("provider.approved_at must be a UTC time like 2026-10-01T00:00:00Z");
+  return {
+    provider: "anthropic",
+    endpoint,
+    model: text2(v.model, "provider.model"),
+    key_env: keyEnv,
+    data_class: text2(v.data_class, "provider.data_class"),
+    approved_by: text2(v.approved_by, "provider.approved_by"),
+    approved_at: approvedAt,
+    max_calls: int(v.max_calls, "provider.max_calls", 1, 1e5),
+    max_input_chars: int(v.max_input_chars, "provider.max_input_chars", 1, 5e8)
+  };
+}
+function parsePilotConfig(source) {
+  let v;
+  try {
+    v = JSON.parse(source);
+  } catch {
+    return bad2("not valid JSON");
+  }
+  if (!isObject3(v)) return bad2("must be a JSON object");
+  const unsafe = unsafeKey(v);
+  if (unsafe) bad2(`has a field named "${unsafe}", which is not allowed`);
+  onlyKeys2(v, ["version", "pilot_id", "agent", "repo", "metric", "replay", "provider"], "the file");
+  if (v.version !== 1) bad2("version must be 1");
+  const pilotId = text2(v.pilot_id, "pilot_id");
+  if (!/^[a-z0-9][a-z0-9-]{2,39}$/.test(pilotId)) bad2("pilot_id must be 3 to 40 lowercase letters, digits or dashes");
+  const agent = v.agent;
+  if (!isObject3(agent)) return bad2("agent is required");
+  onlyKeys2(agent, ["name", "prompt_path", "baseline_tag"], "agent");
+  const promptPath = text2(agent.prompt_path, "agent.prompt_path");
+  const pathProblem3 = promptPathProblem(promptPath);
+  if (pathProblem3) bad2(`agent.prompt_path: ${pathProblem3}`);
+  const baselineTag = text2(agent.baseline_tag, "agent.baseline_tag");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(baselineTag)) bad2("agent.baseline_tag must be 1 to 64 letters, digits, dots, dashes or underscores");
+  const repo = v.repo;
+  if (!isObject3(repo)) return bad2("repo is required");
+  onlyKeys2(repo, ["slug", "base", "api"], "repo");
+  const slug = text2(repo.slug, "repo.slug");
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(slug)) bad2("repo.slug must look like owner/name");
+  const base = text2(repo.base, "repo.base");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/.test(base) || base.includes("..")) bad2("repo.base must be a branch name");
+  let api;
+  if (repo.api !== void 0) {
+    api = text2(repo.api, "repo.api");
+    if (api !== GITHUB_API && !isLoopback2(api)) bad2(`repo.api must be ${GITHUB_API} or a loopback address`);
+  }
+  if (!("provider" in v)) bad2("provider is required: null means only scripted models run and nothing is sent to a model provider");
+  return {
+    version: 1,
+    pilot_id: pilotId,
+    agent: { name: text2(agent.name, "agent.name"), prompt_path: promptPath, baseline_tag: baselineTag },
+    repo: { slug, base, ...api !== void 0 ? { api } : {} },
+    metric: parseMetricContract(v.metric),
+    replay: parseReplay(v.replay),
+    provider: parseProvider(v.provider)
+  };
+}
+var CONFIG_FILE, GITHUB_API, LOOPBACK2, bad2, text2, int, fraction, isLoopback2;
+var init_config = __esm({
+  "src/pilot/config.ts"() {
+    "use strict";
+    init_safety();
+    init_errors3();
+    init_ids();
+    init_io();
+    init_metric();
+    CONFIG_FILE = "pilot.json";
+    GITHUB_API = "https://api.github.com";
+    LOOPBACK2 = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
+    bad2 = (why) => {
+      throw new PilotError("invalid_config", `${CONFIG_FILE}: ${why}`);
+    };
+    text2 = (v, name) => typeof v === "string" && v.trim() ? v : bad2(`${name} is required`);
+    int = (v, name, min, max) => typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : bad2(`${name} must be a whole number from ${min} to ${max}`);
+    fraction = (v, name) => typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 1 ? v : bad2(`${name} must be a number from 0 to 1`);
+    isLoopback2 = (url) => {
+      try {
+        const u = new URL(url);
+        return (u.protocol === "http:" || u.protocol === "https:") && LOOPBACK2.has(u.hostname);
+      } catch {
+        return false;
+      }
+    };
+  }
+});
+
+// src/pilot/safety.ts
+function addedLineProblem(baseline2, candidate) {
+  const had = new Set(linesOf(baseline2).map((l) => l.trim()));
+  const checks = [
+    [URL_SCHEME, "a link or web address"],
+    [SCHEME_RELATIVE, "a link or web address"],
+    [WEB_ADDRESS, "a link or web address"],
+    [MARKDOWN_IMAGE, "a markdown image"],
+    [ACTIVE_HTML, "an HTML tag that loads or links something"],
+    [PLACEHOLDER, "a {placeholder} that would be filled with conversation text"],
+    [ENCODED_RUN, "a long run of encoded-looking characters"]
+  ];
+  const lines = linesOf(candidate);
+  for (let i = 0; i < lines.length; i++) {
+    if (had.has(lines[i].trim())) continue;
+    for (const [pattern, what] of checks) if (pattern.test(lines[i])) return `it adds ${what} on line ${i + 1}, which a candidate may not do`;
+  }
+  return null;
+}
+var URL_SCHEME, SCHEME_RELATIVE, WEB_ADDRESS, MARKDOWN_IMAGE, PLACEHOLDER, ACTIVE_HTML, ENCODED_RUN, linesOf;
+var init_safety2 = __esm({
+  "src/pilot/safety.ts"() {
+    "use strict";
+    URL_SCHEME = /\b[a-z][a-z0-9+.-]*:\/\/\S/i;
+    SCHEME_RELATIVE = /(^|[\s(<[`"'])\/\/[a-z0-9][a-z0-9.-]*\.[a-z]/i;
+    WEB_ADDRESS = /\b(?:www\.|(?:data|javascript|mailto|file):)\S/i;
+    MARKDOWN_IMAGE = /!\[/;
+    PLACEHOLDER = /\$?\{\{?\s*[A-Za-z_][\w.-]*\s*\}?\}/;
+    ACTIVE_HTML = /<\s*(?:img|script|iframe|a|link|svg|object|embed|video|audio|source|meta|style|form|input|base)\b/i;
+    ENCODED_RUN = /[A-Za-z0-9+/]{32,}|(?<![0-9a-fA-F])[0-9a-fA-F]{24,}(?![0-9a-fA-F])/;
+    linesOf = (text4) => text4.split(/\r\n|[\n\r\u2028\u2029]/);
+  }
+});
+
+// src/pilot/pii.ts
+function luhn(digits) {
+  let sum = 0;
+  for (let i = 0; i < digits.length; i++) {
+    let d = digits.charCodeAt(digits.length - 1 - i) - 48;
+    if (i % 2 === 1) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+function hasCardNumber(text4) {
+  for (const match of text4.matchAll(DIGIT_RUN)) {
+    const digits = match[2].replace(/[ -]/g, "");
+    if (digits.length >= 13 && digits.length <= 19 && !/^0+$/.test(digits) && luhn(digits)) return true;
+  }
+  return false;
+}
+function personalDataKinds(text4) {
+  const kinds = [];
+  if (EMAIL.test(text4)) kinds.push("email address");
+  if (hasCardNumber(text4)) kinds.push("payment card number");
+  if (SSN.test(text4)) kinds.push("national identity number");
+  if (redactSecrets(text4) !== text4) kinds.push("credential");
+  return kinds;
+}
+var EMAIL, SSN, DIGIT_RUN;
+var init_pii = __esm({
+  "src/pilot/pii.ts"() {
+    "use strict";
+    init_safety();
+    EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/;
+    SSN = /(^|[^0-9])\d{3}-\d{2}-\d{4}([^0-9]|$)/;
+    DIGIT_RUN = /(^|[^0-9])((?:\d[ -]?){12,18}\d)(?=[^0-9]|$)/g;
+  }
+});
+
+// src/pilot/pack.ts
+function onlyKeys3(o, allowed, where) {
+  for (const key of Object.keys(o)) if (!allowed.includes(key)) bad3(`${where} has a field this pack format does not allow (${NAME3.test(key) ? key : "unnamed"}). Remove it and export again.`);
+}
+function parsePack(text4) {
+  let raw;
+  try {
+    raw = JSON.parse(text4);
+  } catch {
+    return bad3("The pack file is not valid JSON.");
+  }
+  if (!isObject3(raw)) return bad3("The pack file must be a JSON object.");
+  if (unsafeKey(raw) !== null) bad3("The pack has a field named __proto__, constructor or prototype, which no pack needs. Rename it and export again.");
+  onlyKeys3(raw, ["version", "name", "pack_version", "parent_pack_id", "source", "tools", "check_catalog", "cases"], "The pack");
+  if (raw.version !== 1) bad3("The pack version field must be 1.");
+  if (!isNonEmpty(raw.name)) bad3("The pack needs a non-empty name.");
+  if (!isInt(raw.pack_version) || raw.pack_version < 1) bad3("pack_version must be a whole number of at least 1.");
+  const packVersion = raw.pack_version;
+  if (raw.parent_pack_id !== null && !isSha256(raw.parent_pack_id)) bad3("parent_pack_id must be null or a 64-character hex pack id.");
+  if (raw.parent_pack_id === null !== (packVersion === 1)) bad3("parent_pack_id must be null for pack_version 1 and a pack id for every later version.");
+  checkApproval(raw.source);
+  if (!Array.isArray(raw.tools)) bad3("tools must be an array.");
+  if (raw.tools.length > PACK_LIMITS.tools) throw new PilotError("too_large", `The pack lists ${raw.tools.length} tools; the limit is ${PACK_LIMITS.tools}.`);
+  const toolNames = /* @__PURE__ */ new Set();
+  for (const [i, t] of raw.tools.entries()) {
+    if (!isObject3(t)) {
+      bad3(`Tool #${i + 1} must be an object.`);
+      continue;
+    }
+    onlyKeys3(t, ["name", "description", "input_schema"], `Tool #${i + 1}`);
+    if (!isNonEmpty(t.name)) bad3(`Tool #${i + 1} needs a name.`);
+    if (typeof t.description !== "string") bad3(`Tool ${safeName(t.name)} needs a description.`);
+    if (!isObject3(t.input_schema)) bad3(`Tool ${safeName(t.name)} needs an input_schema object.`);
+    if (toolNames.has(t.name)) bad3(`Tool ${safeName(t.name)} is listed twice.`);
+    toolNames.add(t.name);
+  }
+  if (!isObject3(raw.check_catalog)) bad3("check_catalog must be an object of check id to sentence.");
+  const catalog = raw.check_catalog;
+  for (const [id, sentence] of Object.entries(catalog)) {
+    if (!isNonEmpty(sentence)) bad3(`check_catalog entry ${safeName(id)} must be a non-empty sentence.`);
+    if (!isNonEmpty(id)) bad3("check_catalog has an empty check id.");
+  }
+  if (!Array.isArray(raw.cases) || raw.cases.length === 0) bad3("The pack needs at least one case.");
+  const cases4 = raw.cases;
+  if (cases4.length > PACK_LIMITS.cases) throw new PilotError("too_large", `The pack has ${cases4.length} cases; the limit is ${PACK_LIMITS.cases}.`);
+  const seen = /* @__PURE__ */ new Set();
+  const ctx = { packVersion, toolNames, catalog, seen };
+  cases4.forEach((c, i) => checkCase(c, i, ctx));
+  scanForPersonalData(raw);
+  return raw;
+}
+function checkApproval(source) {
+  const refuse2 = (what) => {
+    throw new PilotError("pack_not_approved", `The pack has no recorded approval: ${what}. Ask the data owner to complete the source block and export again.`);
+  };
+  if (!isObject3(source)) return refuse2("the source block is missing");
+  for (const key of ["exported_by", "exported_at"]) if (!isNonEmpty(source[key])) refuse2(`source.${key} is missing`);
+  if (Number.isNaN(ms(source.exported_at))) refuse2("source.exported_at is not a UTC time like 2026-10-01T00:00:00Z");
+  const red = source.redaction;
+  if (!isObject3(red)) return refuse2("source.redaction is missing");
+  for (const key of ["method", "approved_by", "approved_at"]) if (!isNonEmpty(red[key])) refuse2(`source.redaction.${key} is missing`);
+  if (Number.isNaN(ms(red.approved_at))) refuse2("source.redaction.approved_at is not a UTC time like 2026-10-01T00:00:00Z");
+  if (!Array.isArray(source.approved_uses) || !source.approved_uses.includes("replay")) refuse2('source.approved_uses does not include "replay"');
+  onlyKeys3(source, ["exported_by", "exported_at", "redaction", "approved_uses", "policy_version"], "source");
+  onlyKeys3(red, ["method", "approved_by", "approved_at"], "source.redaction");
+  if (source.policy_version !== void 0 && typeof source.policy_version !== "string") bad3("source.policy_version must be a string.");
+}
+function checkCase(c, index, ctx) {
+  if (!isObject3(c)) {
+    bad3(`Case #${index + 1} must be an object.`);
+    return;
+  }
+  const label = typeof c.id === "string" && CASE_ID.test(c.id) ? `Case ${c.id}` : `Case #${index + 1}`;
+  onlyKeys3(c, ["id", "split", "provenance", "intent", "messages", "checks", "observed", "regression"], label);
+  if (typeof c.id !== "string" || !CASE_ID.test(c.id)) bad3(`${label} needs an id of letters, digits, dot, dash or underscore (at most 64 characters).`);
+  if (ctx.seen.has(c.id)) bad3(`${label} has an id that is used by another case.`);
+  ctx.seen.add(c.id);
+  if (c.split !== "discovery" && c.split !== "heldout") bad3(`${label} needs split "discovery" or "heldout".`);
+  const prov = c.provenance;
+  if (!isObject3(prov)) {
+    bad3(`${label} needs a provenance block.`);
+    return;
+  }
+  onlyKeys3(prov, ["kind", "ref", "added_in_pack_version"], `${label} provenance`);
+  if (prov.kind !== "export" && prov.kind !== "promoted") bad3(`${label} provenance.kind must be "export" or "promoted".`);
+  if (!isNonEmpty(prov.ref)) bad3(`${label} provenance.ref is missing.`);
+  if (!isInt(prov.added_in_pack_version) || prov.added_in_pack_version < 1 || prov.added_in_pack_version > ctx.packVersion) bad3(`${label} provenance.added_in_pack_version must be a whole number from 1 to the pack version.`);
+  if (c.intent !== void 0 && !isNonEmpty(c.intent)) bad3(`${label} intent must be a non-empty string when present.`);
+  const turns = checkMessages(c, label, ctx);
+  checkChecks(c, label, turns, ctx);
+  if (c.observed !== void 0) {
+    if (!isObject3(c.observed)) bad3(`${label} observed must be an object.`);
+    for (const [k, v] of Object.entries(c.observed)) {
+      if (!(v === null || typeof v === "boolean" || typeof v === "number" && Number.isFinite(v))) bad3(`${label} observed value ${safeName(k)} must be a number, true, false or null.`);
+    }
+  }
+  if (c.regression !== void 0) {
+    const r = c.regression;
+    if (!isObject3(r)) {
+      bad3(`${label} regression must be an object.`);
+      return;
+    }
+    onlyKeys3(r, ["approved_by", "approved_at", "reason", "promotion_ref"], `${label} regression`);
+    for (const k of ["approved_by", "approved_at", "reason", "promotion_ref"]) if (!isNonEmpty(r[k])) bad3(`${label} regression.${k} must be a non-empty string.`);
+  }
+}
+function checkMessages(c, label, ctx) {
+  if (!Array.isArray(c.messages) || c.messages.length === 0) bad3(`${label} needs messages.`);
+  const messages = c.messages;
+  if (messages.length > PACK_LIMITS.messages_per_case) throw new PilotError("too_large", `${label} has ${messages.length} messages; the limit is ${PACK_LIMITS.messages_per_case}.`);
+  const tooLong = (n, what) => {
+    if (n > PACK_LIMITS.message_chars) throw new PilotError("too_large", `${label} ${what} is ${n} characters; the limit is ${PACK_LIMITS.message_chars}.`);
+  };
+  messages.forEach((m, i2) => {
+    const at = `${label} message ${i2 + 1}`;
+    if (!isObject3(m)) {
+      bad3(`${at} must be an object.`);
+      return;
+    }
+    const role = m.role;
+    if (role !== "user" && role !== "assistant" && role !== "tool") bad3(`${at} needs role user, assistant or tool.`);
+    onlyKeys3(m, MESSAGE_KEYS[role], at);
+    if (role === "tool") {
+      if (!isNonEmpty(m.tool_call_id)) bad3(`${at} needs a tool_call_id.`);
+      if (!isNonEmpty(m.name)) bad3(`${at} needs the tool name.`);
+      if (typeof m.result !== "string") bad3(`${at} needs a result string.`);
+      tooLong(m.result.length, `message ${i2 + 1} result`);
+      if (m.is_error !== void 0 && typeof m.is_error !== "boolean") bad3(`${at} is_error must be true or false.`);
+      return;
+    }
+    if (typeof m.text !== "string") bad3(`${at} needs a text string.`);
+    tooLong(m.text.length, `message ${i2 + 1} text`);
+    if (role === "assistant" && m.tool_calls !== void 0) {
+      if (!Array.isArray(m.tool_calls)) bad3(`${at} tool_calls must be an array.`);
+      for (const tc of m.tool_calls) {
+        if (!isObject3(tc)) {
+          bad3(`${at} has a tool call that is not an object.`);
+          continue;
+        }
+        onlyKeys3(tc, ["id", "name", "input"], `${at} tool call`);
+        if (!isNonEmpty(tc.id)) bad3(`${at} has a tool call without an id.`);
+        if (!isNonEmpty(tc.name)) bad3(`${at} has a tool call without a name.`);
+        if (!ctx.toolNames.has(tc.name)) bad3(`${at} calls tool ${safeName(tc.name)}, which the pack does not list in tools.`);
+        if (!isObject3(tc.input)) bad3(`${at} has a tool call for ${safeName(tc.name)} whose input is not an object.`);
+        tooLong(canonicalJson(tc.input).length, `message ${i2 + 1} tool input`);
+      }
+    }
+  });
+  const list = messages;
+  if (list[0].role !== "user") bad3(`${label} must start with a user message.`);
+  const callIds = /* @__PURE__ */ new Set();
+  let turns = 0;
+  let i = 0;
+  while (i < list.length) {
+    let j = i + 1;
+    while (j < list.length && list[j].role !== "user") j++;
+    turns++;
+    if (j === i + 1) bad3(`${label} user message ${i + 1} is not followed by an assistant turn.`);
+    const pending = /* @__PURE__ */ new Map();
+    for (let k = i + 1; k < j; k++) {
+      const m = list[k];
+      if (m.role === "assistant") {
+        for (const tc of m.tool_calls ?? []) {
+          const id = tc.id;
+          if (callIds.has(id)) bad3(`${label} tool call id ${safeName(id)} is used more than once.`);
+          callIds.add(id);
+          pending.set(id, tc.name);
+        }
+      } else {
+        const want = pending.get(m.tool_call_id);
+        if (want === void 0) bad3(`${label} message ${k + 1} is a tool result with no matching call earlier in the same turn.`);
+        else if (want !== m.name) bad3(`${label} message ${k + 1} answers call ${safeName(m.tool_call_id)} under a different tool name.`);
+        pending.delete(m.tool_call_id);
+      }
+    }
+    if (pending.size > 0) bad3(`${label} turn ${turns} has a tool call (${[...pending.keys()].map(safeName).join(", ")}) with no result in the same turn.`);
+    const end = list[j - 1];
+    if (end.role !== "assistant" || (end.tool_calls?.length ?? 0) > 0 || end.text.trim() === "") {
+      bad3(`${label} turn ${turns} must end with an assistant message that has text and no tool calls.`);
+    }
+    i = j;
+  }
+  return turns;
+}
+function checkChecks(c, label, turns, ctx) {
+  if (!Array.isArray(c.checks)) bad3(`${label} needs a checks array.`);
+  const checks = c.checks;
+  if (checks.length > PACK_LIMITS.checks_per_case) throw new PilotError("too_large", `${label} has ${checks.length} checks; the limit is ${PACK_LIMITS.checks_per_case}.`);
+  const pairs = /* @__PURE__ */ new Set();
+  checks.forEach((k, i) => {
+    const at = `${label} check #${i + 1}`;
+    if (!isObject3(k)) {
+      bad3(`${at} must be an object.`);
+      return;
+    }
+    const kind = k.kind;
+    if (typeof kind !== "string" || !Object.hasOwn(CHECK_KEYS, kind)) bad3(`${at} needs a kind of reply_includes, reply_excludes, calls_tool, avoids_tool or tool_requires.`);
+    onlyKeys3(k, ["id", "turn", "role", "blocking", "kind", ...CHECK_KEYS[kind]], at);
+    if (typeof k.id !== "string" || !Object.hasOwn(ctx.catalog, k.id)) bad3(`${at} uses check id ${safeName(k.id)}, which is not in check_catalog.`);
+    if (!isInt(k.turn) || k.turn < 1 || k.turn > turns) bad3(`${label} check ${safeName(k.id)} names a turn outside 1 to ${turns}.`);
+    if (k.role !== "primary" && k.role !== "guard") bad3(`${label} check ${safeName(k.id)} needs role primary or guard.`);
+    if (k.blocking !== void 0 && (k.role !== "guard" || typeof k.blocking !== "boolean")) bad3(`${label} check ${safeName(k.id)}: blocking is only allowed on guard checks, and must be true or false.`);
+    if (kind === "reply_includes" || kind === "reply_excludes") {
+      const phrases = k.any_of;
+      if (!Array.isArray(phrases) || phrases.length === 0 || phrases.some((p) => !isNonEmpty(p) || p.length > 200)) bad3(`${label} check ${safeName(k.id)} needs any_of: a non-empty list of phrases of at most 200 characters.`);
+    } else {
+      const names2 = kind === "tool_requires" ? ["tool", "after"] : ["tool"];
+      for (const field2 of names2) if (typeof k[field2] !== "string" || !ctx.toolNames.has(k[field2])) bad3(`${label} check ${safeName(k.id)} names a ${field2} that the pack does not list in tools.`);
+    }
+    const pair = `${k.id}\0${k.turn}`;
+    if (pairs.has(pair)) bad3(`${label} has check ${safeName(k.id)} twice on turn ${k.turn}.`);
+    pairs.add(pair);
+  });
+}
+function scanForPersonalData(pack2) {
+  const hit = (text4, where) => {
+    const kinds = personalDataKinds(text4);
+    if (kinds.length > 0) throw new PilotError("pack_not_redacted", `${where} contains what looks like personal data (${kinds.join(", ")}). Replace it with a token such as [EMAIL_1] and export again.`);
+  };
+  const walk3 = (value, where) => {
+    if (typeof value === "string") hit(value, where);
+    else if (Array.isArray(value)) for (const v of value) walk3(v, where);
+    else if (isObject3(value)) for (const [k, v] of Object.entries(value)) {
+      hit(k, where);
+      walk3(v, where);
+    }
+  };
+  for (const sentence of Object.values(pack2.check_catalog)) hit(sentence, "check_catalog");
+  for (const c of pack2.cases) {
+    hit(c.provenance.ref, `Case ${c.id} provenance.ref`);
+    if (c.intent !== void 0) hit(c.intent, `Case ${c.id} intent`);
+    c.messages.forEach((m, i) => {
+      const where = `Case ${c.id} message number ${i + 1} (counting from 1)`;
+      if (m.role === "tool") hit(m.result, where);
+      else {
+        hit(m.text, where);
+        if (m.role === "assistant") for (const tc of m.tool_calls ?? []) walk3(tc.input, where);
+      }
+    });
+    for (const k of c.checks) if ("any_of" in k) for (const p of k.any_of) hit(p, `Case ${c.id} check ${k.id}`);
+  }
+}
+function packSummary(pack2, packId) {
+  const by_split = { discovery: 0, heldout: 0 };
+  let regression_cases = 0;
+  let assistant_turns = 0;
+  let checks = 0;
+  for (const c of pack2.cases) {
+    by_split[c.split]++;
+    if (c.regression) regression_cases++;
+    assistant_turns += turnCount(c);
+    checks += c.checks.length;
+  }
+  return { pack_id: packId, name: pack2.name, pack_version: pack2.pack_version, parent_pack_id: pack2.parent_pack_id, cases: pack2.cases.length, by_split, regression_cases, assistant_turns, checks };
+}
+function turnCount(c) {
+  return c.messages.filter((m) => m.role === "user").length;
+}
+function discoveryCases(pack2) {
+  return pack2.cases.filter((c) => c.split === "discovery");
+}
+var PACK_LIMITS, CASE_ID, NAME3, bad3, safeName, MESSAGE_KEYS, CHECK_KEYS;
+var init_pack = __esm({
+  "src/pilot/pack.ts"() {
+    "use strict";
+    init_evidence();
+    init_errors3();
+    init_ids();
+    init_io();
+    init_pii();
+    PACK_LIMITS = { cases: 2e3, messages_per_case: 200, message_chars: 2e4, checks_per_case: 60, tools: 50 };
+    CASE_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/;
+    NAME3 = /^[A-Za-z0-9_.-]{1,64}$/;
+    bad3 = (message) => {
+      throw new PilotError("invalid_pack", message);
+    };
+    safeName = (v) => typeof v === "string" && NAME3.test(v) ? v : "(unnamed)";
+    MESSAGE_KEYS = { user: ["role", "text"], assistant: ["role", "text", "tool_calls"], tool: ["role", "tool_call_id", "name", "result", "is_error"] };
+    CHECK_KEYS = {
+      reply_includes: ["any_of"],
+      reply_excludes: ["any_of"],
+      calls_tool: ["tool"],
+      avoids_tool: ["tool"],
+      tool_requires: ["tool", "after"]
+    };
+  }
+});
+
+// src/pilot/discover.ts
+function discoverFailures(input) {
+  const { pack: pack2, baseline: baseline2 } = input;
+  const min = Math.max(1, input.min_recurring_cases);
+  const split = new Map(pack2.cases.map((c) => [c.id, c.split]));
+  for (const run2 of baseline2.cases) {
+    if (split.get(run2.case_id) !== run2.split) throw new PilotError("conflict", "The baseline replay does not match the pack's cases. Replay the baseline on this pack again.");
+  }
+  const have = new Set(baseline2.cases.map((c) => c.case_id));
+  if (discoveryCases(pack2).some((c) => !have.has(c.id))) throw new PilotError("conflict", "The baseline replay is missing discovery cases from the pack. Replay the baseline on this pack again.");
+  const failing = /* @__PURE__ */ new Map();
+  const discovery = new Set(discoveryCases(pack2).map((c) => c.id));
+  const runs = new Map(baseline2.cases.map((c) => [c.case_id, c]));
+  for (const pc of pack2.cases) {
+    if (!discovery.has(pc.id)) continue;
+    for (const t of runs.get(pc.id)?.turns ?? []) {
+      for (const r of t.checks) {
+        if (r.role === "primary" && r.pass === false) {
+          const list = failing.get(r.id) ?? [];
+          list.push({ case_id: pc.id, turn: t.turn });
+          failing.set(r.id, list);
+        }
+      }
+    }
+  }
+  const findings = [];
+  for (const [check_id, list] of failing) {
+    const distinct = new Set(list.map((x) => x.case_id)).size;
+    if (distinct < min) continue;
+    findings.push({
+      version: 1,
+      pack_id: baseline2.pack_id,
+      baseline_prompt_id: baseline2.prompt_id,
+      check_id,
+      description: pack2.check_catalog[check_id] ?? "",
+      failing: list,
+      discovery_cases_with_check: discoveryCases(pack2).filter((c) => c.checks.some((k) => k.id === check_id)).length
+    });
+  }
+  const count3 = (f) => new Set(f.failing.map((x) => x.case_id)).size;
+  return findings.sort((a, b) => count3(b) - count3(a) || (a.check_id < b.check_id ? -1 : a.check_id > b.check_id ? 1 : 0));
+}
+function proposerContext(input) {
+  const { pack: pack2, finding } = input;
+  const allowed = new Map(discoveryCases(pack2).map((c) => [c.id, c]));
+  for (const f of finding.failing) {
+    if (!allowed.has(f.case_id)) throw new PilotError("holdout_leak", "The finding names a case that is not a discovery case of this pack. Nothing was sent to the proposer. Rebuild the finding from the baseline replay.");
+  }
+  const examples = finding.failing.slice(0, MAX_EXAMPLES2).map((f) => {
+    const c = allowed.get(f.case_id);
+    if (!Number.isInteger(f.turn) || f.turn < 1 || f.turn > turnCount(c)) throw new PilotError("conflict", `The finding names turn ${f.turn} of case ${f.case_id}, which has ${turnCount(c)} turns.`);
+    let seen = 0;
+    let end = c.messages.length;
+    for (const [i, m] of c.messages.entries()) {
+      if (m.role === "user" && ++seen === f.turn) {
+        end = i + 1;
+        break;
+      }
+    }
+    return { case_id: f.case_id, turn: f.turn, messages: c.messages.slice(0, end) };
+  });
+  return { baseline_prompt: input.baseline_prompt, finding, examples, attempt: input.attempt, feedback: input.feedback, max_changed_lines: input.max_changed_lines };
+}
+function changedLines2(before, after) {
+  const a = before.split("\n");
+  const b = after.split("\n");
+  let lo = 0;
+  while (lo < a.length && lo < b.length && a[lo] === b[lo]) lo++;
+  let hiA = a.length;
+  let hiB = b.length;
+  while (hiA > lo && hiB > lo && a[hiA - 1] === b[hiB - 1]) {
+    hiA--;
+    hiB--;
+  }
+  const x = a.slice(lo, hiA);
+  const y = b.slice(lo, hiB);
+  if (x.length === 0 || y.length === 0) return x.length + y.length;
+  if (x.length * y.length > MAX_DIFF_CELLS) return x.length + y.length;
+  let prev = new Array(y.length + 1).fill(0);
+  let cur = new Array(y.length + 1).fill(0);
+  for (let i = 1; i <= x.length; i++) {
+    for (let j = 1; j <= y.length; j++) cur[j] = x[i - 1] === y[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+    [prev, cur] = [cur, prev];
+  }
+  const common = prev[y.length];
+  return x.length - common + (y.length - common);
+}
+function makeCandidate(input) {
+  const invalid2 = (why) => {
+    throw new PilotError("invalid_candidate", `The candidate was refused: ${why}.`);
+  };
+  if (typeof input.author !== "string" || input.author.trim() === "") invalid2("it has no author");
+  if (typeof input.rationale !== "string" || input.rationale.trim() === "") invalid2("it has no rationale");
+  const problem = candidateProblem(input.prompt, { kind: "file", path: "prompt.md" });
+  if (problem) invalid2(problem);
+  const added = addedLineProblem(input.baseline_prompt, input.prompt);
+  if (added) invalid2(added);
+  if (input.prompt === input.baseline_prompt) invalid2("it is identical to the current prompt");
+  const changed = changedLines2(input.baseline_prompt, input.prompt);
+  if (changed > input.max_changed_lines) throw new PilotError("candidate_not_narrow", `The candidate changes ${changed} lines; the limit is ${input.max_changed_lines}. Make a smaller change.`);
+  return {
+    version: 1,
+    pilot_id: input.pilot_id,
+    baseline_prompt_id: promptId(input.baseline_prompt),
+    prompt_id: promptId(input.prompt),
+    origin: input.origin,
+    author: input.author,
+    rationale: input.rationale,
+    finding_id: input.finding_id,
+    target_check_id: input.target_check_id,
+    changed_lines: changed
+  };
+}
+function renderFindings(findings, pack2) {
+  if (findings.length === 0) return "No check failed in enough discovery cases to count as a recurring failure.\n";
+  const out = ["# Recurring failures on discovery cases", ""];
+  for (const f of findings) {
+    const cases4 = new Set(f.failing.map((x) => x.case_id)).size;
+    out.push(`## ${f.check_id}`, "", pack2.check_catalog[f.check_id] ?? f.description, "");
+    out.push(`- Fails in ${cases4} of ${f.discovery_cases_with_check} discovery cases that test it`);
+    out.push(`- Failing: ${f.failing.map((x) => `${x.case_id} (turn ${x.turn})`).join(", ")}`, "");
+  }
+  return out.join("\n");
+}
+var MAX_EXAMPLES2, MAX_DIFF_CELLS;
+var init_discover = __esm({
+  "src/pilot/discover.ts"() {
+    "use strict";
+    init_safety();
+    init_safety2();
+    init_errors3();
+    init_ids();
+    init_pack();
+    MAX_EXAMPLES2 = 8;
+    MAX_DIFF_CELLS = 25e6;
+  }
+});
+
+// src/pilot/egress.ts
+function tokens(text4) {
+  const t = normal2(text4);
+  const out = [];
+  let end = 0;
+  for (const m of t.matchAll(/[\p{L}\p{N}]+/gu)) {
+    const prev = out.at(-1);
+    const between = t.slice(end, m.index);
+    const abbreviation = prev !== void 0 && prev.word.length <= 3 && prev.word !== prev.lower && /^\.\s*$/.test(between);
+    out.push({ word: m[0], lower: m[0].toLowerCase(), starts: prev === void 0 || /[.!?]/.test(between) && !abbreviation });
+    end = m.index + m[0].length;
+  }
+  return out;
+}
+function words(text4) {
+  return tokens(text4).map((t) => t.lower);
+}
+function stringsIn(value, out) {
+  if (typeof value === "string") out.push(value);
+  else if (Array.isArray(value)) for (const v of value) stringsIn(v, out);
+  else if (value !== null && typeof value === "object") for (const [k, v] of Object.entries(value)) {
+    out.push(k);
+    stringsIn(v, out);
+  }
+}
+function rendered(text4) {
+  return text4.replace(/&#(\d{1,7});/g, (_, d) => codePoint(Number(d))).replace(/&#[xX]([0-9a-fA-F]{1,6});/g, (_, h) => codePoint(parseInt(h, 16))).replace(/&([A-Za-z])(?:acute|grave|circ|uml|tilde|ring|cedil|caron|slash|macr|breve|ogon|dot|strok);/g, "$1").replace(/&(?:amp|lt|gt|quot|apos|nbsp|ensp|emsp|thinsp);/g, " ").replace(/&[A-Za-z][A-Za-z0-9]{1,31};/g, "").replace(/<[^<>\n]{0,300}>/g, "").replace(/\]\([^)\n]{0,2000}\)/g, "").replace(/%([2-7][0-9a-fA-F])/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
+}
+function identifierPattern(packs, clean) {
+  const ids = /* @__PURE__ */ new Set();
+  const add = (text4, cap) => {
+    if (text4.length <= cap && clean(text4)) ids.add(text4);
+  };
+  for (const pack2 of packs) {
+    for (const [id, sentence] of Object.entries(pack2.check_catalog)) {
+      add(id, MAX_ID_CHARS);
+      add(sentence, MAX_SENTENCE_CHARS);
+    }
+    for (const tool of pack2.tools) add(tool.name, MAX_ID_CHARS);
+    for (const c of pack2.cases) add(c.id, MAX_ID_CHARS);
+  }
+  const list = [...ids].filter((s) => s.trim() !== "").sort((a, b) => b.length - a.length || (a < b ? -1 : 1));
+  if (list.length === 0) return null;
+  return new RegExp(`(?<![\\p{L}\\p{N}_-])(?:${list.map(escapeRegExp).join("|")})(?![\\p{L}\\p{N}_-])`, "gu");
+}
+function sensitiveIndex(packs, allow = [], telemetryIds = []) {
+  const byCase = /* @__PURE__ */ new Map();
+  const always = /* @__PURE__ */ new Set();
+  const capital = /* @__PURE__ */ new Set();
+  const lower2 = /* @__PURE__ */ new Set();
+  for (const pack2 of packs) {
+    for (const c of pack2.cases) {
+      const items = byCase.get(c.id) ?? /* @__PURE__ */ new Set();
+      byCase.set(c.id, items);
+      const prose = [];
+      const values = [];
+      for (const m of c.messages) {
+        if (m.role === "tool") prose.push(m.result);
+        else {
+          prose.push(m.text);
+          if (m.role === "assistant") for (const call of m.tool_calls ?? []) stringsIn(call.input, values);
+        }
+      }
+      if (c.intent !== void 0) values.push(c.intent);
+      values.push(c.provenance.ref);
+      values.push(...Object.keys(c.observed ?? {}));
+      for (const [texts, isProse] of [[prose, true], [values, false]]) {
+        for (const t of texts) {
+          const toks = tokens(t.replace(PLACEHOLDER2, " "));
+          for (const run2 of runsOf(toks.map((x) => x.lower))) items.add(run2);
+          for (const tok of toks) {
+            if (new RegExp("\\p{N}", "u").test(tok.lower)) {
+              if (tok.lower.length >= TOKEN_MIN) always.add(tok.lower);
+              continue;
+            }
+            if (tok.lower.length >= WORD_MIN) items.add(tok.lower);
+            if (tok.word === tok.lower) lower2.add(tok.lower);
+            else if ((!isProse || !tok.starts) && tok.lower.length >= NAME_MIN) capital.add(tok.lower);
+          }
+        }
+      }
+    }
+  }
+  const cases4 = /* @__PURE__ */ new Map();
+  for (const items of byCase.values()) for (const item of items) cases4.set(item, (cases4.get(item) ?? 0) + 1);
+  const few = Math.max(2, Math.ceil(byCase.size * 0.02));
+  const all = /* @__PURE__ */ new Set();
+  for (const [item, count3] of cases4) if (count3 <= few) all.add(item);
+  for (const word of always) all.add(word);
+  const allNames = /* @__PURE__ */ new Set();
+  for (const word of capital) if (!lower2.has(word)) {
+    all.add(word);
+    allNames.add(word);
+  }
+  const identifiers = identifierPattern(packs, (text4) => !carriesConversation(text4, all, allNames));
+  const allowed = /* @__PURE__ */ new Set();
+  for (const t of allow) {
+    const w = words(withoutIdentifiers(t, identifiers));
+    for (const word of w) allowed.add(word);
+    for (const run2 of runsOf(w)) allowed.add(run2);
+  }
+  const phrases = new Set([...all].filter((x) => !allowed.has(x)));
+  const names2 = new Set([...allNames].filter((x) => !allowed.has(x)));
+  const sequences = /* @__PURE__ */ new Set();
+  let maxSequence = 0;
+  for (const id of telemetryIds) {
+    const w = words(id);
+    if (w.join("").length < SEQUENCE_MIN) continue;
+    sequences.add(w.join(" "));
+    maxSequence = Math.max(maxSequence, w.length);
+  }
+  return { phrases, names: names2, identifiers, conversation: { phrases: all, names: allNames }, sequences, maxSequence };
+}
+function telemetryIdentifiers(rows) {
+  const ids = /* @__PURE__ */ new Set();
+  for (const r of rows) {
+    ids.add(r.conversation_id);
+    if (r.unit_id !== void 0) ids.add(r.unit_id);
+  }
+  return [...ids];
+}
+function carriesConversation(text4, phrases, names2, byName = true) {
+  for (const form of /* @__PURE__ */ new Set([text4, rendered(text4)])) {
+    const w = words(form);
+    for (const run2 of runsOf(w)) if (phrases.has(run2)) return true;
+    for (const word of w) if ((byName && names2.has(word) || new RegExp("\\p{N}", "u").test(word)) && phrases.has(word)) return true;
+    if (!byName) continue;
+    for (let i = 0; i < w.length; i++) {
+      if (new RegExp("\\p{N}", "u").test(w[i])) continue;
+      let joined = w[i];
+      for (let j = i + 1; j < w.length && j < i + JOIN_WORDS && !new RegExp("\\p{N}", "u").test(w[j]); j++) {
+        joined += w[j];
+        if (joined.length > JOIN_CHARS) break;
+        if (joined.length >= JOIN_MIN && names2.has(joined)) return true;
+      }
+    }
+  }
+  return false;
+}
+function carriesConversationContent(text4, index, byName = true) {
+  return carriesConversation(text4, index.conversation.phrases, index.conversation.names, byName);
+}
+function decodedForms(text4) {
+  const out = [];
+  for (const m of text4.matchAll(/[A-Za-z0-9+/_-]{8,}={0,2}/g)) {
+    const bytes = Buffer.from(m[0], "base64");
+    if (printable3(bytes)) out.push(bytes.toString("utf8"));
+  }
+  for (const m of text4.matchAll(/(?<![0-9a-fA-F])(?:[0-9a-fA-F]{2}){4,}(?![0-9a-fA-F])/g)) {
+    const bytes = Buffer.from(m[0], "hex");
+    if (printable3(bytes)) out.push(bytes.toString("utf8"));
+  }
+  return out;
+}
+function egressProblems(text4, index) {
+  const problems = personalDataKinds(text4).map((kind) => `contains what looks like ${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}`);
+  if (MIXED.test(rendered(text4).normalize("NFKD").replace(new RegExp("\\p{Cf}", "gu"), ""))) problems.push("contains a word that mixes alphabets, which is how a look-alike letter hides a name");
+  if (index !== null) {
+    const rest = withoutIdentifiers(text4, index.identifiers);
+    const hits = (part) => {
+      const single = /* @__PURE__ */ new Set();
+      const copied = /* @__PURE__ */ new Set();
+      const scan = (form, strict) => {
+        const w = words(form);
+        for (const run2 of runsOf(w)) if (index.phrases.has(run2)) copied.add(run2);
+        for (const word of w) if (index.phrases.has(word) && (strict || word.length >= 6)) single.add(word);
+        for (let i = 0; i < w.length; i++) {
+          if (new RegExp("\\p{N}", "u").test(w[i])) continue;
+          let joined = w[i];
+          for (let j = i + 1; j < w.length && j < i + JOIN_WORDS && !new RegExp("\\p{N}", "u").test(w[j]); j++) {
+            joined += w[j];
+            if (joined.length > JOIN_CHARS) break;
+            if (strict && joined.length >= JOIN_MIN && index.names.has(joined)) single.add(joined);
+          }
+        }
+        for (let i = 0; i < w.length && index.maxSequence > 0; i++) {
+          for (let n = 1; n <= index.maxSequence && i + n <= w.length; n++) if (index.sequences.has(w.slice(i, i + n).join(" "))) single.add(w.slice(i, i + n).join(" "));
+        }
+      };
+      const forms = /* @__PURE__ */ new Set([part, rendered(part)]);
+      for (const form of forms) scan(form, true);
+      const before = copied.size + single.size;
+      for (const form of forms) {
+        for (const decoded of decodedForms(form)) scan(decoded, true);
+        scan(rot13(form), false);
+      }
+      return { copied, single, encoded: copied.size + single.size - before };
+    };
+    const all = hits(rest);
+    if (all.copied.size > 0 || all.single.size > 0) {
+      const copiedOn = [];
+      const singleOn = [];
+      rest.split("\n").forEach((line, i) => {
+        const h = hits(line);
+        if (h.copied.size > 0) copiedOn.push(i + 1);
+        if (h.single.size > 0) singleOn.push(i + 1);
+      });
+      if (all.copied.size > 0) problems.push(`contains wording copied from pack conversations (${all.copied.size} matches${listed(copiedOn)})`);
+      if (all.single.size > 0) problems.push(`contains a name, identifier or word that belongs to particular pack conversations (${all.single.size} matches${listed(singleOn)})`);
+      if (all.encoded > 0) problems.push(`contains encoded or scrambled text (base64, hex or rot13) that decodes to content from pack conversations (${all.encoded} matches)`);
+    }
+  }
+  return problems;
+}
+function assertEgressSafe(text4, index, what) {
+  const problems = egressProblems(text4, index);
+  if (problems.length === 0) return;
+  throw new PilotError("egress_blocked", `Nothing was sent: the ${what} ${problems.join("; ")}. Remove that content and try again.`);
+}
+function modelTextProblem(text4, cap = MAX_MODEL_TEXT_CHARS) {
+  if (text4.trim() === "") return "it is empty";
+  if (text4.length > cap) return `it is longer than ${cap} characters`;
+  if (!/^[\p{Script=Latin}\p{N} .,;:!?'"()\/%&+_-]+$/u.test(text4)) return "it has characters other than plain words and sentence punctuation";
+  if (MIXED.test(text4.normalize("NFKD"))) return "it has a word that mixes alphabets";
+  for (const token2 of text4.split(/[ .,;:!?'"()\/%&+_-]+/)) {
+    if (token2.length >= 20) return "it has a very long unbroken word, which may be an encoded run";
+    if (token2.length >= 8 && new RegExp("\\p{L}", "u").test(token2) && new RegExp("\\p{N}", "u").test(token2)) return "it has a word that mixes letters and digits, which may be an encoded run";
+    if (token2.length >= 8 && /[a-z][A-Z]/.test(token2)) return "it has a word with capitals inside it, which may be an encoded run";
+    if (token2.length >= 8 && !/[aeiouyAEIOUY]/.test(token2)) return "it has a word with no vowels, which may be an encoded run";
+  }
+  return null;
+}
+var RUN, WORD_MIN, TOKEN_MIN, NAME_MIN, JOIN_MIN, JOIN_WORDS, JOIN_CHARS, SEQUENCE_MIN, LOOKALIKES, normal2, PLACEHOLDER2, runsOf, MIXED, codePoint, escapeRegExp, MAX_SENTENCE_CHARS, MAX_ID_CHARS, withoutIdentifiers, printable3, rot13, listed, MAX_MODEL_TEXT_CHARS;
+var init_egress = __esm({
+  "src/pilot/egress.ts"() {
+    "use strict";
+    init_errors3();
+    init_pii();
+    RUN = 3;
+    WORD_MIN = 5;
+    TOKEN_MIN = 3;
+    NAME_MIN = 2;
+    JOIN_MIN = 4;
+    JOIN_WORDS = 16;
+    JOIN_CHARS = 40;
+    SEQUENCE_MIN = 6;
+    LOOKALIKES = new Map(
+      "\u0410A \u0412B \u0415E \u041AK \u041CM \u041DH \u041EO \u0420P \u0421C \u0422T \u0423Y \u0425X \u0405S \u0406I \u0408J \u0430a \u0435e \u043Eo \u0440p \u0441c \u0443y \u0445x \u0455s \u0456i \u0458j \u0501d \u051Bq \u051Dw \u04BBh \u0391A \u0392B \u0395E \u0396Z \u0397H \u0399I \u039AK \u039CM \u039DN \u039FO \u03A1P \u03A4T \u03A5Y \u03A7X \u03BFo \u03BDv \u03B9i \u03BAk \u03C1p \u1D00A \u0299B \u1D04C \u1D05D \u1D07E \uA730F \u0262G \u029CH \u026AI \u1D0AJ \u1D0BK \u029FL \u1D0DM \u0274N \u1D0FO \u1D18P \u0280R \uA731S \u1D1BT \u1D1CU \u1D20V \u1D21W \u028FY \u1D22Z \u0131i \u0130I \u0251a \u0261g \u0269i \u01C0l \u04CFl \u212Ee \uA793c \u0275o \u0585o \u057Du \u0581g \u0570h \u0578n \u057Cn \u0511e \u050Dg \u0455s \u13AAA \u13F4B \u13DFC \u13A0D \u13ACE \u13C0G \u13BBH \u13ABJ \u13E6K \u13DEL \u13B7M \u13DAS \u13A2T \u13D9V \u13D4W \u13C3Z".split(" ").map((p) => [p[0], p[1]])
+    );
+    normal2 = (text4) => text4.normalize("NFKD").replace(/[\p{M}\p{Cf}]/gu, "").replace(/[^\x00-\x7f]/g, (ch) => LOOKALIKES.get(ch) ?? ch);
+    PLACEHOLDER2 = /[[<{]{1,2}[A-Z][A-Z0-9_]{1,40}[\]>}]{1,2}/g;
+    runsOf = (w) => {
+      const out = [];
+      for (let i = 0; i + RUN <= w.length; i++) out.push(w.slice(i, i + RUN).join(" "));
+      return out;
+    };
+    MIXED = new RegExp("(?=[\\p{L}\\p{M}]*\\p{Script=Latin})(?=[\\p{L}\\p{M}]*[\\p{Script=Cyrillic}\\p{Script=Greek}\\p{Script=Armenian}\\p{Script=Cherokee}\\p{Script=Coptic}])[\\p{L}\\p{M}]+", "u");
+    codePoint = (n) => Number.isInteger(n) && n > 0 && n <= 1114111 && !(n >= 55296 && n <= 57343) ? String.fromCodePoint(n) : " ";
+    escapeRegExp = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    MAX_SENTENCE_CHARS = 200;
+    MAX_ID_CHARS = 80;
+    withoutIdentifiers = (text4, identifiers) => identifiers === null ? text4 : text4.replace(identifiers, " ");
+    printable3 = (b) => {
+      if (b.length < 4) return false;
+      let ok = 0;
+      for (const byte of b) if (byte >= 32 && byte < 127 || byte === 10 || byte === 9) ok++;
+      return ok / b.length >= 0.95;
+    };
+    rot13 = (text4) => text4.replace(/[a-z]/gi, (c) => String.fromCharCode((c <= "Z" ? 65 : 97) + (c.charCodeAt(0) - (c <= "Z" ? 65 : 97) + 13) % 26));
+    listed = (lines) => lines.length === 0 ? "" : `; line${lines.length === 1 ? "" : "s"} ${lines.slice(0, 8).join(", ")}${lines.length > 8 ? " and more" : ""}`;
+    MAX_MODEL_TEXT_CHARS = 300;
+  }
+});
+
 // src/pilot/wrap.ts
 import { createHash as createHash3, createHmac } from "node:crypto";
-import { closeSync as closeSync2, constants as constants2, fstatSync, mkdirSync as mkdirSync7, openSync as openSync2, readSync, writeFileSync as writeFileSync9, writeSync } from "node:fs";
-import { join as join19 } from "node:path";
+import { closeSync as closeSync2, constants as constants2, fstatSync, mkdirSync as mkdirSync12, openSync as openSync2, readSync, writeFileSync as writeFileSync13, writeSync } from "node:fs";
+import { join as join30 } from "node:path";
 function appendLine(path4, text4) {
   const fd = openSync2(path4, constants2.O_RDWR | constants2.O_APPEND | constants2.O_CREAT | (constants2.O_NOFOLLOW ?? 0), 384);
   try {
@@ -30719,13 +33504,13 @@ function pilotRecorder(options) {
   };
   function append(line, at) {
     try {
-      mkdirSync7(logDir, { recursive: true, mode: 448 });
+      mkdirSync12(logDir, { recursive: true, mode: 448 });
       try {
-        writeFileSync9(join19(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
+        writeFileSync13(join30(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
       } catch (e) {
         if (e.code !== "EEXIST") throw e;
       }
-      return appendLine(join19(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
+      return appendLine(join30(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
 `);
     } catch {
       return false;
@@ -30868,7 +33653,7 @@ var init_wrap = __esm({
 
 // src/pilot/types.ts
 var TELEMETRY_FORMAT;
-var init_types2 = __esm({
+var init_types3 = __esm({
   "src/pilot/types.ts"() {
     "use strict";
     TELEMETRY_FORMAT = "synthe-pilot-telemetry/v1";
@@ -30884,7 +33669,7 @@ function checkPersonalData(text4, field2, where) {
 }
 function likelyCopies(rows) {
   if (rows.length < 2) return null;
-  const tally2 = (keys) => {
+  const tally3 = (keys) => {
     const m = /* @__PURE__ */ new Map();
     for (const k of keys) m.set(k, (m.get(k) ?? 0) + 1);
     return m;
@@ -30892,8 +33677,8 @@ function likelyCopies(rows) {
   const order = rows.map((_, i) => i).sort((x, y) => ms(rows[x].started_at) - ms(rows[y].started_at) || byString(rows[x].started_at, rows[y].started_at));
   const sorted = order.map((i) => rows[i]);
   const attributes = sorted.map((r) => canonicalJson({ ...r, conversation_id: null, started_at: null }));
-  const common = tally2(attributes);
-  const exact = tally2(sorted.map((r, i) => `${r.started_at}|${attributes[i]}`));
+  const common = tally3(attributes);
+  const exact = tally3(sorted.map((r, i) => `${r.started_at}|${attributes[i]}`));
   let twins = 0;
   let expected = 0;
   let variance = 0;
@@ -30901,7 +33686,7 @@ function likelyCopies(rows) {
     let to = from + 1;
     while (to < sorted.length && sorted[to].started_at === sorted[from].started_at) to++;
     if (to - from > 1) {
-      const around = tally2([...attributes.slice(Math.max(0, from - NEIGHBOURS), from), ...attributes.slice(to, to + NEIGHBOURS)]);
+      const around = tally3([...attributes.slice(Math.max(0, from - NEIGHBOURS), from), ...attributes.slice(to, to + NEIGHBOURS)]);
       const neighbours = Math.min(from, NEIGHBOURS) + Math.min(sorted.length - to, NEIGHBOURS);
       for (let i = from; i < to; i++) {
         if ((exact.get(`${sorted[i].started_at}|${attributes[i]}`) ?? 0) > 1) twins++;
@@ -30918,7 +33703,7 @@ function likelyCopies(rows) {
   return { twins, expected };
 }
 function validateRow(raw, where, contract) {
-  if (!isObject(raw)) return bad4(`${where} is not an object.`);
+  if (!isObject3(raw)) return bad4(`${where} is not an object.`);
   const unknown = Object.keys(raw).filter((k) => !ROW_FIELDS.includes(k));
   if (unknown.length > 0) bad4(`${where} has an undocumented field ${shown(unknown[0])}. ${MINIMISE}`);
   for (const field2 of ["conversation_id", "prompt_version", "started_at"]) {
@@ -30934,7 +33719,7 @@ function validateRow(raw, where, contract) {
     checkPersonalData(v, field2, where);
   }
   if (!validTime(raw.started_at)) bad4(`${where}: started_at must be a UTC time like 2026-09-01T12:00:00Z.`);
-  if (!isObject(raw.values)) return bad4(`${where}: values must be an object of metric name to number or null.`);
+  if (!isObject3(raw.values)) return bad4(`${where}: values must be an object of metric name to number or null.`);
   const metrics = contractMetrics(contract);
   const extra = Object.keys(raw.values).filter((k) => !metrics.some((m) => m.name === k));
   if (extra.length > 0) bad4(`${where}: values has ${shown(extra[0])}, which is not a metric in the contract. ${MINIMISE}`);
@@ -31044,48 +33829,48 @@ function rowsFromCsv(text4, file, contract) {
     const raw = {};
     const values = {};
     header.forEach((h, j) => {
-      const cell3 = fields[j];
+      const cell4 = fields[j];
       const metric = metrics.find((m) => m.name === h);
       if (metric) {
-        if (cell3.trim() === "") {
+        if (cell4.trim() === "") {
           values[h] = null;
           return;
         }
-        values[h] = /^\s*-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*$/.test(cell3) ? Number(cell3) : cell3;
+        values[h] = /^\s*-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*$/.test(cell4) ? Number(cell4) : cell4;
         return;
       }
-      if (cell3 === "" && (h === "segment" || h === "unit_id" || h === "model_id")) return;
-      raw[h] = cell3;
+      if (cell4 === "" && (h === "segment" || h === "unit_id" || h === "model_id")) return;
+      raw[h] = cell4;
     });
     raw.values = values;
     return { line, raw };
   }).map(({ line, raw }) => validateRow(raw, `${file} line ${line}`, contract));
 }
 function validateAggregate(raw, where, contract) {
-  if (!isObject(raw)) return bad4(`${where} is not an object.`);
+  if (!isObject3(raw)) return bad4(`${where} is not an object.`);
   const unknown = Object.keys(raw).filter((k) => !["prompt_version", "n", "immature", "unattributed", "metrics", "segments"].includes(k));
   if (unknown.length > 0) bad4(`${where} has an undocumented field ${shown(unknown[0])}. ${MINIMISE}`);
   if (!isNonEmpty(raw.prompt_version)) bad4(`${where}: prompt_version must be a non-empty string.`);
   if (raw.prompt_version.length > MAX_ID) bad4(`${where}: prompt_version is longer than ${MAX_ID} characters.`);
   checkPersonalData(raw.prompt_version, "prompt_version", where);
   for (const field2 of ["n", "immature", "unattributed"]) {
-    if (!isCount(raw[field2])) bad4(`${where}: ${field2} must be a whole number of 0 or more.`);
+    if (!isCount2(raw[field2])) bad4(`${where}: ${field2} must be a whole number of 0 or more.`);
   }
   const n = raw.n;
-  if (!isObject(raw.metrics)) return bad4(`${where}: metrics must be an object of metric name to summary.`);
+  if (!isObject3(raw.metrics)) return bad4(`${where}: metrics must be an object of metric name to summary.`);
   const metrics = contractMetrics(contract);
   const extra = Object.keys(raw.metrics).filter((k) => !metrics.some((m) => m.name === k));
   if (extra.length > 0) bad4(`${where}: metrics has "${extra[0]}", which is not a metric in the contract. ${MINIMISE}`);
   const out = {};
   for (const m of metrics) {
     const s = raw.metrics[m.name];
-    if (!isObject(s)) return bad4(`${where}: metrics is missing ${m.name}.`);
+    if (!isObject3(s)) return bad4(`${where}: metrics is missing ${m.name}.`);
     if (s.kind !== m.kind) bad4(`${where}: metrics.${m.name}.kind must be "${m.kind}", as in the contract.`);
     if (m.kind === "rate") {
       const unk = Object.keys(s).filter((k) => !["kind", "successes", "missing"].includes(k));
       if (unk.length > 0) bad4(`${where}: metrics.${m.name} has an undocumented field "${unk[0]}".`);
-      if (!isCount(s.successes)) bad4(`${where}: metrics.${m.name}.successes must be a whole number of 0 or more.`);
-      if (!isCount(s.missing)) bad4(`${where}: metrics.${m.name}.missing must be a whole number of 0 or more.`);
+      if (!isCount2(s.successes)) bad4(`${where}: metrics.${m.name}.successes must be a whole number of 0 or more.`);
+      if (!isCount2(s.missing)) bad4(`${where}: metrics.${m.name}.missing must be a whole number of 0 or more.`);
       if (s.successes + s.missing > n) bad4(`${where}: metrics.${m.name}.successes plus missing is more than n.`);
       out[m.name] = { kind: "rate", successes: s.successes, missing: s.missing };
     } else {
@@ -31093,8 +33878,8 @@ function validateAggregate(raw, where, contract) {
       if (unk.length > 0) bad4(`${where}: metrics.${m.name} has an undocumented field "${unk[0]}".`);
       if (typeof s.mean !== "number" || !Number.isFinite(s.mean)) bad4(`${where}: metrics.${m.name}.mean must be a finite number.`);
       if (typeof s.sd !== "number" || !Number.isFinite(s.sd) || s.sd < 0) bad4(`${where}: metrics.${m.name}.sd must be a finite number of 0 or more.`);
-      if (!isCount(s.missing) || s.missing > n) bad4(`${where}: metrics.${m.name}.missing must be a whole number from 0 to n.`);
-      if (s.nonzero !== void 0 && (!isCount(s.nonzero) || s.nonzero > n - s.missing)) bad4(`${where}: metrics.${m.name}.nonzero must be a whole number from 0 to the conversations that have a value.`);
+      if (!isCount2(s.missing) || s.missing > n) bad4(`${where}: metrics.${m.name}.missing must be a whole number from 0 to n.`);
+      if (s.nonzero !== void 0 && (!isCount2(s.nonzero) || s.nonzero > n - s.missing)) bad4(`${where}: metrics.${m.name}.nonzero must be a whole number from 0 to the conversations that have a value.`);
       if (s.nonzero !== void 0 && n - s.missing > 0) {
         const have = n - s.missing;
         const expected = s.sd === 0 ? s.mean === 0 ? 0 : have : null;
@@ -31114,12 +33899,12 @@ function validateAggregate(raw, where, contract) {
   }
   const agg = { prompt_version: raw.prompt_version, n, immature: raw.immature, unattributed: raw.unattributed, metrics: out };
   if (raw.segments !== void 0) {
-    if (!isObject(raw.segments)) return bad4(`${where}: segments must be an object of segment to count.`);
+    if (!isObject3(raw.segments)) return bad4(`${where}: segments must be an object of segment to count.`);
     const segments = {};
     for (const [k, v] of Object.entries(raw.segments)) {
       if (k.length > MAX_ID) bad4(`${where}: a segment name is longer than ${MAX_ID} characters.`);
       checkPersonalData(k, "a segment name", where);
-      if (!isCount(v)) bad4(`${where}: segment counts must be whole numbers of 0 or more.`);
+      if (!isCount2(v)) bad4(`${where}: segment counts must be whole numbers of 0 or more.`);
       segments[k] = v;
     }
     agg.segments = segments;
@@ -31172,16 +33957,16 @@ function importTelemetry(input) {
   } catch {
     return bad4("The export is not valid JSON. Export it again as one JSON file shaped as docs/PILOT.md describes.");
   }
-  if (!isObject(parsed)) return bad4("The export must be a JSON object.");
+  if (!isObject3(parsed)) return bad4("The export must be a JSON object.");
   const x = parsed;
   if (unsafeKey(x) !== null) bad4("The export has a field named __proto__, constructor or prototype, which no export needs.");
-  const unknownTop = Object.keys(x).filter((k) => !TOP_KEYS.includes(k));
+  const unknownTop = Object.keys(x).filter((k) => !TOP_KEYS2.includes(k));
   if (unknownTop.length > 0) bad4(`The export has an undocumented top-level field ${shown(unknownTop[0])}. ${MINIMISE}`);
   if (x.format !== TELEMETRY_FORMAT) bad4(`The export's format must be "${TELEMETRY_FORMAT}".`);
   if (!isNonEmpty(x.export_id)) bad4("The export needs a non-empty export_id (the customer's own id for this export).");
   if (!isNonEmpty(x.source)) bad4("The export needs a non-empty source naming the system it came from.");
   if (!validTime(x.exported_at)) bad4("exported_at must be a UTC time like 2026-09-20T00:00:00Z.");
-  if (!isObject(x.window)) return bad4("window must be an object with start and end.");
+  if (!isObject3(x.window)) return bad4("window must be an object with start and end.");
   if (Object.keys(x.window).some((k) => k !== "start" && k !== "end")) bad4("window may only have start and end.");
   if (!validTime(x.window.start) || !validTime(x.window.end)) bad4("window.start and window.end must be UTC times like 2026-09-01T00:00:00Z.");
   if (ms(x.window.start) >= ms(x.window.end)) bad4("window.start must be before window.end.");
@@ -31189,9 +33974,9 @@ function importTelemetry(input) {
   if (input.purpose === "baseline" && x.assignment !== "none") bad4(`A baseline export covers the current prompt only, so assignment must be "none" (it is "${x.assignment}").`);
   if (input.purpose === "experiment" && x.assignment === "none") bad4('An experiment export compares two prompts, so assignment must be "randomized" or "observational", not "none".');
   if (!isNonEmpty(x.denominator)) bad4("The export needs a non-empty denominator.");
-  if (!isObject(x.units) || Object.values(x.units).some((u) => typeof u !== "string")) bad4("units must be an object of metric name to unit.");
+  if (!isObject3(x.units) || Object.values(x.units).some((u) => typeof u !== "string")) bad4("units must be an object of metric name to unit.");
   if (x.query_hash !== void 0 && !isSha256(x.query_hash)) bad4("query_hash must be 64 lowercase hex characters.");
-  if (x.expected_rows !== void 0 && !isCount(x.expected_rows)) bad4("expected_rows must be a whole number of 0 or more.");
+  if (x.expected_rows !== void 0 && !isCount2(x.expected_rows)) bad4("expected_rows must be a whole number of 0 or more.");
   const forms = ["rows", "rows_csv", "aggregates"].filter((k) => x[k] !== void 0);
   if (forms.length !== 1) bad4(`The export must have exactly one of rows, rows_csv or aggregates (it has ${forms.length === 0 ? "none" : forms.join(" and ")}).`);
   const units = x.units;
@@ -31619,7 +34404,7 @@ function renderBaseline(report2, contract, baselineId) {
   return `${lines.join("\n")}
 `;
 }
-var fail, bad4, MAX_COUNT, isCount, validTime, TOP_KEYS, ROW_FIELDS, ID_FIELDS, MAX_ID, NO_SEGMENT, MINIMISE, contractMetrics, shown, NEIGHBOURS, MAX_NAMED_VERSIONS, byString, sameExceptValues, telemetrySource, fmt, pct3, BASELINE_FLAG_TEXT, ciText;
+var fail, bad4, MAX_COUNT, isCount2, validTime, TOP_KEYS2, ROW_FIELDS, ID_FIELDS, MAX_ID, NO_SEGMENT, MINIMISE, contractMetrics, shown, NEIGHBOURS, MAX_NAMED_VERSIONS, byString, sameExceptValues, telemetrySource, fmt, pct3, BASELINE_FLAG_TEXT, ciText;
 var init_telemetry = __esm({
   "src/pilot/telemetry.ts"() {
     "use strict";
@@ -31630,15 +34415,15 @@ var init_telemetry = __esm({
     init_wrap();
     init_evidence();
     init_stats();
-    init_types2();
+    init_types3();
     fail = (code, message) => {
       throw new PilotError(code, message);
     };
     bad4 = (message) => fail("invalid_telemetry", message);
     MAX_COUNT = 1e12;
-    isCount = (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 && v <= MAX_COUNT;
+    isCount2 = (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 && v <= MAX_COUNT;
     validTime = (v) => typeof v === "string" && !Number.isNaN(ms(v));
-    TOP_KEYS = [
+    TOP_KEYS2 = [
       "format",
       "export_id",
       "source",
@@ -32176,7 +34961,7 @@ var init_experiment = __esm({
     init_ids();
     init_stats();
     init_telemetry();
-    init_types2();
+    init_types3();
     fail2 = (code, message) => {
       throw new PilotError(code, message);
     };
@@ -32250,19 +35035,19 @@ function parseModelScript(source) {
   } catch {
     return bad5("it is not valid JSON");
   }
-  if (!isObject(v) || v.version !== 1 || typeof v.name !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.name)) return bad5("it needs version 1 and a short lowercase name");
+  if (!isObject3(v) || v.version !== 1 || typeof v.name !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.name)) return bad5("it needs version 1 and a short lowercase name");
   if (typeof v.fallback !== "string" || !v.fallback.trim()) return bad5("it needs a fallback reply");
   if (!Array.isArray(v.rules) || v.rules.length > 500) return bad5("rules must be a list of at most 500 rules");
   for (const [i, rule] of v.rules.entries()) {
     const where = `rule ${i + 1}`;
-    if (!isObject(rule) || !isObject(rule.when) || !isObject(rule.reply)) return bad5(`${where} needs "when" and "reply"`);
+    if (!isObject3(rule) || !isObject3(rule.when) || !isObject3(rule.reply)) return bad5(`${where} needs "when" and "reply"`);
     for (const key of ["system_includes", "system_excludes", "user_includes", "result_includes", "called", "not_called", "ever_called", "never_called"]) {
       if (rule.when[key] !== void 0 && !strings(rule.when[key])) return bad5(`${where}: when.${key} must be a list of phrases`);
     }
     if (rule.when.after_tool !== void 0 && rule.when.after_tool !== null && typeof rule.when.after_tool !== "string") return bad5(`${where}: when.after_tool must be a tool name or null`);
     for (const captures of [rule.capture, rule.capture_result]) {
       if (captures === void 0) continue;
-      if (!isObject(captures)) return bad5(`${where}: capture must map names to patterns`);
+      if (!isObject3(captures)) return bad5(`${where}: capture must map names to patterns`);
       for (const pattern of Object.values(captures)) {
         if (typeof pattern !== "string" || pattern.length > 200) return bad5(`${where}: a capture pattern must be text of at most 200 characters`);
         try {
@@ -32274,7 +35059,7 @@ function parseModelScript(source) {
     }
     const { text: text4, tool } = rule.reply;
     if (text4 !== void 0 && typeof text4 !== "string") return bad5(`${where}: reply.text must be text`);
-    if (tool !== void 0 && (!isObject(tool) || typeof tool.name !== "string" || !isObject(tool.input))) return bad5(`${where}: reply.tool needs a name and an input object`);
+    if (tool !== void 0 && (!isObject3(tool) || typeof tool.name !== "string" || !isObject3(tool.input))) return bad5(`${where}: reply.tool needs a name and an input object`);
     if (text4 === void 0 && tool === void 0) return bad5(`${where}: reply needs text or a tool call`);
   }
   return v;
@@ -32282,7 +35067,7 @@ function parseModelScript(source) {
 function fill(value, values) {
   if (typeof value === "string") return value.replace(/\{([a-z_]+)\}/g, (whole2, name) => values[name] ?? whole2);
   if (Array.isArray(value)) return value.map((v) => fill(v, values));
-  if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v, values)]));
+  if (isObject3(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v, values)]));
   return value;
 }
 function scriptedModel(script) {
@@ -32359,13 +35144,13 @@ function parseProposerScript(source) {
   } catch {
     return bad5("it is not valid JSON");
   }
-  if (!isObject(v) || v.version !== 1 || typeof v.name !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.name) || !isObject(v.findings)) return bad5("it needs version 1, a short lowercase name and a findings object");
+  if (!isObject3(v) || v.version !== 1 || typeof v.name !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.name) || !isObject3(v.findings)) return bad5("it needs version 1, a short lowercase name and a findings object");
   for (const [check, attempts] of Object.entries(v.findings)) {
     if (!Array.isArray(attempts)) return bad5(`findings.${check} must be a list of attempts`);
     for (const a of attempts) {
-      if (!isObject(a) || typeof a.rationale !== "string" || !a.rationale.trim()) return bad5(`every attempt for ${check} needs a rationale`);
+      if (!isObject3(a) || typeof a.rationale !== "string" || !a.rationale.trim()) return bad5(`every attempt for ${check} needs a rationale`);
       if (a.append !== void 0 && !strings(a.append)) return bad5(`append for ${check} must be a list of lines`);
-      if (a.replace !== void 0 && !(Array.isArray(a.replace) && a.replace.every((r) => isObject(r) && typeof r.find === "string" && r.find !== "" && typeof r.with === "string"))) return bad5(`replace for ${check} must be a list of {find, with}`);
+      if (a.replace !== void 0 && !(Array.isArray(a.replace) && a.replace.every((r) => isObject3(r) && typeof r.find === "string" && r.find !== "" && typeof r.with === "string"))) return bad5(`replace for ${check} must be a list of {find, with}`);
       if (a.append === void 0 && a.replace === void 0) return bad5(`every attempt for ${check} needs append or replace`);
     }
   }
@@ -32395,7 +35180,7 @@ function transcript(messages, token2) {
 ${text4}`;
   return messages.map((m) => m.role === "user" ? turn("CUSTOMER", m.text) : m.role === "assistant" ? turn("AGENT", `${m.text}${(m.tool_calls ?? []).map((c) => ` [calls ${c.name}]`).join("")}`) : turn(`TOOL ${m.name}`, m.result)).join("\n");
 }
-function modelProposer(model, modelName2, maxTokens, token2 = randomToken) {
+function modelProposer2(model, modelName2, maxTokens, token2 = randomToken) {
   return {
     destination: model.destination,
     async propose(context2) {
@@ -32973,7 +35758,7 @@ function pairArms(input) {
   }
   const baseRuns = new Map(baseline2.cases.map((c) => [c.case_id, c]));
   const candRuns = new Map(candidate.cases.map((c) => [c.case_id, c]));
-  const tally2 = { all: emptyTally(), discovery: emptyTally(), heldout: emptyTally() };
+  const tally3 = { all: emptyTally(), discovery: emptyTally(), heldout: emptyTally() };
   const paired2 = [];
   const excluded = [];
   const diverged = [];
@@ -33021,28 +35806,28 @@ function pairArms(input) {
     commonTotal += common;
     const cd = k.stopped?.why === "diverged" ? k.stopped : null;
     if (cd) diverged.push({ case_id: pc.id, split: pc.split, turn: cd.turn });
-    let entry;
+    let entry2;
     if (common === 0) {
       const stops = [earliestStop(b), earliestStop(k)].filter((s) => s !== null);
       stops.sort((x, y) => x.turn - y.turn || Number(x.why === "diverged") - Number(y.why === "diverged"));
       const first = stops[0];
       const why = first?.why === "unsupported" ? "unsupported" : "inconclusive";
-      entry = { case_id: pc.id, split: pc.split, outcome: "excluded", excluded_why: why, common_turns: 0, total_turns: total, baseline_passed: 0, candidate_passed: 0, primary_checks: 0 };
+      entry2 = { case_id: pc.id, split: pc.split, outcome: "excluded", excluded_why: why, common_turns: 0, total_turns: total, baseline_passed: 0, candidate_passed: 0, primary_checks: 0 };
       excluded.push({ case_id: pc.id, split: pc.split, why, turn: first?.turn ?? 1 });
     } else {
       const outcome2 = candPassed > basePassed ? "win" : candPassed < basePassed ? "loss" : "tie";
-      entry = { case_id: pc.id, split: pc.split, outcome: outcome2, common_turns: common, total_turns: total, baseline_passed: basePassed, candidate_passed: candPassed, primary_checks: primaryChecks };
+      entry2 = { case_id: pc.id, split: pc.split, outcome: outcome2, common_turns: common, total_turns: total, baseline_passed: basePassed, candidate_passed: candPassed, primary_checks: primaryChecks };
     }
-    paired2.push(entry);
-    for (const t of [tally2.all, tally2[pc.split]]) {
+    paired2.push(entry2);
+    for (const t of [tally3.all, tally3[pc.split]]) {
       t.cases++;
-      if (entry.outcome === "excluded") {
+      if (entry2.outcome === "excluded") {
         t.excluded++;
         continue;
       }
       t.paired++;
-      if (entry.outcome === "win") t.wins++;
-      else if (entry.outcome === "loss") t.losses++;
+      if (entry2.outcome === "win") t.wins++;
+      else if (entry2.outcome === "loss") t.losses++;
       else t.ties++;
     }
   }
@@ -33058,12 +35843,12 @@ function pairArms(input) {
   }
   const sortedObserved = Object.fromEntries([...observed].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
   const coverage = {
-    paired_cases: tally2.all.cases === 0 ? 0 : tally2.all.paired / tally2.all.cases,
+    paired_cases: tally3.all.cases === 0 ? 0 : tally3.all.paired / tally3.all.cases,
     common_turns: turnsTotal === 0 ? 0 : commonTotal / turnsTotal,
     excluded,
     diverged
   };
-  const verdict2 = judge({ pack: pack2, gate, tally: tally2, coverage, fixes, newBlocking, unchecked, regressions, paired: paired2, target: input.target_check_id, p: signP(tally2.all.wins, tally2.all.losses) });
+  const verdict2 = judge({ pack: pack2, gate, tally: tally3, coverage, fixes, newBlocking, unchecked, regressions, paired: paired2, target: input.target_check_id, p: signP(tally3.all.wins, tally3.all.losses) });
   return {
     version: 1,
     pack_id: baseline2.pack_id,
@@ -33075,9 +35860,9 @@ function pairArms(input) {
     baseline: baseline2,
     candidate,
     paired: paired2,
-    tally: tally2,
+    tally: tally3,
     coverage,
-    sign_p: signP(tally2.all.wins, tally2.all.losses),
+    sign_p: signP(tally3.all.wins, tally3.all.losses),
     regressions,
     fixes,
     new_blocking_guard_failures: newBlocking,
@@ -33087,7 +35872,7 @@ function pairArms(input) {
   };
 }
 function judge(j) {
-  const { gate, tally: tally2, coverage, fixes, newBlocking, target } = j;
+  const { gate, tally: tally3, coverage, fixes, newBlocking, target } = j;
   const reasons = [];
   const feedback = [];
   let hidden = false;
@@ -33107,15 +35892,15 @@ function judge(j) {
   const excludedFeedback = () => {
     for (const e of discExcluded) feedback.push(`Case ${e.case_id} could not be compared at turn ${e.turn} (${e.why === "unsupported" ? "the replay asked for a tool call the recording has no result for" : "no usable reply"}). Keep tool calls to the ones the conversation already shows.`);
   };
-  const fewCases = tally2.all.paired < gate.min_paired_cases;
+  const fewCases = tally3.all.paired < gate.min_paired_cases;
   const lowCoverage = coverage.paired_cases < gate.min_paired_coverage;
-  if (fewCases) reasons.push(`Only ${tally2.all.paired} of ${tally2.all.cases} cases were scored on both prompts; the gate needs at least ${gate.min_paired_cases}.`);
-  if (lowCoverage) reasons.push(`${pct4(coverage.paired_cases)} of cases (${tally2.all.paired} of ${tally2.all.cases}) were scored on both prompts; the gate needs at least ${pct4(gate.min_paired_coverage)}.`);
+  if (fewCases) reasons.push(`Only ${tally3.all.paired} of ${tally3.all.cases} cases were scored on both prompts; the gate needs at least ${gate.min_paired_cases}.`);
+  if (lowCoverage) reasons.push(`${pct4(coverage.paired_cases)} of cases (${tally3.all.paired} of ${tally3.all.cases}) were scored on both prompts; the gate needs at least ${pct4(gate.min_paired_coverage)}.`);
   if ((fewCases || lowCoverage) && discExcluded.length === 0) hidden = true;
-  const net = tally2.all.wins - tally2.all.losses;
+  const net = tally3.all.wins - tally3.all.losses;
   if (net < gate.min_net_wins) {
     reasons.push(`Wins minus losses is ${net}; the gate needs at least ${gate.min_net_wins}.`);
-    const discNet = tally2.discovery.wins - tally2.discovery.losses;
+    const discNet = tally3.discovery.wins - tally3.discovery.losses;
     const lost = j.paired.filter((p) => p.split === "discovery" && p.outcome === "loss");
     for (const p of lost) feedback.push(`The change did worse on case ${p.case_id}: it passes fewer checks than the current prompt there.`);
     if (discNet < gate.min_net_wins) {
@@ -33123,16 +35908,16 @@ function judge(j) {
     } else hidden = true;
   }
   if (net >= gate.min_net_wins && j.p > REPLAY_MAX_SIGN_P) {
-    reasons.push(`Wins against losses could be luck: ${tally2.all.wins} wins and ${tally2.all.losses} losses give a sign test p of ${j.p.toFixed(4)}; the gate needs ${REPLAY_MAX_SIGN_P} or less.`);
-    const discP = signP(tally2.discovery.wins, tally2.discovery.losses);
+    reasons.push(`Wins against losses could be luck: ${tally3.all.wins} wins and ${tally3.all.losses} losses give a sign test p of ${j.p.toFixed(4)}; the gate needs ${REPLAY_MAX_SIGN_P} or less.`);
+    const discP = signP(tally3.discovery.wins, tally3.discovery.losses);
     if (discP > REPLAY_MAX_SIGN_P) feedback.push("The change improved too few of the cases you can see, compared with the cases it made worse, to rule out luck. Aim at the failing checks in the examples.");
     else hidden = true;
   }
-  if (tally2.heldout.wins < tally2.heldout.losses) {
-    reasons.push(`On held-out cases the candidate lost ${tally2.heldout.losses} and won ${tally2.heldout.wins}; held-out wins must be at least held-out losses.`);
+  if (tally3.heldout.wins < tally3.heldout.losses) {
+    reasons.push(`On held-out cases the candidate lost ${tally3.heldout.losses} and won ${tally3.heldout.wins}; held-out wins must be at least held-out losses.`);
     hidden = true;
   }
-  if (tally2.heldout.paired === 0) {
+  if (tally3.heldout.paired === 0) {
     reasons.push("No held-out case was scored on both prompts, so nothing checks the change on cases the proposer did not see. Add held-out cases to the pack.");
     hidden = true;
   }
@@ -33142,8 +35927,8 @@ function judge(j) {
   }
   const eligible2 = reasons.length === 0;
   if (eligible2) {
-    reasons.push(`Every gate condition holds: ${tally2.all.wins} wins, ${tally2.all.losses} losses and ${tally2.all.ties} ties over ${tally2.all.paired} paired cases (sign test p = ${j.p.toFixed(4)}), no new blocking guard failure, and held-out cases did not lose.`);
-    return { eligible: eligible2, reasons, proposer_feedback: [`The change passed the replay gate on the cases you can see (${tally2.discovery.wins} wins, ${tally2.discovery.losses} losses).`] };
+    reasons.push(`Every gate condition holds: ${tally3.all.wins} wins, ${tally3.all.losses} losses and ${tally3.all.ties} ties over ${tally3.all.paired} paired cases (sign test p = ${j.p.toFixed(4)}), no new blocking guard failure, and held-out cases did not lose.`);
+    return { eligible: eligible2, reasons, proposer_feedback: [`The change passed the replay gate on the cases you can see (${tally3.discovery.wins} wins, ${tally3.discovery.losses} losses).`] };
   }
   excludedFeedback();
   for (const r of j.regressions) if (disc(r) && !r.blocking) feedback.push(`Check ${r.check_id} passed before and fails now on case ${r.case_id} at turn ${r.turn}.`);
@@ -33247,9 +36032,9 @@ function renderPilotReport(store, f) {
     const b = store.get("baseline", baselineEntry.key);
     out.push(`Record \`baseline:${baselineEntry.key}\`, from ${b.telemetry_ids.map((id) => `\`telemetry:${shortId(id)}\``).join(", ")}; window ${b.window.start} to ${b.window.end}; ${b.rows} rows, ${b.mature} mature, ${b.immature} immature.`, "");
     out.push("| Metric | Role | Value | Interval | n | Missing | Source | Method |", "|---|---|---|---|---|---|---|---|");
-    for (const x of b.metrics) out.push(`| ${x.name} | ${x.role} | ${num(x.estimate.value)} | ${x.ci ? `${num(x.ci.lo)} to ${num(x.ci.hi)} (${Math.round(x.ci.level * 100)}%)` : "none"} | ${x.n} | ${x.missing} | ${cell2(x.estimate.source)} | ${cell2(x.estimate.method)} |`);
-    out.push(`| daily volume | | ${num(b.daily_volume.value, 1)} | | | | ${cell2(b.daily_volume.source)} | ${cell2(b.daily_volume.method)} |`);
-    out.push(`| needed per arm | | ${num(b.required_per_arm.value, 0)} | | | | ${cell2(b.required_per_arm.source)} | ${cell2(b.required_per_arm.method)} |`, "");
+    for (const x of b.metrics) out.push(`| ${x.name} | ${x.role} | ${num(x.estimate.value)} | ${x.ci ? `${num(x.ci.lo)} to ${num(x.ci.hi)} (${Math.round(x.ci.level * 100)}%)` : "none"} | ${x.n} | ${x.missing} | ${cell3(x.estimate.source)} | ${cell3(x.estimate.method)} |`);
+    out.push(`| daily volume | | ${num(b.daily_volume.value, 1)} | | | | ${cell3(b.daily_volume.source)} | ${cell3(b.daily_volume.method)} |`);
+    out.push(`| needed per arm | | ${num(b.required_per_arm.value, 0)} | | | | ${cell3(b.required_per_arm.source)} | ${cell3(b.required_per_arm.method)} |`, "");
     if (b.flags.length) out.push(`Flags: ${b.flags.join(", ")}.`, "");
   }
   out.push("## 3. Conversation packs", "");
@@ -33318,14 +36103,14 @@ function renderPilotReport(store, f) {
   return `${out.join("\n")}
 `;
 }
-var num, cell2;
-var init_report = __esm({
+var num, cell3;
+var init_report2 = __esm({
   "src/pilot/report.ts"() {
     "use strict";
     init_ids();
     init_io();
     num = (v, digits = 4) => v === null || v === void 0 || !Number.isFinite(v) ? "unknown" : String(Number(v.toFixed(digits)));
-    cell2 = (s) => s.replaceAll("|", "\\|").replaceAll("\n", " ");
+    cell3 = (s) => s.replaceAll("|", "\\|").replaceAll("\n", " ");
   }
 });
 
@@ -33333,10 +36118,10 @@ var init_report = __esm({
 function lineOps(a, b) {
   let head = 0;
   while (head < a.length && head < b.length && a[head] === b[head]) head++;
-  let tail = 0;
-  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
-  const x = a.slice(head, a.length - tail);
-  const y = b.slice(head, b.length - tail);
+  let tail2 = 0;
+  while (tail2 < a.length - head && tail2 < b.length - head && a[a.length - 1 - tail2] === b[b.length - 1 - tail2]) tail2++;
+  const x = a.slice(head, a.length - tail2);
+  const y = b.slice(head, b.length - tail2);
   const w = y.length + 1;
   const lcs = new Uint32Array((x.length + 1) * w);
   for (let i2 = x.length - 1; i2 >= 0; i2--) {
@@ -33355,7 +36140,7 @@ function lineOps(a, b) {
     } else if (j >= y.length || i < x.length && lcs[(i + 1) * w + j] >= lcs[i * w + j + 1]) ops.push({ t: "-", line: x[i++] });
     else ops.push({ t: "+", line: y[j++] });
   }
-  for (const line of a.slice(a.length - tail)) ops.push({ t: " ", line });
+  for (const line of a.slice(a.length - tail2)) ops.push({ t: " ", line });
   return ops;
 }
 function promptDiff(path4, before, after) {
@@ -33382,7 +36167,7 @@ function promptDiff(path4, before, after) {
     const slice = ops.slice(from, to);
     const oldCount = slice.filter((o) => o.t !== "+").length;
     const newCount = slice.filter((o) => o.t !== "-").length;
-    const range2 = (start2, count2) => `${count2 === 0 ? start2 - 1 : start2}${count2 === 1 ? "" : `,${count2}`}`;
+    const range2 = (start2, count3) => `${count3 === 0 ? start2 - 1 : start2}${count3 === 1 ? "" : `,${count3}`}`;
     out.push(`@@ -${range2(oldStart, oldCount)} +${range2(newStart, newCount)} @@`);
     for (const o of slice) out.push(`${o.t}${rendered2(o.line)}`);
     k = m;
@@ -33587,8 +36372,8 @@ var init_review = __esm({
 });
 
 // src/pilot/store.ts
-import { appendFileSync as appendFileSync2, closeSync as closeSync3, existsSync as existsSync15, mkdirSync as mkdirSync8, openSync as openSync3, readdirSync as readdirSync3, readFileSync as readFileSync18, statSync as statSync5, truncateSync, unlinkSync as unlinkSync4, writeSync as writeSync2 } from "node:fs";
-import { join as join20 } from "node:path";
+import { appendFileSync as appendFileSync3, closeSync as closeSync3, existsSync as existsSync21, mkdirSync as mkdirSync13, openSync as openSync3, readdirSync as readdirSync3, readFileSync as readFileSync26, statSync as statSync6, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
+import { join as join31 } from "node:path";
 var OBJECT_KINDS, entryHash, MAX_OBJECT_BYTES, LOCK_STALE_MS, HELD, PilotStore;
 var init_store = __esm({
   "src/pilot/store.ts"() {
@@ -33625,7 +36410,7 @@ var init_store = __esm({
       }
       objectPath(kind, id) {
         if (!isSha256(id)) throw new PilotError("usage", `${String(id).slice(0, 80)} is not a full 64-character id.`);
-        return join20(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
+        return join31(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
       }
       // Stores a record under its content id. Storing the same record again is a no-op, so every step can be retried.
       put(kind, value) {
@@ -33643,7 +36428,7 @@ var init_store = __esm({
           writeOnce(path4, content);
         } catch (e) {
           if (!(e instanceof PilotError) || e.code !== "conflict") throw e;
-          if (!content.startsWith(readFileSync18(path4, "utf8"))) {
+          if (!content.startsWith(readFileSync26(path4, "utf8"))) {
             throw new PilotError("tampered", `${path4} already exists with content that does not match its name, so it was changed after it was written. It was not overwritten. Compare it with a backup, or start a new pilot directory.`);
           }
           writeAtomic(path4, content);
@@ -33652,7 +36437,7 @@ var init_store = __esm({
       // Reads a record and checks it still hashes to its name: an edited record is refused, not used.
       get(kind, id) {
         const path4 = this.objectPath(kind, id);
-        if (!existsSync15(path4)) throw new PilotError("not_found", `No ${kind} record ${id.slice(0, 12)} in ${this.dir}.`);
+        if (!existsSync21(path4)) throw new PilotError("not_found", `No ${kind} record ${id.slice(0, 12)} in ${this.dir}.`);
         let value;
         try {
           value = JSON.parse(readBounded(path4, MAX_OBJECT_BYTES));
@@ -33667,11 +36452,11 @@ var init_store = __esm({
         return { id, value: this.get(kind, id) };
       }
       has(kind, id) {
-        return isSha256(id) && existsSync15(this.objectPath(kind, id));
+        return isSha256(id) && existsSync21(this.objectPath(kind, id));
       }
       list(kind) {
-        const dir = join20(this.dir, "objects", kind);
-        if (!existsSync15(dir)) return [];
+        const dir = join31(this.dir, "objects", kind);
+        if (!existsSync21(dir)) return [];
         return readdirSync3(dir).map((f) => f.replace(/\.(json|txt)$/, "")).filter(isSha256).sort();
       }
       // A full id, or a prefix of at least 8 characters that names exactly one record. Approvals and publication
@@ -33695,23 +36480,23 @@ var init_store = __esm({
       }
       getPrompt(id) {
         const path4 = this.objectPath("prompt", id);
-        if (!existsSync15(path4)) throw new PilotError("not_found", `No prompt ${id.slice(0, 12)} in ${this.dir}.`);
+        if (!existsSync21(path4)) throw new PilotError("not_found", `No prompt ${id.slice(0, 12)} in ${this.dir}.`);
         const text4 = readBounded(path4);
         if (promptId(text4) !== id) throw new PilotError("tampered", `The stored prompt ${id.slice(0, 12)} no longer matches its id, so it was changed after it was written.`);
         return text4;
       }
       journalPath() {
-        return join20(this.dir, "journal.jsonl");
+        return join31(this.dir, "journal.jsonl");
       }
       // The sequence number and hash of the newest entry, kept beside the journal. The chain alone cannot show that
       // entries were cut off the end; a journal shorter than its recorded head can.
       headPath() {
-        return join20(this.dir, "journal.head");
+        return join31(this.dir, "journal.head");
       }
       head() {
-        if (!existsSync15(this.headPath())) return null;
+        if (!existsSync21(this.headPath())) return null;
         try {
-          const h = JSON.parse(readFileSync18(this.headPath(), "utf8"));
+          const h = JSON.parse(readFileSync26(this.headPath(), "utf8"));
           if (Number.isInteger(h.seq) && h.seq >= 1 && isSha256(h.hash)) return { seq: h.seq, hash: h.hash };
         } catch {
         }
@@ -33720,7 +36505,7 @@ var init_store = __esm({
       // Every entry, after checking the chain: each line must hash to its own `hash` and name the line before it.
       journal() {
         const path4 = this.journalPath();
-        if (!existsSync15(path4)) return [];
+        if (!existsSync21(path4)) return [];
         const entries = [];
         let prev = null;
         const text4 = readBounded(path4, MAX_OBJECT_BYTES);
@@ -33753,8 +36538,8 @@ var init_store = __esm({
       // next record() removes it.
       tornTail() {
         const path4 = this.journalPath();
-        if (!existsSync15(path4)) return false;
-        const bytes = readFileSync18(path4);
+        if (!existsSync21(path4)) return false;
+        const bytes = readFileSync26(path4);
         return bytes.length > 0 && bytes[bytes.length - 1] !== 10;
       }
       find(step, key) {
@@ -33776,14 +36561,14 @@ var init_store = __esm({
             return same;
           }
           const rest = { seq: entries.length + 1, at, step, key, refs, prev: entries.at(-1)?.hash ?? null };
-          const entry = { ...rest, hash: entryHash(rest) };
-          mkdirSync8(this.dir, { recursive: true });
-          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync18(this.journalPath()).lastIndexOf(10) + 1);
-          appendFileSync2(this.journalPath(), `${JSON.stringify(entry)}
+          const entry2 = { ...rest, hash: entryHash(rest) };
+          mkdirSync13(this.dir, { recursive: true });
+          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync26(this.journalPath()).lastIndexOf(10) + 1);
+          appendFileSync3(this.journalPath(), `${JSON.stringify(entry2)}
 `, { mode: 384 });
-          writeAtomic(this.headPath(), `${JSON.stringify({ seq: entry.seq, hash: entry.hash })}
+          writeAtomic(this.headPath(), `${JSON.stringify({ seq: entry2.seq, hash: entry2.hash })}
 `);
-          return entry;
+          return entry2;
         });
       }
       // One writer at a time. A lock left by a process that died is taken over, so a crash never blocks the retry.
@@ -33811,12 +36596,12 @@ var init_store = __esm({
       // half-written. Only a lock whose owner is gone, or that is older than `staleMs`, is removed, and only after
       // reading it again and finding the same content, so a lock that was replaced in between is not removed.
       acquire(file, staleMs) {
-        mkdirSync8(this.dir, { recursive: true });
-        const lock = join20(this.dir, file);
+        mkdirSync13(this.dir, { recursive: true });
+        const lock = join31(this.dir, file);
         const pause = new Int32Array(new SharedArrayBuffer(4));
         const read = () => {
           try {
-            return { text: readFileSync18(lock, "utf8"), age: Date.now() - statSync5(lock).mtimeMs };
+            return { text: readFileSync26(lock, "utf8"), age: Date.now() - statSync6(lock).mtimeMs };
           } catch (e) {
             if (e.code === "ENOENT") return null;
             throw e;
@@ -33857,7 +36642,7 @@ var init_store = __esm({
             const again = read();
             if (again === null || again.text !== seen.text) continue;
             try {
-              unlinkSync4(lock);
+              unlinkSync5(lock);
             } catch {
             }
           }
@@ -33865,14 +36650,14 @@ var init_store = __esm({
         return () => {
           HELD.delete(lock);
           try {
-            if (readFileSync18(lock, "utf8") === String(process.pid)) unlinkSync4(lock);
+            if (readFileSync26(lock, "utf8") === String(process.pid)) unlinkSync5(lock);
           } catch {
           }
         };
       }
       // A rendering of stored records. Safe to overwrite: the records, not the report, are the evidence.
       report(name, content) {
-        const path4 = join20(this.dir, "reports", name);
+        const path4 = join31(this.dir, "reports", name);
         writeAtomic(path4, content);
         return path4;
       }
@@ -33881,12 +36666,12 @@ var init_store = __esm({
 });
 
 // src/pilot/commands.ts
-import { execFileSync as execFileSync4 } from "node:child_process";
-import { appendFileSync as appendFileSync3, existsSync as existsSync16, readFileSync as readFileSync19 } from "node:fs";
-import { dirname as dirname6, join as join21 } from "node:path";
+import { execFileSync as execFileSync9 } from "node:child_process";
+import { appendFileSync as appendFileSync4, existsSync as existsSync22, readFileSync as readFileSync27 } from "node:fs";
+import { dirname as dirname9, join as join32 } from "node:path";
 function defaultGit(args, cwd) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_")));
-  return execFileSync4("git", args, { cwd, encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync9("git", args, { cwd, encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
 }
 function originOf(url) {
   const m = /^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^@/\s]+@)?([^:/\s]+)[:/](?:\d+\/)?(.+?)(?:\.git)?\/?$/i.exec(url);
@@ -33895,14 +36680,14 @@ function originOf(url) {
   return parts.length >= 2 ? { host: m[1], slug: parts.slice(-2).join("/") } : null;
 }
 function frozen(store) {
-  const entry = store.last("config.frozen");
-  if (!entry) throw new PilotError("not_found", `No pilot is set up in ${store.dir}. Run \`init\` first.`);
-  return { config_id: entry.refs.config, config: store.get("config", entry.refs.config), baseline_prompt_id: entry.refs.baseline_prompt, commit: entry.refs.commit };
+  const entry2 = store.last("config.frozen");
+  if (!entry2) throw new PilotError("not_found", `No pilot is set up in ${store.dir}. Run \`init\` first.`);
+  return { config_id: entry2.refs.config, config: store.get("config", entry2.refs.config), baseline_prompt_id: entry2.refs.baseline_prompt, commit: entry2.refs.commit };
 }
 function activePack(store) {
-  const entry = store.journal().filter((e) => e.step === "pack.frozen" || e.step === "pack.promoted").at(-1);
-  if (!entry) throw new PilotError("not_found", "No conversation pack is frozen yet. Run `pack --file <pack.json>` first.");
-  return store.stored("pack", entry.refs.pack);
+  const entry2 = store.journal().filter((e) => e.step === "pack.frozen" || e.step === "pack.promoted").at(-1);
+  if (!entry2) throw new PilotError("not_found", "No conversation pack is frozen yet. Run `pack --file <pack.json>` first.");
+  return store.stored("pack", entry2.refs.pack);
 }
 function candidateOf(store, idOrPrefix) {
   const entries = store.find("candidate.created");
@@ -33957,18 +36742,18 @@ function assertNotFromTheFuture(imported, now, cutoff) {
   }
 }
 function protectDirectory(dir, say) {
-  if (existsSync16(join21(dir, ".git"))) {
+  if (existsSync22(join32(dir, ".git"))) {
     throw new PilotError("usage", "The pilot directory is a git repository root. It holds customer data; use a directory that is not a repository, or a subdirectory with its own .gitignore.");
   }
-  const file = join21(dir, ".gitignore");
-  if (!existsSync16(file)) writeOnce(file, "*\n");
+  const file = join32(dir, ".gitignore");
+  if (!existsSync22(file)) writeOnce(file, "*\n");
   else {
-    const lines = readFileSync19(file, "utf8").split(/\r?\n/).map((l) => l.trim());
-    if (!lines.includes("*")) appendFileSync3(file, `${readFileSync19(file, "utf8").endsWith("\n") ? "" : "\n"}*
+    const lines = readFileSync27(file, "utf8").split(/\r?\n/).map((l) => l.trim());
+    if (!lines.includes("*")) appendFileSync4(file, `${readFileSync27(file, "utf8").endsWith("\n") ? "" : "\n"}*
 `);
   }
   try {
-    const tracked = execFileSync4("git", ["-C", dir, "ls-files", "--", "."], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const tracked = execFileSync9("git", ["-C", dir, "ls-files", "--", "."], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     if (tracked) say("Warning: a surrounding git repository already tracks files in this directory. An ignore file does not untrack them; run `git rm -r --cached` on it before you commit.");
   } catch {
   }
@@ -33991,7 +36776,7 @@ function proposerFor2(flags, config, deps) {
   if (flags.live === true) {
     if (spec) throw new PilotError("usage", "Give --proposer scripted:<file> or --live, not both.");
     const model = liveModel(config.provider, liveOptIn(flags), deps.env, deps.say, deps.fetch);
-    return modelProposer(model, config.provider.model, 8e3);
+    return modelProposer2(model, config.provider.model, 8e3);
   }
   if (!spec?.startsWith("scripted:")) throw new PilotError("usage", "Name where the candidate comes from: --file <prompt> with --author and --rationale (a person wrote it), --proposer scripted:<file>, or --live.");
   return scriptedProposer(parseProposerScript(readBounded(spec.slice("scripted:".length), 4 * 1024 * 1024)));
@@ -34010,22 +36795,22 @@ async function init2(store, flags, deps) {
   const configPath = need(flags, "config", `the path to ${CONFIG_FILE}`);
   const repoDir = need(flags, "repo-dir", "a local checkout of the customer's repo, so the baseline prompt is read at an exact commit");
   const config = parsePilotConfig(readBounded(configPath, 1024 * 1024));
-  const git2 = deps.git ?? defaultGit;
+  const git5 = deps.git ?? defaultGit;
   let commit;
   let prompt;
   try {
-    commit = git2(["rev-parse", "--verify", `${opt(flags, "rev") ?? "HEAD"}^{commit}`], repoDir).trim();
+    commit = git5(["rev-parse", "--verify", `${opt(flags, "rev") ?? "HEAD"}^{commit}`], repoDir).trim();
   } catch {
     throw new PilotError("wrong_revision", `${repoDir} is not a git checkout, or it has no commit ${opt(flags, "rev") ?? "HEAD"}.`);
   }
   try {
-    prompt = git2(["show", `${commit}:${config.agent.prompt_path}`], repoDir);
+    prompt = git5(["show", `${commit}:${config.agent.prompt_path}`], repoDir);
   } catch {
     throw new PilotError("wrong_revision", `${config.agent.prompt_path} is not in commit ${commit.slice(0, 12)} of ${repoDir}. Check agent.prompt_path and the revision.`);
   }
   let origin = "";
   try {
-    origin = git2(["remote", "get-url", "origin"], repoDir).trim();
+    origin = git5(["remote", "get-url", "origin"], repoDir).trim();
   } catch {
   }
   if (origin) {
@@ -34061,7 +36846,7 @@ async function baselineLocked(store, flags, deps) {
   const file = need(flags, "telemetry", "the customer's baseline export (JSON)");
   const imported = importTelemetry({
     text: readBounded(file),
-    readSibling: (name) => readBounded(inside(dirname6(file), name)),
+    readSibling: (name) => readBounded(inside(dirname9(file), name)),
     purpose: "baseline",
     scope_id: f.config_id,
     contract: f.config.metric,
@@ -34325,8 +37110,8 @@ async function approve(store, flags, deps) {
   const experimentId = need(flags, "experiment", "the full experiment id from the review");
   if (!isSha256(candidateId) || !isSha256(experimentId)) throw new PilotError("unknown_approval", "An approval must name the full 64-character candidate and experiment ids, as printed in the review bundle.");
   const approver = need(flags, "approver", "the name of the person approving");
-  const entry = store.find("review.bundled").filter((e) => e.refs.candidate === candidateId && e.refs.experiment === experimentId).at(-1);
-  if (!entry) throw new PilotError("unknown_approval", "There is no review bundle for that candidate and experiment, so there is nothing to approve. Check both ids against REVIEW.md.");
+  const entry2 = store.find("review.bundled").filter((e) => e.refs.candidate === candidateId && e.refs.experiment === experimentId).at(-1);
+  if (!entry2) throw new PilotError("unknown_approval", "There is no review bundle for that candidate and experiment, so there is nothing to approve. Check both ids against REVIEW.md.");
   const decision = flags.reject === true ? "rejected" : "approved";
   const same = approvals(store).filter((a) => a.value.candidate_id === candidateId && a.value.experiment_id === experimentId).at(-1);
   if (same && same.value.decision === decision && same.value.approver === approver) {
@@ -34343,7 +37128,7 @@ async function approve(store, flags, deps) {
     assertMayRun(store, candidateId, experimentId);
     eligibleReplay(store, candidateId, activePack(store).id);
   }
-  const approval = makeApproval({ pilot_id: f.config.pilot_id, bundle: store.stored("review", entry.key), candidate_id: candidateId, experiment_id: experimentId, approver, decision, at: iso(deps.now()) });
+  const approval = makeApproval({ pilot_id: f.config.pilot_id, bundle: store.stored("review", entry2.key), candidate_id: candidateId, experiment_id: experimentId, approver, decision, at: iso(deps.now()) });
   const id = store.put("approval", approval);
   store.record("approval.recorded", id, { approval: id, candidate: candidateId, experiment: experimentId, decision }, approval.at);
   deps.say(`Approval ${id}: ${approver} ${decision} candidate ${shortId(candidateId)} for experiment ${shortId(experimentId)}.`);
@@ -34363,7 +37148,7 @@ async function analyzeLocked(store, flags, deps) {
   if (file) {
     const imported = importTelemetry({
       text: readBounded(file),
-      readSibling: (name) => readBounded(inside(dirname6(file), name)),
+      readSibling: (name) => readBounded(inside(dirname9(file), name)),
       purpose: "experiment",
       scope_id: experimentId,
       contract: f.config.metric,
@@ -34653,7 +37438,7 @@ var init_commands = __esm({
     init_promote();
     init_publish();
     init_replay();
-    init_report();
+    init_report2();
     init_review();
     init_store();
     init_telemetry();
@@ -34689,9 +37474,9 @@ var init_commands = __esm({
     };
     settledBy = (store, experimentId) => store.find("analysis.decided").find((e) => e.refs.experiment === experimentId && (e.refs.recommendation === "keep" || e.refs.recommendation === "revert"));
     experimentFor = (store, candidateId) => {
-      const entry = store.find("experiment.specified").filter((e) => e.refs.candidate === candidateId).at(-1);
-      if (!entry) throw new PilotError("not_found", `Candidate ${shortId(candidateId)} has no experiment specification. Run \`experiment --candidate ${shortId(candidateId)} --start <UTC time>\` first: the review shows the plan a person approves.`);
-      return store.stored("experiment", entry.key);
+      const entry2 = store.find("experiment.specified").filter((e) => e.refs.candidate === candidateId).at(-1);
+      if (!entry2) throw new PilotError("not_found", `Candidate ${shortId(candidateId)} has no experiment specification. Run \`experiment --candidate ${shortId(candidateId)} --start <UTC time>\` first: the review shows the plan a person approves.`);
+      return store.stored("experiment", entry2.key);
     };
     analyze = (store, flags, deps) => store.exclusive(EVIDENCE_LOCK, EVIDENCE_LOCK_STALE_MS, () => analyzeLocked(store, flags, deps));
     NAMED_RECORDS = {
@@ -34715,7 +37500,7 @@ var init_commands = __esm({
 
 // src/pilot/calllog.ts
 import { readdirSync as readdirSync4 } from "node:fs";
-import { join as join22 } from "node:path";
+import { join as join33 } from "node:path";
 function valuesBefore(c, before) {
   const values = /* @__PURE__ */ new Map();
   const seen = /* @__PURE__ */ new Map();
@@ -34751,7 +37536,7 @@ function readCallLog(dir) {
     return c;
   };
   for (const name of names2) {
-    const text4 = readBounded(join22(dir, name), MAX_LOG_FILE_BYTES);
+    const text4 = readBounded(join33(dir, name), MAX_LOG_FILE_BYTES);
     const parts = text4.split("\n");
     parts.pop();
     for (const part of parts) {
@@ -34764,7 +37549,7 @@ function readCallLog(dir) {
         log.malformed++;
         continue;
       }
-      if (!isObject(line) || line.v !== CALL_LOG_VERSION || !isUtc(line.at) || !isId2(line.agent)) {
+      if (!isObject3(line) || line.v !== CALL_LOG_VERSION || !isUtc(line.at) || !isId2(line.agent)) {
         log.malformed++;
         continue;
       }
@@ -34798,7 +37583,7 @@ function readCallLog(dir) {
         continue;
       }
       if (line.type === "outcome") {
-        if (!isObject(line.values)) {
+        if (!isObject3(line.values)) {
           log.malformed++;
           continue;
         }
@@ -34849,7 +37634,7 @@ var init_calllog = __esm({
 });
 
 // src/pilot/export.ts
-import { join as join23 } from "node:path";
+import { join as join34 } from "node:path";
 function buildLogExport(input) {
   const { log, contract } = input;
   if (contract.query_hash !== void 0) throw new PilotError("usage", "The metric contract pins a query hash. A call-log export comes from the wrapper, not from a query, so it cannot carry one. Export from the signed-off query instead.");
@@ -34978,26 +37763,26 @@ function writeLogExport(input) {
     tags,
     ...experiment2 ? { window: experiment2.window } : {}
   });
-  const outDir = input.outDir ?? join23(store.dir, "exports");
-  const path4 = join23(outDir, `${exportId}.json`);
-  writeAtomic(join23(outDir, csvName), built.csv);
+  const outDir = input.outDir ?? join34(store.dir, "exports");
+  const path4 = join34(outDir, `${exportId}.json`);
+  writeAtomic(join34(outDir, csvName), built.csv);
   writeAtomic(path4, `${JSON.stringify(built.header, null, 2)}
 `);
   const notes = [];
-  const plural2 = (n, one2, many) => `${n} ${n === 1 ? one2 : many}`;
+  const plural4 = (n, one2, many) => `${n} ${n === 1 ? one2 : many}`;
   const l = built.left_out;
-  if (l.no_outcome) notes.push(`${plural2(l.no_outcome, "conversation has", "conversations have")} a recorded call and no outcome yet (by first-served version: ${Object.entries(built.no_outcome_by).sort().map(([t, n]) => `${printable2(t, 40)} ${n}`).join(", ")}). They are in the export with empty values, so the analysis counts them as missing outcomes in that version until a later export fills them in.`);
-  if (l.outcome_without_call) notes.push(`${plural2(l.outcome_without_call, "conversation has", "conversations have")} an outcome but no recorded call, so ${l.outcome_without_call === 1 ? "it was" : "they were"} left out. Check that every agent call goes through the recorder.`);
-  if (l.served_two_versions) notes.push(`${plural2(l.served_two_versions, "conversation was", "conversations were")} served by a second prompt version before or with the outcome (by first-served version: ${Object.entries(built.two_versions_by).sort().map(([t, n]) => `${printable2(t, 40)} ${n}`).join(", ")}). Their outcome cannot be credited to one prompt, so they are in the export under the first version with empty values and count as missing outcomes there.`);
-  if (l.other_version_after_outcome) notes.push(`${plural2(l.other_version_after_outcome, "conversation was", "conversations were")} served by another prompt version only after the outcome was recorded. The row is unchanged.`);
-  if (l.outcome_after_other_version) notes.push(`${plural2(l.outcome_after_other_version, "of them has", "of them have")} an outcome recorded again after that call. It is not used: it may have been influenced by the other prompt.`);
-  if (l.outside_window) notes.push(`${plural2(l.outside_window, "conversation", "conversations")} in the log started outside the window and ${l.outside_window === 1 ? "is" : "are"} not in this export.`);
-  if (log.malformed) notes.push(`${plural2(log.malformed, "line", "lines")} of the log could not be read and ${log.malformed === 1 ? "was" : "were"} skipped.`);
-  for (const [kind, n] of Object.entries(log.problems)) notes.push(`The recorder logged ${plural2(n, "problem", "problems")} of kind ${kind}: some calls or outcomes may be missing from the log.`);
-  if (l.other_agent) notes.push(`${plural2(l.other_agent, "conversation", "conversations")} in the log ${l.other_agent === 1 ? "belongs" : "belong"} to another agent and ${l.other_agent === 1 ? "is" : "are"} not in this export.`);
-  if (l.outcome_before_call) notes.push(`${plural2(l.outcome_before_call, "conversation has", "conversations have")} an outcome recorded before its first call. ${l.outcome_before_call === 1 ? "It was" : "They were"} still joined, because another process may record outcomes; check that clocks agree.`);
+  if (l.no_outcome) notes.push(`${plural4(l.no_outcome, "conversation has", "conversations have")} a recorded call and no outcome yet (by first-served version: ${Object.entries(built.no_outcome_by).sort().map(([t, n]) => `${printable2(t, 40)} ${n}`).join(", ")}). They are in the export with empty values, so the analysis counts them as missing outcomes in that version until a later export fills them in.`);
+  if (l.outcome_without_call) notes.push(`${plural4(l.outcome_without_call, "conversation has", "conversations have")} an outcome but no recorded call, so ${l.outcome_without_call === 1 ? "it was" : "they were"} left out. Check that every agent call goes through the recorder.`);
+  if (l.served_two_versions) notes.push(`${plural4(l.served_two_versions, "conversation was", "conversations were")} served by a second prompt version before or with the outcome (by first-served version: ${Object.entries(built.two_versions_by).sort().map(([t, n]) => `${printable2(t, 40)} ${n}`).join(", ")}). Their outcome cannot be credited to one prompt, so they are in the export under the first version with empty values and count as missing outcomes there.`);
+  if (l.other_version_after_outcome) notes.push(`${plural4(l.other_version_after_outcome, "conversation was", "conversations were")} served by another prompt version only after the outcome was recorded. The row is unchanged.`);
+  if (l.outcome_after_other_version) notes.push(`${plural4(l.outcome_after_other_version, "of them has", "of them have")} an outcome recorded again after that call. It is not used: it may have been influenced by the other prompt.`);
+  if (l.outside_window) notes.push(`${plural4(l.outside_window, "conversation", "conversations")} in the log started outside the window and ${l.outside_window === 1 ? "is" : "are"} not in this export.`);
+  if (log.malformed) notes.push(`${plural4(log.malformed, "line", "lines")} of the log could not be read and ${log.malformed === 1 ? "was" : "were"} skipped.`);
+  for (const [kind, n] of Object.entries(log.problems)) notes.push(`The recorder logged ${plural4(n, "problem", "problems")} of kind ${kind}: some calls or outcomes may be missing from the log.`);
+  if (l.other_agent) notes.push(`${plural4(l.other_agent, "conversation", "conversations")} in the log ${l.other_agent === 1 ? "belongs" : "belong"} to another agent and ${l.other_agent === 1 ? "is" : "are"} not in this export.`);
+  if (l.outcome_before_call) notes.push(`${plural4(l.outcome_before_call, "conversation has", "conversations have")} an outcome recorded before its first call. ${l.outcome_before_call === 1 ? "It was" : "They were"} still joined, because another process may record outcomes; check that clocks agree.`);
   const other = Object.values(built.other_tags).reduce((s, n) => s + n, 0);
-  if (other) notes.push(`${plural2(other, "conversation carries", "conversations carry")} a prompt version that the pilot does not name.`);
+  if (other) notes.push(`${plural4(other, "conversation carries", "conversations carry")} a prompt version that the pilot does not name.`);
   return { path: path4, export_id: exportId, rows: built.rows, by_version: built.by_version, notes };
 }
 async function exportLog(store, flags, deps) {
@@ -35046,7 +37831,7 @@ var init_export = __esm({
     init_errors3();
     init_ids();
     init_io();
-    init_types2();
+    init_types3();
     seconds = (iso3) => iso3.replace(/\.\d+Z$/, "Z");
     nowSeconds = (d) => seconds(d.toISOString());
     field = (s) => s === void 0 ? "" : /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
@@ -35056,7 +37841,7 @@ var init_export = __esm({
 
 // src/pilot/watch.ts
 import { readdirSync as readdirSync5 } from "node:fs";
-import { dirname as dirname7, join as join24 } from "node:path";
+import { dirname as dirname10, join as join35 } from "node:path";
 function whole(interimDays) {
   if (!Number.isInteger(interimDays) || interimDays < 1) throw new PilotError("usage", "--interim-days must be a whole number of 1 or more.");
   return interimDays;
@@ -35157,11 +37942,11 @@ function scanInbox(store, inbox, experimentId, spec) {
   const importedKeys = new Set(imports.map((e) => e.key));
   const newest = Math.max(-Infinity, ...imports.map((e) => ms(store.get("telemetry", e.refs.telemetry).exported_at)));
   const files = names2.map((name) => {
-    const path4 = join24(inbox, name);
+    const path4 = join35(inbox, name);
     try {
       const imported = importTelemetry({
         text: readBounded(path4),
-        readSibling: (n) => readBounded(inside(dirname7(path4), n)),
+        readSibling: (n) => readBounded(inside(dirname10(path4), n)),
         purpose: "experiment",
         scope_id: experimentId,
         contract: f.config.metric,
@@ -35343,8 +38128,8 @@ var init_watch = __esm({
 });
 
 // src/pilot/cases.ts
-import { existsSync as existsSync17, mkdirSync as mkdirSync9, writeFileSync as writeFileSync10 } from "node:fs";
-import { dirname as dirname8, join as join25, resolve as resolve4 } from "node:path";
+import { existsSync as existsSync23, mkdirSync as mkdirSync14, writeFileSync as writeFileSync14 } from "node:fs";
+import { dirname as dirname11, join as join36, resolve as resolve8 } from "node:path";
 function describe(check) {
   switch (check.kind) {
     case "reply_includes":
@@ -35389,9 +38174,9 @@ function failureCases(pack2, replay2) {
       heldoutTurns.add(key);
       continue;
     }
-    const entry = byTurn.get(key) ?? { case_id: f.case_id, turn: f.turn, checks: [] };
-    if (!entry.checks.includes(f.check_id)) entry.checks.push(f.check_id);
-    byTurn.set(key, entry);
+    const entry2 = byTurn.get(key) ?? { case_id: f.case_id, turn: f.turn, checks: [] };
+    if (!entry2.checks.includes(f.check_id)) entry2.checks.push(f.check_id);
+    byTurn.set(key, entry2);
   }
   const out = { cases: [], heldout: heldoutTurns.size, personalData: 0, placeholders: 0, usedTools: 0 };
   const byId = new Map(pack2.cases.map((c) => [c.id, c]));
@@ -35436,17 +38221,17 @@ async function cases3(store, flags, deps) {
   const text4 = renderCases(result2.cases);
   let path4;
   if (typeof outFlag === "string") {
-    path4 = resolve4(outFlag);
-    if (existsSync17(path4)) throw new PilotError("conflict", `${printable2(outFlag, 200)} already exists. Name a new file with --out, then copy the lines you want into your scenarios file yourself.`);
-    mkdirSync9(dirname8(path4), { recursive: true });
+    path4 = resolve8(outFlag);
+    if (existsSync23(path4)) throw new PilotError("conflict", `${printable2(outFlag, 200)} already exists. Name a new file with --out, then copy the lines you want into your scenarios file yourself.`);
+    mkdirSync14(dirname11(path4), { recursive: true });
     try {
-      writeFileSync10(path4, text4, { flag: "wx", mode: 384 });
+      writeFileSync14(path4, text4, { flag: "wx", mode: 384 });
     } catch (e) {
       if (e.code === "EEXIST") throw new PilotError("conflict", `${printable2(outFlag, 200)} already exists. Name a new file with --out.`);
       throw e;
     }
   } else {
-    path4 = join25(store.dir, "cases", `cases-${shortId(id)}.jsonl`);
+    path4 = join36(store.dir, "cases", `cases-${shortId(id)}.jsonl`);
     writeAtomic(path4, text4);
   }
   deps.say(`Wrote ${path4}`);
@@ -35822,7 +38607,7 @@ var init_demo_data = __esm({
     "use strict";
     init_ids();
     init_wrap();
-    init_types2();
+    init_types3();
     DEMO = {
       pilot_id: "fernhill-juniper",
       slug: "fernhill/support-agent",
@@ -36119,43 +38904,43 @@ var demo_exports = {};
 __export(demo_exports, {
   demo: () => demo
 });
-import { execFileSync as execFileSync5 } from "node:child_process";
-import { existsSync as existsSync18, mkdirSync as mkdirSync10, readdirSync as readdirSync6, readFileSync as readFileSync20, statSync as statSync6, writeFileSync as writeFileSync11 } from "node:fs";
-import { dirname as dirname9, join as join26, resolve as resolve5 } from "node:path";
-function git(args, cwd) {
+import { execFileSync as execFileSync10 } from "node:child_process";
+import { existsSync as existsSync24, mkdirSync as mkdirSync15, readdirSync as readdirSync6, readFileSync as readFileSync28, statSync as statSync7, writeFileSync as writeFileSync15 } from "node:fs";
+import { dirname as dirname12, join as join37, resolve as resolve9 } from "node:path";
+function git4(args, cwd) {
   const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_"))), ...GIT_ENV };
-  return execFileSync5("git", args, { cwd, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync10("git", args, { cwd, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
 }
 function filesUnder(dir) {
-  if (!existsSync18(dir)) return [];
+  if (!existsSync24(dir)) return [];
   return readdirSync6(dir).flatMap((name) => {
-    const path4 = join26(dir, name);
-    return statSync6(path4).isDirectory() ? filesUnder(path4) : [path4];
+    const path4 = join37(dir, name);
+    return statSync7(path4).isDirectory() ? filesUnder(path4) : [path4];
   });
 }
 async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
   const startedAt = Date.now();
   const outFlag = flags.out;
   if (typeof outFlag !== "string" || !outFlag.trim()) throw new PilotError("usage", "--out is required: a new, empty directory for the demo's inputs, pilot records and reports.");
-  const out = resolve5(outFlag);
-  if (existsSync18(out) && readdirSync6(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
-  const inputs = join26(out, "inputs");
-  const repoDir = join26(out, "customer-repo");
-  const dir = join26(out, "pilot");
-  mkdirSync10(inputs, { recursive: true });
-  mkdirSync10(join26(repoDir, dirname9(DEMO.prompt_path)), { recursive: true });
+  const out = resolve9(outFlag);
+  if (existsSync24(out) && readdirSync6(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
+  const inputs = join37(out, "inputs");
+  const repoDir = join37(out, "customer-repo");
+  const dir = join37(out, "pilot");
+  mkdirSync15(inputs, { recursive: true });
+  mkdirSync15(join37(repoDir, dirname12(DEMO.prompt_path)), { recursive: true });
   const put = (name, content) => {
-    const path4 = join26(inputs, name);
-    writeFileSync11(path4, content);
+    const path4 = join37(inputs, name);
+    writeFileSync15(path4, content);
     return path4;
   };
   const json = (value) => `${JSON.stringify(value, null, 2)}
 `;
-  writeFileSync11(join26(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
-  git(["init", "-q", "-b", DEMO.base], repoDir);
-  git(["add", DEMO.prompt_path], repoDir);
-  git(["commit", "-q", "-m", "Juniper prompt v14"], repoDir);
-  const commit = git(["rev-parse", "HEAD"], repoDir).trim();
+  writeFileSync15(join37(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
+  git4(["init", "-q", "-b", DEMO.base], repoDir);
+  git4(["add", DEMO.prompt_path], repoDir);
+  git4(["commit", "-q", "-m", "Juniper prompt v14"], repoDir);
+  const commit = git4(["rev-parse", "HEAD"], repoDir).trim();
   const github = new FakeGitHub(DEMO.slug, DEMO.base, { [DEMO.prompt_path]: BASELINE_PROMPT }, commit);
   const githubUrl = await github.start();
   const transcript2 = [];
@@ -36198,9 +38983,9 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     if (!ok) failures.push(what);
   };
   const lastOf = (stepName) => {
-    const entry = store.last(stepName);
-    if (!entry) throw new Error(`the demo expected a ${stepName} journal entry`);
-    return entry;
+    const entry2 = store.last(stepName);
+    if (!entry2) throw new Error(`the demo expected a ${stepName} journal entry`);
+    return entry2;
   };
   const model = `scripted:${put("agent.script.json", json(agentScript()))}`;
   const proposer = `scripted:${put("proposer.script.json", json(proposerScript()))}`;
@@ -36212,7 +38997,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Synthe enterprise pilot: synthetic run for Fernhill Outfitters' support agent Juniper (all data invented).");
     say(`Inputs: ${inputs}   Pilot records and reports: ${dir}`);
     expect("init succeeds", await run2("Freeze the contract and the baseline prompt", ["init", "--config", put("pilot.json", json(demoConfig())), "--repo-dir", repoDir]) === 0);
-    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync18(join26(dir, "reports", "baseline.md")));
+    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync24(join37(dir, "reports", "baseline.md")));
     expect("pack frozen", await run2("Freeze the redacted conversation pack", ["pack", "--file", put("pack.v1.json", json(demoPack()))]) === 0);
     const packV1 = activePack(store);
     expect("discover succeeds", await run2("Find recurring failures on the discovery cases", ["discover", "--model", model]) === 0);
@@ -36319,7 +39104,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("approval recorded against the exact candidate and experiment", await run2("Record the approval", ["approve", "--candidate", candD, "--experiment", expD, "--approver", DEMO.metric_owner]) === 0);
     const tagD = candidateTag(candD);
     const specD = store.get("experiment", expD);
-    const logDir = join26(out, "agent-log");
+    const logDir = join37(out, "agent-log");
     let recorderClock = 0;
     const traffic = demoTraffic({
       recorder: pilotRecorder({ logDir, agent: "Juniper", idKey: DEMO_ID_KEY, now: () => new Date(recorderClock) }),
@@ -36336,7 +39121,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     });
     const looksD = () => store.find("analysis.decided").filter((e) => e.refs.experiment === expD);
     const importsD = () => store.find("telemetry.imported").filter((e) => e.refs.scope === expD).length;
-    const watchMd = () => readFileSync20(join26(dir, "reports", "WATCH.md"), "utf8");
+    const watchMd = () => readFileSync28(join37(dir, "reports", "WATCH.md"), "utf8");
     const tick2 = async (title, iso3) => {
       traffic.upTo(Date.parse(iso3));
       atTime(iso3);
@@ -36347,7 +39132,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const lastLook = () => store.get("analysis", looksD().at(-1)?.refs.analysis ?? "");
     expect("watch --log without --assignment is refused, even while no look is due", await run2("Try a watch tick without saying how traffic was assigned", ["watch", "--log", logDir]) === 1 && looksD().length === 0);
     const t0 = await tick2("Watch tick before the experiment starts (2026-11-27)", "2026-11-27T09:00:00Z");
-    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join26(dir, "exports")).length === 0);
+    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join37(dir, "exports")).length === 0);
     const t1 = await tick2("Watch tick at the end of day 1 (2026-11-29)", "2026-11-29T23:30:00Z");
     expect("day 1: one interim look, HOLD", t1.code === 0 && looksD().length === 1 && lastLook().recommendation === "hold" && lastLook().final === false && importsD() === 1);
     const t1b = await tick2("Watch tick again on day 1, twenty minutes later", "2026-11-29T23:50:00Z");
@@ -36361,28 +39146,28 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("the cutoff: the final analysis is HOLD (inconclusive), final", t4.code === 0 && looksD().length === 4 && finalD.recommendation === "hold" && finalD.final === true && t4.md.startsWith("# HOLD"));
     expect("the lift is real but smaller than the minimum effect, so it is not a keep", (finalD.primary.candidate.estimate ?? 0) - (finalD.primary.baseline.estimate ?? 0) < specD.primary.min_effect);
     const importsAtFinal = importsD();
-    const exportsAtFinal = filesUnder(join26(dir, "exports")).length;
+    const exportsAtFinal = filesUnder(join37(dir, "exports")).length;
     const t5 = await tick2("Watch tick after the final analysis (2026-12-16)", "2026-12-16T09:00:00Z");
-    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join26(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
+    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join37(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
     const pl = traffic.planted;
     const byVersion = (m) => Object.entries(m).sort().map(([t, n]) => `${t} ${n}`).join(", ");
-    const count2 = (m) => Object.values(m).reduce((a, b) => a + b, 0);
-    const noteNoOutcome = `${count2(pl.no_outcome)} conversations have a recorded call and no outcome yet (by first-served version: ${byVersion(pl.no_outcome)})`;
-    const noteTwo = `${count2(pl.two_versions)} conversations were served by a second prompt version before or with the outcome (by first-served version: ${byVersion(pl.two_versions)})`;
+    const count3 = (m) => Object.values(m).reduce((a, b) => a + b, 0);
+    const noteNoOutcome = `${count3(pl.no_outcome)} conversations have a recorded call and no outcome yet (by first-served version: ${byVersion(pl.no_outcome)})`;
+    const noteTwo = `${count3(pl.two_versions)} conversations were served by a second prompt version before or with the outcome (by first-served version: ${byVersion(pl.two_versions)})`;
     const noteAfter = `${pl.other_version_after_outcome} conversation was served by another prompt version only after the outcome was recorded. The row is unchanged.`;
     const noteRepeat = `${pl.outcome_after_other_version} of them has an outcome recorded again after that call. It is not used`;
     const noteOrphan = `${pl.outcome_without_call} conversations have an outcome but no recorded call`;
     const notesOk = (text4) => [noteNoOutcome, noteTwo, noteAfter, noteRepeat, noteOrphan].every((n) => text4.includes(n));
-    expect(`the cutoff export notes carry the planted counts (${count2(pl.no_outcome)} no outcome, ${count2(pl.two_versions)} two versions, ${pl.other_version_after_outcome} after the outcome, ${pl.outcome_after_other_version} of them with the outcome recorded again, ${pl.outcome_without_call} outcome without a call), in the tick's output and in WATCH.md`, count2(pl.no_outcome) === TRAFFIC.no_outcome.length && count2(pl.two_versions) === TRAFFIC.call_before_outcome.length && pl.other_version_after_outcome === TRAFFIC.call_after_outcome.length && pl.outcome_after_other_version === TRAFFIC.repeat_after_other_call.length && pl.outcome_without_call === TRAFFIC.outcome_without_call.length && notesOk(t4.out) && notesOk(t4.md));
+    expect(`the cutoff export notes carry the planted counts (${count3(pl.no_outcome)} no outcome, ${count3(pl.two_versions)} two versions, ${pl.other_version_after_outcome} after the outcome, ${pl.outcome_after_other_version} of them with the outcome recorded again, ${pl.outcome_without_call} outcome without a call), in the tick's output and in WATCH.md`, count3(pl.no_outcome) === TRAFFIC.no_outcome.length && count3(pl.two_versions) === TRAFFIC.call_before_outcome.length && pl.other_version_after_outcome === TRAFFIC.call_after_outcome.length && pl.outcome_after_other_version === TRAFFIC.repeat_after_other_call.length && pl.outcome_without_call === TRAFFIC.outcome_without_call.length && notesOk(t4.out) && notesOk(t4.md));
     expect("every conversation with a recorded call is a row, including the ones with no outcome or two versions", finalD.coverage.rows === 14 * TRAFFIC.per_day);
     expect("no new GitHub request was made after the review", github.requests.length === requestsAfterReview);
-    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync20(p, "utf8")).join("\n");
+    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync28(p, "utf8")).join("\n");
     const rawId = /fernhill-(conv|unit|orphan)-/;
-    const pilotText = [...filesUnder(join26(dir, "reports")), ...filesUnder(join26(dir, "exports")), join26(dir, "journal.jsonl")].map((p) => readFileSync20(p, "utf8")).join("\n");
+    const pilotText = [...filesUnder(join37(dir, "reports")), ...filesUnder(join37(dir, "exports")), join37(dir, "journal.jsonl")].map((p) => readFileSync28(p, "utf8")).join("\n");
     const canariesList = Object.values(CANARIES);
     expect(`the ${filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).length} log files hold no raw conversation or unit id and no message text`, logText.length > 0 && !rawId.test(logText) && !traffic.rawIds.filter((_, i) => i % 997 === 0).some((id) => logText.includes(id)) && !canariesList.some((c) => logText.toLowerCase().includes(c.toLowerCase())));
     expect("the exports, reports and journal hold no raw conversation or unit id either", !rawId.test(pilotText));
-    outcomes.push(`Candidate ${shortId(candD)} (written by a person, the same two lines in the other order): passed replay on pack v2, experiment ${shortId(expD)} watched from 2026-11-27 to its cutoff, final analysis HOLD (inconclusive): ${finalD.primary.name} ${finalD.primary.baseline.estimate?.toFixed(4)} to ${finalD.primary.candidate.estimate?.toFixed(4)}, the measured difference is below the ${specD.primary.min_effect} minimum effect (the simulated true lift is 0.01, real but smaller than that) (${finalD.flags.length ? finalD.flags.join(", ") : "no data flags"}). The log's ${count2(pl.no_outcome)} calls with no outcome, ${count2(pl.two_versions)} two-version conversations and ${pl.outcome_without_call} outcomes with no call are counted in the export notes.`);
+    outcomes.push(`Candidate ${shortId(candD)} (written by a person, the same two lines in the other order): passed replay on pack v2, experiment ${shortId(expD)} watched from 2026-11-27 to its cutoff, final analysis HOLD (inconclusive): ${finalD.primary.name} ${finalD.primary.baseline.estimate?.toFixed(4)} to ${finalD.primary.candidate.estimate?.toFixed(4)}, the measured difference is below the ${specD.primary.min_effect} minimum effect (the simulated true lift is 0.01, real but smaller than that) (${finalD.flags.length ? finalD.flags.join(", ") : "no data flags"}). The log's ${count3(pl.no_outcome)} calls with no outcome, ${count3(pl.two_versions)} two-version conversations and ${pl.outcome_without_call} outcomes with no call are counted in the export notes.`);
     expect("evidence summary written", await run2("Rebuild the evidence summary", ["report"]) === 0);
     expect("every record matches its id and every decision recomputes to the same result", await run2("Verify the records and recompute the decisions", ["verify"]) === 0);
     expect("the journal still holds the head that was noted after the revert", await run2("Verify against the journal head noted after the revert", ["verify", "--head", headAfterRevert]) === 0);
@@ -36391,8 +39176,8 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const canaries = Object.values(CANARIES);
     const leaks = (text4) => canaries.some((c) => text4.toLowerCase().includes(c.toLowerCase()));
     expect(`nothing sent to GitHub holds pack conversation text (${github.requests.length} requests checked)`, !github.requests.some((r) => leaks(r.body) || leaks(r.path)));
-    expect("no report holds pack conversation text", !filesUnder(join26(dir, "reports")).some((p) => leaks(readFileSync20(p, "utf8"))));
-    expect("the journal holds no pack conversation text", !leaks(readFileSync20(join26(dir, "journal.jsonl"), "utf8")));
+    expect("no report holds pack conversation text", !filesUnder(join37(dir, "reports")).some((p) => leaks(readFileSync28(p, "utf8"))));
+    expect("the journal holds no pack conversation text", !leaks(readFileSync28(join37(dir, "journal.jsonl"), "utf8")));
     expect("nothing printed by the commands holds pack conversation text", !leaks(transcript2.join("\n")));
     expect("the GitHub token went only to the loopback server and was never printed", github.requests.every((r) => r.authorization === "Bearer demo-token-for-the-loopback-server") && !transcript2.join("\n").includes("demo-token-for-the-loopback-server"));
     expect("no provider credential was read: the commands saw only the GitHub token variable", Object.keys(inner.env).length === 1);
@@ -36400,21 +39185,21 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Outcomes:");
     for (const line of outcomes) say(`- ${line}`);
     const decisionFiles = [`replay-${shortId(candA)}-pack-v1.md`, `decision-${shortId(expB)}.md`, `decision-${shortId(expC)}.md`, `decision-${shortId(expD)}.md`];
-    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync18(join26(dir, "reports", f))));
+    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync24(join37(dir, "reports", f))));
     say("");
     say("The four outcomes, and the file that holds each decision:");
-    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join26(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
-    say(`- Reverted: candidate ${shortId(candB)}   ${join26(dir, "reports", `decision-${shortId(expB)}.md`)}`);
-    say(`- Kept: candidate ${shortId(candC)}   ${join26(dir, "reports", `decision-${shortId(expC)}.md`)}`);
-    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join26(dir, "reports", `decision-${shortId(expD)}.md`)}`);
+    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join37(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
+    say(`- Reverted: candidate ${shortId(candB)}   ${join37(dir, "reports", `decision-${shortId(expB)}.md`)}`);
+    say(`- Kept: candidate ${shortId(candC)}   ${join37(dir, "reports", `decision-${shortId(expC)}.md`)}`);
+    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join37(dir, "reports", `decision-${shortId(expD)}.md`)}`);
     say("");
     say("Evidence to open:");
-    say(`- ${join26(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
-    say(`- ${join26(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
-    say(`- ${join26(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
-    say(`- ${join26(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
-    say(`- ${join26(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
-    say(`- ${join26(dir, "journal.jsonl")}   every step, in order`);
+    say(`- ${join37(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
+    say(`- ${join37(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
+    say(`- ${join37(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
+    say(`- ${join37(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
+    say(`- ${join37(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
+    say(`- ${join37(dir, "journal.jsonl")}   every step, in order`);
     say("");
     say(failures.length === 0 ? `Synthetic pilot passed: ${step} steps, every expectation held (${((Date.now() - startedAt) / 1e3).toFixed(1)} s).` : `Synthetic pilot FAILED: ${failures.length} expectation(s) did not hold:`);
     for (const f of failures) say(`- ${f}`);
@@ -36451,7 +39236,7 @@ __export(main_exports, {
   helpText: () => helpText,
   main: () => main
 });
-import { resolve as resolve6 } from "node:path";
+import { resolve as resolve10 } from "node:path";
 import { parseArgs as parseArgs2 } from "node:util";
 async function main(argv, deps, prog = CHECKOUT_PROG) {
   const name = argv[0];
@@ -36480,7 +39265,7 @@ async function main(argv, deps, prog = CHECKOUT_PROG) {
       deps.say(`"${name}" is not a pilot command. Run \`${prog} help\` for the list.`);
       return 1;
     }
-    return await command(new PilotStore(resolve6(typeof flags.dir === "string" ? flags.dir : DEFAULT_DIR)), flags, deps);
+    return await command(new PilotStore(resolve10(typeof flags.dir === "string" ? flags.dir : DEFAULT_DIR)), flags, deps);
   } catch (e) {
     if (e instanceof PilotError) {
       deps.say(`Refused (${e.code}): ${printable2(e.message, 2e3)}`);
@@ -36620,8 +39405,8 @@ init_goal();
 init_prompt();
 init_state();
 init_safety();
-import { spawn as spawn3 } from "node:child_process";
-import { existsSync as existsSync19, readFileSync as readFileSync21, writeFileSync as writeFileSync12 } from "node:fs";
+import { spawn as spawn4 } from "node:child_process";
+import { existsSync as existsSync25, readFileSync as readFileSync29, writeFileSync as writeFileSync16 } from "node:fs";
 import { createInterface as createInterface4 } from "node:readline/promises";
 
 // src/loop/report.ts
@@ -36746,385 +39531,16 @@ var CHANGED = /* @__PURE__ */ new Set(["merged", "reverted", "proposed"]);
 
 // src/loop/vault.ts
 init_merge_rule();
-
-// src/core/cost.ts
-var PRICES = {
-  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
-  "claude-sonnet-5-5": { input: 2, output: 10 },
-  "claude-opus-5-5": { input: 4, output: 20 },
-  // Teams still on Sonnet 4.5 need a price to see what moving off it (it retires 2026-11-30) would cost.
-  "claude-sonnet-4-5": { input: 3, output: 15 }
-};
-var knownModels = () => Object.keys(PRICES);
-function costUsd(model, usage) {
-  const base = PRICES[model];
-  if (!base || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
-  const totalInput = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
-  const price = model === "claude-haiku-5-5" && totalInput > 1e5 ? { input: 0.5, output: 2.5 } : base;
-  const input = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) * 1.25 + (usage.cache_read_input_tokens ?? 0) * 0.1;
-  return (input * price.input + usage.output_tokens * price.output) / 1e6;
-}
-function sumCosts(costs) {
-  let total = 0;
-  for (const c of costs) {
-    if (c === null) return null;
-    total += c;
-  }
-  return total;
-}
-function pricedCost(price, input, output) {
-  if (!price || typeof input !== "number" || typeof output !== "number" || !Number.isFinite(input) || !Number.isFinite(output)) return null;
-  return (input * price.input + output * price.output) / 1e6;
-}
+init_cost();
 
 // src/loop/score.ts
 init_merge_rule();
 init_safety();
-
-// src/model/client.ts
-init_sdk();
-
-// src/model/cache.ts
-import { createHash as createHash2 } from "node:crypto";
-function cachedSystem(system) {
-  return system === void 0 ? void 0 : [{ type: "text", text: system, cache_control: { type: "ephemeral" } }];
-}
-var WARM_MIN_CHARS = 2048;
-var WARM_FOR_MS = 4 * 6e4;
-function firstAlone() {
-  const first = /* @__PURE__ */ new Map();
-  return async (model, system, send) => {
-    if (system === void 0 || system.length < WARM_MIN_CHARS) return send();
-    const key = createHash2("sha256").update(`${model}
-${system}`).digest("hex");
-    const ahead = first.get(key);
-    if (ahead && Date.now() - ahead.at < WARM_FOR_MS) {
-      await ahead.sent.catch(() => void 0);
-      return send();
-    }
-    const sent = send();
-    first.set(key, { sent, at: Date.now() });
-    return sent;
-  };
-}
-
-// src/model/openai-compatible.ts
-init_goal();
-var ProviderError = class extends Error {
-  status;
-  // null when the server couldn't be reached
-  host;
-  model;
-  loopback;
-  credit;
-  // out of credit or over a spending limit: a person has to act
-  exhausted;
-  // the free limit is used up for now: the next scheduled run tries again
-  constructor(message, a) {
-    super(message);
-    this.status = a.status;
-    this.host = a.host;
-    this.model = a.model;
-    this.loopback = a.loopback;
-    this.credit = a.credit ?? false;
-    this.exhausted = a.exhausted ?? false;
-  }
-};
-var MAX_RETRIES = 4;
-var TIMEOUT_MS = 10 * 6e4;
-var MAX_WAIT_MS = 6e4;
-var CREDIT = /insufficient_quota|credit balance|out of credits?|insufficient (funds|balance)|spend(ing)? limit reached|payment required/i;
-var DAILY = /per[\s_-]?day|daily|requests_per_day|PerDay/i;
-var PACED_AT_ONCE = 2;
-function retryAfterMs(headers, now = Date.now()) {
-  const ms2 = Number(headers.get("retry-after-ms"));
-  if (headers.get("retry-after-ms") && Number.isFinite(ms2) && ms2 >= 0) return Math.min(ms2, MAX_WAIT_MS);
-  const raw = headers.get("retry-after");
-  if (!raw) return null;
-  const seconds2 = Number(raw);
-  if (Number.isFinite(seconds2) && seconds2 >= 0) return Math.min(seconds2 * 1e3, MAX_WAIT_MS);
-  const at = Date.parse(raw);
-  return Number.isFinite(at) ? Math.min(Math.max(0, at - now), MAX_WAIT_MS) : null;
-}
-var backoffMs = (attempt) => Math.min(500 * 2 ** attempt, 8e3) * (0.75 + Math.random() * 0.25);
-var JSON_ONLY = (schema) => `
-
-Reply with only a JSON object that matches this JSON schema, with no other text before or after it:
-${JSON.stringify(schema)}`;
-var unfence = (text4) => text4.match(/^\s*```(?:json)?\s*\n?([\s\S]*?)\n?\s*```\s*$/i)?.[1] ?? text4;
-function textOf(content) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((p) => p && typeof p === "object" && typeof p.text === "string" ? p.text : "").join("");
-  return null;
-}
-function openAiCompatibleModel(o) {
-  const base = o.baseUrl.trim().replace(/\/+$/, "");
-  const url = new URL(`${base}/chat/completions`);
-  const host = url.host;
-  const loopback = isLoopback(url);
-  const sleep2 = o.sleep ?? ((ms2) => new Promise((resolve7) => setTimeout(resolve7, ms2)));
-  const now = o.now ?? Date.now;
-  const gap = o.maxRequestsPerMinute ? 6e4 / o.maxRequestsPerMinute : 0;
-  let nextAt = 0;
-  const pace = async () => {
-    if (!gap) return;
-    const t = now(), at = Math.max(t, nextAt);
-    nextAt = at + gap;
-    if (at > t) await sleep2(at - t);
-  };
-  let active = 0;
-  const waiting2 = [];
-  const slot = async () => {
-    if (!gap) return () => {
-    };
-    while (active >= PACED_AT_ONCE) await new Promise((resolve7) => waiting2.push(resolve7));
-    active++;
-    return () => {
-      active--;
-      waiting2.shift()?.();
-    };
-  };
-  const hide = (text4) => o.apiKey ? text4.split(o.apiKey).join("[your key]") : text4;
-  const noSchema = /* @__PURE__ */ new Set();
-  const completionTokens = /* @__PURE__ */ new Set();
-  async function post(model, body) {
-    for (let attempt = 0; ; attempt++) {
-      let response;
-      await pace();
-      try {
-        response = await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}` },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(TIMEOUT_MS),
-          redirect: "error"
-          // a redirect would carry the key to wherever it points
-        });
-      } catch (error) {
-        if (attempt < MAX_RETRIES) {
-          await sleep2(backoffMs(attempt));
-          continue;
-        }
-        throw new ProviderError(`Couldn't reach ${host}: ${hide(error instanceof Error ? error.message : String(error))}`, { status: null, host, model, loopback });
-      }
-      const text4 = await response.text();
-      let json = null;
-      try {
-        json = JSON.parse(text4);
-      } catch {
-      }
-      const credit = CREDIT.test(text4) || response.status === 402;
-      const daily = response.status === 429 && DAILY.test(text4);
-      const retryable = response.status === 429 && !credit && !daily || response.status === 408 || response.status >= 500;
-      if (retryable && attempt < MAX_RETRIES) {
-        await sleep2(retryAfterMs(response.headers) ?? backoffMs(attempt));
-        continue;
-      }
-      return { status: response.status, json, text: text4 };
-    }
-  }
-  const said = (r) => {
-    const m = r.json?.error?.message ?? r.json?.message ?? r.json?.error;
-    return (typeof m === "string" ? m : r.text).trim().slice(0, 300);
-  };
-  return {
-    async ask(a) {
-      const done = await slot();
-      try {
-        return await askOnce(a);
-      } finally {
-        done();
-      }
-    }
-  };
-  async function askOnce({ model, system, user: user2, maxTokens, schema, allowCutOff }) {
-    let jsonInPrompt = Boolean(schema) && noSchema.has(model);
-    let tokensField = completionTokens.has(model) ? "max_completion_tokens" : "max_tokens";
-    let retriedTokens = false, retriedSchema = false;
-    for (; ; ) {
-      const body = {
-        model,
-        messages: [...system === void 0 ? [] : [{ role: "system", content: system }], { role: "user", content: schema && jsonInPrompt ? `${user2}${JSON_ONLY(schema)}` : user2 }],
-        [tokensField]: maxTokens,
-        ...o.reasoningEffort ? { reasoning_effort: o.reasoningEffort } : {},
-        ...schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}
-      };
-      const r = await post(model, body);
-      if (r.status === 400) {
-        const why = said(r);
-        if (!retriedTokens && tokensField === "max_tokens" && /max_completion_tokens/.test(why)) {
-          retriedTokens = true;
-          tokensField = "max_completion_tokens";
-          completionTokens.add(model);
-          continue;
-        }
-        if (schema && !jsonInPrompt && !retriedSchema) {
-          retriedSchema = true;
-          jsonInPrompt = true;
-          noSchema.add(model);
-          continue;
-        }
-      }
-      if (r.status < 200 || r.status >= 300) {
-        const credit = CREDIT.test(r.text) || r.status === 402;
-        throw new ProviderError(`${host} answered ${r.status}: ${hide(said(r))}`, { status: r.status, host, model, loopback, credit, exhausted: r.status === 429 && !credit });
-      }
-      const choice = r.json?.choices?.[0];
-      const content = textOf(choice?.message?.content);
-      const refused = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim().length > 0;
-      const reason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
-      const raw = refused ? null : content;
-      const text4 = raw !== null && jsonInPrompt ? unfence(raw) : raw;
-      const finished = reason === "stop" && text4 !== null && text4.length > 0;
-      const cutOff = allowCutOff === true && reason === "length" && text4 !== null && text4.length > 0;
-      const usage = r.json?.usage;
-      const input = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
-      const output = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
-      const price = o.prices?.[model];
-      const costUsd2 = price ? pricedCost(price, input, output) : typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
-      return {
-        text: finished || cutOff ? text4 : null,
-        costUsd: costUsd2,
-        ...cutOff ? { truncated: true } : {},
-        ...input !== null && output !== null ? { usage: { input, output } } : {},
-        stopReason: refused ? "refusal" : reason
-      };
-    }
-  }
-}
-async function listModels(baseUrl, apiKey) {
-  const url = new URL(`${baseUrl.trim().replace(/\/+$/, "")}/models`);
-  const hide = (text4) => apiKey ? text4.split(apiKey).join("[your key]") : text4;
-  try {
-    const response = await fetch(url, { headers: { authorization: `Bearer ${apiKey}` }, redirect: "error", signal: AbortSignal.timeout(3e4) });
-    if (response.status === 404) return { ok: false, missing: true, why: "it has no /models route" };
-    if (!response.ok) return { ok: false, missing: false, why: `it answered ${response.status}` };
-    const body = await response.json();
-    const rows = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
-    if (!rows) return { ok: false, missing: false, why: "its answer had no list of models" };
-    const zero = (v) => (typeof v === "number" || typeof v === "string" && v.trim() !== "") && Number(v) === 0;
-    return { ok: true, models: rows.flatMap((m) => typeof m?.id === "string" && m.id ? [{ id: m.id.replace(/^models\//, ""), free: zero(m.pricing?.prompt) && zero(m.pricing?.completion) }] : []) };
-  } catch (error) {
-    return { ok: false, missing: false, why: hide(`it couldn't be reached (${error instanceof Error ? error.message : String(error)})`) };
-  }
-}
-
-// src/model/client.ts
-var MissingKeyError = class extends Error {
-};
-function configuredModel(key, provider) {
-  if (provider?.kind === "openai-compatible") {
-    if (key?.trim()) return providerModel(provider, key.trim());
-    throw new MissingKeyError(`synthe.json sends model calls to ${providerHost(provider)}, and no key for it is set. On this computer, set SYNTHE_API_KEY. For the GitHub workflow, run \`npx synthe key\` to save it as the SYNTHE_API_KEY secret, and \`npx synthe upgrade\` if your workflow file doesn't pass api-key yet.`);
-  }
-  if (key?.trim()) return anthropicModel(key.trim());
-  throw new MissingKeyError("No Anthropic key is set. Run `npx synthe key` to save one as the repo secret SYNTHE_ANTHROPIC_KEY.");
-}
-var ANTHROPIC_API_URL = "https://api.anthropic.com";
-var LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
-function ownKeyBaseUrl(env = process.env) {
-  const override = env.SYNTHE_ANTHROPIC_BASE_URL?.trim();
-  if (!override) return ANTHROPIC_API_URL;
-  try {
-    const url = new URL(override);
-    if ((url.protocol === "http:" || url.protocol === "https:") && LOOPBACK.has(url.hostname)) return override;
-  } catch {
-  }
-  return ANTHROPIC_API_URL;
-}
-function providerModel(provider, apiKey) {
-  if (provider?.kind === "openai-compatible") return openAiCompatibleModel({ baseUrl: provider.base_url, apiKey, prices: provider.prices, maxRequestsPerMinute: provider.max_requests_per_minute, reasoningEffort: provider.reasoning_effort });
-  return anthropicModel(apiKey);
-}
-function onModel(model, id) {
-  return { ask: (a) => model.ask({ ...a, model: id }) };
-}
-function providerHost(provider) {
-  if (provider?.kind !== "openai-compatible") return "Anthropic";
-  try {
-    return new URL(provider.base_url).host;
-  } catch {
-    return provider.base_url;
-  }
-}
-function anthropicModel(apiKey) {
-  const client = new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(), maxRetries: 4 });
-  return sdkModel(client);
-}
-function sdkModel(client) {
-  const warm = firstAlone();
-  return {
-    async ask({ model, system, user: user2, maxTokens, schema, allowCutOff }) {
-      const send = () => client.messages.create({
-        model,
-        max_tokens: maxTokens,
-        system: cachedSystem(system),
-        messages: [{ role: "user", content: user2 }],
-        // Haiku's thinking would spend the output limit on short scoring calls.
-        ...model.startsWith("claude-haiku") ? { thinking: { type: "disabled" } } : {},
-        output_config: { effort: "low", ...schema ? { format: { type: "json_schema", schema } } : {} }
-      });
-      const res = await warm(model, system, send);
-      const text4 = res.content.flatMap((b) => b.type === "text" ? [b.text] : []).join("");
-      const finished = res.stop_reason === "end_turn" && text4.length > 0;
-      const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text4.length > 0;
-      return {
-        text: finished || cutOff ? text4 : null,
-        costUsd: costUsd(model, res.usage),
-        ...cutOff ? { truncated: true } : {},
-        usage: { input: res.usage.input_tokens, output: res.usage.output_tokens },
-        stopReason: res.stop_reason ?? null
-      };
-    }
-  };
-}
-async function askJson(model, a) {
-  const reply = await model.ask(a);
-  if (reply.text === null) return { value: null, costUsd: reply.costUsd };
-  try {
-    return { value: JSON.parse(reply.text), costUsd: reply.costUsd };
-  } catch {
-    return { value: null, costUsd: reply.costUsd };
-  }
-}
-async function pool(items, limit2, fn) {
-  const results = new Array(items.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(limit2, items.length) }, async () => {
-    while (next < items.length) {
-      const i = next++;
-      results[i] = await fn(items[i]);
-    }
-  }));
-  return results;
-}
-function modelProblem(e) {
-  if (e instanceof ProviderError) return providerProblem(e);
-  const err = e;
-  const status3 = typeof err?.status === "number" ? err.status : null;
-  const text4 = typeof err?.message === "string" ? err.message : "";
-  if (status3 === 401) return "Your Anthropic key was rejected. Run `npx synthe key` to replace it.";
-  if (/credit balance is too low/i.test(text4)) return "Your Anthropic key has no credit left. Run `npx synthe key` to replace it.";
-  if (/usage limit|spend limit/i.test(text4)) return "Your Anthropic key has reached its spending limit. Run `npx synthe key` to replace it.";
-  if (status3 === 403) return "Your Anthropic key isn't allowed to use this model. Run `npx synthe key` to replace it.";
-  if (status3 === 429 || status3 === 529 || status3 !== null && status3 >= 500) return "Anthropic's API is busy right now. Wait a few minutes and try again.";
-  if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach Anthropic's API. Check your internet connection and try again.";
-  return null;
-}
-function providerProblem(e) {
-  const host = e.host;
-  if (e.status === null) return e.loopback ? `Couldn't reach the model server at ${host}. Start it (for example \`ollama serve\`), or fix provider.base_url in synthe.json, and try again.` : `Couldn't reach ${host}. Check your internet connection and provider.base_url in synthe.json, then try again.`;
-  if (e.credit) return `Your key for ${host} has no credit left or has reached its spending limit. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
-  if (e.exhausted) return "Your provider's free limit is used up for now. Run the command again later.";
-  if (e.status === 401) return `Your key for ${host} was rejected. Run \`npx synthe key\` to replace it.`;
-  if (e.status === 402) return `Your key for ${host} has no credit left. Add credit with that provider, or run \`npx synthe key\` to replace the key.`;
-  if (e.status === 403) return `Your key for ${host} isn't allowed to use ${e.model}. Check "models" in synthe.json, or run \`npx synthe key\` to replace the key.`;
-  if (e.status === 404) return `${host} doesn't have the model ${e.model}, or provider.base_url doesn't point at its OpenAI-compatible API (it usually ends in /v1). Check "models" and "provider" in synthe.json. ${e.message}`;
-  if (e.status === 429 || e.status === 408 || e.status >= 500) return `${host} is busy or rate-limiting this key right now. Wait a few minutes and try again.`;
-  return `${host} refused the request for ${e.model}. Check "models" and "provider" in synthe.json. ${e.message}`;
-}
+init_cost();
+init_client2();
 
 // src/loop/write.ts
+init_cost();
 init_safety();
 
 // src/core/candidate-history.ts
@@ -37132,7 +39548,7 @@ init_safety();
 var MAX_CANDIDATE_MEMORY = 1e3;
 var HASH = /^[a-f0-9]{64}$/;
 function validateCandidateMemory(value) {
-  if (!Array.isArray(value) || value.length > MAX_CANDIDATE_MEMORY || value.some((entry) => !entry || Object.keys(entry).sort().join(",") !== "fingerprint,scope" || typeof entry.scope !== "string" || !HASH.test(entry.scope) || typeof entry.fingerprint !== "string" || !HASH.test(entry.fingerprint))) {
+  if (!Array.isArray(value) || value.length > MAX_CANDIDATE_MEMORY || value.some((entry2) => !entry2 || Object.keys(entry2).sort().join(",") !== "fingerprint,scope" || typeof entry2.scope !== "string" || !HASH.test(entry2.scope) || typeof entry2.fingerprint !== "string" || !HASH.test(entry2.fingerprint))) {
     throw new Error("Candidate history is corrupt. Restore it or remove it explicitly before trying again.");
   }
   return value;
@@ -37140,13 +39556,16 @@ function validateCandidateMemory(value) {
 var candidateScope = (goal, prompt) => sha256(JSON.stringify([goal, prompt]));
 var candidateFingerprint = (text4) => sha256(text4.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu)?.join(" ") ?? "");
 function rememberCandidates(history, scope, texts) {
-  const unique = new Map(validateCandidateMemory(history).map((entry) => [`${entry.scope}:${entry.fingerprint}`, entry]));
+  const unique = new Map(validateCandidateMemory(history).map((entry2) => [`${entry2.scope}:${entry2.fingerprint}`, entry2]));
   for (const text4 of texts) {
     const fingerprint = candidateFingerprint(text4);
     unique.set(`${scope}:${fingerprint}`, { scope, fingerprint });
   }
   return [...unique.values()].slice(-MAX_CANDIDATE_MEMORY);
 }
+
+// src/loop/write.ts
+init_client2();
 
 // src/loop/closed.ts
 init_safety();
@@ -37210,10 +39629,10 @@ function validPool(value) {
   });
 }
 var flat = (t) => t.replace(/\s+/g, " ").trim().toLowerCase();
-function apply(text4, entry, goal) {
+function apply(text4, entry2, goal) {
   const have = flat(text4);
-  if (entry.edits.some((e) => e.find === "" && have.includes(flat(e.replace)))) return { problem: "the prompt already has this text" };
-  return applyEdits(text4, entry.edits, `${goal.objective}
+  if (entry2.edits.some((e) => e.find === "" && have.includes(flat(e.replace)))) return { problem: "the prompt already has this text" };
+  return applyEdits(text4, entry2.edits, `${goal.objective}
 ${goal.policy ?? ""}`);
 }
 function couldStillPool(done, rest, current) {
@@ -37244,12 +39663,12 @@ function mergeFromPool(a) {
   const trainIds = new Set(a.train.map((s) => s.id));
   const saved = validPool(a.pool);
   if (saved.length === 0) return { candidate: null, skipped: "the pool is empty" };
-  const live2 = saved.map((e) => ({ ...e, wonOn: e.wonOn.filter((id) => trainIds.has(id)) })).filter((e) => e.wonOn.length > 0 && !("problem" in apply(prompt, e, goal))).sort((x, y) => x.round - y.round);
-  if (live2.length === 0) return { candidate: null, skipped: "no pooled change still applies to the current prompt" };
+  const live3 = saved.map((e) => ({ ...e, wonOn: e.wonOn.filter((id) => trainIds.has(id)) })).filter((e) => e.wonOn.length > 0 && !("problem" in apply(prompt, e, goal))).sort((x, y) => x.round - y.round);
+  if (live3.length === 0) return { candidate: null, skipped: "no pooled change still applies to the current prompt" };
   const now = sha256(prompt);
   const options = [
-    ...live2.flatMap((x, i) => live2.slice(i + 1).map((y) => [x, y])),
-    ...live2.filter((e) => e.promptHash !== now).map((e) => [e])
+    ...live3.flatMap((x, i) => live3.slice(i + 1).map((y) => [x, y])),
+    ...live3.filter((e) => e.promptHash !== now).map((e) => [e])
   ];
   const cover = (o) => new Set(o.flatMap((e) => e.wonOn)).size;
   const newest = (o) => o.reduce((n, e) => n + e.round, 0) / o.length;
@@ -37371,7 +39790,7 @@ async function runWrite(goal, state, prompt, scenarios, model) {
   const train = scenarios.filter((s) => s.split === "train");
   const lessons = lessonText(state, prompt, train);
   const scope = candidateScope(goal, prompt);
-  const tried = new Set(validateCandidateMemory(state.candidateHistory ?? []).filter((entry) => entry.scope === scope).map((entry) => entry.fingerprint));
+  const tried = new Set(validateCandidateMemory(state.candidateHistory ?? []).filter((entry2) => entry2.scope === scope).map((entry2) => entry2.fingerprint));
   const roundOutcomes = state.rounds.slice(-5).map((r) => `Round ${r.round}: ${r.outcome}.`).join("\n");
   const history = [tried.size ? `${tried.size} candidate texts were already attempted for this goal and prompt. Repeated text will be rejected before scoring. Try a different instruction.` : "", roundOutcomes].filter(Boolean).join("\n") || "None yet.";
   const triedSummaries = [...new Set(state.rounds.slice(-5).flatMap((r) => r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary)))];
@@ -37442,6 +39861,7 @@ var clip = (t, n = 300) => (t === void 0 ? "(none)" : t.length > n ? `${t.slice(
 
 // src/loop/compose.ts
 init_safety();
+init_client2();
 var COMPOSED_ID = "composed";
 var MAX_CONTRASTS = 8;
 var REPLY_SHOWN = 500;
@@ -37463,7 +39883,7 @@ var SCHEMA2 = {
   required: ["edits", "summary", "title"],
   additionalProperties: false
 };
-var outcome = (score) => score === null || score === void 0 ? "unknown" : score > 50 ? "won" : score < 50 ? "lost" : "tied";
+var outcome = (score2) => score2 === null || score2 === void 0 ? "unknown" : score2 > 50 ? "won" : score2 < 50 ? "lost" : "tied";
 function contrasts(train, scored) {
   const spread = (s) => {
     const values = scored.map((c) => c.train.find((r) => r.id === s.id)?.score).filter((v) => typeof v === "number");
@@ -37478,14 +39898,14 @@ async function composeCandidate(a) {
   const cases4 = contrasts(train, scored);
   if (cases4.length === 0) return { candidate: null, skipped: "the candidates did the same on every training case", costUsd: 0 };
   const byId = new Map(a.candidates.map((c) => [c.id, c]));
-  const tally2 = (c) => {
+  const tally3 = (c) => {
     const n = (o) => c.train.filter((r) => outcome(r.score) === o).length;
     return `won ${n("won")}, lost ${n("lost")}, tied ${n("tied")}${n("unknown") ? `, unknown ${n("unknown")}` : ""} of ${c.train.length}`;
   };
   const tried = scored.map((c) => {
     const cand = byId.get(c.id);
     const edits = (cand.edits ?? []).map((e) => `  ${e.find ? `replaced "${clip(e.find, 200)}"` : "added at the end"} with "${clip(e.replace, 400)}"`);
-    return [`${c.id}: ${cand.summary ?? "(no summary)"} (against the current prompt: ${tally2(c)})`, ...edits].join("\n");
+    return [`${c.id}: ${cand.summary ?? "(no summary)"} (against the current prompt: ${tally3(c)})`, ...edits].join("\n");
   });
   const shown3 = (t) => t ? `<reply>${t.slice(0, REPLY_SHOWN)}</reply>` : "(no reply)";
   const examples = cases4.map((s) => [
@@ -37689,10 +40109,10 @@ Which reply better meets the goal for this situation? ${NO_LENGTH_PREFERENCE} An
     const valid = v && (v.better === "A" || v.better === "B" || v.better === "tie") && typeof v.a_guardrail_ok === "boolean" && typeof v.b_guardrail_ok === "boolean";
     if (!valid) return { row: { id: s.id, score: null, violation: null }, currentViolation: null };
     const challengerWon = v.better === (first ? "A" : "B");
-    const score = v.better === "tie" ? TIE : challengerWon ? WIN : LOSS;
+    const score2 = v.better === "tie" ? TIE : challengerWon ? WIN : LOSS;
     const challengerOk = first ? v.a_guardrail_ok : v.b_guardrail_ok;
     const currentOk = first ? v.b_guardrail_ok : v.a_guardrail_ok;
-    return { row: { id: s.id, score, violation: !challengerOk, reply: challenger.slice(0, REPLY_KEPT) }, currentViolation: !currentOk, full: challenger };
+    return { row: { id: s.id, score: score2, violation: !challengerOk, reply: challenger.slice(0, REPLY_KEPT) }, currentViolation: !currentOk, full: challenger };
   };
   const challenge = async (_who, prompt, set, currentReplies, stop2) => {
     const flip = random() < 0.5;
@@ -37786,12 +40206,12 @@ Does this reply clearly break one of the guardrails? The business policy and the
     });
     return unknown ? null : failed.sort();
   };
-  const measure = (set, replies) => pool(set, CONCURRENCY, async (s) => {
+  const measure2 = (set, replies) => pool(set, CONCURRENCY, async (s) => {
     const text4 = replies.get(s.id) ?? null;
     const currentChecks = text4 === null ? null : await checkReply(s, text4, "checks", "first");
     return { row: { id: s.id, score: EVEN, violation: null }, currentViolation: null, currentChecks };
   });
-  return { costs, challenge, repliesFor, confirmBreak, markAttacks, measure, cutOffCount: () => cutOff };
+  return { costs, challenge, repliesFor, confirmBreak, markAttacks, measure: measure2, cutOffCount: () => cutOff };
 }
 function trained(id, duels) {
   const ran = duels.filter((d) => !d.notRun).length;
@@ -37825,7 +40245,7 @@ function scoreKey(goal, baseline2, holdout, judgePromptVersion = JUDGE_PROMPT_VE
   ].join("\n"));
 }
 async function runScore(goal, baseline2, candidates, scenarios, model, prior = null, random = Math.random, attacks = [], attackCache = null, scoreCache = null, stopEarly = true) {
-  const { costs, challenge, repliesFor, confirmBreak, markAttacks, measure, cutOffCount } = scorer(goal, model, random);
+  const { costs, challenge, repliesFor, confirmBreak, markAttacks, measure: measure2, cutOffCount } = scorer(goal, model, random);
   const train = scenarios.filter((s) => s.split === "train");
   const holdout = scenarios.filter((s) => s.split === "holdout");
   const safe = candidates.filter((c) => candidateProblem(c.text, goal.prompt) === null && c.text.trim() !== baseline2.trim());
@@ -37874,7 +40294,7 @@ async function runScore(goal, baseline2, candidates, scenarios, model, prior = n
     holdDuels.push(duels);
     leader.holdout = duels.map((d) => d.row);
   } else if (known === void 0 && !hasPrior && holdout.length > 0 && (goal.checks?.some((c) => c.trim()) ?? false)) {
-    holdDuels.push(await measure(holdout, await holdReplies()));
+    holdDuels.push(await measure2(holdout, await holdReplies()));
   }
   let freshAttackCache;
   if (leader && attacks.length > 0) {
@@ -38084,6 +40504,9 @@ function headlineBase(goal, state, stoppedByTeam = false, mode = "plain") {
   return merged > 0 ? { title: `Done: your prompt got better (${plural(merged, "change")} merged)`, summary: `${gain}${guardLine}Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` } : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money2(state)} of $${goal.budget.max_usd}.` };
 }
 
+// src/cli/main.ts
+init_client2();
+
 // src/cli/try-round.ts
 init_goal();
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
@@ -38144,6 +40567,7 @@ async function runLocalTry(cwd, goal, prompt, scenarios, model) {
 }
 
 // src/cli/local-credential.ts
+init_client2();
 function localCredential(env, provider) {
   const generic = env.SYNTHE_API_KEY?.trim();
   if (provider?.kind === "openai-compatible") {
@@ -38195,8 +40619,10 @@ var presetById = (id) => PRESETS.find((p) => p.id === id);
 var FREE_MAX_CALLS = 500;
 
 // src/cli/init.ts
+init_openai_compatible();
 init_prompt();
 init_safety();
+init_client2();
 
 // src/cli/agent.ts
 var AgentSetupError = class extends Error {
@@ -38279,6 +40705,8 @@ function baseUrlOption(args) {
 }
 
 // src/cli/calibrate.ts
+init_cost();
+init_client2();
 import { mkdirSync as mkdirSync2, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join3 } from "node:path";
 var CASES = 20;
@@ -39398,6 +41826,8 @@ Set up, but GitHub did not accept the first dispatch. Run \`gh workflow run synt
 }
 
 // src/cli/calibrate-judge.ts
+init_cost();
+init_client2();
 var JUDGE_CASES = 10;
 var PAIRS = 6;
 var MIN_PAIRS = 3;
@@ -39535,11 +41965,13 @@ ${VARIANTS[i % VARIANTS.length]}` })), 6, async ({ s, variant }) => {
 }
 
 // src/cli/migrate.ts
-import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
-import { join as join5 } from "node:path";
+init_cost();
 init_goal();
 init_merge_rule();
 init_prompt();
+init_client2();
+import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
+import { join as join5 } from "node:path";
 var MAX_DROP = 5;
 function parseArgs(args) {
   const out = { dryRun: false };
@@ -39627,9 +42059,9 @@ Scenarios: ${train} train + ${scenarios.length - train} holdout = ${scenarios.le
   if (judged.length === 0) return fail3("None of the test cases could be judged, so there's nothing to compare. Try again in a few minutes; if it keeps happening, open an issue at https://github.com/synthelabs/synthe/issues");
   const avg = (rows) => rows.reduce((n, r) => n + r.score, 0) / rows.length;
   const judgeBefore = avg(judged.map(([b]) => b)), judgeAfter = avg(judged.map(([, a]) => a));
-  const count2 = (score) => judged.filter(([, a]) => a.score === score).length;
+  const count3 = (score2) => judged.filter(([, a]) => a.score === score2).length;
   const lines = [];
-  lines.push(`Test cases: better on ${to} in ${count2(WIN)}, worse in ${count2(LOSS)}, the same in ${count2(TIE)}${judged.length < scenarios.length ? `. ${scenarios.length - judged.length} couldn't be judged and are left out` : ""}`, "");
+  lines.push(`Test cases: better on ${to} in ${count3(WIN)}, worse in ${count3(LOSS)}, the same in ${count3(TIE)}${judged.length < scenarios.length ? `. ${scenarios.length - judged.length} couldn't be judged and are left out` : ""}`, "");
   lines.push("Judge score (all scenarios, head to head: 50 is even)", `  Before: ${judgeBefore.toFixed(1)}  After: ${judgeAfter.toFixed(1)}  Change: ${signed(judgeAfter - judgeBefore)}`, "");
   let rateDrop = 0, rateChange = null;
   if (goal.checks?.some((c) => c.trim())) {
@@ -39730,7 +42162,7 @@ function nextLine() {
   if (!rl) start();
   if (queued.length) return Promise.resolve(queued.shift());
   if (ended) return Promise.resolve("");
-  return new Promise((resolve7) => waiting.push(resolve7));
+  return new Promise((resolve11) => waiting.push(resolve11));
 }
 async function askPiped(question) {
   process.stdout.write(question);
@@ -39778,6 +42210,7 @@ function upgrade(root, template2) {
 
 // src/cli/key.ts
 init_goal();
+init_client2();
 init_goal();
 init_state();
 import { readFileSync as readFileSync5, writeFileSync as writeFileSync5 } from "node:fs";
@@ -40029,6 +42462,7 @@ async function undo(d, roundArg) {
 init_goal();
 init_prompt();
 init_state();
+init_client2();
 import { existsSync as existsSync7, readFileSync as readFileSync8 } from "node:fs";
 import { join as join10 } from "node:path";
 var vaultOptions = (args) => {
@@ -40191,6 +42625,8 @@ function parseImproveConfig(raw) {
 }
 
 // src/improve/loop.ts
+init_cost();
+init_client2();
 import { execFileSync as execFileSync3 } from "node:child_process";
 import { existsSync as existsSync12, mkdirSync as mkdirSync5, mkdtempSync as mkdtempSync2, readFileSync as readFileSync13, realpathSync as realpathSync2, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
@@ -40257,7 +42693,7 @@ var package_default = {
   },
   scripts: {
     build: "node scripts/build.mjs",
-    test: "node --test test/*.test.ts",
+    test: "node scripts/with-tmp.mjs node --test test/*.test.ts",
     typecheck: "tsc --noEmit",
     prepublishOnly: "node scripts/check-release-tag.mjs",
     version: "node scripts/version-pins.mjs && npm run build && git add README.md docs/AGENT-SETUP.md src/cli/guide.ts dist",
@@ -40268,7 +42704,7 @@ var package_default = {
     "simulate:run": "node scripts/simulate-run.ts",
     "mutation:operators": "stryker run mutation/stryker.config.mjs",
     "mutation:compare": "node mutation/compare.mjs",
-    milestones: "node scripts/swarm/milestones.mjs"
+    milestones: "node scripts/with-tmp.mjs node scripts/swarm/milestones.mjs"
   },
   devDependencies: {
     "@anthropic-ai/sdk": "1.3.0",
@@ -40280,41 +42716,8 @@ var package_default = {
   }
 };
 
-// src/improve/verdict.ts
-var median = (xs) => {
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-};
-var range = (xs) => xs.length ? Math.max(...xs) - Math.min(...xs) : 0;
-var plainNumber = (n) => String(Number.isInteger(n) ? n : Number(n.toFixed(2)));
-var MAX_NAMED = 3;
-function brokenTests(baseline2, candidate) {
-  if (candidate.failing === void 0) return null;
-  if (candidate.failing !== null && candidate.failing.length === 0) return null;
-  if (baseline2.failing === void 0) return "Some tests still fail, and the current code was measured before Synthe recorded which tests fail, so a fixed test could be hiding a newly broken one. Run npx synthe improve again to measure it.";
-  if (candidate.failing === null || baseline2.failing === null) return "Some tests still fail, and Synthe could not tell which ones from the test output, so a fixed test could be hiding a newly broken one.";
-  const before = new Set(baseline2.failing);
-  const broken = candidate.failing.filter((t) => !before.has(t));
-  if (!broken.length) return null;
-  const named = broken.slice(0, MAX_NAMED).join("; ") + (broken.length > MAX_NAMED ? `; and ${broken.length - MAX_NAMED} more` : "");
-  return `It breaks ${broken.length === 1 ? "a test that" : `${broken.length} tests that`} passed in every run before: ${named}.`;
-}
-function verdict(direction, baseline2, candidate, guardPassed) {
-  const delta = candidate.median - baseline2.median;
-  const noise = Math.max(range(baseline2.runs), range(candidate.runs));
-  const result2 = (win3, why, reason) => ({ win: win3, why, delta, noise, ...reason && { reason } });
-  if (guardPassed === false) return result2(false, "The regression check did not pass.", "guard");
-  const better = direction === "higher" ? delta : -delta;
-  if (better <= 0) return result2(false, `Not better than the current code (${plainNumber(candidate.median)} vs ${plainNumber(baseline2.median)}).`, "worse");
-  const broken = brokenTests(baseline2, candidate);
-  if (broken) return result2(false, broken, "tests");
-  const d = plainNumber(Math.abs(delta));
-  if (Math.abs(delta) <= noise) return result2(false, `Within noise: changed by ${d}, but runs vary by up to ${plainNumber(noise)}.`, "noise");
-  return result2(true, `Better by ${d}, more than the run-to-run noise of ${plainNumber(noise)}${guardPassed ? "; the regression check passed." : "."}`);
-}
-
 // src/improve/text.ts
+init_verdict();
 function formatValue(value, unit) {
   if (unit === "bytes") {
     if (Math.abs(value) < 1024) return `${plainNumber(value)} bytes`;
@@ -40459,9 +42862,9 @@ function lessonLine(l) {
   const why = clip3(oneLine2(l.why ?? ""), WHY_MAX).replace(/[.\s]+$/, "");
   const numbers = l.after === null ? "" : `${formatValue(l.before, l.unit)} \u2192 ${formatValue(l.after, l.unit)}`;
   const detail = [why, numbers].filter(Boolean).join("; ");
-  const tail = `${detail ? ` (${detail})` : ""}.`;
-  const summary = clip3(oneLine2(l.summary).replace(/[.\s]+$/, ""), Math.max(20, LINE_MAX - head.length - tail.length));
-  return clip3(`${head}${summary}${tail}`, LINE_MAX);
+  const tail2 = `${detail ? ` (${detail})` : ""}.`;
+  const summary = clip3(oneLine2(l.summary).replace(/[.\s]+$/, ""), Math.max(20, LINE_MAX - head.length - tail2.length));
+  return clip3(`${head}${summary}${tail2}`, LINE_MAX);
 }
 var lessonsFile = (gitRoot) => join12(gitRoot, ".synthe", "improve-lessons.md");
 function appendLessons(gitRoot, lines) {
@@ -40510,6 +42913,9 @@ function lessonsTarget(_gitRoot, choice) {
   if (choice === "agents") return "AGENTS.md";
   return null;
 }
+
+// src/improve/loop.ts
+init_verdict();
 
 // src/improve/worktree.ts
 import { existsSync as existsSync9, lstatSync, mkdtempSync, rmSync as rmSync2, symlinkSync, unlinkSync as unlinkSync2 } from "node:fs";
@@ -40694,6 +43100,7 @@ ${r.stderr}`;
 }
 
 // src/improve/worktree.ts
+init_verdict();
 var win2 = process.platform === "win32";
 var quote = (s) => win2 ? `"${s}"` : `'${s.replace(/'/g, "'\\''")}'`;
 var GIT_TIMEOUT_MS = 12e4;
@@ -40753,6 +43160,7 @@ async function measureAt(exec, root, commit, config, say = () => {
 
 // src/improve/writer.ts
 init_safety();
+init_client2();
 import { existsSync as existsSync11, lstatSync as lstatSync2, readFileSync as readFileSync12, realpathSync } from "node:fs";
 import { dirname as dirname3, join as join16, sep } from "node:path";
 
@@ -40778,8 +43186,8 @@ var RULES = [
 function commandPaths(config) {
   return [config.metric.command, config.guard.command ?? ""].flatMap((c) => c.split(/\s+/)).map((w) => w.replace(/^['"]|['"]$/g, "").replace(/^\.\//, "")).filter((w) => /[/.]/.test(w) && !w.startsWith("-") && !w.startsWith("/") && !w.split("/").includes(".."));
 }
-var under = (path4, entry) => {
-  const e = entry.replace(/^\.\//, "").replace(/\/$/, "").toLowerCase();
+var under = (path4, entry2) => {
+  const e = entry2.replace(/^\.\//, "").replace(/\/$/, "").toLowerCase();
   const p = path4.toLowerCase();
   return p === e || p.startsWith(`${e}/`);
 };
@@ -41082,34 +43490,34 @@ function checkEdits(dir, edits, shown3, config) {
     if (refused) return { problem: refused };
     if (AGENT_NOTES.test(path4)) return { problem: `${path4} holds notes for coding agents; Synthe writes its lessons there itself` };
     if (GENERATED.test(path4)) return { problem: `${path4} is generated output; change the source it is built from` };
-    let entry = texts.get(path4);
-    if (!entry) {
+    let entry2 = texts.get(path4);
+    if (!entry2) {
       const onDisk = existsSync11(join16(dir, path4));
-      if (shown3.has(path4)) entry = { original: readFileSync12(join16(dir, path4), "utf8"), text: "" };
+      if (shown3.has(path4)) entry2 = { original: readFileSync12(join16(dir, path4), "utf8"), text: "" };
       else if (onDisk) return { problem: `${path4} was not among the files shown, so it can't be edited` };
       else if (e.search !== "") return { problem: `${path4} does not exist` };
       else if (!insideCheckout(dir, path4)) return { problem: `${path4} is not a path inside the repo` };
-      else entry = { original: null, text: "" };
-      if (entry.original !== null) entry.text = entry.original;
-      texts.set(path4, entry);
+      else entry2 = { original: null, text: "" };
+      if (entry2.original !== null) entry2.text = entry2.original;
+      texts.set(path4, entry2);
     }
     let { search, replace } = e;
     if (search === "") {
-      if (entry.original !== null || entry.text !== "") return { problem: `the search text for ${path4} is empty, but that file already exists` };
+      if (entry2.original !== null || entry2.text !== "") return { problem: `the search text for ${path4} is empty, but that file already exists` };
       if (!replace.trim()) return { problem: `${path4} would be created empty` };
-      entry.text = replace;
+      entry2.text = replace;
       lines += changedLines("", replace);
       continue;
     }
-    if (entry.text.includes("\r\n") && !search.includes("\r")) {
+    if (entry2.text.includes("\r\n") && !search.includes("\r")) {
       search = search.replace(/\n/g, "\r\n");
       replace = replace.replace(/\n/g, "\r\n");
     }
-    const n = count(entry.text, search);
+    const n = count(entry2.text, search);
     if (n === 0) return { problem: `the search text for ${path4} is not in the file` };
     if (n > 1) return { problem: `the search text for ${path4} appears ${n} times; it must appear once` };
-    const at = entry.text.indexOf(search);
-    entry.text = entry.text.slice(0, at) + replace + entry.text.slice(at + search.length);
+    const at = entry2.text.indexOf(search);
+    entry2.text = entry2.text.slice(0, at) + replace + entry2.text.slice(at + search.length);
     lines += changedLines(e.search, e.replace);
   }
   const writes = [...texts].filter(([, t]) => t.text !== t.original).map(([path4, t]) => ({ path: path4, text: t.text, created: t.original === null }));
@@ -41372,9 +43780,12 @@ async function publish(io2, a) {
 }
 
 // src/cli/improve.ts
+init_client2();
 init_goal();
 
 // src/core/calls.ts
+init_cost();
+init_openai_compatible();
 var CallLimitError = class extends Error {
   maxCalls;
   constructor(maxCalls) {
@@ -41755,6 +44166,7 @@ async function settle(io2, o, presets, defaultBranch, top) {
 
 // src/cli/submit.ts
 import { existsSync as existsSync13, readFileSync as readFileSync15 } from "node:fs";
+init_verdict();
 var SUBMIT_NEXT_WIN = "NEXT: Show the person the result and the pull request link as written.";
 var SUBMIT_NEXT_LOSS = "NEXT: Show the person why this change did not win, as written. If they want another try, make a different small change on the same branch, commit, and run `npx synthe submit` again.";
 var MAX_CHANGED_FILES = 60;
@@ -41889,62 +44301,11 @@ async function submit(io2, _root, options) {
   return true;
 }
 
-// src/improve/exec.ts
-import { spawn as spawn2 } from "node:child_process";
-import { performance } from "node:perf_hooks";
-var MAX_OUTPUT = 4 * 1024 * 1024;
-var HIDDEN = ["ANTHROPIC_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "NODE_TEST_CONTEXT"];
-function childEnv(env = process.env) {
-  return Object.fromEntries(Object.entries(env).filter(([k]) => !k.startsWith("SYNTHE_") && !HIDDEN.includes(k)));
-}
-var live = /* @__PURE__ */ new Set();
-function killRunning() {
-  for (const pid of live) {
-    try {
-      process.kill(process.platform === "win32" ? pid : -pid, "SIGKILL");
-    } catch {
-    }
-  }
-  live.clear();
-}
-var shellExec = (cwd, command, timeoutMs) => new Promise((resolve7) => {
-  const win3 = process.platform === "win32";
-  const started = performance.now();
-  const child = spawn2(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: childEnv(), stdio: ["ignore", "pipe", "pipe"], detached: !win3 });
-  if (child.pid) live.add(child.pid);
-  let stdout = "", stderr = "", timedOut = false, done = false;
-  const take = (into) => (d) => {
-    if (into === "out" && stdout.length < MAX_OUTPUT) stdout += d.toString().slice(0, MAX_OUTPUT - stdout.length);
-    if (into === "err" && stderr.length < MAX_OUTPUT) stderr += d.toString().slice(0, MAX_OUTPUT - stderr.length);
-  };
-  child.stdout.on("data", take("out"));
-  child.stderr.on("data", take("err"));
-  const timer = setTimeout(() => {
-    timedOut = true;
-    try {
-      if (win3) child.kill("SIGKILL");
-      else process.kill(-child.pid, "SIGKILL");
-    } catch {
-    }
-  }, timeoutMs);
-  const finish = (code) => {
-    if (done) return;
-    done = true;
-    if (child.pid) live.delete(child.pid);
-    clearTimeout(timer);
-    resolve7({ ok: code === 0 && !timedOut, stdout, stderr, ms: Math.round(performance.now() - started), timedOut });
-  };
-  child.on("error", (e) => {
-    stderr += e.message;
-    finish(null);
-  });
-  child.on("close", finish);
-});
-
 // src/cli/main.ts
-var run = (cmd, args, stdin) => new Promise((resolve7, reject) => {
+init_exec();
+var run = (cmd, args, stdin) => new Promise((resolve11, reject) => {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_")));
-  const child = spawn3(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env });
+  const child = spawn4(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env });
   let out = "", err = "";
   child.stdout.on("data", (d) => {
     out += d;
@@ -41953,7 +44314,7 @@ var run = (cmd, args, stdin) => new Promise((resolve7, reject) => {
     err += d;
   });
   child.on("error", reject);
-  child.on("close", (code) => code === 0 ? resolve7(out) : reject(new Error(err || `${cmd} failed`)));
+  child.on("close", (code) => code === 0 ? resolve11(out) : reject(new Error(err || `${cmd} failed`)));
   child.stdin.on("error", () => {
   });
   child.stdin.end(stdin ?? "");
@@ -41965,7 +44326,7 @@ async function ask(question) {
   rl2.close();
   return answer;
 }
-function onInterrupt(cleanup) {
+function onInterrupt2(cleanup) {
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
   const stop2 = () => {
     killRunning();
@@ -41978,7 +44339,7 @@ function onInterrupt(cleanup) {
     console.log("\nStopped. Synthe stopped its measurements and removed its temporary checkouts; your working tree was never touched.");
     const exit = () => process.exit(130);
     if (pending && typeof pending.then === "function") Promise.race([pending.catch(() => {
-    }), new Promise((resolve7) => setTimeout(resolve7, 1500))]).then(exit, exit);
+    }), new Promise((resolve11) => setTimeout(resolve11, 1500))]).then(exit, exit);
     else exit();
   };
   for (const s of signals) process.once(s, stop2);
@@ -41986,10 +44347,10 @@ function onInterrupt(cleanup) {
     for (const s of signals) process.off(s, stop2);
   };
 }
-var template = () => readFileSync21(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync29(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms2) => new Promise((r) => setTimeout(r, ms2)) };
 function setUpHere() {
-  if (existsSync19(GOAL_FILE)) return true;
+  if (existsSync25(GOAL_FILE)) return true;
   console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
   process.exitCode = 1;
   return false;
@@ -42018,7 +44379,7 @@ async function status2() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync29(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -42026,7 +44387,7 @@ async function status2() {
   const sameModel = sameModelNote(goal.models);
   if (sameModel) console.log(sameModel);
   try {
-    const rows = parseScenarios(readFileSync21(goal.scenarios, "utf8"));
+    const rows = parseScenarios(readFileSync29(goal.scenarios, "utf8"));
     const power = powerLines(goal, rows.filter((r) => r.split === "train").length, rows.filter((r) => r.split === "holdout").length);
     console.log(`What your test cases can detect: ${power[0]} ${power.at(-1)}`);
   } catch {
@@ -42045,7 +44406,7 @@ async function changes() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync29(GOAL_FILE, "utf8"));
   console.log(changesText(goal, s));
 }
 async function stop() {
@@ -42064,7 +44425,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync29(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -42074,7 +44435,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync19(goal.scenarios) ? sha256(readFileSync21(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync25(goal.scenarios) ? sha256(readFileSync29(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -42103,7 +44464,7 @@ async function undoRound() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync29(GOAL_FILE, "utf8"));
   const token2 = (await run("gh", ["auth", "token"])).trim();
   const history = async (path4) => {
     const shas = (await run("git", ["log", "--format=%H", "--", path4])).split("\n").filter(Boolean);
@@ -42113,7 +44474,7 @@ async function undoRound() {
 }
 function localRun(command) {
   if (!setUpHere()) return null;
-  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync29(GOAL_FILE, "utf8"));
   const credential = localCredential(process.env, goal.provider);
   if (!credential) {
     console.log(noLocalCredential(command, goal));
@@ -42121,13 +44482,13 @@ function localRun(command) {
     return null;
   }
   console.log(credential.line);
-  const prompt = readPrompt(readFileSync21(goal.prompt.path, "utf8"), goal, null);
+  const prompt = readPrompt(readFileSync29(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync21(goal.scenarios, "utf8")), model: configuredModel(credential.key, goal.provider) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync29(goal.scenarios, "utf8")), model: configuredModel(credential.key, goal.provider) };
 }
 function noLocalCredential(command, goal) {
   if (goal.provider?.kind === "openai-compatible") return `\`npx synthe ${command}\` runs on your computer, changing nothing, and needs your key for ${providerHost(goal.provider)}. Set SYNTHE_API_KEY in your environment, then run this again.`;
@@ -42157,8 +44518,8 @@ async function calibrateChecks() {
   const result2 = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result2) return;
   if (result2.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync21(GOAL_FILE, "utf8"));
-    writeFileSync12(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result2.checks }, null, 2)}
+    const saved = JSON.parse(readFileSync29(GOAL_FILE, "utf8"));
+    writeFileSync16(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result2.checks }, null, 2)}
 `);
     console.log(`
 Saved your reworded checks in ${GOAL_FILE}. Push them so Synthe's next round uses them:`);
@@ -42166,7 +44527,7 @@ Saved your reworded checks in ${GOAL_FILE}. Push them so Synthe's next round use
   }
   if (result2.results.some((r) => r.verdict !== "trustworthy")) process.exitCode = 1;
 }
-async function tryRound() {
+async function tryRound2() {
   const local = localRun("try");
   if (!local) return;
   const { goal, prompt, scenarios, model } = local;
@@ -42193,6 +44554,7 @@ Start here, inside your project's folder:
   npx synthe improve  raise a number you choose (tests passing, bundle size, build time or your own command): Synthe proposes code changes, measures each one, keeps only wins and opens one pull request (own key; no AI prompt needed)
   npx synthe improve --rounds N --budget USD   at most N rounds (default 6) and USD dollars of model cost (default 1.50)
   npx synthe problem check <file>   check a problem file: which files may change, how to measure them, what must not break
+  npx synthe measure draft --examples FILE --out DIR [--model ID]   draft a judged measure (rubric, cases, compare command) from good and bad example outputs, and check it against your labels
   npx synthe solve <file> [--out DIR] [--seed N]   propose changes for a problem file, measure each one and keep only real gains on a new branch
   npx synthe improve --handoff   measure only, and make the change with the coding agent you already use; then:
   npx synthe submit   measure that change; open the pull request, or merge it in auto mode
@@ -42222,23 +44584,24 @@ async function main2() {
   const command = process.argv[2];
   if (command === "init") process.exitCode = await init(io, process.cwd(), void 0, void 0, process.env, agentOptions(process.argv.slice(3)), baseUrlOption(process.argv.slice(3))) ? 0 : 1;
   else if (command === "guide") console.log(guide);
-  else if (command === "improve") process.exitCode = await improve({ say: console.log, ask, run, exec: shellExec, env: process.env, onInterrupt }, process.cwd(), improveOptions(process.argv.slice(3))) ? 0 : 1;
+  else if (command === "improve") process.exitCode = await improve({ say: console.log, ask, run, exec: shellExec, env: process.env, onInterrupt: onInterrupt2 }, process.cwd(), improveOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "submit") process.exitCode = await submit({ say: console.log, ask, run, exec: shellExec, env: process.env }, process.cwd(), submitOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
-    process.exitCode = await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync21(GOAL_FILE, "utf8")).provider, process.cwd()) ? 0 : 1;
+    process.exitCode = await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync29(GOAL_FILE, "utf8")).provider, process.cwd()) ? 0 : 1;
   } else if (command === "upgrade") console.log(upgrade(process.cwd(), template()));
   else if (command === "stop") await stop();
   else if (command === "status") await status2();
   else if (command === "changes") await changes();
   else if (command === "restart") await restart();
-  else if (command === "try") await tryRound();
+  else if (command === "try") await tryRound2();
   else if (command === "verify") process.exitCode = verify(process.argv[3], process.cwd());
   else if (command === "undo") await undoRound();
   else if (command === "calibrate") await calibrateChecks();
   else if (command === "vault") await vaultCheck();
   else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.SYNTHE_API_KEY, anthropicKey: process.env.SYNTHE_ANTHROPIC_KEY });
   else if (command === "problem") process.exitCode = (await Promise.resolve().then(() => (init_problem2(), problem_exports))).problemCommand(process.argv.slice(3), process.cwd(), console.log);
+  else if (command === "measure") process.exitCode = await (await Promise.resolve().then(() => (init_measure(), measure_exports))).measureCommand(process.argv.slice(3), process.cwd(), console.log, process.env);
   else if (command === "solve") process.exitCode = await (await Promise.resolve().then(() => (init_solve(), solve_exports))).solveCommand(process.argv.slice(3), process.cwd(), console.log, process.env);
   else if (command === "pilot") {
     const pilot = await Promise.resolve().then(() => (init_main(), main_exports));

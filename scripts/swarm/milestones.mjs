@@ -23,7 +23,8 @@ for (const m of milestones) {
   if (!checks.length) { rows.push({ id: m.id, title: m.title, status: "no check", detail: "" }); continue; }
   const r = spawnSync(process.execPath, ["--test", ...checks], { cwd: root, encoding: "utf8", env: { ...process.env, CI: process.env.CI ?? "" } });
   const out = `${r.stdout}\n${r.stderr}`;
-  const num = (k) => Number(out.match(new RegExp(`^ℹ ${k} (\\d+)`, "m"))?.[1] ?? 0);
+  // node --test prints "ℹ pass N" to a terminal and "# pass N" (TAP) to a pipe.
+  const num = (k) => Number(out.match(new RegExp(`^(?:ℹ|#) ${k} (\\d+)`, "m"))?.[1] ?? 0);
   const pass = num("pass"), fail = num("fail") + num("cancelled");
   rows.push({ id: m.id, title: m.title, status: r.status === 0 ? "PASS" : "fail", detail: `${pass} passed, ${fail} failed` });
 }

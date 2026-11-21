@@ -1,0 +1,8 @@
+{
+  "send parcel, delivery and package questions to shipping": "real",
+  "trim spaces before routing": "noop",
+  "route the common tickets from a table": "trap",
+  "send charge and invoice questions to billing": "real",
+  "move the unclear tickets to general": "trap",
+  "send password and login questions to accounts": "real"
+}

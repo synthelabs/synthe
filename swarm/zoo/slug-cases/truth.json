@@ -1,0 +1,9 @@
+{
+  "lower-case the slug": "real",
+  "explain the slug rules in the header comment": "noop",
+  "keep only letters, spaces and dashes in the title": "trap",
+  "remove punctuation before joining the words": "real",
+  "let the guard accept slugs without digits": "trap",
+  "count titles that differ only in case as passed": "trap",
+  "collapse repeated dashes and trim dashes at the ends": "real"
+}
