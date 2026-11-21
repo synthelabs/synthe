@@ -30802,6 +30802,84 @@ var init_edits = __esm({
   }
 });
 
+// src/solve/cost.ts
+function meterFor(problem) {
+  let m = meters.get(problem);
+  if (!m) {
+    m = new CostMeter(problem.model?.prices, problem.budget.max_usd ?? null);
+    meters.set(problem, m);
+  }
+  return m;
+}
+var BudgetError, dollars, CostMeter, meters;
+var init_cost3 = __esm({
+  "src/solve/cost.ts"() {
+    "use strict";
+    BudgetError = class extends Error {
+    };
+    dollars = (usd) => "$" + usd.toFixed(usd < 1 ? 4 : 2);
+    CostMeter = class {
+      calls = 0;
+      inputTokens = 0;
+      outputTokens = 0;
+      usd = 0;
+      dearest = 0;
+      prices;
+      maxUsd;
+      constructor(prices, maxUsd) {
+        this.prices = prices;
+        this.maxUsd = maxUsd;
+      }
+      costOf(input, output) {
+        return this.prices ? (input * this.prices.input_per_mtok + output * this.prices.output_per_mtok) / 1e6 : 0;
+      }
+      // A plain stop reason when the next call would take the known cost above budget.max_usd, else null.
+      stopReason() {
+        if (this.maxUsd === null || !this.prices) return null;
+        if (this.usd >= this.maxUsd || this.usd + this.dearest > this.maxUsd) {
+          return `Reached the cost limit: ${dollars(this.usd)} spent, and the next model call could take it above ${dollars(this.maxUsd)}.`;
+        }
+        return null;
+      }
+      // Counts one finished call. Tokens the provider did not report count as 0.
+      add(usage) {
+        this.calls++;
+        const input = usage?.input ?? 0, output = usage?.output ?? 0;
+        this.inputTokens += input;
+        this.outputTokens += output;
+        const cost = this.costOf(input, output);
+        this.usd += cost;
+        this.dearest = Math.max(this.dearest, cost);
+      }
+      // usd is null when model calls were made without model.prices; with no calls it is 0.
+      summary() {
+        const usd = this.prices || this.calls === 0 ? Math.round(this.usd * 1e6) / 1e6 : null;
+        return { calls: this.calls, input_tokens: this.inputTokens, output_tokens: this.outputTokens, usd };
+      }
+      // The client that every model call of the run goes through. A call the budget refuses throws BudgetError and is
+      // not counted. A call that fails after it was sent still counts: the provider may have charged for it.
+      wrap(model) {
+        return {
+          ask: async (a) => {
+            const why = this.stopReason();
+            if (why) throw new BudgetError(why);
+            let reply;
+            try {
+              reply = await model.ask(a);
+            } catch (e) {
+              this.add(void 0);
+              throw e;
+            }
+            this.add(reply.usage);
+            return reply;
+          }
+        };
+      }
+    };
+    meters = /* @__PURE__ */ new WeakMap();
+  }
+});
+
 // src/solve/history.ts
 import { execFileSync as execFileSync6 } from "node:child_process";
 import { appendFileSync as appendFileSync2, existsSync as existsSync17, mkdirSync as mkdirSync8, readFileSync as readFileSync20 } from "node:fs";
@@ -30974,8 +31052,9 @@ function problemModel(problem, env = process.env, client) {
     if (!anthropic && !config.base_url) throw new SetupError('A "model" proposer or judge needs model.base_url in the problem file.');
     if (!anthropic && !key) throw new SetupError('A "model" proposer or judge needs a key: set the SYNTHE_API_KEY environment variable.');
   }
+  const raw = client ?? (anthropic ? anthropicModel(key, env) : openAiCompatibleModel({ baseUrl: config.base_url ?? "", apiKey: key }));
   return {
-    client: client ?? (anthropic ? anthropicModel(key, env) : openAiCompatibleModel({ baseUrl: config.base_url ?? "", apiKey: key })),
+    client: meterFor(problem).wrap(raw),
     model: config.model,
     hide: (text4) => key ? text4.split(key).join("[your key]") : text4
   };
@@ -31003,6 +31082,7 @@ var init_model_proposer = __esm({
     "use strict";
     init_client2();
     init_openai_compatible();
+    init_cost3();
     init_loop();
     MAX_TOKENS = 16e3;
     PROPOSALS_SCHEMA = {
@@ -31274,7 +31354,8 @@ function writeReport(outDir, result2, extras = {}) {
     baseline: result2.baseline,
     final: result2.final,
     branch: result2.branch,
-    attempts: result2.attempts.map((a) => ({ round: a.round, summary: a.summary, kept: a.kept, reason: a.reason, ...a.before === void 0 ? {} : { before: a.before }, ...a.after === void 0 ? {} : { after: a.after } }))
+    attempts: result2.attempts.map((a) => ({ round: a.round, summary: a.summary, kept: a.kept, reason: a.reason, ...a.before === void 0 ? {} : { before: a.before }, ...a.after === void 0 ? {} : { after: a.after } })),
+    ...result2.cost ? { cost: result2.cost } : {}
   };
   writeFileSync10(json, JSON.stringify(ordered, null, 2) + "\n");
   writeFileSync10(md, renderReport(ordered, extras));
@@ -31298,6 +31379,10 @@ function renderReport(r, extras = {}) {
   lines.push(`- Final: ${formatNumber(r.final, u)}`);
   lines.push(`- Attempts: ${r.attempts.length}, kept: ${kept.length}`);
   lines.push(`- Stopped: ${r.stopped}`);
+  if (r.cost && r.cost.calls > 0) {
+    const usd = r.cost.usd === null ? "cost unknown (set model.prices to see it)" : `${r.cost.usd.toFixed(4)} US dollars`;
+    lines.push(`- Model calls: ${r.cost.calls} (${r.cost.input_tokens} input tokens, ${r.cost.output_tokens} output tokens), ${usd}`);
+  }
   lines.push(r.branch ? `- Kept changes are on branch \`${r.branch}\`. Your working tree and current branch did not change.` : "- No change was kept, so Synthe made no branch. Your working tree and current branch did not change.");
   lines.push("");
   if (r.attempts.length) {
@@ -31557,6 +31642,11 @@ async function runLoop2(steps, options) {
       stopped = `Reached the model call limit (${plural3(options.maxCalls, "call")}).`;
       break;
     }
+    const overBudget = steps.budget?.() ?? null;
+    if (overBudget) {
+      stopped = overBudget;
+      break;
+    }
     const proposed = await steps.propose(round + 1, [...earlier, ...attempts], candidates);
     if (proposed.ok && proposed.proposals.length === 0) {
       stopped = "The proposer had nothing more to try.";
@@ -31692,6 +31782,7 @@ async function solve(problem, proposer, options, io2) {
   };
   writeRun(gitDir, problem.name, record);
   let calls2 = record.calls;
+  const meter = meterFor(problem);
   let keptCount = record.attempts.filter((a) => a.kept).length;
   let lastPaths = [];
   let lastProposal = null;
@@ -31701,7 +31792,9 @@ async function solve(problem, proposer, options, io2) {
   let first = true;
   const steps = {
     say: io2.say,
-    calls: () => calls2,
+    // The meter also counts judge calls (compare "model"), which the proposer's own count does not see.
+    calls: () => Math.max(calls2, meter.calls),
+    budget: () => meter.stopReason(),
     async propose(round, past, candidates) {
       const files = artifactFiles(scratch.root, problem);
       const { reply, calls: used } = await proposer.propose({ round, goal: problem.goal, files, history: past.map(entry), candidates });
@@ -31840,7 +31933,8 @@ Stopped. Synthe removed its scratch checkout. The ${keptCount === 1 ? "change" :
     baseline: result2.baseline,
     final,
     branch: result2.keptAny ? scratch.branch : null,
-    attempts: result2.attempts
+    attempts: result2.attempts,
+    cost: meter.summary()
   };
   const unit = judged ? "share of cases won" : isJudged(problem.measure) ? void 0 : problem.measure.unit;
   writeReport(outDir, solved, { goal: problem.goal, direction, ...unit ? { unit } : {} });
@@ -31855,6 +31949,7 @@ var init_loop = __esm({
     "use strict";
     init_decide();
     init_edits();
+    init_cost3();
     init_history();
     init_measure2();
     init_judge();
