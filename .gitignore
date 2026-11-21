@@ -7,3 +7,4 @@ mutation/reports
 dist/.build-*
 bench/results.json
 bench/results-live.json
+bench/zoo-results.json
