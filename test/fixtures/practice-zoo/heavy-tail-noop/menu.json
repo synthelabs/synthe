@@ -1,0 +1,52 @@
+[
+  {
+    "summary": "NOOP: retry three times",
+    "edits": [
+      {
+        "path": "settings.json",
+        "search": "\"retries\": 2",
+        "replace": "\"retries\": 3"
+      }
+    ]
+  },
+  {
+    "summary": "NOOP: change the color to green",
+    "edits": [
+      {
+        "path": "settings.json",
+        "search": "\"color\": \"blue\"",
+        "replace": "\"color\": \"green\""
+      }
+    ]
+  },
+  {
+    "summary": "GAIN: raise the cache to 400 (+3 sd)",
+    "edits": [
+      {
+        "path": "settings.json",
+        "search": "\"cache\": 100",
+        "replace": "\"cache\": 400"
+      }
+    ]
+  },
+  {
+    "summary": "NOOP: turn on verbose output",
+    "edits": [
+      {
+        "path": "settings.json",
+        "search": "\"verbose\": false",
+        "replace": "\"verbose\": true"
+      }
+    ]
+  },
+  {
+    "summary": "NOOP: rename the title",
+    "edits": [
+      {
+        "path": "settings.json",
+        "search": "\"title\": \"Report\"",
+        "replace": "\"title\": \"Summary\""
+      }
+    ]
+  }
+]

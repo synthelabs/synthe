@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "small-gain-runs3",
+  "goal": "Raise the score that measure/score.js prints.",
+  "artifact": ["params.json"],
+  "protect": ["measure/**"],
+  "measure": { "command": "node measure/score.js {{TMP}}", "direction": "higher" },
+  "proposer": { "command": "node propose.mjs" },
+  "budget": { "max_rounds": 6 }
+}
