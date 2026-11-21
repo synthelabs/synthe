@@ -129,6 +129,9 @@ export function validateProblem(raw: unknown, file: string): ProblemCheck {
     else {
       unknownKeys(raw.split, ["holdout"], "split.", errors);
       if (raw.split.holdout !== undefined && typeof raw.split.holdout !== "boolean") errors.push(`split.holdout: must be true or false.`);
+      // GOAL.md defines the held-back split for measure.command (SYNTHE_SPLIT). A judged measure has no split, and a
+      // file that asks for one must not pass with a guard that silently never runs.
+      else if (raw.split.holdout === true && measure && isJudged(measure)) errors.push(`split.holdout: works only with measure.command, which runs with SYNTHE_SPLIT=train and holdout. A judged measure has no held-back split: remove split.holdout, or measure with a command.`);
       else split.holdout = raw.split.holdout === true;
     }
   }

@@ -183,3 +183,13 @@ test("budget.max_usd: a positive number with model.prices; refused without price
     if (!r.ok) { assert.equal(r.problems.length, 1, r.problems.join("\n")); assert.match(r.problems[0], field); }
   }
 });
+
+test("split.holdout with a judged measure is refused with one line; holdout false is fine", () => {
+  const dir = repo();
+  writeFileSync(join(dir, "cases.jsonl"), '{"id":"1","input":"hi"}\n');
+  const judged = { version: 1, name: "j", goal: "g", artifact: ["run.js"], measure: { judge: { cases: "cases.jsonl", run: "node run.js", compare: "node judge.js" } } };
+  const r = validateProblem({ ...judged, split: { holdout: true } }, join(dir, "p.json"));
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.deepEqual(r.problems.map((l) => l.split(":")[0]), ["split.holdout"]);
+  assert.ok(validateProblem({ ...judged, split: { holdout: false } }, join(dir, "p.json")).ok);
+});
