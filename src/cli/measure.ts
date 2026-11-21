@@ -3,21 +3,13 @@
 import { resolve } from "node:path";
 import { anthropicModel, type Model } from "../model/client.ts";
 import { openAiCompatibleModel } from "../model/openai-compatible.ts";
-import { draftMeasure, examplesFile, type DraftModel } from "../solve/draft.ts";
+import { draftMeasure, examplesFile, providerKey, type DraftModel } from "../solve/draft.ts";
 import { loadProblem } from "./problem.ts";
 
 const USAGE = "Usage: npx synthe measure draft --examples <file.jsonl> --out <dir> [--problem <problem-file> | --model <model-id>]";
 
-// The key for a provider, and where it may go. A key that is set but not for this provider is not used.
-export function providerKey(provider: DraftModel["provider"], env: NodeJS.ProcessEnv): string {
-  if (provider === "anthropic") {
-    const own = env.SYNTHE_ANTHROPIC_KEY?.trim();
-    if (own) return own;
-    const shared = env.SYNTHE_API_KEY?.trim() ?? "";
-    return shared.startsWith("sk-ant-") ? shared : "";
-  }
-  return env.SYNTHE_API_KEY?.trim() ?? "";
-}
+// The key rule lives with the draft code, so the CLI and compare.js's environment agree.
+export { providerKey } from "../solve/draft.ts";
 
 export async function measureCommand(args: string[], cwd: string, say: (line: string) => void, env: NodeJS.ProcessEnv, client?: Model): Promise<number> {
   const takesValue = ["--examples", "--out", "--problem", "--model"];
