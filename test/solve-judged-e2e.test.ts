@@ -9,7 +9,7 @@ const main = resolve("src/cli/main.ts");
 const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 
 // A reply style file, a run command that answers each case in that style, and a judge that truly prefers answers
-// that give a reason ("because") but, when both or neither do, picks the longer one: a judge with a length bias.
+// that give a reason ("because") but, when both or neither do, picks the longer one for some of the cases: a judge with a length bias.
 function repo(proposals: { summary: string; replace: string }[]): string {
   const top = realpathSync(mkdtempSync(join(tmpdir(), "solve-judged-")));
   git(top, "init", "-q", "-b", "main");
@@ -20,7 +20,8 @@ function repo(proposals: { summary: string; replace: string }[]): string {
   writeFileSync(join(top, "run.mjs"), `import {readFileSync} from "node:fs"; const c = JSON.parse(readFileSync(0, "utf8")); console.log(c.input + ": " + readFileSync("style.txt", "utf8"));`);
   writeFileSync(join(top, "judge.mjs"), `import {readFileSync} from "node:fs"; const q = JSON.parse(readFileSync(0, "utf8"));
 const g = (s) => s.includes("because"); let w;
-if (g(q.a) !== g(q.b)) w = g(q.a) ? "a" : "b"; else w = q.a.length === q.b.length ? "tie" : q.a.length > q.b.length ? "a" : "b";
+const follows = Number(/question (\\d)/.exec(q.a)?.[1] ?? 1) % 3 === 0;
+if (g(q.a) !== g(q.b)) w = g(q.a) ? "a" : "b"; else w = !follows || q.a.length === q.b.length ? "tie" : q.a.length > q.b.length ? "a" : "b";
 console.log(JSON.stringify({ winner: w }));`);
   writeFileSync(join(top, "propose.mjs"), `import {readFileSync} from "node:fs"; const req = JSON.parse(readFileSync(0, "utf8"));
 const list = ${JSON.stringify(proposals)}; const p = list[req.round - 1];
@@ -48,7 +49,7 @@ test("solve with a judged measure keeps a real gain and refuses a longer-only ch
   assert.equal(result.attempts.length, 2);
   const [pad, reason] = result.attempts;
   assert.equal(pad.kept, false);
-  assert.match(pad.reason, /same length/);
+  assert.match(pad.reason, /did not clearly prefer/);
   assert.equal(reason.kept, true, reason.reason);
   assert.equal(result.baseline, 0.5);
   assert.equal(result.final, 1);
