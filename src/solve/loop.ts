@@ -4,7 +4,7 @@ import { decide, decideWithConfirm, type Remeasure } from "./decide.ts";
 import { applyProposal, artifactFiles } from "./edits.ts";
 import { appendHistory, nextRun, readHistory } from "./history.ts";
 import { failedGuard, measure, type Split } from "./measure.ts";
-import { commandCompare, judgeOutputs, readCases, runCases, type Compare, type Outputs } from "./judge.ts";
+import { commandCompare, compareKeyEnv, judgeOutputs, readCases, runCases, type Compare, type Outputs } from "./judge.ts";
 import { modelCompare } from "./model-compare.ts";
 import { writeReport } from "./report.ts";
 import { stopRunning } from "./run.ts";
@@ -330,7 +330,7 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     }
     let compareFn: Compare;
     try {
-      compareFn = judged.compare === "model" ? modelCompare(problem, io.env) : commandCompare(scratch.dir, judged.compare);
+      compareFn = judged.compare === "model" ? modelCompare(problem, io.env) : commandCompare(scratch.dir, judged.compare, compareKeyEnv(problem, io.env));
     } catch (e) {
       await scratch.close(false);
       throw new SetupError(`The judged measure could not start: ${(e as Error).message}`);

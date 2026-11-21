@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { commandFailure } from "./measure.ts";
 import { modelCompare } from "./model-compare.ts";
+import { compareEnv } from "./draft.ts";
 import { runCommand } from "./run.ts";
 import { isJudged, type Decision, type Problem } from "./types.ts";
 
@@ -76,9 +77,17 @@ export function parseWinner(stdout: string): Winner | null {
   return null;
 }
 
-export function commandCompare(problemDir: string, command: string): Compare {
+// The key values a compare command may get: only when the problem names a model, and only that provider's values
+// (compareEnv). This is the one exception to "a command never sees a SYNTHE_* value": a compare.js from
+// `measure draft` asks the model itself. The run, measure, guard and proposer commands never get them, and the
+// compare file is protected from edits (edits.ts), so a proposal cannot change what receives the key.
+export function compareKeyEnv(problem: Problem, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  return problem.model ? compareEnv(problem.model, env) : {};
+}
+
+export function commandCompare(problemDir: string, command: string, env: Record<string, string> = {}): Compare {
   return async (c, a, b) => {
-    const r = await runCommand(problemDir, command, { stdin: JSON.stringify({ case: c, a, b }) + "\n" });
+    const r = await runCommand(problemDir, command, { stdin: JSON.stringify({ case: c, a, b }) + "\n", env });
     if (!r.ok) return { failed: commandFailure("The compare command", command, r) };
     const w = parseWinner(r.stdout);
     return w ?? { failed: `The compare command \`${command}\` did not print {"winner": "a" | "b" | "tie"}.` };
@@ -195,7 +204,7 @@ export async function judgeCandidate(keptCheckout: string, candidateCheckout: st
   if (!isJudged(m)) return { keep: false, reason: "This problem has no judged measure.", calls: 0, share: 0.5 };
   let compare: Compare;
   try {
-    compare = m.judge.compare === "model" ? modelCompare(problem) : commandCompare(keptCheckout, m.judge.compare);
+    compare = m.judge.compare === "model" ? modelCompare(problem) : commandCompare(keptCheckout, m.judge.compare, compareKeyEnv(problem));
   } catch (e) {
     return { keep: false, reason: e instanceof Error ? e.message : String(e), calls: 0, share: 0.5 };
   }

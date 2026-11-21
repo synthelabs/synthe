@@ -113,6 +113,20 @@ npx synthe solve problem.json [--out DIR] [--seed N]
 - **Interrupted?** Press Ctrl-C any time. Synthe stops the running commands and removes its scratch checkout. A branch stays only if it holds a kept change.
 - **Exit codes.** 0 when the run ends normally, with or without gains. 1 for a bad problem file or a failed setup.
 
+### A judged measure, and where the key goes
+
+When no command can print a number, such as for a reply's quality, use `measure.judge` with your cases, a `run` command and a `compare` command. Synthe asks every comparison twice, with the two outputs swapped.
+
+To write the judge, start from a few examples (`{"input": "...", "good": "...", "bad": "..."}` on each line):
+
+```bash
+npx synthe measure draft --examples examples.jsonl --out judge --model <model-id>
+```
+
+It writes `judge/cases.jsonl`, `judge/rubric.md` and `judge/compare.js`, and asks `compare.js` about each example in both orders. It prints `agreement N/M`. If the judge agrees on fewer than 80% of your examples, it names them and exits 2: edit `rubric.md` and run it again.
+
+Commands never see your key, with one exception. The `compare` command gets the provider's key values (`SYNTHE_ANTHROPIC_KEY`, `SYNTHE_ANTHROPIC_BASE_URL` and `SYNTHE_API_KEY` for Anthropic; `SYNTHE_API_KEY` for an OpenAI-compatible provider), and only when the problem file has a `model` section. Then a `compare.js` from `measure draft` can ask the model. The `run`, measure, guard and proposer commands never get them. Synthe never lets a proposal change the compare file. If you write your own `compare` command, it gets the key under the same rule, so keep it to code you trust.
+
 ### Where results go
 
 - `result.json` and `report.md` go to `--out`, or to `.synthe/solve/<name>/` in the repository by default. Add `.synthe/` to `.gitignore`. `result.json` has the stop reason, the starting and final scores, the branch, and every attempt with its reason. `report.md` says the same in plain words.
