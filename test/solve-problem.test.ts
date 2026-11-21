@@ -157,3 +157,39 @@ test("problem check: exit 0 with a summary, exit 1 with one line per bad field",
 
   assert.equal(problemCommand(["nope"], dir, () => {}), 1);
 });
+
+test("budget.max_usd: a positive number with model.prices; refused without prices", () => {
+  const dir = repo();
+  const file = join(dir, "p.json");
+  const base = { version: 1, name: "c", goal: "g", artifact: ["x"], measure: { command: "echo 1", direction: "higher" }, proposer: "model" };
+  const priced = { model: { provider: "anthropic", model: "m", prices: { input_per_mtok: 3, output_per_mtok: 15 } } };
+  const ok = validateProblem({ ...base, ...priced, budget: { max_usd: 2.5 } }, file);
+  assert.ok(ok.ok, JSON.stringify(ok));
+  assert.equal(ok.problem.budget.max_usd, 2.5);
+  assert.match(problemSummary(ok), /Budget: 6 rounds, at most 2\.5 US dollars/);
+  const none = validateProblem({ ...base, ...priced }, file);
+  assert.ok(none.ok);
+  assert.equal(none.problem.budget.max_usd, undefined);
+
+  const cases: [Record<string, unknown>, RegExp][] = [
+    [{ model: { provider: "anthropic", model: "m" }, budget: { max_usd: 1 } }, /^budget\.max_usd: needs model\.prices/],
+    [{ budget: { max_usd: 1 } }, /^budget\.max_usd: needs model\.prices/],
+    [{ ...priced, budget: { max_usd: 0 } }, /^budget\.max_usd: must be a number/],
+    [{ ...priced, budget: { max_usd: "2" } }, /^budget\.max_usd: must be a number/],
+  ];
+  for (const [extra, field] of cases) {
+    const r = validateProblem({ ...base, ...extra }, file);
+    assert.equal(r.ok, false);
+    if (!r.ok) { assert.equal(r.problems.length, 1, r.problems.join("\n")); assert.match(r.problems[0], field); }
+  }
+});
+
+test("split.holdout with a judged measure is refused with one line; holdout false is fine", () => {
+  const dir = repo();
+  writeFileSync(join(dir, "cases.jsonl"), '{"id":"1","input":"hi"}\n');
+  const judged = { version: 1, name: "j", goal: "g", artifact: ["run.js"], measure: { judge: { cases: "cases.jsonl", run: "node run.js", compare: "node judge.js" } } };
+  const r = validateProblem({ ...judged, split: { holdout: true } }, join(dir, "p.json"));
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.deepEqual(r.problems.map((l) => l.split(":")[0]), ["split.holdout"]);
+  assert.ok(validateProblem({ ...judged, split: { holdout: false } }, join(dir, "p.json")).ok);
+});

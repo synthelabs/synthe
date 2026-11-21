@@ -29086,7 +29086,7 @@ function recomputeProblem(r, goal, splits) {
   if (dropped) return `the record has no scores for scenario ${dropped}, so it is incomplete and the verdict can't be rechecked`;
   if (r.holdoutMaxP !== void 0 && !(typeof r.holdoutMaxP === "number" && r.holdoutMaxP > 0 && r.holdoutMaxP <= 1)) return "the record's held-back limit (holdoutMaxP) is not a number above 0 and at most 1";
   if (r.mergeMode === "propose" && r.verdict === "merge") return "the record says the round ran in review mode, where Synthe never merges by itself, but the verdict says it merged";
-  const rowOf = (s, score, guard2) => ({ id: s.id, score, violation: guard2 === void 0 ? null : guard2 > 0 });
+  const rowOf = (s, score2, guard2) => ({ id: s.id, score: score2, violation: guard2 === void 0 ? null : guard2 > 0 });
   const side = (split, pick2) => r.scenarioScores.filter((s) => splits.get(s.id) === split).map(pick2);
   const base = (s) => rowOf(s, s.baselineScore, s.baselineGuardFailed);
   const cand = (s) => rowOf(s, s.candidateScore, s.guardFailed);
@@ -29651,6 +29651,7 @@ function validateProblem(raw, file) {
     else {
       unknownKeys(raw.split, ["holdout"], "split.", errors);
       if (raw.split.holdout !== void 0 && typeof raw.split.holdout !== "boolean") errors.push(`split.holdout: must be true or false.`);
+      else if (raw.split.holdout === true && measure2 && isJudged(measure2)) errors.push(`split.holdout: works only with measure.command, which runs with SYNTHE_SPLIT=train and holdout. A judged measure has no held-back split: remove split.holdout, or measure with a command.`);
       else split.holdout = raw.split.holdout === true;
     }
   }
@@ -29667,9 +29668,15 @@ function validateProblem(raw, file) {
   if (raw.budget !== void 0) {
     if (!isObject(raw.budget)) errors.push(`budget: must be an object, such as { "max_rounds": 6 }.`);
     else {
-      unknownKeys(raw.budget, ["max_rounds", "max_calls"], "budget.", errors);
+      unknownKeys(raw.budget, ["max_rounds", "max_calls", "max_usd"], "budget.", errors);
       budget.max_rounds = countOf("budget.max_rounds", raw.budget.max_rounds, DEFAULT_MAX_ROUNDS, errors);
       if (raw.budget.max_calls !== void 0) budget.max_calls = countOf("budget.max_calls", raw.budget.max_calls, 1, errors);
+      const usd = raw.budget.max_usd;
+      if (usd !== void 0) {
+        if (typeof usd !== "number" || !Number.isFinite(usd) || usd <= 0) errors.push(`budget.max_usd: must be a number of US dollars above 0, such as 2.5.`);
+        else if (!isObject(raw.model) || raw.model.prices === void 0) errors.push(`budget.max_usd: needs model.prices, so Synthe knows what each call costs. Add "prices": { "input_per_mtok": ..., "output_per_mtok": ... } to model, or remove max_usd.`);
+        else budget.max_usd = usd;
+      }
     }
   }
   let model;
@@ -29754,7 +29761,8 @@ function problemSummary(check) {
   if (p.split.holdout) lines.push(`Holdout: on. A change is kept only if it also wins on the holdout split.`);
   lines.push(`Proposer: ${p.proposer === "model" ? "the configured model" : p.proposer.command}`);
   if (p.candidates > 1) lines.push(`Candidates: ${p.candidates} in each round`);
-  lines.push(`Budget: ${p.budget.max_rounds} rounds${p.budget.max_calls ? `, ${p.budget.max_calls} model calls` : ""}`);
+  const usdLimit = p.budget.max_usd !== void 0 ? `, at most ${p.budget.max_usd} US dollars` : "";
+  lines.push(`Budget: ${p.budget.max_rounds} rounds${p.budget.max_calls ? `, ${p.budget.max_calls} model calls` : ""}${usdLimit}`);
   lines.push(`Next: run "npx synthe solve ${p.file}".`);
   return lines.join("\n");
 }
@@ -30899,573 +30907,6 @@ var init_measure2 = __esm({
   }
 });
 
-// src/solve/report.ts
-import { mkdirSync as mkdirSync9, writeFileSync as writeFileSync10 } from "node:fs";
-import { join as join24 } from "node:path";
-function writeReport(outDir, result2, extras = {}) {
-  mkdirSync9(outDir, { recursive: true });
-  const json = join24(outDir, "result.json");
-  const md = join24(outDir, "report.md");
-  const ordered = {
-    problem: result2.problem,
-    stopped: result2.stopped,
-    baseline: result2.baseline,
-    final: result2.final,
-    branch: result2.branch,
-    attempts: result2.attempts.map((a) => ({ round: a.round, summary: a.summary, kept: a.kept, reason: a.reason, ...a.before === void 0 ? {} : { before: a.before }, ...a.after === void 0 ? {} : { after: a.after } }))
-  };
-  writeFileSync10(json, JSON.stringify(ordered, null, 2) + "\n");
-  writeFileSync10(md, renderReport(ordered, extras));
-  return { json, md };
-}
-function formatNumber(n, unit) {
-  if (n === null || n === void 0 || !Number.isFinite(n)) return "-";
-  const rounded = Math.abs(n) >= 100 ? n.toFixed(1) : Number(n.toPrecision(4)).toString();
-  return unit ? `${rounded} ${unit}` : rounded;
-}
-function cell2(text4) {
-  return text4.replace(/\r?\n+/g, " ").replace(/\|/g, "\\|").trim() || "-";
-}
-function renderReport(r, extras = {}) {
-  const u = extras.unit;
-  const kept = r.attempts.filter((a) => a.kept);
-  const lines = [`# Synthe solve: ${r.problem}`, ""];
-  if (extras.goal) lines.push(`Goal: ${extras.goal}`, "");
-  const better = extras.direction === "lower" ? "lower is better" : extras.direction === "higher" ? "higher is better" : "";
-  lines.push(`- Baseline: ${formatNumber(r.baseline, u)}${better ? ` (${better})` : ""}`);
-  lines.push(`- Final: ${formatNumber(r.final, u)}`);
-  lines.push(`- Attempts: ${r.attempts.length}, kept: ${kept.length}`);
-  lines.push(`- Stopped: ${r.stopped}`);
-  lines.push(r.branch ? `- Kept changes are on branch \`${r.branch}\`. Your working tree and current branch did not change.` : "- No change was kept, so Synthe made no branch. Your working tree and current branch did not change.");
-  lines.push("");
-  if (r.attempts.length) {
-    lines.push("## Attempts", "", "| Round | Change | Kept | Before | After | Reason |", "|---|---|---|---|---|---|");
-    for (const a of r.attempts) {
-      lines.push(`| ${a.round} | ${cell2(a.summary)} | ${a.kept ? "kept" : "not kept"} | ${formatNumber(a.before, u)} | ${formatNumber(a.after, u)} | ${cell2(a.reason)} |`);
-    }
-    lines.push("");
-  } else {
-    lines.push("No attempts were made.", "");
-  }
-  lines.push("## Next step", "");
-  if (r.branch) lines.push(`Read the diff with \`git diff HEAD...${r.branch}\`. If you agree with it, merge the branch.`);
-  else lines.push("Read the reasons above. Then change the goal, the measure or the proposer, and run `synthe solve` again.");
-  lines.push("");
-  return lines.join("\n");
-}
-var init_report = __esm({
-  "src/solve/report.ts"() {
-    "use strict";
-  }
-});
-
-// src/solve/resume.ts
-import { existsSync as existsSync18, mkdirSync as mkdirSync10, readFileSync as readFileSync21, renameSync as renameSync3, writeFileSync as writeFileSync11 } from "node:fs";
-import { join as join25 } from "node:path";
-function readRun(gitDir, name) {
-  const file = fileOf(gitDir, name);
-  if (!existsSync18(file)) return null;
-  try {
-    const r = JSON.parse(readFileSync21(file, "utf8"));
-    const ok = r && typeof r.run === "number" && (r.status === "running" || r.status === "ended") && typeof r.branch === "string" && typeof r.base === "string" && typeof r.head === "string" && typeof r.rounds === "number" && Array.isArray(r.attempts);
-    if (!ok) return null;
-    return {
-      run: r.run,
-      status: r.status,
-      branch: r.branch,
-      base: r.base,
-      head: r.head,
-      root: typeof r.root === "string" ? r.root : "",
-      pid: typeof r.pid === "number" ? r.pid : 0,
-      rounds: r.rounds,
-      calls: typeof r.calls === "number" ? r.calls : 0,
-      baseline: typeof r.baseline === "number" ? r.baseline : null,
-      attempts: r.attempts
-    };
-  } catch {
-    return null;
-  }
-}
-function writeRun(gitDir, name, record) {
-  const file = fileOf(gitDir, name);
-  mkdirSync10(join25(file, ".."), { recursive: true });
-  writeFileSync11(`${file}.tmp`, JSON.stringify(record, null, 2) + "\n");
-  renameSync3(`${file}.tmp`, file);
-}
-function stillRunning(record) {
-  if (!record.pid || record.pid === process.pid) return false;
-  try {
-    process.kill(record.pid, 0);
-  } catch {
-    return false;
-  }
-  try {
-    return !/^\d+ \(.*\) Z/.test(readFileSync21(`/proc/${record.pid}/stat`, "utf8"));
-  } catch {
-    return true;
-  }
-}
-function idleRounds(record) {
-  let idle = 0;
-  for (let round = record.rounds; round >= 1; round--) {
-    if (record.attempts.some((a) => a.round === round && a.kept)) break;
-    idle++;
-  }
-  return idle;
-}
-var fileOf;
-var init_resume = __esm({
-  "src/solve/resume.ts"() {
-    "use strict";
-    fileOf = (gitDir, name) => join25(gitDir, "synthe", "solve", name, "run.json");
-  }
-});
-
-// src/solve/scratch.ts
-import { execFileSync as execFileSync7 } from "node:child_process";
-import { existsSync as existsSync19, lstatSync as lstatSync4, mkdtempSync as mkdtempSync3, realpathSync as realpathSync3, rmSync as rmSync4, symlinkSync as symlinkSync2, unlinkSync as unlinkSync3 } from "node:fs";
-import { tmpdir as tmpdir3 } from "node:os";
-import { join as join26, relative as relative3 } from "node:path";
-function git2(cwd, args, input) {
-  return execFileSync7("git", ["-C", cwd, ...args], {
-    encoding: "utf8",
-    input,
-    stdio: [input === void 0 ? "ignore" : "pipe", "pipe", "pipe"],
-    maxBuffer: 64 * 1024 * 1024
-  });
-}
-function tryGit(cwd, args) {
-  try {
-    return git2(cwd, args);
-  } catch {
-    return null;
-  }
-}
-function firstLine4(e) {
-  const err = e;
-  const text4 = String(err.stderr ?? "").trim() || String(err.message ?? e);
-  return text4.split("\n")[0];
-}
-function nextBranch2(top, name) {
-  const prefix = `synthe/solve-${name}-`;
-  const listed2 = tryGit(top, ["for-each-ref", "--format=%(refname:short)", `refs/heads/${prefix}*`]) ?? "";
-  let max = 0;
-  for (const ref of listed2.split("\n")) {
-    const n = Number(ref.trim().slice(prefix.length));
-    if (ref.trim().startsWith(prefix) && Number.isInteger(n) && n > max) max = n;
-  }
-  return `${prefix}${max + 1}`;
-}
-async function openScratch(repoRoot, problemDir, name, resume) {
-  const s = openState(repoRoot, problemDir, name, resume);
-  let closed = false;
-  return {
-    root: s.root,
-    dir: s.dir,
-    branch: s.branch,
-    base: s.base,
-    commit: async (paths, message) => commitKept(s, paths, message),
-    reset: async () => resetScratch(s),
-    close: async (keepBranch) => {
-      if (closed) return;
-      closed = true;
-      closeScratch(s, keepBranch);
-    }
-  };
-}
-function openState(repoRoot, problemDir, name, resume) {
-  const real = realpathSync3(problemDir);
-  const topOut = tryGit(repoRoot || real, ["rev-parse", "--show-toplevel"]);
-  if (!topOut) throw new Error(`${problemDir} is not inside a git repository. Run git init and commit the files first.`);
-  const top = realpathSync3(topOut.trim());
-  const base = resume ? tryGit(top, ["rev-parse", "--verify", `${resume.base}^{commit}`])?.trim() : tryGit(top, ["rev-parse", "--verify", "HEAD^{commit}"])?.trim();
-  if (resume && !base) throw new Error(`The stopped run started from commit ${resume.base.slice(0, 7)}, which is no longer in the repository.`);
-  if (!base) throw new Error(`The repository at ${top} has no commit yet. Commit the files first.`);
-  const rel = relative3(top, real);
-  if (rel && !tryGit(top, ["ls-tree", "-d", "--name-only", base, rel])?.trim()) {
-    throw new Error(`The folder ${rel} is not committed in ${top}. Commit it first: Synthe works only on committed files.`);
-  }
-  const branch = resume ? resume.branch : nextBranch2(top, name);
-  if (resume) releaseBranch(top, resume);
-  const dir = realpathSync3(mkdtempSync3(join26(tmpdir3(), "synthe-solve-")));
-  try {
-    const start2 = resume ? resume.head : base;
-    git2(top, ["worktree", "add", "--quiet", resume ? "-B" : "-b", branch, dir, start2]);
-  } catch (e) {
-    rmSync4(dir, { recursive: true, force: true });
-    throw new Error(`Could not make a scratch checkout on ${branch}: ${firstLine4(e)}`);
-  }
-  const scratch = { top, root: dir, dir: join26(dir, rel), branch, base, links: [] };
-  for (const from of /* @__PURE__ */ new Set([top, real])) {
-    const to = join26(scratch.root, relative3(top, from));
-    for (const name2 of LINKED2) {
-      const source = join26(from, name2);
-      const link = join26(to, name2);
-      if (existsSync19(source) && existsSync19(to) && !existsSync19(link)) {
-        try {
-          symlinkSync2(source, link, process.platform === "win32" ? "junction" : "dir");
-          scratch.links.push(link);
-        } catch {
-        }
-      }
-    }
-  }
-  return scratch;
-}
-function releaseBranch(top, resume) {
-  const list = tryGit(top, ["worktree", "list", "--porcelain"]) ?? "";
-  for (const block of list.split("\n\n")) {
-    const path4 = /^worktree (.+)$/m.exec(block)?.[1];
-    const ref = /^branch (.+)$/m.exec(block)?.[1];
-    if (!path4 || ref !== `refs/heads/${resume.branch}`) continue;
-    if (!/synthe-solve-[^/\\]*$/.test(path4)) throw new Error(`The branch ${resume.branch} is checked out in ${path4}. Switch that checkout to another branch first.`);
-    tryGit(top, ["worktree", "remove", "--force", path4]);
-    rmSync4(path4, { recursive: true, force: true });
-  }
-  tryGit(top, ["worktree", "prune"]);
-}
-function headOf(s) {
-  return git2(s.root, ["rev-parse", "HEAD"]).trim();
-}
-function commitKept(s, paths, message) {
-  if (paths.length) git2(s.root, ["add", "-A", "--", ...paths]);
-  const hasName = tryGit(s.root, ["config", "user.name"])?.trim();
-  const hasEmail = tryGit(s.root, ["config", "user.email"])?.trim();
-  const identity = hasName && hasEmail ? [] : IDENTITY;
-  git2(s.root, [...identity, "-c", "commit.gpgsign=false", "commit", "--no-verify", "--quiet", "--allow-empty", "-F", "-"], message);
-  return headOf(s);
-}
-function resetScratch(s) {
-  git2(s.root, ["reset", "--hard", "--quiet", "HEAD"]);
-  git2(s.root, ["clean", "-fdq", ...LINKED2.flatMap((n) => ["-e", n])]);
-}
-function closeScratch(s, keepBranch) {
-  for (const link of s.links) try {
-    if (lstatSync4(link).isSymbolicLink()) unlinkSync3(link);
-  } catch {
-  }
-  tryGit(s.top, ["worktree", "remove", "--force", s.root]);
-  rmSync4(s.root, { recursive: true, force: true });
-  tryGit(s.top, ["worktree", "prune"]);
-  if (!keepBranch) tryGit(s.top, ["branch", "-D", "--quiet", s.branch]);
-}
-var LINKED2, IDENTITY;
-var init_scratch = __esm({
-  "src/solve/scratch.ts"() {
-    "use strict";
-    LINKED2 = ["node_modules", ".venv", "venv"];
-    IDENTITY = ["-c", "user.name=Synthe", "-c", "user.email=synthe@users.noreply.github.com"];
-  }
-});
-
-// src/solve/loop.ts
-import { execFileSync as execFileSync8 } from "node:child_process";
-import { isAbsolute as isAbsolute4, join as join27, resolve as resolve6 } from "node:path";
-async function runLoop2(steps, options) {
-  const say = steps.say ?? (() => {
-  });
-  const candidates = Math.max(1, options.candidates ?? 1);
-  const patience = options.patience ?? MAX_MISSES2;
-  const earlier = options.history ?? [];
-  const attempts = [];
-  const prior = options.resume?.attempts ?? [];
-  const start2 = await steps.guards();
-  if (!start2.ok) throw new SetupError(`${start2.reason} This is before any change, so no change can be judged. Fix the guard first.`);
-  const first = await steps.measure();
-  if (!first.ok) throw new SetupError(`Could not measure the starting point: ${first.reason}`);
-  let current = first;
-  const baseline2 = options.resume?.baseline ?? first.value;
-  say(options.resume ? `Resuming after round ${options.resume.rounds}. Score now: ${first.value} (baseline ${baseline2}).` : `Starting score: ${first.value}.`);
-  const record = async (attempt) => {
-    attempts.push(attempt);
-    await steps.record?.(attempt);
-    say(`Round ${attempt.round}: ${attempt.summary || "(no summary)"}: ${attempt.kept ? "kept" : "not kept"}. ${attempt.reason}`);
-  };
-  let stopped = `Reached the round limit (${plural2(options.maxRounds, "round")}).`;
-  let idle = options.resume?.idle ?? 0;
-  let round = options.resume?.rounds ?? 0;
-  let keptAny = prior.some((a) => a.kept);
-  while (true) {
-    if (round >= options.maxRounds) break;
-    if (idle >= patience) {
-      stopped = `${plural2(patience, "round")} in a row kept nothing.`;
-      break;
-    }
-    if (options.maxCalls != null && steps.calls && steps.calls() >= options.maxCalls) {
-      stopped = `Reached the model call limit (${plural2(options.maxCalls, "call")}).`;
-      break;
-    }
-    const proposed = await steps.propose(round + 1, [...earlier, ...attempts], candidates);
-    if (proposed.ok && proposed.proposals.length === 0) {
-      stopped = "The proposer had nothing more to try.";
-      break;
-    }
-    round++;
-    let kept = false;
-    if (!proposed.ok) {
-      await record({ round, summary: "", kept: false, reason: `The proposal failed: ${proposed.reason}` });
-    } else {
-      const next = await tryRound(steps, round, proposed.proposals.slice(0, candidates), current, record);
-      if (next) {
-        current = next;
-        kept = true;
-        keptAny = true;
-      }
-    }
-    idle = kept ? 0 : idle + 1;
-    await options.onRound?.(round, [...prior, ...attempts]);
-    if (idle >= patience) {
-      stopped = `${plural2(patience, "round")} in a row kept nothing.`;
-      break;
-    }
-  }
-  return { stopped, baseline: baseline2, final: current.value, attempts: [...prior, ...attempts], rounds: round, keptAny };
-}
-async function tryRound(steps, round, proposals, current, record) {
-  const tried = [];
-  const passed = [];
-  let best = null;
-  for (const proposal of proposals) {
-    const attempt = { round, summary: typeof proposal?.summary === "string" ? proposal.summary : "", kept: false, reason: "" };
-    tried.push(attempt);
-    await steps.reset();
-    const applied = await steps.apply(proposal);
-    if (!applied.ok) {
-      attempt.reason = applied.reason;
-      continue;
-    }
-    const guarded = await steps.guards();
-    if (!guarded.ok) {
-      attempt.reason = guarded.reason;
-      continue;
-    }
-    const measured = await steps.measure();
-    if (!measured.ok) {
-      attempt.reason = `Could not measure the change: ${measured.reason}`;
-      continue;
-    }
-    attempt.before = current.value;
-    attempt.after = measured.value;
-    const decision = await steps.decide(current, measured);
-    attempt.reason = decision.reason;
-    if (!decision.keep) continue;
-    passed.push(attempt);
-    const strength = decision.strength ?? 0;
-    if (!best || strength > best.strength) best = { proposal, measured, strength, attempt };
-  }
-  await steps.reset();
-  let next = null;
-  if (best) {
-    const applied = await steps.apply(best.proposal);
-    if (applied.ok) {
-      await steps.keep(best.proposal, round);
-      best.attempt.kept = true;
-      next = best.measured;
-      for (const a of passed) if (a !== best.attempt) a.reason += " A stronger change in the same round was kept instead.";
-    } else {
-      best.attempt.reason += ` It could not be applied again: ${applied.reason}`;
-      await steps.reset();
-    }
-  }
-  for (const a of tried) await record(a);
-  return next;
-}
-function onInterrupt(cleanUp, say) {
-  const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
-  const stop2 = () => {
-    const exit = () => {
-      say();
-      process.exit(130);
-    };
-    cleanUp().then(exit, exit);
-  };
-  for (const s of signals) process.once(s, stop2);
-  return () => {
-    for (const s of signals) process.off(s, stop2);
-  };
-}
-async function solve(problem, proposer, options, io2) {
-  if (isJudged(problem.measure)) throw new SetupError("Judged measures (measure.judge) are not supported by solve yet.");
-  const direction = problem.measure.direction;
-  let repoRoot, gitDir;
-  try {
-    repoRoot = git3(problem.dir, "rev-parse", "--show-toplevel");
-    gitDir = resolve6(problem.dir, git3(problem.dir, "rev-parse", "--git-common-dir"));
-  } catch {
-    throw new SetupError(`${problem.dir} is not inside a git repository. Synthe works in a scratch checkout of a git repository.`);
-  }
-  const outDir = options.out ? isAbsolute4(options.out) ? options.out : resolve6(process.cwd(), options.out) : join27(repoRoot, ".synthe", "solve", problem.name);
-  const history = readHistory(gitDir, problem.name).map((h) => ({ ...h }));
-  const last = readRun(gitDir, problem.name);
-  let from = null;
-  if (options.resume) {
-    if (last?.status === "running") {
-      if (stillRunning(last)) throw new SetupError(`The last run of ${problem.name} is still going (process ${last.pid}). Stop it or let it end, then resume.`);
-      from = last;
-    } else {
-      io2.say(last ? `The last run of ${problem.name} ended normally, so --resume starts a new run.` : `There is no earlier run of ${problem.name}, so --resume starts a new run.`);
-    }
-  }
-  const run2 = from ? from.run : Math.max(nextRun(gitDir, problem.name), (last?.run ?? 0) + 1);
-  let scratch;
-  try {
-    scratch = await openScratch(repoRoot, problem.dir, problem.name, from ? { branch: from.branch, base: from.base, head: from.head, staleRoot: from.root } : void 0);
-  } catch (e) {
-    throw new SetupError(`Could not ${from ? "resume on" : "make"} the scratch checkout: ${e.message}`);
-  }
-  if (from) io2.say(`Resuming run ${run2} of ${problem.name} on ${scratch.branch} after round ${from.rounds}.`);
-  const record = {
-    run: run2,
-    status: "running",
-    branch: scratch.branch,
-    base: from?.base ?? scratch.base,
-    head: git3(scratch.root, "rev-parse", "HEAD"),
-    root: scratch.root,
-    pid: process.pid,
-    rounds: from?.rounds ?? 0,
-    calls: from?.calls ?? 0,
-    baseline: from?.baseline ?? null,
-    attempts: from?.attempts ?? []
-  };
-  writeRun(gitDir, problem.name, record);
-  let calls2 = record.calls;
-  let keptCount = record.attempts.filter((a) => a.kept).length;
-  let lastPaths = [];
-  let lastProposal = null;
-  const measureAt2 = async (split) => measure(scratch.dir, problem, { ...options.seed !== void 0 ? { seed: options.seed } : {}, ...split ? { split } : {} });
-  const holdout = problem.split.holdout;
-  const sign = direction === "higher" ? 1 : -1;
-  let first = true;
-  const steps = {
-    say: io2.say,
-    calls: () => calls2,
-    async propose(round, past, candidates) {
-      const files = artifactFiles(scratch.root, problem);
-      const { reply, calls: used } = await proposer.propose({ round, goal: problem.goal, files, history: past.map(entry), candidates });
-      calls2 += used;
-      return "failed" in reply ? { ok: false, reason: reply.failed } : { ok: true, proposals: reply.proposals };
-    },
-    reset: () => scratch.reset(),
-    async apply(proposal) {
-      const applied = applyProposal(scratch.root, problem, proposal);
-      if ("refused" in applied) return { ok: false, reason: applied.refused };
-      if (applied.paths.length === 0) return { ok: false, reason: "The proposal changed no file." };
-      lastPaths = applied.paths;
-      lastProposal = proposal;
-      return { ok: true };
-    },
-    async guards() {
-      const failed = await failedGuard(scratch.dir, problem);
-      return failed === null ? { ok: true } : { ok: false, reason: `The guard \`${failed}\` failed.` };
-    },
-    async measure() {
-      const train = await measureAt2(holdout ? "train" : void 0);
-      if ("failed" in train) return { ok: false, reason: train.failed };
-      const sample = { train };
-      if (holdout && first) {
-        const held = await measureAt2("holdout");
-        if ("failed" in held) return { ok: false, reason: `the held-back split gave no number: ${held.failed}` };
-        sample.holdout = held;
-      }
-      if (first && record.baseline === null) record.baseline = train.value;
-      first = false;
-      return { ok: true, value: train.value, samples: sample };
-    },
-    async decide(kept, cand) {
-      const k = kept.samples, c = cand.samples;
-      const proposal = lastProposal;
-      const remeasure = async () => {
-        const after = await measureAt2(holdout ? "train" : void 0);
-        if ("failed" in after) return after;
-        await scratch.reset();
-        const before = await measureAt2(holdout ? "train" : void 0);
-        const back = applyProposal(scratch.root, problem, proposal);
-        if ("refused" in back) return { failed: `the change could not be applied again: ${back.refused}` };
-        lastPaths = back.paths;
-        return "failed" in before ? before : { before, after };
-      };
-      const confirmed = await decideWithConfirm(direction, k.train, c.train, remeasure);
-      k.train = confirmed.before;
-      c.train = confirmed.after;
-      const onTrain = { keep: confirmed.keep, reason: confirmed.reason };
-      const strength = sign * (c.train.value - k.train.value);
-      if (!onTrain.keep || !holdout) return { ...onTrain, strength };
-      const now = await measureAt2("holdout");
-      if ("failed" in now) return { keep: false, reason: `Could not measure the held-back split: ${now.failed}` };
-      c.holdout = now;
-      const onHoldout = decide(direction, k.holdout, now);
-      if (!onHoldout.keep) return { keep: false, reason: "It won on the train split but not on the held-back split, so it does not generalize." };
-      return { keep: true, reason: `${onTrain.reason} It also won on the held-back split.`, strength };
-    },
-    async keep(proposal, round) {
-      await scratch.commit(lastPaths, `synthe solve ${problem.name}, round ${round}: ${proposal.summary || "change"}`.slice(0, 200));
-      keptCount++;
-    },
-    record(attempt) {
-      appendHistory(gitDir, problem.name, [entry(attempt)], run2);
-    }
-  };
-  const cleanUp = async () => {
-    stopRunning();
-    await scratch.close(keptCount > 0);
-  };
-  const unhook = onInterrupt(cleanUp, () => io2.say(keptCount > 0 ? `
-Stopped. Synthe removed its scratch checkout. The ${keptCount === 1 ? "change" : `${keptCount} changes`} kept so far ${keptCount === 1 ? "is" : "are"} on the branch ${scratch.branch}. Your working tree did not change.` : "\nStopped. Synthe removed its scratch checkout and kept no change. Your working tree did not change."));
-  let result2;
-  try {
-    result2 = await runLoop2(steps, {
-      maxRounds: problem.budget.max_rounds,
-      maxCalls: problem.budget.max_calls,
-      candidates: problem.candidates,
-      history,
-      ...from ? { resume: { rounds: from.rounds, attempts: from.attempts, idle: idleRounds(from), baseline: from.baseline } } : {},
-      onRound(round, attempts) {
-        Object.assign(record, { rounds: round, calls: calls2, attempts, head: git3(scratch.root, "rev-parse", "HEAD") });
-        writeRun(gitDir, problem.name, record);
-      }
-    });
-  } catch (e) {
-    await cleanUp();
-    throw e;
-  } finally {
-    unhook();
-  }
-  await scratch.close(result2.keptAny);
-  const solved = {
-    problem: problem.name,
-    stopped: result2.stopped,
-    baseline: result2.baseline,
-    final: result2.final,
-    branch: result2.keptAny ? scratch.branch : null,
-    attempts: result2.attempts
-  };
-  writeReport(outDir, solved, { goal: problem.goal, direction, ...problem.measure.unit ? { unit: problem.measure.unit } : {} });
-  writeRun(gitDir, problem.name, { ...record, status: "ended" });
-  io2.say(`Wrote ${join27(outDir, "result.json")} and report.md.`);
-  if (solved.branch) io2.say(`Kept changes are on the branch ${solved.branch}.`);
-  return solved;
-}
-var SetupError, plural2, git3, entry;
-var init_loop = __esm({
-  "src/solve/loop.ts"() {
-    "use strict";
-    init_decide();
-    init_edits();
-    init_history();
-    init_measure2();
-    init_report();
-    init_run2();
-    init_resume();
-    init_scratch();
-    init_types2();
-    SetupError = class extends Error {
-    };
-    plural2 = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-    git3 = (cwd, ...args) => execFileSync8("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-    entry = (a) => ({ round: a.round, summary: a.summary, kept: a.kept, reason: a.reason });
-  }
-});
-
 // src/solve/model-proposer.ts
 function buildUser(input) {
   const n = input.candidates;
@@ -31596,6 +31037,833 @@ var init_model_proposer = __esm({
       'Change only the files you were given. If you have nothing more worth trying, reply with {"proposals": []}.'
     ].join("\n");
     short = (s) => s.length > 200 ? `${s.slice(0, 200)}...` : s;
+  }
+});
+
+// src/solve/model-compare.ts
+function winnerIn(text4) {
+  for (const t of [text4.trim(), text4.match(/\{[^{}]*\}(?![\s\S]*\{)/)?.[0] ?? ""]) {
+    try {
+      const w = JSON.parse(t)?.winner;
+      if (w === "a" || w === "b" || w === "tie") return w;
+    } catch {
+    }
+  }
+  return null;
+}
+function modelCompare(problem, env = process.env, client) {
+  const { client: model, model: id, hide } = problemModel(problem, env, client);
+  return async (c, a, b) => {
+    try {
+      const user2 = JSON.stringify({ goal: problem.goal, case: c, a, b }, null, 2);
+      const reply = await model.ask({ model: id, system: JUDGE_SYSTEM, user: user2, maxTokens: MAX_TOKENS2, schema: WINNER_SCHEMA });
+      if (reply.text === null) return { failed: hide(`The model judge gave no usable reply: ${noTextReason(reply.stopReason)}.`) };
+      const w = winnerIn(reply.text);
+      return w ?? { failed: hide(`The model judge did not answer {"winner": "a" | "b" | "tie"}: ${JSON.stringify(reply.text.trim().slice(0, 200))}`) };
+    } catch (error) {
+      return { failed: hide(`The model judge request failed: ${error instanceof Error ? error.message : String(error)}`) };
+    }
+  };
+}
+var MAX_TOKENS2, WINNER_SCHEMA, JUDGE_SYSTEM;
+var init_model_compare = __esm({
+  "src/solve/model-compare.ts"() {
+    "use strict";
+    init_model_proposer();
+    MAX_TOKENS2 = 2e3;
+    WINNER_SCHEMA = {
+      type: "object",
+      additionalProperties: false,
+      required: ["winner"],
+      properties: { winner: { type: "string", enum: ["a", "b", "tie"] } }
+    };
+    JUDGE_SYSTEM = [
+      "You judge which of two outputs better meets the goal for one input.",
+      "You get a JSON object: the goal, the case with its input, and two outputs, a and b.",
+      "Judge only the quality of the output for the goal. The order of a and b means nothing, and a longer output is not better for being longer.",
+      'Reply with only a JSON object: {"winner": "a"}, {"winner": "b"}, or {"winner": "tie"} when neither is better.'
+    ].join("\n");
+  }
+});
+
+// src/solve/judge.ts
+import { readFileSync as readFileSync21 } from "node:fs";
+import { join as join24 } from "node:path";
+function readCases(problemDir, casesPath) {
+  let text4;
+  try {
+    text4 = readFileSync21(join24(problemDir, casesPath), "utf8");
+  } catch {
+    return { failed: `Could not read the cases file ${casesPath}.` };
+  }
+  const cases4 = [];
+  const seen = /* @__PURE__ */ new Set();
+  const lines = text4.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    let c;
+    try {
+      c = JSON.parse(lines[i]);
+    } catch {
+      return { failed: `Line ${i + 1} of ${casesPath} is not valid JSON.` };
+    }
+    if (!c || typeof c !== "object" || Array.isArray(c) || !("id" in c) || !("input" in c)) {
+      return { failed: `Line ${i + 1} of ${casesPath} needs an "id" and an "input".` };
+    }
+    const id = String(c.id);
+    if (seen.has(id)) return { failed: `The case id ${id} occurs more than once in ${casesPath}.` };
+    seen.add(id);
+    cases4.push({ ...c, id });
+  }
+  if (cases4.length === 0) return { failed: `${casesPath} has no cases.` };
+  return cases4;
+}
+async function eachLimited(items, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PARALLEL, items.length) }, worker));
+  return out;
+}
+async function runCases(checkoutDir, run2, cases4) {
+  const results = await eachLimited(cases4, async (c) => ({ c, r: await runCommand(checkoutDir, run2, { stdin: JSON.stringify(c) + "\n" }) }));
+  const outputs = {};
+  for (const { c, r } of results) {
+    if (!r.ok) return { failed: `For case ${c.id}: ${commandFailure("The run command", run2, r)}` };
+    outputs[c.id] = r.stdout.replace(/\s+$/, "");
+  }
+  return outputs;
+}
+function parseWinner(stdout) {
+  const lines = stdout.trim().split("\n").reverse();
+  for (const text4 of [stdout.trim(), ...lines]) {
+    try {
+      const w = JSON.parse(text4)?.winner;
+      if (w === "a" || w === "b" || w === "tie") return w;
+    } catch {
+    }
+  }
+  return null;
+}
+function commandCompare(problemDir, command) {
+  return async (c, a, b) => {
+    const r = await runCommand(problemDir, command, { stdin: JSON.stringify({ case: c, a, b }) + "\n" });
+    if (!r.ok) return { failed: commandFailure("The compare command", command, r) };
+    const w = parseWinner(r.stdout);
+    return w ?? { failed: `The compare command \`${command}\` did not print {"winner": "a" | "b" | "tie"}.` };
+  };
+}
+function padTo(text4, length) {
+  if (text4.length >= length) return text4;
+  let fill2 = "";
+  while (text4.length + fill2.length < length) fill2 += FILLER;
+  fill2 = fill2.slice(0, length - text4.length);
+  return text4 + (/\s$/.test(fill2) ? `${fill2.slice(0, -1)}.` : fill2);
+}
+function signTestP(wins, losses) {
+  const n = wins + losses;
+  if (n === 0) return 1;
+  let p = 0;
+  let term = Math.pow(0.5, n);
+  for (let k = 0; k <= n; k++) {
+    if (k >= wins) p += term;
+    term = term * (n - k) / (k + 1);
+  }
+  return Math.min(1, p);
+}
+async function askTwice(compare2, c, kept, cand) {
+  const first = await compare2(c, kept, cand);
+  if (typeof first !== "string") return first;
+  const second = await compare2(c, cand, kept);
+  if (typeof second !== "string") return second;
+  const candFirst = first === "b" ? 1 : first === "a" ? -1 : 0;
+  const candSecond = second === "a" ? 1 : second === "b" ? -1 : 0;
+  const sum = candFirst + candSecond;
+  return { score: sum > 0 ? 1 : sum < 0 ? -1 : 0, split: candFirst * candSecond === -1 };
+}
+function tally2(scores) {
+  const wins = scores.filter((s) => s.score > 0).length;
+  const losses = scores.filter((s) => s.score < 0).length;
+  const splits = scores.filter((s) => s.split).length;
+  return { wins, losses, ties: scores.length - wins - losses, splits, p: signTestP(wins, losses) };
+}
+async function judgeOutputs(cases4, kept, cand, compare2, alpha = JUDGE_ALPHA) {
+  let calls2 = 0;
+  const counted = async (c, a, b) => {
+    calls2++;
+    return compare2(c, a, b);
+  };
+  const raw = await eachLimited(cases4, (c) => askTwice(counted, c, kept[c.id] ?? "", cand[c.id] ?? ""));
+  const failed = raw.find((r2) => "failed" in r2);
+  if (failed) return { keep: false, reason: `The judge failed: ${failed.failed}`, calls: calls2, share: 0.5 };
+  const rawScores = raw;
+  const r = tally2(rawScores);
+  const share = (r.wins + r.ties / 2) / cases4.length;
+  const n = cases4.length;
+  if (r.wins <= r.losses || r.p >= alpha) {
+    let reason = `The judge did not clearly prefer it: of ${plural2(n, "case")} it ${score(r)} (sign test p = ${r.p.toFixed(3)}, needs < ${alpha}).`;
+    if (r.splits > 0 && r.splits >= r.wins + r.losses) {
+      reason += ` In ${plural2(r.splits, "case")} the judge picked whichever output came first or second, so its choice followed the position, not the output.`;
+    }
+    return { keep: false, reason, calls: calls2, share, raw: r };
+  }
+  const matched = await eachLimited(cases4, async (c) => {
+    const k = kept[c.id] ?? "", d = cand[c.id] ?? "";
+    if (k.length === d.length) return rawScores[cases4.indexOf(c)];
+    const len = Math.max(k.length, d.length);
+    return askTwice(counted, c, padTo(k, len), padTo(d, len));
+  });
+  const mFailed = matched.find((m2) => "failed" in m2);
+  if (mFailed) return { keep: false, reason: `The judge failed: ${mFailed.failed}`, calls: calls2, share, raw: r };
+  const m = tally2(matched);
+  if (m.wins <= m.losses || m.p >= alpha) {
+    return {
+      keep: false,
+      reason: `The judge preferred it in ${r.wins} of ${plural2(n, "case")}, but with both outputs at the same length it ${score(m)}. The win came from longer output, not better output.`,
+      calls: calls2,
+      share,
+      raw: r,
+      matched: m
+    };
+  }
+  return {
+    keep: true,
+    reason: `The judge preferred it in both orders: of ${plural2(n, "case")} it ${score(r)} (sign test p = ${r.p.toFixed(3)}), and it still won with both outputs at the same length.`,
+    calls: calls2,
+    share,
+    raw: r,
+    matched: m
+  };
+}
+var JUDGE_ALPHA, PARALLEL, FILLER, plural2, score;
+var init_judge = __esm({
+  "src/solve/judge.ts"() {
+    "use strict";
+    init_measure2();
+    init_model_compare();
+    init_run2();
+    init_types2();
+    JUDGE_ALPHA = 0.05;
+    PARALLEL = 4;
+    FILLER = " lorem ipsum dolor sit amet";
+    plural2 = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+    score = (t) => `won ${t.wins}, lost ${t.losses}, tied ${t.ties}`;
+  }
+});
+
+// src/solve/report.ts
+import { mkdirSync as mkdirSync9, writeFileSync as writeFileSync10 } from "node:fs";
+import { join as join25 } from "node:path";
+function writeReport(outDir, result2, extras = {}) {
+  mkdirSync9(outDir, { recursive: true });
+  const json = join25(outDir, "result.json");
+  const md = join25(outDir, "report.md");
+  const ordered = {
+    problem: result2.problem,
+    stopped: result2.stopped,
+    baseline: result2.baseline,
+    final: result2.final,
+    branch: result2.branch,
+    attempts: result2.attempts.map((a) => ({ round: a.round, summary: a.summary, kept: a.kept, reason: a.reason, ...a.before === void 0 ? {} : { before: a.before }, ...a.after === void 0 ? {} : { after: a.after } }))
+  };
+  writeFileSync10(json, JSON.stringify(ordered, null, 2) + "\n");
+  writeFileSync10(md, renderReport(ordered, extras));
+  return { json, md };
+}
+function formatNumber(n, unit) {
+  if (n === null || n === void 0 || !Number.isFinite(n)) return "-";
+  const rounded = Math.abs(n) >= 100 ? n.toFixed(1) : Number(n.toPrecision(4)).toString();
+  return unit ? `${rounded} ${unit}` : rounded;
+}
+function cell2(text4) {
+  return text4.replace(/\r?\n+/g, " ").replace(/\|/g, "\\|").trim() || "-";
+}
+function renderReport(r, extras = {}) {
+  const u = extras.unit;
+  const kept = r.attempts.filter((a) => a.kept);
+  const lines = [`# Synthe solve: ${r.problem}`, ""];
+  if (extras.goal) lines.push(`Goal: ${extras.goal}`, "");
+  const better = extras.direction === "lower" ? "lower is better" : extras.direction === "higher" ? "higher is better" : "";
+  lines.push(`- Baseline: ${formatNumber(r.baseline, u)}${better ? ` (${better})` : ""}`);
+  lines.push(`- Final: ${formatNumber(r.final, u)}`);
+  lines.push(`- Attempts: ${r.attempts.length}, kept: ${kept.length}`);
+  lines.push(`- Stopped: ${r.stopped}`);
+  lines.push(r.branch ? `- Kept changes are on branch \`${r.branch}\`. Your working tree and current branch did not change.` : "- No change was kept, so Synthe made no branch. Your working tree and current branch did not change.");
+  lines.push("");
+  if (r.attempts.length) {
+    lines.push("## Attempts", "", "| Round | Change | Kept | Before | After | Reason |", "|---|---|---|---|---|---|");
+    for (const a of r.attempts) {
+      lines.push(`| ${a.round} | ${cell2(a.summary)} | ${a.kept ? "kept" : "not kept"} | ${formatNumber(a.before, u)} | ${formatNumber(a.after, u)} | ${cell2(a.reason)} |`);
+    }
+    lines.push("");
+  } else {
+    lines.push("No attempts were made.", "");
+  }
+  lines.push("## Next step", "");
+  if (r.branch) lines.push(`Read the diff with \`git diff HEAD...${r.branch}\`. If you agree with it, merge the branch.`);
+  else lines.push("Read the reasons above. Then change the goal, the measure or the proposer, and run `synthe solve` again.");
+  lines.push("");
+  return lines.join("\n");
+}
+var init_report = __esm({
+  "src/solve/report.ts"() {
+    "use strict";
+  }
+});
+
+// src/solve/resume.ts
+import { existsSync as existsSync18, mkdirSync as mkdirSync10, readFileSync as readFileSync22, renameSync as renameSync3, writeFileSync as writeFileSync11 } from "node:fs";
+import { join as join26 } from "node:path";
+function readRun(gitDir, name) {
+  const file = fileOf(gitDir, name);
+  if (!existsSync18(file)) return null;
+  try {
+    const r = JSON.parse(readFileSync22(file, "utf8"));
+    const ok = r && typeof r.run === "number" && (r.status === "running" || r.status === "ended") && typeof r.branch === "string" && typeof r.base === "string" && typeof r.head === "string" && typeof r.rounds === "number" && Array.isArray(r.attempts);
+    if (!ok) return null;
+    return {
+      run: r.run,
+      status: r.status,
+      branch: r.branch,
+      base: r.base,
+      head: r.head,
+      root: typeof r.root === "string" ? r.root : "",
+      pid: typeof r.pid === "number" ? r.pid : 0,
+      rounds: r.rounds,
+      calls: typeof r.calls === "number" ? r.calls : 0,
+      baseline: typeof r.baseline === "number" ? r.baseline : null,
+      attempts: r.attempts
+    };
+  } catch {
+    return null;
+  }
+}
+function writeRun(gitDir, name, record) {
+  const file = fileOf(gitDir, name);
+  mkdirSync10(join26(file, ".."), { recursive: true });
+  writeFileSync11(`${file}.tmp`, JSON.stringify(record, null, 2) + "\n");
+  renameSync3(`${file}.tmp`, file);
+}
+function stillRunning(record) {
+  if (!record.pid || record.pid === process.pid) return false;
+  try {
+    process.kill(record.pid, 0);
+  } catch {
+    return false;
+  }
+  try {
+    return !/^\d+ \(.*\) Z/.test(readFileSync22(`/proc/${record.pid}/stat`, "utf8"));
+  } catch {
+    return true;
+  }
+}
+function idleRounds(record) {
+  let idle = 0;
+  for (let round = record.rounds; round >= 1; round--) {
+    if (record.attempts.some((a) => a.round === round && a.kept)) break;
+    idle++;
+  }
+  return idle;
+}
+var fileOf;
+var init_resume = __esm({
+  "src/solve/resume.ts"() {
+    "use strict";
+    fileOf = (gitDir, name) => join26(gitDir, "synthe", "solve", name, "run.json");
+  }
+});
+
+// src/solve/scratch.ts
+import { execFileSync as execFileSync7 } from "node:child_process";
+import { existsSync as existsSync19, lstatSync as lstatSync4, mkdtempSync as mkdtempSync3, realpathSync as realpathSync3, rmSync as rmSync4, symlinkSync as symlinkSync2, unlinkSync as unlinkSync3 } from "node:fs";
+import { tmpdir as tmpdir3 } from "node:os";
+import { join as join27, relative as relative3 } from "node:path";
+function git2(cwd, args, input) {
+  return execFileSync7("git", ["-C", cwd, ...args], {
+    encoding: "utf8",
+    input,
+    stdio: [input === void 0 ? "ignore" : "pipe", "pipe", "pipe"],
+    maxBuffer: 64 * 1024 * 1024
+  });
+}
+function tryGit(cwd, args) {
+  try {
+    return git2(cwd, args);
+  } catch {
+    return null;
+  }
+}
+function firstLine4(e) {
+  const err = e;
+  const text4 = String(err.stderr ?? "").trim() || String(err.message ?? e);
+  return text4.split("\n")[0];
+}
+function nextBranch2(top, name) {
+  const prefix = `synthe/solve-${name}-`;
+  const listed2 = tryGit(top, ["for-each-ref", "--format=%(refname:short)", `refs/heads/${prefix}*`]) ?? "";
+  let max = 0;
+  for (const ref of listed2.split("\n")) {
+    const n = Number(ref.trim().slice(prefix.length));
+    if (ref.trim().startsWith(prefix) && Number.isInteger(n) && n > max) max = n;
+  }
+  return `${prefix}${max + 1}`;
+}
+async function openScratch(repoRoot, problemDir, name, resume) {
+  const s = openState(repoRoot, problemDir, name, resume);
+  let closed = false;
+  return {
+    root: s.root,
+    dir: s.dir,
+    branch: s.branch,
+    base: s.base,
+    commit: async (paths, message) => commitKept(s, paths, message),
+    reset: async () => resetScratch(s),
+    close: async (keepBranch) => {
+      if (closed) return;
+      closed = true;
+      closeScratch(s, keepBranch);
+    }
+  };
+}
+function openState(repoRoot, problemDir, name, resume) {
+  const real = realpathSync3(problemDir);
+  const topOut = tryGit(repoRoot || real, ["rev-parse", "--show-toplevel"]);
+  if (!topOut) throw new Error(`${problemDir} is not inside a git repository. Run git init and commit the files first.`);
+  const top = realpathSync3(topOut.trim());
+  const base = resume ? tryGit(top, ["rev-parse", "--verify", `${resume.base}^{commit}`])?.trim() : tryGit(top, ["rev-parse", "--verify", "HEAD^{commit}"])?.trim();
+  if (resume && !base) throw new Error(`The stopped run started from commit ${resume.base.slice(0, 7)}, which is no longer in the repository.`);
+  if (!base) throw new Error(`The repository at ${top} has no commit yet. Commit the files first.`);
+  const rel = relative3(top, real);
+  if (rel && !tryGit(top, ["ls-tree", "-d", "--name-only", base, rel])?.trim()) {
+    throw new Error(`The folder ${rel} is not committed in ${top}. Commit it first: Synthe works only on committed files.`);
+  }
+  const branch = resume ? resume.branch : nextBranch2(top, name);
+  if (resume) releaseBranch(top, resume);
+  const dir = realpathSync3(mkdtempSync3(join27(tmpdir3(), "synthe-solve-")));
+  try {
+    const start2 = resume ? resume.head : base;
+    git2(top, ["worktree", "add", "--quiet", resume ? "-B" : "-b", branch, dir, start2]);
+  } catch (e) {
+    rmSync4(dir, { recursive: true, force: true });
+    throw new Error(`Could not make a scratch checkout on ${branch}: ${firstLine4(e)}`);
+  }
+  const scratch = { top, root: dir, dir: join27(dir, rel), branch, base, links: [] };
+  for (const from of /* @__PURE__ */ new Set([top, real])) {
+    const to = join27(scratch.root, relative3(top, from));
+    for (const name2 of LINKED2) {
+      const source = join27(from, name2);
+      const link = join27(to, name2);
+      if (existsSync19(source) && existsSync19(to) && !existsSync19(link)) {
+        try {
+          symlinkSync2(source, link, process.platform === "win32" ? "junction" : "dir");
+          scratch.links.push(link);
+        } catch {
+        }
+      }
+    }
+  }
+  return scratch;
+}
+function releaseBranch(top, resume) {
+  const list = tryGit(top, ["worktree", "list", "--porcelain"]) ?? "";
+  for (const block of list.split("\n\n")) {
+    const path4 = /^worktree (.+)$/m.exec(block)?.[1];
+    const ref = /^branch (.+)$/m.exec(block)?.[1];
+    if (!path4 || ref !== `refs/heads/${resume.branch}`) continue;
+    if (!/synthe-solve-[^/\\]*$/.test(path4)) throw new Error(`The branch ${resume.branch} is checked out in ${path4}. Switch that checkout to another branch first.`);
+    tryGit(top, ["worktree", "remove", "--force", path4]);
+    rmSync4(path4, { recursive: true, force: true });
+  }
+  tryGit(top, ["worktree", "prune"]);
+}
+function headOf(s) {
+  return git2(s.root, ["rev-parse", "HEAD"]).trim();
+}
+function commitKept(s, paths, message) {
+  if (paths.length) git2(s.root, ["add", "-A", "--", ...paths]);
+  const hasName = tryGit(s.root, ["config", "user.name"])?.trim();
+  const hasEmail = tryGit(s.root, ["config", "user.email"])?.trim();
+  const identity = hasName && hasEmail ? [] : IDENTITY;
+  git2(s.root, [...identity, "-c", "commit.gpgsign=false", "commit", "--no-verify", "--quiet", "--allow-empty", "-F", "-"], message);
+  return headOf(s);
+}
+function resetScratch(s) {
+  git2(s.root, ["reset", "--hard", "--quiet", "HEAD"]);
+  git2(s.root, ["clean", "-fdq", ...LINKED2.flatMap((n) => ["-e", n])]);
+}
+function closeScratch(s, keepBranch) {
+  for (const link of s.links) try {
+    if (lstatSync4(link).isSymbolicLink()) unlinkSync3(link);
+  } catch {
+  }
+  tryGit(s.top, ["worktree", "remove", "--force", s.root]);
+  rmSync4(s.root, { recursive: true, force: true });
+  tryGit(s.top, ["worktree", "prune"]);
+  if (!keepBranch) tryGit(s.top, ["branch", "-D", "--quiet", s.branch]);
+}
+var LINKED2, IDENTITY;
+var init_scratch = __esm({
+  "src/solve/scratch.ts"() {
+    "use strict";
+    LINKED2 = ["node_modules", ".venv", "venv"];
+    IDENTITY = ["-c", "user.name=Synthe", "-c", "user.email=synthe@users.noreply.github.com"];
+  }
+});
+
+// src/solve/loop.ts
+import { execFileSync as execFileSync8 } from "node:child_process";
+import { isAbsolute as isAbsolute4, join as join28, resolve as resolve6 } from "node:path";
+async function runLoop2(steps, options) {
+  const say = steps.say ?? (() => {
+  });
+  const candidates = Math.max(1, options.candidates ?? 1);
+  const patience = options.patience ?? MAX_MISSES2;
+  const earlier = options.history ?? [];
+  const attempts = [];
+  const prior = options.resume?.attempts ?? [];
+  const start2 = await steps.guards();
+  if (!start2.ok) throw new SetupError(`${start2.reason} This is before any change, so no change can be judged. Fix the guard first.`);
+  const first = await steps.measure();
+  if (!first.ok) throw new SetupError(`Could not measure the starting point: ${first.reason}`);
+  let current = first;
+  const baseline2 = options.resume?.baseline ?? first.value;
+  say(options.resume ? `Resuming after round ${options.resume.rounds}. Score now: ${first.value} (baseline ${baseline2}).` : `Starting score: ${first.value}.`);
+  const record = async (attempt) => {
+    attempts.push(attempt);
+    await steps.record?.(attempt);
+    say(`Round ${attempt.round}: ${attempt.summary || "(no summary)"}: ${attempt.kept ? "kept" : "not kept"}. ${attempt.reason}`);
+  };
+  let stopped = `Reached the round limit (${plural3(options.maxRounds, "round")}).`;
+  let idle = options.resume?.idle ?? 0;
+  let round = options.resume?.rounds ?? 0;
+  let keptAny = prior.some((a) => a.kept);
+  while (true) {
+    if (round >= options.maxRounds) break;
+    if (idle >= patience) {
+      stopped = `${plural3(patience, "round")} in a row kept nothing.`;
+      break;
+    }
+    if (options.maxCalls != null && steps.calls && steps.calls() >= options.maxCalls) {
+      stopped = `Reached the model call limit (${plural3(options.maxCalls, "call")}).`;
+      break;
+    }
+    const proposed = await steps.propose(round + 1, [...earlier, ...attempts], candidates);
+    if (proposed.ok && proposed.proposals.length === 0) {
+      stopped = "The proposer had nothing more to try.";
+      break;
+    }
+    round++;
+    let kept = false;
+    if (!proposed.ok) {
+      await record({ round, summary: "", kept: false, reason: `The proposal failed: ${proposed.reason}` });
+    } else {
+      const next = await tryRound(steps, round, proposed.proposals.slice(0, candidates), current, record);
+      if (next) {
+        current = next;
+        kept = true;
+        keptAny = true;
+      }
+    }
+    idle = kept ? 0 : idle + 1;
+    await options.onRound?.(round, [...prior, ...attempts]);
+    if (idle >= patience) {
+      stopped = `${plural3(patience, "round")} in a row kept nothing.`;
+      break;
+    }
+  }
+  return { stopped, baseline: baseline2, final: current.value, attempts: [...prior, ...attempts], rounds: round, keptAny };
+}
+async function tryRound(steps, round, proposals, current, record) {
+  const tried = [];
+  const passed = [];
+  let best = null;
+  for (const proposal of proposals) {
+    const attempt = { round, summary: typeof proposal?.summary === "string" ? proposal.summary : "", kept: false, reason: "" };
+    tried.push(attempt);
+    await steps.reset();
+    const applied = await steps.apply(proposal);
+    if (!applied.ok) {
+      attempt.reason = applied.reason;
+      continue;
+    }
+    const guarded = await steps.guards();
+    if (!guarded.ok) {
+      attempt.reason = guarded.reason;
+      continue;
+    }
+    const measured = await steps.measure();
+    if (!measured.ok) {
+      attempt.reason = `Could not measure the change: ${measured.reason}`;
+      continue;
+    }
+    attempt.before = current.value;
+    attempt.after = measured.value;
+    const decision = await steps.decide(current, measured);
+    attempt.reason = decision.reason;
+    if (decision.value !== void 0) attempt.after = decision.value;
+    if (!decision.keep) continue;
+    passed.push(attempt);
+    const strength = decision.strength ?? 0;
+    if (!best || strength > best.strength) best = { proposal, measured, strength, attempt };
+  }
+  await steps.reset();
+  let next = null;
+  if (best) {
+    const applied = await steps.apply(best.proposal);
+    if (applied.ok) {
+      await steps.keep(best.proposal, round);
+      best.attempt.kept = true;
+      next = best.measured;
+      for (const a of passed) if (a !== best.attempt) a.reason += " A stronger change in the same round was kept instead.";
+    } else {
+      best.attempt.reason += ` It could not be applied again: ${applied.reason}`;
+      await steps.reset();
+    }
+  }
+  for (const a of tried) await record(a);
+  return next;
+}
+function onInterrupt(cleanUp, say) {
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
+  const stop2 = () => {
+    const exit = () => {
+      say();
+      process.exit(130);
+    };
+    cleanUp().then(exit, exit);
+  };
+  for (const s of signals) process.once(s, stop2);
+  return () => {
+    for (const s of signals) process.off(s, stop2);
+  };
+}
+async function solve(problem, proposer, options, io2) {
+  const judged = isJudged(problem.measure) ? problem.measure.judge : null;
+  const direction = isJudged(problem.measure) ? "higher" : problem.measure.direction;
+  let repoRoot, gitDir;
+  try {
+    repoRoot = git3(problem.dir, "rev-parse", "--show-toplevel");
+    gitDir = resolve6(problem.dir, git3(problem.dir, "rev-parse", "--git-common-dir"));
+  } catch {
+    throw new SetupError(`${problem.dir} is not inside a git repository. Synthe works in a scratch checkout of a git repository.`);
+  }
+  const outDir = options.out ? isAbsolute4(options.out) ? options.out : resolve6(process.cwd(), options.out) : join28(repoRoot, ".synthe", "solve", problem.name);
+  const history = readHistory(gitDir, problem.name).map((h) => ({ ...h }));
+  const last = readRun(gitDir, problem.name);
+  let from = null;
+  if (options.resume) {
+    if (last?.status === "running") {
+      if (stillRunning(last)) throw new SetupError(`The last run of ${problem.name} is still going (process ${last.pid}). Stop it or let it end, then resume.`);
+      from = last;
+    } else {
+      io2.say(last ? `The last run of ${problem.name} ended normally, so --resume starts a new run.` : `There is no earlier run of ${problem.name}, so --resume starts a new run.`);
+    }
+  }
+  const run2 = from ? from.run : Math.max(nextRun(gitDir, problem.name), (last?.run ?? 0) + 1);
+  let scratch;
+  try {
+    scratch = await openScratch(repoRoot, problem.dir, problem.name, from ? { branch: from.branch, base: from.base, head: from.head, staleRoot: from.root } : void 0);
+  } catch (e) {
+    throw new SetupError(`Could not ${from ? "resume on" : "make"} the scratch checkout: ${e.message}`);
+  }
+  if (from) io2.say(`Resuming run ${run2} of ${problem.name} on ${scratch.branch} after round ${from.rounds}.`);
+  const record = {
+    run: run2,
+    status: "running",
+    branch: scratch.branch,
+    base: from?.base ?? scratch.base,
+    head: git3(scratch.root, "rev-parse", "HEAD"),
+    root: scratch.root,
+    pid: process.pid,
+    rounds: from?.rounds ?? 0,
+    calls: from?.calls ?? 0,
+    baseline: from?.baseline ?? null,
+    attempts: from?.attempts ?? []
+  };
+  writeRun(gitDir, problem.name, record);
+  let calls2 = record.calls;
+  let keptCount = record.attempts.filter((a) => a.kept).length;
+  let lastPaths = [];
+  let lastProposal = null;
+  const measureAt2 = async (split) => measure(scratch.dir, problem, { ...options.seed !== void 0 ? { seed: options.seed } : {}, ...split ? { split } : {} });
+  const holdout = problem.split.holdout;
+  const sign = direction === "higher" ? 1 : -1;
+  let first = true;
+  const steps = {
+    say: io2.say,
+    calls: () => calls2,
+    async propose(round, past, candidates) {
+      const files = artifactFiles(scratch.root, problem);
+      const { reply, calls: used } = await proposer.propose({ round, goal: problem.goal, files, history: past.map(entry), candidates });
+      calls2 += used;
+      return "failed" in reply ? { ok: false, reason: reply.failed } : { ok: true, proposals: reply.proposals };
+    },
+    reset: () => scratch.reset(),
+    async apply(proposal) {
+      const applied = applyProposal(scratch.root, problem, proposal);
+      if ("refused" in applied) return { ok: false, reason: applied.refused };
+      if (applied.paths.length === 0) return { ok: false, reason: "The proposal changed no file." };
+      lastPaths = applied.paths;
+      lastProposal = proposal;
+      return { ok: true };
+    },
+    async guards() {
+      const failed = await failedGuard(scratch.dir, problem);
+      return failed === null ? { ok: true } : { ok: false, reason: `The guard \`${failed}\` failed.` };
+    },
+    async measure() {
+      const train = await measureAt2(holdout ? "train" : void 0);
+      if ("failed" in train) return { ok: false, reason: train.failed };
+      const sample = { train };
+      if (holdout && first) {
+        const held = await measureAt2("holdout");
+        if ("failed" in held) return { ok: false, reason: `the held-back split gave no number: ${held.failed}` };
+        sample.holdout = held;
+      }
+      if (first && record.baseline === null) record.baseline = train.value;
+      first = false;
+      return { ok: true, value: train.value, samples: sample };
+    },
+    async decide(kept, cand) {
+      const k = kept.samples, c = cand.samples;
+      const proposal = lastProposal;
+      const remeasure = async () => {
+        const after = await measureAt2(holdout ? "train" : void 0);
+        if ("failed" in after) return after;
+        await scratch.reset();
+        const before = await measureAt2(holdout ? "train" : void 0);
+        const back = applyProposal(scratch.root, problem, proposal);
+        if ("refused" in back) return { failed: `the change could not be applied again: ${back.refused}` };
+        lastPaths = back.paths;
+        return "failed" in before ? before : { before, after };
+      };
+      const confirmed = await decideWithConfirm(direction, k.train, c.train, remeasure);
+      k.train = confirmed.before;
+      c.train = confirmed.after;
+      const onTrain = { keep: confirmed.keep, reason: confirmed.reason };
+      const strength = sign * (c.train.value - k.train.value);
+      if (!onTrain.keep || !holdout) return { ...onTrain, strength };
+      const now = await measureAt2("holdout");
+      if ("failed" in now) return { keep: false, reason: `Could not measure the held-back split: ${now.failed}` };
+      c.holdout = now;
+      const onHoldout = decide(direction, k.holdout, now);
+      if (!onHoldout.keep) return { keep: false, reason: "It won on the train split but not on the held-back split, so it does not generalize." };
+      return { keep: true, reason: `${onTrain.reason} It also won on the held-back split.`, strength };
+    },
+    async keep(proposal, round) {
+      await scratch.commit(lastPaths, `synthe solve ${problem.name}, round ${round}: ${proposal.summary || "change"}`.slice(0, 200));
+      keptCount++;
+    },
+    record(attempt) {
+      appendHistory(gitDir, problem.name, [entry(attempt)], run2);
+    }
+  };
+  let judgeFinal = null;
+  if (judged) {
+    const cases4 = readCases(scratch.dir, judged.cases);
+    if ("failed" in cases4) {
+      await scratch.close(false);
+      throw new SetupError(`The judged measure could not start: ${cases4.failed}`);
+    }
+    let compareFn;
+    try {
+      compareFn = judged.compare === "model" ? modelCompare(problem, io2.env) : commandCompare(scratch.dir, judged.compare);
+    } catch (e) {
+      await scratch.close(false);
+      throw new SetupError(`The judged measure could not start: ${e.message}`);
+    }
+    const judgeCalls = (d) => {
+      if (judged.compare === "model") calls2 += d.calls;
+    };
+    let baseOutputs = null;
+    steps.measure = async () => {
+      const out = await runCases(scratch.dir, judged.run, cases4);
+      if ("failed" in out) return { ok: false, reason: out.failed };
+      baseOutputs ??= out;
+      return { ok: true, value: 0.5, samples: out };
+    };
+    steps.decide = async (kept, cand) => {
+      const d = await judgeOutputs(cases4, kept.samples, cand.samples, compareFn);
+      judgeCalls(d);
+      return { keep: d.keep, reason: d.reason, strength: d.share, value: d.share };
+    };
+    judgeFinal = async () => {
+      await scratch.reset();
+      const out = await runCases(scratch.dir, judged.run, cases4);
+      if ("failed" in out || !baseOutputs) return 0.5;
+      const d = await judgeOutputs(cases4, baseOutputs, out, compareFn);
+      judgeCalls(d);
+      return d.share;
+    };
+  }
+  const cleanUp = async () => {
+    stopRunning();
+    await scratch.close(keptCount > 0);
+  };
+  const unhook = onInterrupt(cleanUp, () => io2.say(keptCount > 0 ? `
+Stopped. Synthe removed its scratch checkout. The ${keptCount === 1 ? "change" : `${keptCount} changes`} kept so far ${keptCount === 1 ? "is" : "are"} on the branch ${scratch.branch}. Your working tree did not change.` : "\nStopped. Synthe removed its scratch checkout and kept no change. Your working tree did not change."));
+  let result2;
+  let final;
+  try {
+    result2 = await runLoop2(steps, {
+      maxRounds: problem.budget.max_rounds,
+      maxCalls: problem.budget.max_calls,
+      candidates: problem.candidates,
+      history,
+      ...from ? { resume: { rounds: from.rounds, attempts: from.attempts, idle: idleRounds(from), baseline: from.baseline } } : {},
+      onRound(round, attempts) {
+        Object.assign(record, { rounds: round, calls: calls2, attempts, head: git3(scratch.root, "rev-parse", "HEAD") });
+        writeRun(gitDir, problem.name, record);
+      }
+    });
+    final = judgeFinal && result2.keptAny ? await judgeFinal() : result2.final;
+  } catch (e) {
+    await cleanUp();
+    throw e;
+  } finally {
+    unhook();
+  }
+  await scratch.close(result2.keptAny);
+  const solved = {
+    problem: problem.name,
+    stopped: result2.stopped,
+    baseline: result2.baseline,
+    final,
+    branch: result2.keptAny ? scratch.branch : null,
+    attempts: result2.attempts
+  };
+  const unit = judged ? "share of cases won" : isJudged(problem.measure) ? void 0 : problem.measure.unit;
+  writeReport(outDir, solved, { goal: problem.goal, direction, ...unit ? { unit } : {} });
+  writeRun(gitDir, problem.name, { ...record, status: "ended" });
+  io2.say(`Wrote ${join28(outDir, "result.json")} and report.md.`);
+  if (solved.branch) io2.say(`Kept changes are on the branch ${solved.branch}.`);
+  return solved;
+}
+var SetupError, plural3, git3, entry;
+var init_loop = __esm({
+  "src/solve/loop.ts"() {
+    "use strict";
+    init_decide();
+    init_edits();
+    init_history();
+    init_measure2();
+    init_judge();
+    init_model_compare();
+    init_report();
+    init_run2();
+    init_resume();
+    init_scratch();
+    init_types2();
+    SetupError = class extends Error {
+    };
+    plural3 = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+    git3 = (cwd, ...args) => execFileSync8("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    entry = (a) => ({ round: a.round, summary: a.summary, kept: a.kept, reason: a.reason });
   }
 });
 
@@ -31899,7 +32167,7 @@ var init_approval = __esm({
 });
 
 // src/pilot/io.ts
-import { existsSync as existsSync20, linkSync, lstatSync as lstatSync5, mkdirSync as mkdirSync11, readFileSync as readFileSync22, realpathSync as realpathSync4, renameSync as renameSync4, statSync as statSync5, unlinkSync as unlinkSync4, writeFileSync as writeFileSync12 } from "node:fs";
+import { existsSync as existsSync20, linkSync, lstatSync as lstatSync5, mkdirSync as mkdirSync11, readFileSync as readFileSync23, realpathSync as realpathSync4, renameSync as renameSync4, statSync as statSync5, unlinkSync as unlinkSync4, writeFileSync as writeFileSync12 } from "node:fs";
 import { dirname as dirname7, isAbsolute as isAbsolute5, relative as relative4, resolve as resolve7 } from "node:path";
 function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
   let size2;
@@ -31912,7 +32180,7 @@ function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
     throw new PilotError("not_found", `${path4} does not exist or cannot be read.`);
   }
   if (size2 > maxBytes) throw new PilotError("too_large", `${path4} is ${size2} bytes; the limit is ${maxBytes}. Export a smaller, bounded file.`);
-  return readFileSync22(path4, "utf8");
+  return readFileSync23(path4, "utf8");
 }
 function inside(root, name) {
   const full = resolve7(root, name);
@@ -31950,7 +32218,7 @@ function writeOnce(path4, content) {
       }
       if (code !== "EEXIST" && code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV") throw e;
     }
-    if (readFileSync22(path4, "utf8") === content) return "already there";
+    if (readFileSync23(path4, "utf8") === content) return "already there";
     throw new PilotError("conflict", `${path4} already exists with different content. Stored pilot records are never replaced.`);
   } finally {
     if (existsSync20(tmp)) unlinkSync4(tmp);
@@ -33027,7 +33295,7 @@ var init_egress = __esm({
 // src/pilot/wrap.ts
 import { createHash as createHash3, createHmac } from "node:crypto";
 import { closeSync as closeSync2, constants as constants2, fstatSync, mkdirSync as mkdirSync12, openSync as openSync2, readSync, writeFileSync as writeFileSync13, writeSync } from "node:fs";
-import { join as join28 } from "node:path";
+import { join as join29 } from "node:path";
 function appendLine(path4, text4) {
   const fd = openSync2(path4, constants2.O_RDWR | constants2.O_APPEND | constants2.O_CREAT | (constants2.O_NOFOLLOW ?? 0), 384);
   try {
@@ -33066,11 +33334,11 @@ function pilotRecorder(options) {
     try {
       mkdirSync12(logDir, { recursive: true, mode: 448 });
       try {
-        writeFileSync13(join28(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
+        writeFileSync13(join29(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
       } catch (e) {
         if (e.code !== "EEXIST") throw e;
       }
-      return appendLine(join28(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
+      return appendLine(join29(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
 `);
     } catch {
       return false;
@@ -33229,7 +33497,7 @@ function checkPersonalData(text4, field2, where) {
 }
 function likelyCopies(rows) {
   if (rows.length < 2) return null;
-  const tally2 = (keys) => {
+  const tally3 = (keys) => {
     const m = /* @__PURE__ */ new Map();
     for (const k of keys) m.set(k, (m.get(k) ?? 0) + 1);
     return m;
@@ -33237,8 +33505,8 @@ function likelyCopies(rows) {
   const order = rows.map((_, i) => i).sort((x, y) => ms(rows[x].started_at) - ms(rows[y].started_at) || byString(rows[x].started_at, rows[y].started_at));
   const sorted = order.map((i) => rows[i]);
   const attributes = sorted.map((r) => canonicalJson({ ...r, conversation_id: null, started_at: null }));
-  const common = tally2(attributes);
-  const exact = tally2(sorted.map((r, i) => `${r.started_at}|${attributes[i]}`));
+  const common = tally3(attributes);
+  const exact = tally3(sorted.map((r, i) => `${r.started_at}|${attributes[i]}`));
   let twins = 0;
   let expected = 0;
   let variance = 0;
@@ -33246,7 +33514,7 @@ function likelyCopies(rows) {
     let to = from + 1;
     while (to < sorted.length && sorted[to].started_at === sorted[from].started_at) to++;
     if (to - from > 1) {
-      const around = tally2([...attributes.slice(Math.max(0, from - NEIGHBOURS), from), ...attributes.slice(to, to + NEIGHBOURS)]);
+      const around = tally3([...attributes.slice(Math.max(0, from - NEIGHBOURS), from), ...attributes.slice(to, to + NEIGHBOURS)]);
       const neighbours = Math.min(from, NEIGHBOURS) + Math.min(sorted.length - to, NEIGHBOURS);
       for (let i = from; i < to; i++) {
         if ((exact.get(`${sorted[i].started_at}|${attributes[i]}`) ?? 0) > 1) twins++;
@@ -35318,7 +35586,7 @@ function pairArms(input) {
   }
   const baseRuns = new Map(baseline2.cases.map((c) => [c.case_id, c]));
   const candRuns = new Map(candidate.cases.map((c) => [c.case_id, c]));
-  const tally2 = { all: emptyTally(), discovery: emptyTally(), heldout: emptyTally() };
+  const tally3 = { all: emptyTally(), discovery: emptyTally(), heldout: emptyTally() };
   const paired2 = [];
   const excluded = [];
   const diverged = [];
@@ -35379,7 +35647,7 @@ function pairArms(input) {
       entry2 = { case_id: pc.id, split: pc.split, outcome: outcome2, common_turns: common, total_turns: total, baseline_passed: basePassed, candidate_passed: candPassed, primary_checks: primaryChecks };
     }
     paired2.push(entry2);
-    for (const t of [tally2.all, tally2[pc.split]]) {
+    for (const t of [tally3.all, tally3[pc.split]]) {
       t.cases++;
       if (entry2.outcome === "excluded") {
         t.excluded++;
@@ -35403,12 +35671,12 @@ function pairArms(input) {
   }
   const sortedObserved = Object.fromEntries([...observed].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
   const coverage = {
-    paired_cases: tally2.all.cases === 0 ? 0 : tally2.all.paired / tally2.all.cases,
+    paired_cases: tally3.all.cases === 0 ? 0 : tally3.all.paired / tally3.all.cases,
     common_turns: turnsTotal === 0 ? 0 : commonTotal / turnsTotal,
     excluded,
     diverged
   };
-  const verdict2 = judge({ pack: pack2, gate, tally: tally2, coverage, fixes, newBlocking, unchecked, regressions, paired: paired2, target: input.target_check_id, p: signP(tally2.all.wins, tally2.all.losses) });
+  const verdict2 = judge({ pack: pack2, gate, tally: tally3, coverage, fixes, newBlocking, unchecked, regressions, paired: paired2, target: input.target_check_id, p: signP(tally3.all.wins, tally3.all.losses) });
   return {
     version: 1,
     pack_id: baseline2.pack_id,
@@ -35420,9 +35688,9 @@ function pairArms(input) {
     baseline: baseline2,
     candidate,
     paired: paired2,
-    tally: tally2,
+    tally: tally3,
     coverage,
-    sign_p: signP(tally2.all.wins, tally2.all.losses),
+    sign_p: signP(tally3.all.wins, tally3.all.losses),
     regressions,
     fixes,
     new_blocking_guard_failures: newBlocking,
@@ -35432,7 +35700,7 @@ function pairArms(input) {
   };
 }
 function judge(j) {
-  const { gate, tally: tally2, coverage, fixes, newBlocking, target } = j;
+  const { gate, tally: tally3, coverage, fixes, newBlocking, target } = j;
   const reasons = [];
   const feedback = [];
   let hidden = false;
@@ -35452,15 +35720,15 @@ function judge(j) {
   const excludedFeedback = () => {
     for (const e of discExcluded) feedback.push(`Case ${e.case_id} could not be compared at turn ${e.turn} (${e.why === "unsupported" ? "the replay asked for a tool call the recording has no result for" : "no usable reply"}). Keep tool calls to the ones the conversation already shows.`);
   };
-  const fewCases = tally2.all.paired < gate.min_paired_cases;
+  const fewCases = tally3.all.paired < gate.min_paired_cases;
   const lowCoverage = coverage.paired_cases < gate.min_paired_coverage;
-  if (fewCases) reasons.push(`Only ${tally2.all.paired} of ${tally2.all.cases} cases were scored on both prompts; the gate needs at least ${gate.min_paired_cases}.`);
-  if (lowCoverage) reasons.push(`${pct4(coverage.paired_cases)} of cases (${tally2.all.paired} of ${tally2.all.cases}) were scored on both prompts; the gate needs at least ${pct4(gate.min_paired_coverage)}.`);
+  if (fewCases) reasons.push(`Only ${tally3.all.paired} of ${tally3.all.cases} cases were scored on both prompts; the gate needs at least ${gate.min_paired_cases}.`);
+  if (lowCoverage) reasons.push(`${pct4(coverage.paired_cases)} of cases (${tally3.all.paired} of ${tally3.all.cases}) were scored on both prompts; the gate needs at least ${pct4(gate.min_paired_coverage)}.`);
   if ((fewCases || lowCoverage) && discExcluded.length === 0) hidden = true;
-  const net = tally2.all.wins - tally2.all.losses;
+  const net = tally3.all.wins - tally3.all.losses;
   if (net < gate.min_net_wins) {
     reasons.push(`Wins minus losses is ${net}; the gate needs at least ${gate.min_net_wins}.`);
-    const discNet = tally2.discovery.wins - tally2.discovery.losses;
+    const discNet = tally3.discovery.wins - tally3.discovery.losses;
     const lost = j.paired.filter((p) => p.split === "discovery" && p.outcome === "loss");
     for (const p of lost) feedback.push(`The change did worse on case ${p.case_id}: it passes fewer checks than the current prompt there.`);
     if (discNet < gate.min_net_wins) {
@@ -35468,16 +35736,16 @@ function judge(j) {
     } else hidden = true;
   }
   if (net >= gate.min_net_wins && j.p > REPLAY_MAX_SIGN_P) {
-    reasons.push(`Wins against losses could be luck: ${tally2.all.wins} wins and ${tally2.all.losses} losses give a sign test p of ${j.p.toFixed(4)}; the gate needs ${REPLAY_MAX_SIGN_P} or less.`);
-    const discP = signP(tally2.discovery.wins, tally2.discovery.losses);
+    reasons.push(`Wins against losses could be luck: ${tally3.all.wins} wins and ${tally3.all.losses} losses give a sign test p of ${j.p.toFixed(4)}; the gate needs ${REPLAY_MAX_SIGN_P} or less.`);
+    const discP = signP(tally3.discovery.wins, tally3.discovery.losses);
     if (discP > REPLAY_MAX_SIGN_P) feedback.push("The change improved too few of the cases you can see, compared with the cases it made worse, to rule out luck. Aim at the failing checks in the examples.");
     else hidden = true;
   }
-  if (tally2.heldout.wins < tally2.heldout.losses) {
-    reasons.push(`On held-out cases the candidate lost ${tally2.heldout.losses} and won ${tally2.heldout.wins}; held-out wins must be at least held-out losses.`);
+  if (tally3.heldout.wins < tally3.heldout.losses) {
+    reasons.push(`On held-out cases the candidate lost ${tally3.heldout.losses} and won ${tally3.heldout.wins}; held-out wins must be at least held-out losses.`);
     hidden = true;
   }
-  if (tally2.heldout.paired === 0) {
+  if (tally3.heldout.paired === 0) {
     reasons.push("No held-out case was scored on both prompts, so nothing checks the change on cases the proposer did not see. Add held-out cases to the pack.");
     hidden = true;
   }
@@ -35487,8 +35755,8 @@ function judge(j) {
   }
   const eligible2 = reasons.length === 0;
   if (eligible2) {
-    reasons.push(`Every gate condition holds: ${tally2.all.wins} wins, ${tally2.all.losses} losses and ${tally2.all.ties} ties over ${tally2.all.paired} paired cases (sign test p = ${j.p.toFixed(4)}), no new blocking guard failure, and held-out cases did not lose.`);
-    return { eligible: eligible2, reasons, proposer_feedback: [`The change passed the replay gate on the cases you can see (${tally2.discovery.wins} wins, ${tally2.discovery.losses} losses).`] };
+    reasons.push(`Every gate condition holds: ${tally3.all.wins} wins, ${tally3.all.losses} losses and ${tally3.all.ties} ties over ${tally3.all.paired} paired cases (sign test p = ${j.p.toFixed(4)}), no new blocking guard failure, and held-out cases did not lose.`);
+    return { eligible: eligible2, reasons, proposer_feedback: [`The change passed the replay gate on the cases you can see (${tally3.discovery.wins} wins, ${tally3.discovery.losses} losses).`] };
   }
   excludedFeedback();
   for (const r of j.regressions) if (disc(r) && !r.blocking) feedback.push(`Check ${r.check_id} passed before and fails now on case ${r.case_id} at turn ${r.turn}.`);
@@ -35932,8 +36200,8 @@ var init_review = __esm({
 });
 
 // src/pilot/store.ts
-import { appendFileSync as appendFileSync3, closeSync as closeSync3, existsSync as existsSync21, mkdirSync as mkdirSync13, openSync as openSync3, readdirSync as readdirSync3, readFileSync as readFileSync23, statSync as statSync6, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
-import { join as join29 } from "node:path";
+import { appendFileSync as appendFileSync3, closeSync as closeSync3, existsSync as existsSync21, mkdirSync as mkdirSync13, openSync as openSync3, readdirSync as readdirSync3, readFileSync as readFileSync24, statSync as statSync6, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
+import { join as join30 } from "node:path";
 var OBJECT_KINDS, entryHash, MAX_OBJECT_BYTES, LOCK_STALE_MS, HELD, PilotStore;
 var init_store = __esm({
   "src/pilot/store.ts"() {
@@ -35970,7 +36238,7 @@ var init_store = __esm({
       }
       objectPath(kind, id) {
         if (!isSha256(id)) throw new PilotError("usage", `${String(id).slice(0, 80)} is not a full 64-character id.`);
-        return join29(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
+        return join30(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
       }
       // Stores a record under its content id. Storing the same record again is a no-op, so every step can be retried.
       put(kind, value) {
@@ -35988,7 +36256,7 @@ var init_store = __esm({
           writeOnce(path4, content);
         } catch (e) {
           if (!(e instanceof PilotError) || e.code !== "conflict") throw e;
-          if (!content.startsWith(readFileSync23(path4, "utf8"))) {
+          if (!content.startsWith(readFileSync24(path4, "utf8"))) {
             throw new PilotError("tampered", `${path4} already exists with content that does not match its name, so it was changed after it was written. It was not overwritten. Compare it with a backup, or start a new pilot directory.`);
           }
           writeAtomic(path4, content);
@@ -36015,7 +36283,7 @@ var init_store = __esm({
         return isSha256(id) && existsSync21(this.objectPath(kind, id));
       }
       list(kind) {
-        const dir = join29(this.dir, "objects", kind);
+        const dir = join30(this.dir, "objects", kind);
         if (!existsSync21(dir)) return [];
         return readdirSync3(dir).map((f) => f.replace(/\.(json|txt)$/, "")).filter(isSha256).sort();
       }
@@ -36046,17 +36314,17 @@ var init_store = __esm({
         return text4;
       }
       journalPath() {
-        return join29(this.dir, "journal.jsonl");
+        return join30(this.dir, "journal.jsonl");
       }
       // The sequence number and hash of the newest entry, kept beside the journal. The chain alone cannot show that
       // entries were cut off the end; a journal shorter than its recorded head can.
       headPath() {
-        return join29(this.dir, "journal.head");
+        return join30(this.dir, "journal.head");
       }
       head() {
         if (!existsSync21(this.headPath())) return null;
         try {
-          const h = JSON.parse(readFileSync23(this.headPath(), "utf8"));
+          const h = JSON.parse(readFileSync24(this.headPath(), "utf8"));
           if (Number.isInteger(h.seq) && h.seq >= 1 && isSha256(h.hash)) return { seq: h.seq, hash: h.hash };
         } catch {
         }
@@ -36099,7 +36367,7 @@ var init_store = __esm({
       tornTail() {
         const path4 = this.journalPath();
         if (!existsSync21(path4)) return false;
-        const bytes = readFileSync23(path4);
+        const bytes = readFileSync24(path4);
         return bytes.length > 0 && bytes[bytes.length - 1] !== 10;
       }
       find(step, key) {
@@ -36123,7 +36391,7 @@ var init_store = __esm({
           const rest = { seq: entries.length + 1, at, step, key, refs, prev: entries.at(-1)?.hash ?? null };
           const entry2 = { ...rest, hash: entryHash(rest) };
           mkdirSync13(this.dir, { recursive: true });
-          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync23(this.journalPath()).lastIndexOf(10) + 1);
+          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync24(this.journalPath()).lastIndexOf(10) + 1);
           appendFileSync3(this.journalPath(), `${JSON.stringify(entry2)}
 `, { mode: 384 });
           writeAtomic(this.headPath(), `${JSON.stringify({ seq: entry2.seq, hash: entry2.hash })}
@@ -36157,11 +36425,11 @@ var init_store = __esm({
       // reading it again and finding the same content, so a lock that was replaced in between is not removed.
       acquire(file, staleMs) {
         mkdirSync13(this.dir, { recursive: true });
-        const lock = join29(this.dir, file);
+        const lock = join30(this.dir, file);
         const pause = new Int32Array(new SharedArrayBuffer(4));
         const read = () => {
           try {
-            return { text: readFileSync23(lock, "utf8"), age: Date.now() - statSync6(lock).mtimeMs };
+            return { text: readFileSync24(lock, "utf8"), age: Date.now() - statSync6(lock).mtimeMs };
           } catch (e) {
             if (e.code === "ENOENT") return null;
             throw e;
@@ -36210,14 +36478,14 @@ var init_store = __esm({
         return () => {
           HELD.delete(lock);
           try {
-            if (readFileSync23(lock, "utf8") === String(process.pid)) unlinkSync5(lock);
+            if (readFileSync24(lock, "utf8") === String(process.pid)) unlinkSync5(lock);
           } catch {
           }
         };
       }
       // A rendering of stored records. Safe to overwrite: the records, not the report, are the evidence.
       report(name, content) {
-        const path4 = join29(this.dir, "reports", name);
+        const path4 = join30(this.dir, "reports", name);
         writeAtomic(path4, content);
         return path4;
       }
@@ -36227,8 +36495,8 @@ var init_store = __esm({
 
 // src/pilot/commands.ts
 import { execFileSync as execFileSync9 } from "node:child_process";
-import { appendFileSync as appendFileSync4, existsSync as existsSync22, readFileSync as readFileSync24 } from "node:fs";
-import { dirname as dirname8, join as join30 } from "node:path";
+import { appendFileSync as appendFileSync4, existsSync as existsSync22, readFileSync as readFileSync25 } from "node:fs";
+import { dirname as dirname8, join as join31 } from "node:path";
 function defaultGit(args, cwd) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_")));
   return execFileSync9("git", args, { cwd, encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
@@ -36302,14 +36570,14 @@ function assertNotFromTheFuture(imported, now, cutoff) {
   }
 }
 function protectDirectory(dir, say) {
-  if (existsSync22(join30(dir, ".git"))) {
+  if (existsSync22(join31(dir, ".git"))) {
     throw new PilotError("usage", "The pilot directory is a git repository root. It holds customer data; use a directory that is not a repository, or a subdirectory with its own .gitignore.");
   }
-  const file = join30(dir, ".gitignore");
+  const file = join31(dir, ".gitignore");
   if (!existsSync22(file)) writeOnce(file, "*\n");
   else {
-    const lines = readFileSync24(file, "utf8").split(/\r?\n/).map((l) => l.trim());
-    if (!lines.includes("*")) appendFileSync4(file, `${readFileSync24(file, "utf8").endsWith("\n") ? "" : "\n"}*
+    const lines = readFileSync25(file, "utf8").split(/\r?\n/).map((l) => l.trim());
+    if (!lines.includes("*")) appendFileSync4(file, `${readFileSync25(file, "utf8").endsWith("\n") ? "" : "\n"}*
 `);
   }
   try {
@@ -37060,7 +37328,7 @@ var init_commands = __esm({
 
 // src/pilot/calllog.ts
 import { readdirSync as readdirSync4 } from "node:fs";
-import { join as join31 } from "node:path";
+import { join as join32 } from "node:path";
 function valuesBefore(c, before) {
   const values = /* @__PURE__ */ new Map();
   const seen = /* @__PURE__ */ new Map();
@@ -37096,7 +37364,7 @@ function readCallLog(dir) {
     return c;
   };
   for (const name of names2) {
-    const text4 = readBounded(join31(dir, name), MAX_LOG_FILE_BYTES);
+    const text4 = readBounded(join32(dir, name), MAX_LOG_FILE_BYTES);
     const parts = text4.split("\n");
     parts.pop();
     for (const part of parts) {
@@ -37194,7 +37462,7 @@ var init_calllog = __esm({
 });
 
 // src/pilot/export.ts
-import { join as join32 } from "node:path";
+import { join as join33 } from "node:path";
 function buildLogExport(input) {
   const { log, contract } = input;
   if (contract.query_hash !== void 0) throw new PilotError("usage", "The metric contract pins a query hash. A call-log export comes from the wrapper, not from a query, so it cannot carry one. Export from the signed-off query instead.");
@@ -37323,26 +37591,26 @@ function writeLogExport(input) {
     tags,
     ...experiment2 ? { window: experiment2.window } : {}
   });
-  const outDir = input.outDir ?? join32(store.dir, "exports");
-  const path4 = join32(outDir, `${exportId}.json`);
-  writeAtomic(join32(outDir, csvName), built.csv);
+  const outDir = input.outDir ?? join33(store.dir, "exports");
+  const path4 = join33(outDir, `${exportId}.json`);
+  writeAtomic(join33(outDir, csvName), built.csv);
   writeAtomic(path4, `${JSON.stringify(built.header, null, 2)}
 `);
   const notes = [];
-  const plural3 = (n, one2, many) => `${n} ${n === 1 ? one2 : many}`;
+  const plural4 = (n, one2, many) => `${n} ${n === 1 ? one2 : many}`;
   const l = built.left_out;
-  if (l.no_outcome) notes.push(`${plural3(l.no_outcome, "conversation has", "conversations have")} a recorded call and no outcome yet (by first-served version: ${Object.entries(built.no_outcome_by).sort().map(([t, n]) => `${printable2(t, 40)} ${n}`).join(", ")}). They are in the export with empty values, so the analysis counts them as missing outcomes in that version until a later export fills them in.`);
-  if (l.outcome_without_call) notes.push(`${plural3(l.outcome_without_call, "conversation has", "conversations have")} an outcome but no recorded call, so ${l.outcome_without_call === 1 ? "it was" : "they were"} left out. Check that every agent call goes through the recorder.`);
-  if (l.served_two_versions) notes.push(`${plural3(l.served_two_versions, "conversation was", "conversations were")} served by a second prompt version before or with the outcome (by first-served version: ${Object.entries(built.two_versions_by).sort().map(([t, n]) => `${printable2(t, 40)} ${n}`).join(", ")}). Their outcome cannot be credited to one prompt, so they are in the export under the first version with empty values and count as missing outcomes there.`);
-  if (l.other_version_after_outcome) notes.push(`${plural3(l.other_version_after_outcome, "conversation was", "conversations were")} served by another prompt version only after the outcome was recorded. The row is unchanged.`);
-  if (l.outcome_after_other_version) notes.push(`${plural3(l.outcome_after_other_version, "of them has", "of them have")} an outcome recorded again after that call. It is not used: it may have been influenced by the other prompt.`);
-  if (l.outside_window) notes.push(`${plural3(l.outside_window, "conversation", "conversations")} in the log started outside the window and ${l.outside_window === 1 ? "is" : "are"} not in this export.`);
-  if (log.malformed) notes.push(`${plural3(log.malformed, "line", "lines")} of the log could not be read and ${log.malformed === 1 ? "was" : "were"} skipped.`);
-  for (const [kind, n] of Object.entries(log.problems)) notes.push(`The recorder logged ${plural3(n, "problem", "problems")} of kind ${kind}: some calls or outcomes may be missing from the log.`);
-  if (l.other_agent) notes.push(`${plural3(l.other_agent, "conversation", "conversations")} in the log ${l.other_agent === 1 ? "belongs" : "belong"} to another agent and ${l.other_agent === 1 ? "is" : "are"} not in this export.`);
-  if (l.outcome_before_call) notes.push(`${plural3(l.outcome_before_call, "conversation has", "conversations have")} an outcome recorded before its first call. ${l.outcome_before_call === 1 ? "It was" : "They were"} still joined, because another process may record outcomes; check that clocks agree.`);
+  if (l.no_outcome) notes.push(`${plural4(l.no_outcome, "conversation has", "conversations have")} a recorded call and no outcome yet (by first-served version: ${Object.entries(built.no_outcome_by).sort().map(([t, n]) => `${printable2(t, 40)} ${n}`).join(", ")}). They are in the export with empty values, so the analysis counts them as missing outcomes in that version until a later export fills them in.`);
+  if (l.outcome_without_call) notes.push(`${plural4(l.outcome_without_call, "conversation has", "conversations have")} an outcome but no recorded call, so ${l.outcome_without_call === 1 ? "it was" : "they were"} left out. Check that every agent call goes through the recorder.`);
+  if (l.served_two_versions) notes.push(`${plural4(l.served_two_versions, "conversation was", "conversations were")} served by a second prompt version before or with the outcome (by first-served version: ${Object.entries(built.two_versions_by).sort().map(([t, n]) => `${printable2(t, 40)} ${n}`).join(", ")}). Their outcome cannot be credited to one prompt, so they are in the export under the first version with empty values and count as missing outcomes there.`);
+  if (l.other_version_after_outcome) notes.push(`${plural4(l.other_version_after_outcome, "conversation was", "conversations were")} served by another prompt version only after the outcome was recorded. The row is unchanged.`);
+  if (l.outcome_after_other_version) notes.push(`${plural4(l.outcome_after_other_version, "of them has", "of them have")} an outcome recorded again after that call. It is not used: it may have been influenced by the other prompt.`);
+  if (l.outside_window) notes.push(`${plural4(l.outside_window, "conversation", "conversations")} in the log started outside the window and ${l.outside_window === 1 ? "is" : "are"} not in this export.`);
+  if (log.malformed) notes.push(`${plural4(log.malformed, "line", "lines")} of the log could not be read and ${log.malformed === 1 ? "was" : "were"} skipped.`);
+  for (const [kind, n] of Object.entries(log.problems)) notes.push(`The recorder logged ${plural4(n, "problem", "problems")} of kind ${kind}: some calls or outcomes may be missing from the log.`);
+  if (l.other_agent) notes.push(`${plural4(l.other_agent, "conversation", "conversations")} in the log ${l.other_agent === 1 ? "belongs" : "belong"} to another agent and ${l.other_agent === 1 ? "is" : "are"} not in this export.`);
+  if (l.outcome_before_call) notes.push(`${plural4(l.outcome_before_call, "conversation has", "conversations have")} an outcome recorded before its first call. ${l.outcome_before_call === 1 ? "It was" : "They were"} still joined, because another process may record outcomes; check that clocks agree.`);
   const other = Object.values(built.other_tags).reduce((s, n) => s + n, 0);
-  if (other) notes.push(`${plural3(other, "conversation carries", "conversations carry")} a prompt version that the pilot does not name.`);
+  if (other) notes.push(`${plural4(other, "conversation carries", "conversations carry")} a prompt version that the pilot does not name.`);
   return { path: path4, export_id: exportId, rows: built.rows, by_version: built.by_version, notes };
 }
 async function exportLog(store, flags, deps) {
@@ -37401,7 +37669,7 @@ var init_export = __esm({
 
 // src/pilot/watch.ts
 import { readdirSync as readdirSync5 } from "node:fs";
-import { dirname as dirname9, join as join33 } from "node:path";
+import { dirname as dirname9, join as join34 } from "node:path";
 function whole(interimDays) {
   if (!Number.isInteger(interimDays) || interimDays < 1) throw new PilotError("usage", "--interim-days must be a whole number of 1 or more.");
   return interimDays;
@@ -37502,7 +37770,7 @@ function scanInbox(store, inbox, experimentId, spec) {
   const importedKeys = new Set(imports.map((e) => e.key));
   const newest = Math.max(-Infinity, ...imports.map((e) => ms(store.get("telemetry", e.refs.telemetry).exported_at)));
   const files = names2.map((name) => {
-    const path4 = join33(inbox, name);
+    const path4 = join34(inbox, name);
     try {
       const imported = importTelemetry({
         text: readBounded(path4),
@@ -37689,7 +37957,7 @@ var init_watch = __esm({
 
 // src/pilot/cases.ts
 import { existsSync as existsSync23, mkdirSync as mkdirSync14, writeFileSync as writeFileSync14 } from "node:fs";
-import { dirname as dirname10, join as join34, resolve as resolve8 } from "node:path";
+import { dirname as dirname10, join as join35, resolve as resolve8 } from "node:path";
 function describe(check) {
   switch (check.kind) {
     case "reply_includes":
@@ -37791,7 +38059,7 @@ async function cases3(store, flags, deps) {
       throw e;
     }
   } else {
-    path4 = join34(store.dir, "cases", `cases-${shortId(id)}.jsonl`);
+    path4 = join35(store.dir, "cases", `cases-${shortId(id)}.jsonl`);
     writeAtomic(path4, text4);
   }
   deps.say(`Wrote ${path4}`);
@@ -38465,8 +38733,8 @@ __export(demo_exports, {
   demo: () => demo
 });
 import { execFileSync as execFileSync10 } from "node:child_process";
-import { existsSync as existsSync24, mkdirSync as mkdirSync15, readdirSync as readdirSync6, readFileSync as readFileSync25, statSync as statSync7, writeFileSync as writeFileSync15 } from "node:fs";
-import { dirname as dirname11, join as join35, resolve as resolve9 } from "node:path";
+import { existsSync as existsSync24, mkdirSync as mkdirSync15, readdirSync as readdirSync6, readFileSync as readFileSync26, statSync as statSync7, writeFileSync as writeFileSync15 } from "node:fs";
+import { dirname as dirname11, join as join36, resolve as resolve9 } from "node:path";
 function git4(args, cwd) {
   const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_"))), ...GIT_ENV };
   return execFileSync10("git", args, { cwd, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
@@ -38474,7 +38742,7 @@ function git4(args, cwd) {
 function filesUnder(dir) {
   if (!existsSync24(dir)) return [];
   return readdirSync6(dir).flatMap((name) => {
-    const path4 = join35(dir, name);
+    const path4 = join36(dir, name);
     return statSync7(path4).isDirectory() ? filesUnder(path4) : [path4];
   });
 }
@@ -38484,19 +38752,19 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
   if (typeof outFlag !== "string" || !outFlag.trim()) throw new PilotError("usage", "--out is required: a new, empty directory for the demo's inputs, pilot records and reports.");
   const out = resolve9(outFlag);
   if (existsSync24(out) && readdirSync6(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
-  const inputs = join35(out, "inputs");
-  const repoDir = join35(out, "customer-repo");
-  const dir = join35(out, "pilot");
+  const inputs = join36(out, "inputs");
+  const repoDir = join36(out, "customer-repo");
+  const dir = join36(out, "pilot");
   mkdirSync15(inputs, { recursive: true });
-  mkdirSync15(join35(repoDir, dirname11(DEMO.prompt_path)), { recursive: true });
+  mkdirSync15(join36(repoDir, dirname11(DEMO.prompt_path)), { recursive: true });
   const put = (name, content) => {
-    const path4 = join35(inputs, name);
+    const path4 = join36(inputs, name);
     writeFileSync15(path4, content);
     return path4;
   };
   const json = (value) => `${JSON.stringify(value, null, 2)}
 `;
-  writeFileSync15(join35(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
+  writeFileSync15(join36(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
   git4(["init", "-q", "-b", DEMO.base], repoDir);
   git4(["add", DEMO.prompt_path], repoDir);
   git4(["commit", "-q", "-m", "Juniper prompt v14"], repoDir);
@@ -38557,7 +38825,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Synthe enterprise pilot: synthetic run for Fernhill Outfitters' support agent Juniper (all data invented).");
     say(`Inputs: ${inputs}   Pilot records and reports: ${dir}`);
     expect("init succeeds", await run2("Freeze the contract and the baseline prompt", ["init", "--config", put("pilot.json", json(demoConfig())), "--repo-dir", repoDir]) === 0);
-    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync24(join35(dir, "reports", "baseline.md")));
+    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync24(join36(dir, "reports", "baseline.md")));
     expect("pack frozen", await run2("Freeze the redacted conversation pack", ["pack", "--file", put("pack.v1.json", json(demoPack()))]) === 0);
     const packV1 = activePack(store);
     expect("discover succeeds", await run2("Find recurring failures on the discovery cases", ["discover", "--model", model]) === 0);
@@ -38664,7 +38932,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("approval recorded against the exact candidate and experiment", await run2("Record the approval", ["approve", "--candidate", candD, "--experiment", expD, "--approver", DEMO.metric_owner]) === 0);
     const tagD = candidateTag(candD);
     const specD = store.get("experiment", expD);
-    const logDir = join35(out, "agent-log");
+    const logDir = join36(out, "agent-log");
     let recorderClock = 0;
     const traffic = demoTraffic({
       recorder: pilotRecorder({ logDir, agent: "Juniper", idKey: DEMO_ID_KEY, now: () => new Date(recorderClock) }),
@@ -38681,7 +38949,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     });
     const looksD = () => store.find("analysis.decided").filter((e) => e.refs.experiment === expD);
     const importsD = () => store.find("telemetry.imported").filter((e) => e.refs.scope === expD).length;
-    const watchMd = () => readFileSync25(join35(dir, "reports", "WATCH.md"), "utf8");
+    const watchMd = () => readFileSync26(join36(dir, "reports", "WATCH.md"), "utf8");
     const tick2 = async (title, iso3) => {
       traffic.upTo(Date.parse(iso3));
       atTime(iso3);
@@ -38692,7 +38960,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const lastLook = () => store.get("analysis", looksD().at(-1)?.refs.analysis ?? "");
     expect("watch --log without --assignment is refused, even while no look is due", await run2("Try a watch tick without saying how traffic was assigned", ["watch", "--log", logDir]) === 1 && looksD().length === 0);
     const t0 = await tick2("Watch tick before the experiment starts (2026-11-27)", "2026-11-27T09:00:00Z");
-    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join35(dir, "exports")).length === 0);
+    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join36(dir, "exports")).length === 0);
     const t1 = await tick2("Watch tick at the end of day 1 (2026-11-29)", "2026-11-29T23:30:00Z");
     expect("day 1: one interim look, HOLD", t1.code === 0 && looksD().length === 1 && lastLook().recommendation === "hold" && lastLook().final === false && importsD() === 1);
     const t1b = await tick2("Watch tick again on day 1, twenty minutes later", "2026-11-29T23:50:00Z");
@@ -38706,9 +38974,9 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("the cutoff: the final analysis is HOLD (inconclusive), final", t4.code === 0 && looksD().length === 4 && finalD.recommendation === "hold" && finalD.final === true && t4.md.startsWith("# HOLD"));
     expect("the lift is real but smaller than the minimum effect, so it is not a keep", (finalD.primary.candidate.estimate ?? 0) - (finalD.primary.baseline.estimate ?? 0) < specD.primary.min_effect);
     const importsAtFinal = importsD();
-    const exportsAtFinal = filesUnder(join35(dir, "exports")).length;
+    const exportsAtFinal = filesUnder(join36(dir, "exports")).length;
     const t5 = await tick2("Watch tick after the final analysis (2026-12-16)", "2026-12-16T09:00:00Z");
-    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join35(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
+    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join36(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
     const pl = traffic.planted;
     const byVersion = (m) => Object.entries(m).sort().map(([t, n]) => `${t} ${n}`).join(", ");
     const count3 = (m) => Object.values(m).reduce((a, b) => a + b, 0);
@@ -38721,9 +38989,9 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect(`the cutoff export notes carry the planted counts (${count3(pl.no_outcome)} no outcome, ${count3(pl.two_versions)} two versions, ${pl.other_version_after_outcome} after the outcome, ${pl.outcome_after_other_version} of them with the outcome recorded again, ${pl.outcome_without_call} outcome without a call), in the tick's output and in WATCH.md`, count3(pl.no_outcome) === TRAFFIC.no_outcome.length && count3(pl.two_versions) === TRAFFIC.call_before_outcome.length && pl.other_version_after_outcome === TRAFFIC.call_after_outcome.length && pl.outcome_after_other_version === TRAFFIC.repeat_after_other_call.length && pl.outcome_without_call === TRAFFIC.outcome_without_call.length && notesOk(t4.out) && notesOk(t4.md));
     expect("every conversation with a recorded call is a row, including the ones with no outcome or two versions", finalD.coverage.rows === 14 * TRAFFIC.per_day);
     expect("no new GitHub request was made after the review", github.requests.length === requestsAfterReview);
-    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync25(p, "utf8")).join("\n");
+    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync26(p, "utf8")).join("\n");
     const rawId = /fernhill-(conv|unit|orphan)-/;
-    const pilotText = [...filesUnder(join35(dir, "reports")), ...filesUnder(join35(dir, "exports")), join35(dir, "journal.jsonl")].map((p) => readFileSync25(p, "utf8")).join("\n");
+    const pilotText = [...filesUnder(join36(dir, "reports")), ...filesUnder(join36(dir, "exports")), join36(dir, "journal.jsonl")].map((p) => readFileSync26(p, "utf8")).join("\n");
     const canariesList = Object.values(CANARIES);
     expect(`the ${filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).length} log files hold no raw conversation or unit id and no message text`, logText.length > 0 && !rawId.test(logText) && !traffic.rawIds.filter((_, i) => i % 997 === 0).some((id) => logText.includes(id)) && !canariesList.some((c) => logText.toLowerCase().includes(c.toLowerCase())));
     expect("the exports, reports and journal hold no raw conversation or unit id either", !rawId.test(pilotText));
@@ -38736,8 +39004,8 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const canaries = Object.values(CANARIES);
     const leaks = (text4) => canaries.some((c) => text4.toLowerCase().includes(c.toLowerCase()));
     expect(`nothing sent to GitHub holds pack conversation text (${github.requests.length} requests checked)`, !github.requests.some((r) => leaks(r.body) || leaks(r.path)));
-    expect("no report holds pack conversation text", !filesUnder(join35(dir, "reports")).some((p) => leaks(readFileSync25(p, "utf8"))));
-    expect("the journal holds no pack conversation text", !leaks(readFileSync25(join35(dir, "journal.jsonl"), "utf8")));
+    expect("no report holds pack conversation text", !filesUnder(join36(dir, "reports")).some((p) => leaks(readFileSync26(p, "utf8"))));
+    expect("the journal holds no pack conversation text", !leaks(readFileSync26(join36(dir, "journal.jsonl"), "utf8")));
     expect("nothing printed by the commands holds pack conversation text", !leaks(transcript2.join("\n")));
     expect("the GitHub token went only to the loopback server and was never printed", github.requests.every((r) => r.authorization === "Bearer demo-token-for-the-loopback-server") && !transcript2.join("\n").includes("demo-token-for-the-loopback-server"));
     expect("no provider credential was read: the commands saw only the GitHub token variable", Object.keys(inner.env).length === 1);
@@ -38745,21 +39013,21 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Outcomes:");
     for (const line of outcomes) say(`- ${line}`);
     const decisionFiles = [`replay-${shortId(candA)}-pack-v1.md`, `decision-${shortId(expB)}.md`, `decision-${shortId(expC)}.md`, `decision-${shortId(expD)}.md`];
-    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync24(join35(dir, "reports", f))));
+    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync24(join36(dir, "reports", f))));
     say("");
     say("The four outcomes, and the file that holds each decision:");
-    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join35(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
-    say(`- Reverted: candidate ${shortId(candB)}   ${join35(dir, "reports", `decision-${shortId(expB)}.md`)}`);
-    say(`- Kept: candidate ${shortId(candC)}   ${join35(dir, "reports", `decision-${shortId(expC)}.md`)}`);
-    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join35(dir, "reports", `decision-${shortId(expD)}.md`)}`);
+    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join36(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
+    say(`- Reverted: candidate ${shortId(candB)}   ${join36(dir, "reports", `decision-${shortId(expB)}.md`)}`);
+    say(`- Kept: candidate ${shortId(candC)}   ${join36(dir, "reports", `decision-${shortId(expC)}.md`)}`);
+    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join36(dir, "reports", `decision-${shortId(expD)}.md`)}`);
     say("");
     say("Evidence to open:");
-    say(`- ${join35(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
-    say(`- ${join35(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
-    say(`- ${join35(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
-    say(`- ${join35(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
-    say(`- ${join35(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
-    say(`- ${join35(dir, "journal.jsonl")}   every step, in order`);
+    say(`- ${join36(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
+    say(`- ${join36(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
+    say(`- ${join36(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
+    say(`- ${join36(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
+    say(`- ${join36(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
+    say(`- ${join36(dir, "journal.jsonl")}   every step, in order`);
     say("");
     say(failures.length === 0 ? `Synthetic pilot passed: ${step} steps, every expectation held (${((Date.now() - startedAt) / 1e3).toFixed(1)} s).` : `Synthetic pilot FAILED: ${failures.length} expectation(s) did not hold:`);
     for (const f of failures) say(`- ${f}`);
@@ -38966,7 +39234,7 @@ init_prompt();
 init_state();
 init_safety();
 import { spawn as spawn4 } from "node:child_process";
-import { existsSync as existsSync25, readFileSync as readFileSync26, writeFileSync as writeFileSync16 } from "node:fs";
+import { existsSync as existsSync25, readFileSync as readFileSync27, writeFileSync as writeFileSync16 } from "node:fs";
 import { createInterface as createInterface4 } from "node:readline/promises";
 
 // src/loop/report.ts
@@ -39443,7 +39711,7 @@ var SCHEMA2 = {
   required: ["edits", "summary", "title"],
   additionalProperties: false
 };
-var outcome = (score) => score === null || score === void 0 ? "unknown" : score > 50 ? "won" : score < 50 ? "lost" : "tied";
+var outcome = (score2) => score2 === null || score2 === void 0 ? "unknown" : score2 > 50 ? "won" : score2 < 50 ? "lost" : "tied";
 function contrasts(train, scored) {
   const spread = (s) => {
     const values = scored.map((c) => c.train.find((r) => r.id === s.id)?.score).filter((v) => typeof v === "number");
@@ -39458,14 +39726,14 @@ async function composeCandidate(a) {
   const cases4 = contrasts(train, scored);
   if (cases4.length === 0) return { candidate: null, skipped: "the candidates did the same on every training case", costUsd: 0 };
   const byId = new Map(a.candidates.map((c) => [c.id, c]));
-  const tally2 = (c) => {
+  const tally3 = (c) => {
     const n = (o) => c.train.filter((r) => outcome(r.score) === o).length;
     return `won ${n("won")}, lost ${n("lost")}, tied ${n("tied")}${n("unknown") ? `, unknown ${n("unknown")}` : ""} of ${c.train.length}`;
   };
   const tried = scored.map((c) => {
     const cand = byId.get(c.id);
     const edits = (cand.edits ?? []).map((e) => `  ${e.find ? `replaced "${clip(e.find, 200)}"` : "added at the end"} with "${clip(e.replace, 400)}"`);
-    return [`${c.id}: ${cand.summary ?? "(no summary)"} (against the current prompt: ${tally2(c)})`, ...edits].join("\n");
+    return [`${c.id}: ${cand.summary ?? "(no summary)"} (against the current prompt: ${tally3(c)})`, ...edits].join("\n");
   });
   const shown3 = (t) => t ? `<reply>${t.slice(0, REPLY_SHOWN)}</reply>` : "(no reply)";
   const examples = cases4.map((s) => [
@@ -39669,10 +39937,10 @@ Which reply better meets the goal for this situation? ${NO_LENGTH_PREFERENCE} An
     const valid = v && (v.better === "A" || v.better === "B" || v.better === "tie") && typeof v.a_guardrail_ok === "boolean" && typeof v.b_guardrail_ok === "boolean";
     if (!valid) return { row: { id: s.id, score: null, violation: null }, currentViolation: null };
     const challengerWon = v.better === (first ? "A" : "B");
-    const score = v.better === "tie" ? TIE : challengerWon ? WIN : LOSS;
+    const score2 = v.better === "tie" ? TIE : challengerWon ? WIN : LOSS;
     const challengerOk = first ? v.a_guardrail_ok : v.b_guardrail_ok;
     const currentOk = first ? v.b_guardrail_ok : v.a_guardrail_ok;
-    return { row: { id: s.id, score, violation: !challengerOk, reply: challenger.slice(0, REPLY_KEPT) }, currentViolation: !currentOk, full: challenger };
+    return { row: { id: s.id, score: score2, violation: !challengerOk, reply: challenger.slice(0, REPLY_KEPT) }, currentViolation: !currentOk, full: challenger };
   };
   const challenge = async (_who, prompt, set, currentReplies, stop2) => {
     const flip = random() < 0.5;
@@ -41619,7 +41887,7 @@ Scenarios: ${train} train + ${scenarios.length - train} holdout = ${scenarios.le
   if (judged.length === 0) return fail3("None of the test cases could be judged, so there's nothing to compare. Try again in a few minutes; if it keeps happening, open an issue at https://github.com/synthelabs/synthe/issues");
   const avg = (rows) => rows.reduce((n, r) => n + r.score, 0) / rows.length;
   const judgeBefore = avg(judged.map(([b]) => b)), judgeAfter = avg(judged.map(([, a]) => a));
-  const count3 = (score) => judged.filter(([, a]) => a.score === score).length;
+  const count3 = (score2) => judged.filter(([, a]) => a.score === score2).length;
   const lines = [];
   lines.push(`Test cases: better on ${to} in ${count3(WIN)}, worse in ${count3(LOSS)}, the same in ${count3(TIE)}${judged.length < scenarios.length ? `. ${scenarios.length - judged.length} couldn't be judged and are left out` : ""}`, "");
   lines.push("Judge score (all scenarios, head to head: 50 is even)", `  Before: ${judgeBefore.toFixed(1)}  After: ${judgeAfter.toFixed(1)}  Change: ${signed(judgeAfter - judgeBefore)}`, "");
@@ -43907,7 +44175,7 @@ function onInterrupt2(cleanup) {
     for (const s of signals) process.off(s, stop2);
   };
 }
-var template = () => readFileSync26(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync27(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms2) => new Promise((r) => setTimeout(r, ms2)) };
 function setUpHere() {
   if (existsSync25(GOAL_FILE)) return true;
@@ -43939,7 +44207,7 @@ async function status2() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync26(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync27(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -43947,7 +44215,7 @@ async function status2() {
   const sameModel = sameModelNote(goal.models);
   if (sameModel) console.log(sameModel);
   try {
-    const rows = parseScenarios(readFileSync26(goal.scenarios, "utf8"));
+    const rows = parseScenarios(readFileSync27(goal.scenarios, "utf8"));
     const power = powerLines(goal, rows.filter((r) => r.split === "train").length, rows.filter((r) => r.split === "holdout").length);
     console.log(`What your test cases can detect: ${power[0]} ${power.at(-1)}`);
   } catch {
@@ -43966,7 +44234,7 @@ async function changes() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync26(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync27(GOAL_FILE, "utf8"));
   console.log(changesText(goal, s));
 }
 async function stop() {
@@ -43985,7 +44253,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync26(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync27(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -43995,7 +44263,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync25(goal.scenarios) ? sha256(readFileSync26(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync25(goal.scenarios) ? sha256(readFileSync27(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -44024,7 +44292,7 @@ async function undoRound() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync26(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync27(GOAL_FILE, "utf8"));
   const token2 = (await run("gh", ["auth", "token"])).trim();
   const history = async (path4) => {
     const shas = (await run("git", ["log", "--format=%H", "--", path4])).split("\n").filter(Boolean);
@@ -44034,7 +44302,7 @@ async function undoRound() {
 }
 function localRun(command) {
   if (!setUpHere()) return null;
-  const goal = parseGoal(readFileSync26(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync27(GOAL_FILE, "utf8"));
   const credential = localCredential(process.env, goal.provider);
   if (!credential) {
     console.log(noLocalCredential(command, goal));
@@ -44042,13 +44310,13 @@ function localRun(command) {
     return null;
   }
   console.log(credential.line);
-  const prompt = readPrompt(readFileSync26(goal.prompt.path, "utf8"), goal, null);
+  const prompt = readPrompt(readFileSync27(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync26(goal.scenarios, "utf8")), model: configuredModel(credential.key, goal.provider) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync27(goal.scenarios, "utf8")), model: configuredModel(credential.key, goal.provider) };
 }
 function noLocalCredential(command, goal) {
   if (goal.provider?.kind === "openai-compatible") return `\`npx synthe ${command}\` runs on your computer, changing nothing, and needs your key for ${providerHost(goal.provider)}. Set SYNTHE_API_KEY in your environment, then run this again.`;
@@ -44078,7 +44346,7 @@ async function calibrateChecks() {
   const result2 = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result2) return;
   if (result2.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync26(GOAL_FILE, "utf8"));
+    const saved = JSON.parse(readFileSync27(GOAL_FILE, "utf8"));
     writeFileSync16(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result2.checks }, null, 2)}
 `);
     console.log(`
@@ -44148,7 +44416,7 @@ async function main2() {
   else if (command === "submit") process.exitCode = await submit({ say: console.log, ask, run, exec: shellExec, env: process.env }, process.cwd(), submitOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
-    process.exitCode = await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync26(GOAL_FILE, "utf8")).provider, process.cwd()) ? 0 : 1;
+    process.exitCode = await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync27(GOAL_FILE, "utf8")).provider, process.cwd()) ? 0 : 1;
   } else if (command === "upgrade") console.log(upgrade(process.cwd(), template()));
   else if (command === "stop") await stop();
   else if (command === "status") await status2();

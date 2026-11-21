@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "name": "demo-knob",
+  "goal": "Raise the level in knob.txt so that the score goes up. The level is a whole number from 0 to 3.",
+  "artifact": ["knob.txt"],
+  "measure": { "command": "node measure.js", "direction": "higher", "unit": "points", "runs": 5 },
+  "guards": ["node check.js"],
+  "split": { "holdout": true },
+  "proposer": "model",
+  "budget": { "max_rounds": 5, "max_calls": 10 }
+}
