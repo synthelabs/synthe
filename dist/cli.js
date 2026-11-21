@@ -387,12 +387,12 @@ function nonInferiorityP(wins, losses, margin = NON_INFERIORITY_MARGIN) {
   if (!Number.isSafeInteger(wins) || !Number.isSafeInteger(losses) || wins < 0 || losses < 0 || n === 0) return 1;
   const p = 0.5 + margin;
   let logTerm = n * Math.log(1 - p);
-  let tail = Math.exp(logTerm);
+  let tail2 = Math.exp(logTerm);
   for (let k = 0; k < losses; k++) {
     logTerm += Math.log(n - k) - Math.log(k + 1) + Math.log(p) - Math.log(1 - p);
-    tail += Math.exp(logTerm);
+    tail2 += Math.exp(logTerm);
   }
-  return Math.min(1, tail);
+  return Math.min(1, tail2);
 }
 function notWorseProblem(id, split, maxP, where) {
   if (split === null) return `${id}: ${where} could not be compared`;
@@ -455,13 +455,13 @@ function mean(rows) {
 function signP(wins, losses) {
   const n = wins + losses;
   if (n === 0) return 1;
-  let tail = 0;
+  let tail2 = 0;
   let ways = 1;
   for (let i = 0; i <= losses; i++) {
-    tail += ways;
+    tail2 += ways;
     ways = ways * (n - i) / (i + 1);
   }
-  return Math.min(1, tail / 2 ** n);
+  return Math.min(1, tail2 / 2 ** n);
 }
 function paired(after, before) {
   const scores = new Map(before.map((r) => [r.id, r.score]));
@@ -659,6 +659,42 @@ var init_merge_rule = __esm({
     };
     breaks = (rows) => rows.filter((r) => r.violation === true).length;
     judgedAsShorter = (c, goal) => c.kind === "shorter" && goal.merge_rule.allow_shorter === true;
+  }
+});
+
+// src/core/cost.ts
+function costUsd(model, usage) {
+  const base = PRICES[model];
+  if (!base || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
+  const totalInput = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
+  const price = model === "claude-haiku-5-5" && totalInput > 1e5 ? { input: 0.5, output: 2.5 } : base;
+  const input = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) * 1.25 + (usage.cache_read_input_tokens ?? 0) * 0.1;
+  return (input * price.input + usage.output_tokens * price.output) / 1e6;
+}
+function sumCosts(costs) {
+  let total = 0;
+  for (const c of costs) {
+    if (c === null) return null;
+    total += c;
+  }
+  return total;
+}
+function pricedCost(price, input, output) {
+  if (!price || typeof input !== "number" || typeof output !== "number" || !Number.isFinite(input) || !Number.isFinite(output)) return null;
+  return (input * price.input + output * price.output) / 1e6;
+}
+var PRICES, knownModels;
+var init_cost = __esm({
+  "src/core/cost.ts"() {
+    "use strict";
+    PRICES = {
+      "claude-haiku-5-5": { input: 0.1, output: 0.5 },
+      "claude-sonnet-5-5": { input: 2, output: 10 },
+      "claude-opus-5-5": { input: 4, output: 20 },
+      // Teams still on Sonnet 4.5 need a price to see what moving off it (it retires 2026-11-30) would cost.
+      "claude-sonnet-4-5": { input: 3, output: 15 }
+    };
+    knownModels = () => Object.keys(PRICES);
   }
 });
 
@@ -6177,25 +6213,25 @@ var init_parser2 = __esm({
       return tokens2.slice(0, length);
     };
     unstrip = (tokens2) => {
-      let tail = [];
+      let tail2 = [];
       tokens2.map((token2) => {
         if (token2.type === "brace") {
           if (token2.value === "{") {
-            tail.push("}");
+            tail2.push("}");
           } else {
-            tail.splice(tail.lastIndexOf("}"), 1);
+            tail2.splice(tail2.lastIndexOf("}"), 1);
           }
         }
         if (token2.type === "paren") {
           if (token2.value === "[") {
-            tail.push("]");
+            tail2.push("]");
           } else {
-            tail.splice(tail.lastIndexOf("]"), 1);
+            tail2.splice(tail2.lastIndexOf("]"), 1);
           }
         }
       });
-      if (tail.length > 0) {
-        tail.reverse().map((item) => {
+      if (tail2.length > 0) {
+        tail2.reverse().map((item) => {
           if (item === "}") {
             tokens2.push({
               type: "brace",
@@ -10303,7 +10339,7 @@ function errnoCode(err) {
   return typeof code === "string" ? code : void 0;
 }
 async function canonicalize(abs) {
-  const tail = [];
+  const tail2 = [];
   let prefix = abs;
   let hops = 0;
   for (; ; ) {
@@ -10321,7 +10357,7 @@ async function canonicalize(abs) {
         const parent = path.dirname(prefix);
         if (parent === prefix)
           throw lstatErr;
-        tail.push(path.basename(prefix));
+        tail2.push(path.basename(prefix));
         prefix = parent;
         continue;
       }
@@ -10333,7 +10369,7 @@ async function canonicalize(abs) {
       prefix = path.resolve(path.dirname(prefix), await fs2.readlink(prefix));
       continue;
     }
-    return tail.length ? path.join(real, ...tail.reverse()) : real;
+    return tail2.length ? path.join(real, ...tail2.reverse()) : real;
   }
 }
 async function confineToRoot(root, p, opts) {
@@ -10431,10 +10467,10 @@ async function setupSkills(ctx) {
   for (const skill of session.agent.skills) {
     try {
       const version = await client.beta.skills.versions.retrieve(skill.version, { skill_id: skill.skill_id });
-      let dirname10 = path.basename(version.name.trim());
-      if (dirname10 === "" || dirname10 === "." || dirname10 === "..")
-        dirname10 = skill.skill_id;
-      const dest = path.resolve(skillsRoot, dirname10);
+      let dirname11 = path.basename(version.name.trim());
+      if (dirname11 === "" || dirname11 === "." || dirname11 === "..")
+        dirname11 = skill.skill_id;
+      const dest = path.resolve(skillsRoot, dirname11);
       if (dest !== skillsRoot && !dest.startsWith(skillsRoot + path.sep)) {
         log.warn("skill name escapes the skills dir; skipping", {
           component: "agent-tool-context",
@@ -10871,8 +10907,8 @@ var init_file_store = __esm({
          * the write fails with `ENOENT`.
          */
         async put(relPath, data, opts) {
-          const tail = relPath.replace(/\\/g, "/");
-          if (tail.endsWith("/") || tail.endsWith("/.") || tail === "" || tail === ".") {
+          const tail2 = relPath.replace(/\\/g, "/");
+          if (tail2.endsWith("/") || tail2.endsWith("/.") || tail2 === "" || tail2 === ".") {
             throw new FileStoreError(FileStoreError.NOT_A_FILE, relPath);
           }
           const dest = this.resolveUnderRoot(relPath);
@@ -11859,7 +11895,7 @@ function scrubbedShellEnv() {
 function betaBashTool(ctx) {
   rejectUnrestrictedPaths(ctx.unrestrictedPaths);
   let session;
-  let tail = Promise.resolve();
+  let tail2 = Promise.resolve();
   return betaTool({
     name: "bash",
     description: "Run a bash command in a persistent shell. State (cwd, env vars) persists across calls.",
@@ -11872,9 +11908,9 @@ function betaBashTool(ctx) {
       }
     },
     run: async ({ command, restart: restart2, timeout_ms }, context2) => {
-      const prev = tail;
+      const prev = tail2;
       const gate = promiseWithResolvers();
-      tail = gate.promise;
+      tail2 = gate.promise;
       try {
         await prev;
       } catch {
@@ -12399,8 +12435,8 @@ var init_node2 = __esm({
           if (idx < 0) {
             throw new AnthropicError("bash session terminated");
           }
-          const tail = __classPrivateFieldGet(this, _BashSession_buf, "f").slice(idx + sentinel2.length);
-          const m = tail.match(/^(-?\d+)/);
+          const tail2 = __classPrivateFieldGet(this, _BashSession_buf, "f").slice(idx + sentinel2.length);
+          const m = tail2.match(/^(-?\d+)/);
           const exitCode = m ? parseInt(m[1], 10) : -1;
           let out = __classPrivateFieldGet(this, _BashSession_buf, "f").slice(0, idx).replace(ANSI_RE, "").replace(/\n+$/, "");
           if (__classPrivateFieldGet(this, _BashSession_truncated, "f")) {
@@ -15314,7 +15350,7 @@ var init_connectors = __esm({
 
 // node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost.mjs
 var Cost;
-var init_cost = __esm({
+var init_cost2 = __esm({
   "node_modules/@anthropic-ai/sdk/resources/beta/organization/analytics/cost.mjs"() {
     init_resource();
     init_pagination();
@@ -16042,8 +16078,8 @@ var init_analytics = __esm({
     init_artifacts();
     init_connectors();
     init_connectors();
-    init_cost();
-    init_cost();
+    init_cost2();
+    init_cost2();
     init_cost_report();
     init_cost_report();
     init_plugins();
@@ -23713,16 +23749,16 @@ var init_ThreadState = __esm({
         __classPrivateFieldGet(this, _ThreadState_logger, "f").info(`Replaying the full message history under a new thread: reason=${reason} previous_message_id=${this.previousMessageId}`);
         __classPrivateFieldSet(this, _ThreadState_anchor, { type: "create", replacesLostThread: reason === "thread_not_found" }, "f");
       }, _ThreadState_retryPartialTurn = function _ThreadState_retryPartialTurn2() {
-        const tail = __classPrivateFieldGet(this, _ThreadState_stored, "f").at(-1);
-        if (__classPrivateFieldGet(this, _ThreadState_staged, "f").length || !tail || tail.reply && !tail.partial)
+        const tail2 = __classPrivateFieldGet(this, _ThreadState_stored, "f").at(-1);
+        if (__classPrivateFieldGet(this, _ThreadState_staged, "f").length || !tail2 || tail2.reply && !tail2.partial)
           return;
-        if (tail.reply)
+        if (tail2.reply)
           __classPrivateFieldGet(this, _ThreadState_stored, "f").pop();
         let turnStart = __classPrivateFieldGet(this, _ThreadState_stored, "f").length;
         while (turnStart > 0 && !__classPrivateFieldGet(this, _ThreadState_stored, "f")[turnStart - 1].reply)
           turnStart -= 1;
         __classPrivateFieldSet(this, _ThreadState_staged, __classPrivateFieldGet(this, _ThreadState_stored, "f").splice(turnStart), "f");
-        __classPrivateFieldGet(this, _ThreadState_logger, "f").info(`Re-sending the turn whose reply ended before \`message_stop\`: partial_reply_id=${tail.reply?.id ?? null}`);
+        __classPrivateFieldGet(this, _ThreadState_logger, "f").info(`Re-sending the turn whose reply ended before \`message_stop\`: partial_reply_id=${tail2.reply?.id ?? null}`);
       }, _ThreadState_dropsRefusedTurn = function _ThreadState_dropsRefusedTurn2(reply) {
         if (reply.stop_reason !== "refusal" || __classPrivateFieldGet(this, _ThreadState_anchor, "f").type === "never_threaded")
           return false;
@@ -28668,6 +28704,214 @@ var init_sdk = __esm({
   }
 });
 
+// src/model/openai-compatible.ts
+function retryAfterMs(headers, now = Date.now()) {
+  const ms2 = Number(headers.get("retry-after-ms"));
+  if (headers.get("retry-after-ms") && Number.isFinite(ms2) && ms2 >= 0) return Math.min(ms2, MAX_WAIT_MS);
+  const raw = headers.get("retry-after");
+  if (!raw) return null;
+  const seconds2 = Number(raw);
+  if (Number.isFinite(seconds2) && seconds2 >= 0) return Math.min(seconds2 * 1e3, MAX_WAIT_MS);
+  const at = Date.parse(raw);
+  return Number.isFinite(at) ? Math.min(Math.max(0, at - now), MAX_WAIT_MS) : null;
+}
+function textOf(content) {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((p) => p && typeof p === "object" && typeof p.text === "string" ? p.text : "").join("");
+  return null;
+}
+function openAiCompatibleModel(o) {
+  const base = o.baseUrl.trim().replace(/\/+$/, "");
+  const url = new URL(`${base}/chat/completions`);
+  const host = url.host;
+  const loopback = isLoopback(url);
+  const sleep2 = o.sleep ?? ((ms2) => new Promise((resolve9) => setTimeout(resolve9, ms2)));
+  const now = o.now ?? Date.now;
+  const gap = o.maxRequestsPerMinute ? 6e4 / o.maxRequestsPerMinute : 0;
+  let nextAt = 0;
+  const pace = async () => {
+    if (!gap) return;
+    const t = now(), at = Math.max(t, nextAt);
+    nextAt = at + gap;
+    if (at > t) await sleep2(at - t);
+  };
+  let active = 0;
+  const waiting2 = [];
+  const slot = async () => {
+    if (!gap) return () => {
+    };
+    while (active >= PACED_AT_ONCE) await new Promise((resolve9) => waiting2.push(resolve9));
+    active++;
+    return () => {
+      active--;
+      waiting2.shift()?.();
+    };
+  };
+  const hide = (text4) => o.apiKey ? text4.split(o.apiKey).join("[your key]") : text4;
+  const noSchema = /* @__PURE__ */ new Set();
+  const completionTokens = /* @__PURE__ */ new Set();
+  async function post(model, body) {
+    for (let attempt = 0; ; attempt++) {
+      let response;
+      await pace();
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}` },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+          redirect: "error"
+          // a redirect would carry the key to wherever it points
+        });
+      } catch (error) {
+        if (attempt < MAX_RETRIES) {
+          await sleep2(backoffMs(attempt));
+          continue;
+        }
+        throw new ProviderError(`Couldn't reach ${host}: ${hide(error instanceof Error ? error.message : String(error))}`, { status: null, host, model, loopback });
+      }
+      const text4 = await response.text();
+      let json = null;
+      try {
+        json = JSON.parse(text4);
+      } catch {
+      }
+      const credit = CREDIT.test(text4) || response.status === 402;
+      const daily = response.status === 429 && DAILY.test(text4);
+      const retryable = response.status === 429 && !credit && !daily || response.status === 408 || response.status >= 500;
+      if (retryable && attempt < MAX_RETRIES) {
+        await sleep2(retryAfterMs(response.headers) ?? backoffMs(attempt));
+        continue;
+      }
+      return { status: response.status, json, text: text4 };
+    }
+  }
+  const said = (r) => {
+    const m = r.json?.error?.message ?? r.json?.message ?? r.json?.error;
+    return (typeof m === "string" ? m : r.text).trim().slice(0, 300);
+  };
+  return {
+    async ask(a) {
+      const done = await slot();
+      try {
+        return await askOnce(a);
+      } finally {
+        done();
+      }
+    }
+  };
+  async function askOnce({ model, system, user: user2, maxTokens, schema, allowCutOff }) {
+    let jsonInPrompt = Boolean(schema) && noSchema.has(model);
+    let tokensField = completionTokens.has(model) ? "max_completion_tokens" : "max_tokens";
+    let retriedTokens = false, retriedSchema = false;
+    for (; ; ) {
+      const body = {
+        model,
+        messages: [...system === void 0 ? [] : [{ role: "system", content: system }], { role: "user", content: schema && jsonInPrompt ? `${user2}${JSON_ONLY(schema)}` : user2 }],
+        [tokensField]: maxTokens,
+        ...o.reasoningEffort ? { reasoning_effort: o.reasoningEffort } : {},
+        ...schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}
+      };
+      const r = await post(model, body);
+      if (r.status === 400) {
+        const why = said(r);
+        if (!retriedTokens && tokensField === "max_tokens" && /max_completion_tokens/.test(why)) {
+          retriedTokens = true;
+          tokensField = "max_completion_tokens";
+          completionTokens.add(model);
+          continue;
+        }
+        if (schema && !jsonInPrompt && !retriedSchema) {
+          retriedSchema = true;
+          jsonInPrompt = true;
+          noSchema.add(model);
+          continue;
+        }
+      }
+      if (r.status < 200 || r.status >= 300) {
+        const credit = CREDIT.test(r.text) || r.status === 402;
+        throw new ProviderError(`${host} answered ${r.status}: ${hide(said(r))}`, { status: r.status, host, model, loopback, credit, exhausted: r.status === 429 && !credit });
+      }
+      const choice = r.json?.choices?.[0];
+      const content = textOf(choice?.message?.content);
+      const refused = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim().length > 0;
+      const reason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
+      const raw = refused ? null : content;
+      const text4 = raw !== null && jsonInPrompt ? unfence(raw) : raw;
+      const finished = reason === "stop" && text4 !== null && text4.length > 0;
+      const cutOff = allowCutOff === true && reason === "length" && text4 !== null && text4.length > 0;
+      const usage = r.json?.usage;
+      const input = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
+      const output = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
+      const price = o.prices?.[model];
+      const costUsd2 = price ? pricedCost(price, input, output) : typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
+      return {
+        text: finished || cutOff ? text4 : null,
+        costUsd: costUsd2,
+        ...cutOff ? { truncated: true } : {},
+        ...input !== null && output !== null ? { usage: { input, output } } : {},
+        stopReason: refused ? "refusal" : reason
+      };
+    }
+  }
+}
+async function listModels(baseUrl, apiKey) {
+  const url = new URL(`${baseUrl.trim().replace(/\/+$/, "")}/models`);
+  const hide = (text4) => apiKey ? text4.split(apiKey).join("[your key]") : text4;
+  try {
+    const response = await fetch(url, { headers: { authorization: `Bearer ${apiKey}` }, redirect: "error", signal: AbortSignal.timeout(3e4) });
+    if (response.status === 404) return { ok: false, missing: true, why: "it has no /models route" };
+    if (!response.ok) return { ok: false, missing: false, why: `it answered ${response.status}` };
+    const body = await response.json();
+    const rows = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
+    if (!rows) return { ok: false, missing: false, why: "its answer had no list of models" };
+    const zero = (v) => (typeof v === "number" || typeof v === "string" && v.trim() !== "") && Number(v) === 0;
+    return { ok: true, models: rows.flatMap((m) => typeof m?.id === "string" && m.id ? [{ id: m.id.replace(/^models\//, ""), free: zero(m.pricing?.prompt) && zero(m.pricing?.completion) }] : []) };
+  } catch (error) {
+    return { ok: false, missing: false, why: hide(`it couldn't be reached (${error instanceof Error ? error.message : String(error)})`) };
+  }
+}
+var ProviderError, MAX_RETRIES, TIMEOUT_MS, MAX_WAIT_MS, CREDIT, DAILY, PACED_AT_ONCE, backoffMs, JSON_ONLY, unfence;
+var init_openai_compatible = __esm({
+  "src/model/openai-compatible.ts"() {
+    "use strict";
+    init_cost();
+    init_goal();
+    ProviderError = class extends Error {
+      status;
+      // null when the server couldn't be reached
+      host;
+      model;
+      loopback;
+      credit;
+      // out of credit or over a spending limit: a person has to act
+      exhausted;
+      // the free limit is used up for now: the next scheduled run tries again
+      constructor(message, a) {
+        super(message);
+        this.status = a.status;
+        this.host = a.host;
+        this.model = a.model;
+        this.loopback = a.loopback;
+        this.credit = a.credit ?? false;
+        this.exhausted = a.exhausted ?? false;
+      }
+    };
+    MAX_RETRIES = 4;
+    TIMEOUT_MS = 10 * 6e4;
+    MAX_WAIT_MS = 6e4;
+    CREDIT = /insufficient_quota|credit balance|out of credits?|insufficient (funds|balance)|spend(ing)? limit reached|payment required/i;
+    DAILY = /per[\s_-]?day|daily|requests_per_day|PerDay/i;
+    PACED_AT_ONCE = 2;
+    backoffMs = (attempt) => Math.min(500 * 2 ** attempt, 8e3) * (0.75 + Math.random() * 0.25);
+    JSON_ONLY = (schema) => `
+
+Reply with only a JSON object that matches this JSON schema, with no other text before or after it:
+${JSON.stringify(schema)}`;
+    unfence = (text4) => text4.match(/^\s*```(?:json)?\s*\n?([\s\S]*?)\n?\s*```\s*$/i)?.[1] ?? text4;
+  }
+});
+
 // src/core/evidence.ts
 import { execFileSync } from "node:child_process";
 import { existsSync as existsSync5, readdirSync, readFileSync as readFileSync6 } from "node:fs";
@@ -29017,6 +29261,46 @@ var init_repo = __esm({
   }
 });
 
+// src/improve/verdict.ts
+function brokenTests(baseline2, candidate) {
+  if (candidate.failing === void 0) return null;
+  if (candidate.failing !== null && candidate.failing.length === 0) return null;
+  if (baseline2.failing === void 0) return "Some tests still fail, and the current code was measured before Synthe recorded which tests fail, so a fixed test could be hiding a newly broken one. Run npx synthe improve again to measure it.";
+  if (candidate.failing === null || baseline2.failing === null) return "Some tests still fail, and Synthe could not tell which ones from the test output, so a fixed test could be hiding a newly broken one.";
+  const before = new Set(baseline2.failing);
+  const broken = candidate.failing.filter((t) => !before.has(t));
+  if (!broken.length) return null;
+  const named = broken.slice(0, MAX_NAMED).join("; ") + (broken.length > MAX_NAMED ? `; and ${broken.length - MAX_NAMED} more` : "");
+  return `It breaks ${broken.length === 1 ? "a test that" : `${broken.length} tests that`} passed in every run before: ${named}.`;
+}
+function verdict(direction, baseline2, candidate, guardPassed) {
+  const delta = candidate.median - baseline2.median;
+  const noise = Math.max(range(baseline2.runs), range(candidate.runs));
+  const result2 = (win3, why, reason) => ({ win: win3, why, delta, noise, ...reason && { reason } });
+  if (guardPassed === false) return result2(false, "The regression check did not pass.", "guard");
+  const better = direction === "higher" ? delta : -delta;
+  if (better <= 0) return result2(false, `Not better than the current code (${plainNumber(candidate.median)} vs ${plainNumber(baseline2.median)}).`, "worse");
+  const broken = brokenTests(baseline2, candidate);
+  if (broken) return result2(false, broken, "tests");
+  const d = plainNumber(Math.abs(delta));
+  if (Math.abs(delta) <= noise) return result2(false, `Within noise: changed by ${d}, but runs vary by up to ${plainNumber(noise)}.`, "noise");
+  return result2(true, `Better by ${d}, more than the run-to-run noise of ${plainNumber(noise)}${guardPassed ? "; the regression check passed." : "."}`);
+}
+var median, range, plainNumber, MAX_NAMED;
+var init_verdict = __esm({
+  "src/improve/verdict.ts"() {
+    "use strict";
+    median = (xs) => {
+      const s = [...xs].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    };
+    range = (xs) => xs.length ? Math.max(...xs) - Math.min(...xs) : 0;
+    plainNumber = (n) => String(Number.isInteger(n) ? n : Number(n.toFixed(2)));
+    MAX_NAMED = 3;
+  }
+});
+
 // src/improve/exec.ts
 import { spawn as spawn2 } from "node:child_process";
 import { performance } from "node:perf_hooks";
@@ -29075,16 +29359,243 @@ var init_exec = __esm({
   }
 });
 
+// src/solve/types.ts
+var isJudged, DEFAULT_RUNS2, DEFAULT_MAX_ROUNDS, MAX_MISSES2;
+var init_types2 = __esm({
+  "src/solve/types.ts"() {
+    "use strict";
+    isJudged = (m) => "judge" in m;
+    DEFAULT_RUNS2 = 3;
+    DEFAULT_MAX_ROUNDS = 6;
+    MAX_MISSES2 = 3;
+  }
+});
+
 // src/solve/problem.ts
-function checkProblem(_raw, _file) {
-  return { ok: false, problems: ["problem check is not built yet"] };
+import { execFileSync as execFileSync4 } from "node:child_process";
+import { existsSync as existsSync14, readFileSync as readFileSync16, statSync as statSync4 } from "node:fs";
+import { dirname as dirname5, isAbsolute as isAbsolute2, join as join19 } from "node:path";
+function unknownKeys(obj, allowed, prefix, errors) {
+  for (const k of Object.keys(obj)) {
+    if (!allowed.includes(k)) errors.push(`${prefix}${k}: unknown field. Allowed fields: ${allowed.join(", ")}.`);
+  }
 }
-function problemSummary(_check) {
-  return "";
+function pathProblem(field2, g) {
+  if (!isText(g)) return `${field2}: each entry must be a non-empty glob, such as "src/**/*.py".`;
+  if (isAbsolute2(g) || /^[A-Za-z]:[\\/]/.test(g)) return `${field2}: "${g}" is an absolute path. Use a path relative to the problem file's folder.`;
+  if (g.split(/[\\/]/).includes("..")) return `${field2}: "${g}" uses "..". Keep paths inside the problem file's folder.`;
+  return null;
 }
+function globList(field2, v, required, errors) {
+  if (v === void 0 && !required) return [];
+  if (!Array.isArray(v) || required && v.length === 0) {
+    errors.push(`${field2}: must be a ${required ? "non-empty " : ""}list of globs, such as ["src/**/*.py"].`);
+    return [];
+  }
+  const bad5 = v.map((g, i) => pathProblem(`${field2}[${i}]`, g)).filter((p) => p !== null);
+  errors.push(...bad5);
+  return bad5.length ? [] : v;
+}
+function commandList(field2, v, errors) {
+  if (v === void 0) return [];
+  if (!Array.isArray(v) || !v.every(isText)) {
+    errors.push(`${field2}: must be a list of shell commands, such as ["python3 -m pytest -q"].`);
+    return [];
+  }
+  return v;
+}
+function countOf(field2, v, fallback, errors) {
+  if (v === void 0) return fallback;
+  if (!isCount(v)) {
+    errors.push(`${field2}: must be a whole number of 1 or more.`);
+    return fallback;
+  }
+  return v;
+}
+function measureOf(v, dir, errors) {
+  if (!isObject(v)) {
+    errors.push(`measure: must be an object with "command" or "judge".`);
+    return null;
+  }
+  const hasCommand = v.command !== void 0, hasJudge = v.judge !== void 0;
+  if (hasCommand === hasJudge) {
+    errors.push(`measure: give exactly one of "command" or "judge"${hasCommand ? ", not both" : ""}.`);
+    return null;
+  }
+  const before = errors.length;
+  if (hasCommand) {
+    unknownKeys(v, ["command", "direction", "unit", "runs"], "measure.", errors);
+    if (!isText(v.command)) errors.push(`measure.command: must be a non-empty shell command.`);
+    if (v.direction !== "higher" && v.direction !== "lower") errors.push(`measure.direction: must be "higher" or "lower".`);
+    if (v.unit !== void 0 && typeof v.unit !== "string") errors.push(`measure.unit: must be text, such as "points".`);
+    const runs2 = countOf("measure.runs", v.runs, DEFAULT_RUNS2, errors);
+    if (errors.length > before) return null;
+    return { command: v.command, direction: v.direction, ...v.unit !== void 0 ? { unit: v.unit } : {}, runs: runs2 };
+  }
+  unknownKeys(v, ["judge", "runs"], "measure.", errors);
+  const runs = countOf("measure.runs", v.runs, DEFAULT_RUNS2, errors);
+  const j = v.judge;
+  if (!isObject(j)) {
+    errors.push(`measure.judge: must be an object with "cases", "run" and "compare".`);
+    return null;
+  }
+  unknownKeys(j, ["cases", "run", "compare"], "measure.judge.", errors);
+  if (!isText(j.cases)) errors.push(`measure.judge.cases: must be the path of a JSONL file of cases.`);
+  else {
+    const p = pathProblem("measure.judge.cases", j.cases);
+    const casesError = p ?? casesProblem(j.cases, join19(dir, j.cases));
+    if (casesError) errors.push(p ?? `measure.judge.cases: ${casesError}`);
+  }
+  if (!isText(j.run)) errors.push(`measure.judge.run: must be a non-empty shell command.`);
+  if (!isText(j.compare)) errors.push(`measure.judge.compare: must be a shell command or "model".`);
+  if (errors.length > before) return null;
+  return { judge: { cases: j.cases, run: j.run, compare: j.compare }, runs };
+}
+function casesProblem(name, path4) {
+  if (!existsSync14(path4) || !statSync4(path4).isFile()) return `Synthe can't find ${name} next to the problem file.`;
+  const lines = readFileSync16(path4, "utf8").split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return `${name} has no cases. Write one JSON object per line.`;
+  const seen = /* @__PURE__ */ new Set();
+  for (const [i, line] of lines.entries()) {
+    let c;
+    try {
+      c = JSON.parse(line);
+    } catch {
+      return `line ${i + 1} of ${name} is not valid JSON.`;
+    }
+    if (!isObject(c) || typeof c.id !== "string" && typeof c.id !== "number" || !("input" in c)) return `line ${i + 1} of ${name} needs an "id" and an "input".`;
+    if (seen.has(String(c.id))) return `line ${i + 1} of ${name} repeats the id "${c.id}". Each id must be unique.`;
+    seen.add(String(c.id));
+  }
+  return null;
+}
+function inGitRepo(dir) {
+  try {
+    execFileSync4("git", ["rev-parse", "--show-toplevel"], { cwd: dir, stdio: ["ignore", "pipe", "ignore"] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function validateProblem(raw, file) {
+  const dir = dirname5(file);
+  const errors = [];
+  if (!isObject(raw)) return { ok: false, problems: ['file: must be a JSON object, such as { "version": 1, ... }.'] };
+  unknownKeys(raw, TOP_KEYS, "", errors);
+  if (raw.version !== 1) errors.push(`version: must be 1.`);
+  if (typeof raw.name !== "string" || !/^[A-Za-z0-9-]+$/.test(raw.name)) errors.push(`name: must use only letters, digits and "-", such as "my-problem".`);
+  if (!isText(raw.goal)) errors.push(`goal: must be one plain sentence that says what should get better.`);
+  const artifact = globList("artifact", raw.artifact, true, errors);
+  const protect = globList("protect", raw.protect, false, errors);
+  const measure2 = raw.measure === void 0 ? (errors.push(`measure: is required. Give "command" or "judge".`), null) : measureOf(raw.measure, dir, errors);
+  const guards = commandList("guards", raw.guards, errors);
+  const candidates = countOf("candidates", raw.candidates, 1, errors);
+  const split = { holdout: false };
+  if (raw.split !== void 0) {
+    if (!isObject(raw.split)) errors.push(`split: must be an object, such as { "holdout": true }.`);
+    else {
+      unknownKeys(raw.split, ["holdout"], "split.", errors);
+      if (raw.split.holdout !== void 0 && typeof raw.split.holdout !== "boolean") errors.push(`split.holdout: must be true or false.`);
+      else split.holdout = raw.split.holdout === true;
+    }
+  }
+  let proposer = "model";
+  if (raw.proposer !== void 0 && raw.proposer !== "model") {
+    if (!isObject(raw.proposer)) errors.push(`proposer: must be "model" or { "command": "..." }.`);
+    else {
+      unknownKeys(raw.proposer, ["command"], "proposer.", errors);
+      if (!isText(raw.proposer.command)) errors.push(`proposer.command: must be a non-empty shell command.`);
+      else proposer = { command: raw.proposer.command };
+    }
+  }
+  const budget = { max_rounds: DEFAULT_MAX_ROUNDS, max_calls: null };
+  if (raw.budget !== void 0) {
+    if (!isObject(raw.budget)) errors.push(`budget: must be an object, such as { "max_rounds": 6 }.`);
+    else {
+      unknownKeys(raw.budget, ["max_rounds", "max_calls"], "budget.", errors);
+      budget.max_rounds = countOf("budget.max_rounds", raw.budget.max_rounds, DEFAULT_MAX_ROUNDS, errors);
+      if (raw.budget.max_calls !== void 0) budget.max_calls = countOf("budget.max_calls", raw.budget.max_calls, 1, errors);
+    }
+  }
+  let model;
+  if (raw.model !== void 0) {
+    if (!isObject(raw.model)) errors.push(`model: must be an object with "base_url" and "model".`);
+    else {
+      for (const k of Object.keys(raw.model)) {
+        if (k === "base_url" || k === "model") continue;
+        errors.push(/key|token|secret|auth/i.test(k) ? `model.${k}: never put a key in the problem file. Set the SYNTHE_API_KEY environment variable.` : `model.${k}: unknown field. Allowed fields: base_url, model.`);
+      }
+      const url = raw.model.base_url;
+      let urlOk = false;
+      if (typeof url === "string") {
+        try {
+          urlOk = ["http:", "https:"].includes(new URL(url).protocol);
+        } catch {
+          urlOk = false;
+        }
+      }
+      if (!urlOk) errors.push(`model.base_url: must be an http or https URL, such as "https://api.example.com/v1".`);
+      if (!isText(raw.model.model)) errors.push(`model.model: must be a model name.`);
+      if (urlOk && isText(raw.model.model)) model = { base_url: url, model: raw.model.model };
+    }
+  }
+  if (!inGitRepo(dir)) errors.push(`file: the folder ${dir} is not inside a git repository. Synthe works in scratch checkouts of a git repository.`);
+  if (errors.length || !measure2) return { ok: false, problems: errors };
+  return {
+    ok: true,
+    problem: {
+      version: 1,
+      name: raw.name,
+      goal: raw.goal,
+      artifact,
+      protect,
+      measure: measure2,
+      guards,
+      split,
+      proposer,
+      budget,
+      ...model ? { model } : {},
+      candidates,
+      dir,
+      file
+    }
+  };
+}
+function checkProblem(raw, file) {
+  let json;
+  try {
+    json = JSON.parse(raw);
+  } catch (e) {
+    return { ok: false, problems: [`file: not valid JSON (${e.message}). Fix the JSON and run the check again.`] };
+  }
+  return validateProblem(json, file);
+}
+function problemSummary(check) {
+  const p = check.problem, m = p.measure;
+  const lines = [
+    `Problem "${p.name}" is valid.`,
+    `Goal: ${p.goal}`,
+    `May change: ${p.artifact.join(", ")}`
+  ];
+  if (p.protect.length) lines.push(`Never changes: ${p.protect.join(", ")}`);
+  lines.push(isJudged(m) ? `Measure: judged on ${m.judge.cases}; run "${m.judge.run}", compare with ${m.judge.compare === "model" ? "the model" : `"${m.judge.compare}"`}` : `Measure: ${m.command} (${m.direction} is better${m.unit ? `, in ${m.unit}` : ""}, ${m.runs} run${m.runs === 1 ? "" : "s"} each)`);
+  lines.push(p.guards.length ? `Guards: ${p.guards.join("; ")}` : `Guards: none`);
+  if (p.split.holdout) lines.push(`Holdout: on. A change is kept only if it also wins on the holdout split.`);
+  lines.push(`Proposer: ${p.proposer === "model" ? "the configured model" : p.proposer.command}`);
+  if (p.candidates > 1) lines.push(`Candidates: ${p.candidates} in each round`);
+  lines.push(`Budget: ${p.budget.max_rounds} rounds${p.budget.max_calls ? `, ${p.budget.max_calls} model calls` : ""}`);
+  lines.push(`Next: run "npx synthe solve ${p.file}".`);
+  return lines.join("\n");
+}
+var TOP_KEYS, isObject, isText, isCount;
 var init_problem = __esm({
   "src/solve/problem.ts"() {
     "use strict";
+    init_types2();
+    TOP_KEYS = ["version", "name", "goal", "artifact", "protect", "measure", "guards", "split", "proposer", "budget", "model", "candidates"];
+    isObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+    isText = (v) => typeof v === "string" && v.trim() !== "";
+    isCount = (v) => typeof v === "number" && Number.isInteger(v) && v >= 1;
   }
 });
 
@@ -29094,13 +29605,13 @@ __export(problem_exports, {
   loadProblem: () => loadProblem,
   problemCommand: () => problemCommand
 });
-import { readFileSync as readFileSync16 } from "node:fs";
+import { readFileSync as readFileSync17 } from "node:fs";
 import { resolve as resolve2 } from "node:path";
 function loadProblem(path4, cwd) {
   const file = resolve2(cwd, path4);
   let raw;
   try {
-    raw = readFileSync16(file, "utf8");
+    raw = readFileSync17(file, "utf8");
   } catch {
     return { ok: false, problems: [`${path4}: Synthe can't read this file. Check the path.`] };
   }
@@ -29126,13 +29637,305 @@ var init_problem2 = __esm({
   }
 });
 
-// src/solve/decide.ts
-function decide(_direction, _before, _after) {
-  throw new Error("decide.ts is not built yet");
+// src/pilot/stats.ts
+function lnGamma(x) {
+  if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lnGamma(1 - x);
+  const y = x - 1;
+  let a = LANCZOS[0];
+  const t = y + 7.5;
+  for (let i = 1; i < 9; i++) a += LANCZOS[i] / (y + i);
+  return 0.5 * Math.log(2 * Math.PI) + (y + 0.5) * Math.log(t) - t + Math.log(a);
 }
+function gammaQ(a, x) {
+  if (x <= 0) return 1;
+  const front = Math.exp(-x + a * Math.log(x) - lnGamma(a));
+  if (x < a + 1) {
+    let ap = a;
+    let del = 1 / a;
+    let sum = del;
+    for (let n = 0; n < 1e4; n++) {
+      ap += 1;
+      del *= x / ap;
+      sum += del;
+      if (Math.abs(del) < Math.abs(sum) * 1e-16) break;
+    }
+    return 1 - sum * front;
+  }
+  let b = x + 1 - a;
+  let c = 1 / TINY;
+  let d = 1 / b;
+  let h = d;
+  for (let i = 1; i < 1e4; i++) {
+    const an = -i * (i - a);
+    b += 2;
+    d = an * d + b;
+    if (Math.abs(d) < TINY) d = TINY;
+    c = b + an / c;
+    if (Math.abs(c) < TINY) c = TINY;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < 1e-16) break;
+  }
+  return front * h;
+}
+function betaCf(a, b, x) {
+  const qab = a + b;
+  const qap = a + 1;
+  const qam = a - 1;
+  let c = 1;
+  let d = 1 - qab * x / qap;
+  if (Math.abs(d) < TINY) d = TINY;
+  d = 1 / d;
+  let h = d;
+  for (let m = 1; m < 1e4; m++) {
+    const m2 = 2 * m;
+    let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+    d = 1 + aa * d;
+    if (Math.abs(d) < TINY) d = TINY;
+    c = 1 + aa / c;
+    if (Math.abs(c) < TINY) c = TINY;
+    d = 1 / d;
+    h *= d * c;
+    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+    d = 1 + aa * d;
+    if (Math.abs(d) < TINY) d = TINY;
+    c = 1 + aa / c;
+    if (Math.abs(c) < TINY) c = TINY;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < 1e-16) break;
+  }
+  return h;
+}
+function incompleteBeta(a, b, x) {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const front = Math.exp(lnGamma(a + b) - lnGamma(a) - lnGamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+  return x < (a + 1) / (a + b + 2) ? front * betaCf(a, b, x) / a : 1 - front * betaCf(b, a, 1 - x) / b;
+}
+function normalQuantile(p) {
+  if (!finite(p) || p <= 0 || p >= 1) return null;
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
+  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
+  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const low = 0.02425;
+  let x;
+  if (p < low) {
+    const q = Math.sqrt(-2 * Math.log(p));
+    x = (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  } else if (p <= 1 - low) {
+    const q = p - 0.5;
+    const r = q * q;
+    x = (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+  } else {
+    const q = Math.sqrt(-2 * Math.log(1 - p));
+    x = -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  const e = x > 0 ? 1 - p - 0.5 * gammaQ(0.5, x * x / 2) : 0.5 * gammaQ(0.5, x * x / 2) - p;
+  const u = e * Math.sqrt(2 * Math.PI) * Math.exp(x * x / 2);
+  return x - u / (1 + x * u / 2);
+}
+function studentTCdf(t, df) {
+  if (!finite(t) || !finite(df) || df <= 0) return null;
+  const tail2 = 0.5 * incompleteBeta(df / 2, 0.5, df / (df + t * t));
+  return t > 0 ? 1 - tail2 : tail2;
+}
+function studentTQuantile(p, df) {
+  if (!finite(p) || p <= 0 || p >= 1 || !finite(df) || df <= 0) return null;
+  if (df > 1e7) return normalQuantile(p);
+  if (p === 0.5) return 0;
+  const upper = p > 0.5;
+  const target = upper ? 1 - p : p;
+  let lo = 0;
+  let hi = 1;
+  while (studentTCdf(-hi, df) > target) {
+    lo = hi;
+    hi *= 2;
+    if (hi > 1e12) return null;
+  }
+  for (let i = 0; i < 200 && hi - lo > 1e-13 * Math.max(1, hi); i++) {
+    const mid = (lo + hi) / 2;
+    if (studentTCdf(-mid, df) > target) lo = mid;
+    else hi = mid;
+  }
+  const t = (lo + hi) / 2;
+  return upper ? t : -t;
+}
+function chiSquareUpper(x, df) {
+  if (!finite(x) || x < 0 || !finite(df) || df < 1) return null;
+  return gammaQ(df / 2, x / 2);
+}
+function wilsonInterval(x, n, level) {
+  const z = zFor(level);
+  if (z === null || !finite(x) || !finite(n) || n <= 0 || x < 0 || x > n) return null;
+  const p = x / n;
+  const z2 = z * z;
+  const denom = 1 + z2 / n;
+  const center = (p + z2 / (2 * n)) / denom;
+  const half = z * Math.sqrt(p * (1 - p) / n + z2 / (4 * n * n)) / denom;
+  return { lo: Math.max(0, center - half), hi: Math.min(1, center + half), level };
+}
+function newcombeInterval(x1, n1, x2, n2, level) {
+  const a = wilsonInterval(x1, n1, level);
+  const b = wilsonInterval(x2, n2, level);
+  if (a === null || b === null) return null;
+  const p1 = x1 / n1;
+  const p2 = x2 / n2;
+  const d = p1 - p2;
+  return {
+    lo: d - Math.sqrt((p1 - a.lo) ** 2 + (b.hi - p2) ** 2),
+    hi: d + Math.sqrt((a.hi - p1) ** 2 + (p2 - b.lo) ** 2),
+    level
+  };
+}
+function meanSummary(values) {
+  const n = values.length;
+  if (n === 0) return { n, mean: null, sd: null };
+  const mean2 = values.reduce((s, v) => s + v, 0) / n;
+  if (n < 2) return { n, mean: mean2, sd: null };
+  const ss = values.reduce((s, v) => s + (v - mean2) ** 2, 0);
+  return { n, mean: mean2, sd: Math.sqrt(ss / (n - 1)) };
+}
+function oneSampleT(s, level) {
+  if (!finite(level) || level <= 0 || level >= 1 || s.n < 2 || !finite(s.mean) || !finite(s.sd)) return null;
+  const t = studentTQuantile(1 - (1 - level) / 2, s.n - 1);
+  if (t === null) return null;
+  const half = t * s.sd / Math.sqrt(s.n);
+  return { lo: s.mean - half, hi: s.mean + half, level };
+}
+function welchInterval(a, b, level) {
+  if (!finite(level) || level <= 0 || level >= 1) return null;
+  if (a.n < 2 || b.n < 2 || !finite(a.mean) || !finite(b.mean) || !finite(a.sd) || !finite(b.sd)) return null;
+  const va = a.sd * a.sd / a.n;
+  const vb = b.sd * b.sd / b.n;
+  const se2 = va + vb;
+  if (!(se2 >= 0)) return null;
+  const d = a.mean - b.mean;
+  if (se2 === 0) return { lo: d, hi: d, level, df: a.n + b.n - 2 };
+  const df = se2 * se2 / (va * va / (a.n - 1) + vb * vb / (b.n - 1));
+  const t = studentTQuantile(1 - (1 - level) / 2, df);
+  if (t === null) return null;
+  const half = t * Math.sqrt(se2);
+  return { lo: d - half, hi: d + half, level, df };
+}
+function chiSquareGof(observed, shares) {
+  if (observed.length < 2 || observed.length !== shares.length) return null;
+  const total = observed.reduce((s, v) => s + v, 0);
+  const shareSum = shares.reduce((s, v) => s + v, 0);
+  if (!(total > 0) || !(shareSum > 0)) return null;
+  let statistic = 0;
+  for (let i = 0; i < observed.length; i++) {
+    const expected = total * shares[i] / shareSum;
+    if (!(expected > 0)) return null;
+    statistic += (observed[i] - expected) ** 2 / expected;
+  }
+  const df = observed.length - 1;
+  const p = chiSquareUpper(statistic, df);
+  return p === null ? null : { statistic, df, p };
+}
+function chiSquareIndependence(table) {
+  const r = table.length;
+  const c = r > 0 ? table[0].length : 0;
+  if (r < 2 || c < 2 || table.some((row) => row.length !== c)) return null;
+  const rowT = table.map((row) => row.reduce((s, v) => s + v, 0));
+  const colT = Array.from({ length: c }, (_, j) => table.reduce((s, row) => s + row[j], 0));
+  const total = rowT.reduce((s, v) => s + v, 0);
+  if (!(total > 0)) return null;
+  let statistic = 0;
+  for (let i = 0; i < r; i++) {
+    for (let j = 0; j < c; j++) {
+      const expected = rowT[i] * colT[j] / total;
+      if (!(expected > 0)) return null;
+      statistic += (table[i][j] - expected) ** 2 / expected;
+    }
+  }
+  const df = (r - 1) * (c - 1);
+  const p = chiSquareUpper(statistic, df);
+  return p === null ? null : { statistic, df, p };
+}
+function sampleSizeProportions(p1, delta, direction, alpha, power) {
+  if (!finite(p1) || p1 < 0 || p1 > 1 || !finite(delta) || delta <= 0) return null;
+  const za = normalQuantile(1 - alpha / 2);
+  const zb = normalQuantile(power);
+  if (za === null || zb === null) return null;
+  const raw = direction === "higher_is_better" ? p1 + delta : p1 - delta;
+  if (raw > 1 + 1e-12 || raw < -1e-12) return null;
+  const p2 = Math.min(1 - PROPORTION_CLAMP, Math.max(PROPORTION_CLAMP, raw));
+  const diff = Math.abs(p2 - p1);
+  if (diff < PROPORTION_CLAMP || Math.sign(p2 - p1) !== Math.sign(raw - p1)) return null;
+  const pbar = (p1 + p2) / 2;
+  const top = za * Math.sqrt(2 * pbar * (1 - pbar)) + zb * Math.sqrt(p1 * (1 - p1) + p2 * (1 - p2));
+  return Math.ceil(top * top / (diff * diff) - 1e-9);
+}
+function sampleSizeMeans(sd, delta, alpha, power) {
+  if (!finite(sd) || sd <= 0 || !finite(delta) || delta <= 0) return null;
+  const za = normalQuantile(1 - alpha / 2);
+  const zb = normalQuantile(power);
+  if (za === null || zb === null) return null;
+  return Math.ceil(2 * (za + zb) ** 2 * sd * sd / (delta * delta) - 1e-9);
+}
+var finite, TINY, LANCZOS, zFor, PROPORTION_CLAMP;
+var init_stats = __esm({
+  "src/pilot/stats.ts"() {
+    "use strict";
+    finite = (x) => typeof x === "number" && Number.isFinite(x);
+    TINY = 1e-300;
+    LANCZOS = [
+      0.9999999999998099,
+      676.5203681218851,
+      -1259.1392167224028,
+      771.3234287776531,
+      -176.6150291621406,
+      12.507343278686905,
+      -0.13857109526572012,
+      9984369578019572e-21,
+      15056327351493116e-23
+    ];
+    zFor = (level) => finite(level) && level > 0 && level < 1 ? normalQuantile(1 - (1 - level) / 2) : null;
+    PROPORTION_CLAMP = 1e-6;
+  }
+});
+
+// src/solve/decide.ts
+function compare(direction, before, after) {
+  const a = meanSummary(after), b = meanSummary(before);
+  if (a.mean === null || b.mean === null) return { better: false, p: null };
+  const gain = direction === "higher" ? a.mean - b.mean : b.mean - a.mean;
+  const scale = Math.max(1, Math.abs(a.mean), Math.abs(b.mean));
+  const better = gain > DUST * scale;
+  if (a.sd === null || b.sd === null) return { better, p: null };
+  const va = a.sd * a.sd / a.n, vb = b.sd * b.sd / b.n;
+  const se2 = va + vb;
+  if (se2 <= (DUST * scale) ** 2) return { better, p: better ? 0 : 1 };
+  const df = se2 * se2 / (va * va / (a.n - 1) + vb * vb / (b.n - 1));
+  const cdf = studentTCdf(gain / Math.sqrt(se2), df);
+  return { better, p: cdf === null ? 1 : 1 - cdf };
+}
+function look(direction, before, after, alpha, second) {
+  const c = compare(direction, before.runs, after.runs);
+  const nums = `${plainNumber(before.value)} -> ${plainNumber(after.value)}`;
+  const exact = c.p === null || c.p === 0;
+  if (!c.better) return { keep: false, exact, reason: `Not better: the score went ${nums}, and ${direction} is better.` };
+  if (c.p === null) return { keep: true, exact, reason: `Better: the score went ${nums}.` };
+  const p = `p = ${plainNumber(c.p)}${second ? ` on ${after.runs.length} runs each` : ""}`;
+  if (c.p >= alpha) return { keep: false, exact, reason: `Within noise: the score went ${nums}, but a move this size happens by chance (${p}).` };
+  return { keep: true, exact, reason: `Better: the score went ${nums}, more than the noise explains (${p}).` };
+}
+function decide(direction, before, after) {
+  const { keep, reason } = look(direction, before, after, SCREEN_ALPHA, false);
+  return { keep, reason };
+}
+var SCREEN_ALPHA, DUST;
 var init_decide = __esm({
   "src/solve/decide.ts"() {
     "use strict";
+    init_stats();
+    init_verdict();
+    SCREEN_ALPHA = 0.1;
+    DUST = 1e-9;
   }
 });
 
@@ -29150,16 +29953,16 @@ var init_edits = __esm({
 });
 
 // src/solve/history.ts
-import { execFileSync as execFileSync4 } from "node:child_process";
-import { appendFileSync as appendFileSync2, existsSync as existsSync14, mkdirSync as mkdirSync6, readFileSync as readFileSync17 } from "node:fs";
-import { isAbsolute as isAbsolute2, join as join19, resolve as resolve3 } from "node:path";
+import { execFileSync as execFileSync5 } from "node:child_process";
+import { appendFileSync as appendFileSync2, existsSync as existsSync15, mkdirSync as mkdirSync6, readFileSync as readFileSync18 } from "node:fs";
+import { isAbsolute as isAbsolute3, join as join20, resolve as resolve3 } from "node:path";
 function gitCommonDir(dir) {
-  const out = execFileSync4("git", ["rev-parse", "--git-common-dir"], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-  return isAbsolute2(out) ? out : resolve3(dir, out);
+  const out = execFileSync5("git", ["rev-parse", "--git-common-dir"], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  return isAbsolute3(out) ? out : resolve3(dir, out);
 }
 function historyFile(dir, name) {
   if (!NAME.test(name)) throw new Error(`The problem name "${name}" can hold only letters, digits and "-".`);
-  return join19(gitCommonDir(dir), "synthe", "solve", name, "history.jsonl");
+  return join20(gitCommonDir(dir), "synthe", "solve", name, "history.jsonl");
 }
 function parse(line) {
   try {
@@ -29172,8 +29975,8 @@ function parse(line) {
 }
 function readStored(dir, name) {
   const file = historyFile(dir, name);
-  if (!existsSync14(file)) return [];
-  return readFileSync17(file, "utf8").split("\n").filter((l) => l.trim()).map(parse).filter((e) => e !== null);
+  if (!existsSync15(file)) return [];
+  return readFileSync18(file, "utf8").split("\n").filter((l) => l.trim()).map(parse).filter((e) => e !== null);
 }
 function readHistory(dir, name) {
   return readStored(dir, name).map(({ round, summary, kept, reason }) => ({ round, summary, kept, reason }));
@@ -29184,7 +29987,7 @@ function nextRun(dir, name) {
 function appendHistory(dir, name, entries, run2 = nextRun(dir, name)) {
   if (entries.length === 0) return;
   const file = historyFile(dir, name);
-  mkdirSync6(join19(file, ".."), { recursive: true });
+  mkdirSync6(join20(file, ".."), { recursive: true });
   const at = (/* @__PURE__ */ new Date()).toISOString();
   const lines = entries.map((e) => JSON.stringify({ round: e.round, summary: e.summary, kept: e.kept, reason: e.reason, run: run2, at }));
   appendFileSync2(file, lines.join("\n") + "\n");
@@ -29197,22 +30000,163 @@ var init_history = __esm({
   }
 });
 
+// src/solve/run.ts
+import { spawn as spawn3 } from "node:child_process";
+function runCommand(cwd, command, o = {}) {
+  return new Promise((resolve9) => {
+    const win3 = process.platform === "win32";
+    const child = spawn3(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: { ...childEnv(), ...o.env }, stdio: ["pipe", "pipe", "pipe"], detached: !win3 });
+    let stdout = "", stderr = "", timedOut = false, done = false;
+    child.stdout.on("data", (d) => {
+      if (stdout.length < MAX_OUTPUT2) stdout += d.toString().slice(0, MAX_OUTPUT2 - stdout.length);
+    });
+    child.stderr.on("data", (d) => {
+      if (stderr.length < MAX_OUTPUT2) stderr += d.toString().slice(0, MAX_OUTPUT2 - stderr.length);
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        if (win3) child.kill("SIGKILL");
+        else process.kill(-child.pid, "SIGKILL");
+      } catch {
+      }
+    }, o.timeoutMs ?? COMMAND_TIMEOUT_MS2);
+    const finish = (code) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve9({ ok: code === 0 && !timedOut, code, stdout, stderr, timedOut });
+    };
+    child.on("error", (e) => {
+      stderr += e.message;
+      finish(null);
+    });
+    child.on("close", finish);
+    child.stdin.on("error", () => {
+    });
+    child.stdin.end(o.stdin ?? "");
+  });
+}
+var COMMAND_TIMEOUT_MS2, MAX_OUTPUT2;
+var init_run2 = __esm({
+  "src/solve/run.ts"() {
+    "use strict";
+    init_exec();
+    COMMAND_TIMEOUT_MS2 = 6e5;
+    MAX_OUTPUT2 = 4 * 1024 * 1024;
+  }
+});
+
 // src/solve/measure.ts
-async function measure(_checkout, _problem, _ctx = {}) {
-  throw new Error("measure.ts is not built yet");
+function lastNumber2(stdout) {
+  const all = stdout.match(NUMBER2);
+  if (!all) return null;
+  const n = Number(all[all.length - 1]);
+  return Number.isFinite(n) ? n : null;
 }
-async function failedGuard(_checkout, _problem) {
-  throw new Error("measure.ts is not built yet");
+function tail(text4, lines = 3) {
+  const t = text4.trim().split("\n").slice(-lines).join(" | ").trim();
+  return t.length > 300 ? `...${t.slice(-300)}` : t;
 }
+function commandFailure(what, command, r) {
+  if (r.timedOut) return `${what} \`${command}\` did not finish in time.`;
+  const said = tail(r.stderr) || tail(r.stdout);
+  return `${what} \`${command}\` failed${said ? `: ${said}` : " and printed nothing"}.`;
+}
+async function measure(checkout, problem, ctx = {}) {
+  const m = problem.measure;
+  if (isJudged(m)) return { failed: "A judged measure has no command to run; judge.ts compares judged versions." };
+  const env = {};
+  if (ctx.split) env.SYNTHE_SPLIT = ctx.split;
+  if (ctx.seed !== void 0) env.SYNTHE_SEED = String(ctx.seed);
+  const runs = [];
+  for (let i = 0; i < Math.max(1, m.runs); i++) {
+    const r = await runCommand(checkout, m.command, { env });
+    if (!r.ok) return { failed: commandFailure("The measure command", m.command, r) };
+    const n = lastNumber2(r.stdout);
+    if (n === null) return { failed: `The measure command \`${m.command}\` printed no number. Its last number on stdout is the score.` };
+    runs.push(n);
+  }
+  return { value: median2(runs), runs };
+}
+async function guardFailure(checkout, problem) {
+  for (const guard2 of problem.guards) {
+    const r = await runCommand(checkout, guard2);
+    if (!r.ok) return { guard: guard2, reason: commandFailure("The guard", guard2, r) };
+  }
+  return null;
+}
+async function failedGuard(checkout, problem) {
+  return (await guardFailure(checkout, problem))?.guard ?? null;
+}
+var NUMBER2, median2;
 var init_measure = __esm({
   "src/solve/measure.ts"() {
     "use strict";
+    init_run2();
+    init_types2();
+    NUMBER2 = /[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g;
+    median2 = (xs) => {
+      const s = [...xs].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    };
   }
 });
 
 // src/solve/report.ts
-function writeReport(_outDir, _result) {
-  throw new Error("report.ts is not built yet");
+import { mkdirSync as mkdirSync7, writeFileSync as writeFileSync8 } from "node:fs";
+import { join as join21 } from "node:path";
+function writeReport(outDir, result2, extras = {}) {
+  mkdirSync7(outDir, { recursive: true });
+  const json = join21(outDir, "result.json");
+  const md = join21(outDir, "report.md");
+  const ordered = {
+    problem: result2.problem,
+    stopped: result2.stopped,
+    baseline: result2.baseline,
+    final: result2.final,
+    branch: result2.branch,
+    attempts: result2.attempts.map((a) => ({ round: a.round, summary: a.summary, kept: a.kept, reason: a.reason, ...a.before === void 0 ? {} : { before: a.before }, ...a.after === void 0 ? {} : { after: a.after } }))
+  };
+  writeFileSync8(json, JSON.stringify(ordered, null, 2) + "\n");
+  writeFileSync8(md, renderReport(ordered, extras));
+  return { json, md };
+}
+function formatNumber(n, unit) {
+  if (n === null || n === void 0 || !Number.isFinite(n)) return "-";
+  const rounded = Math.abs(n) >= 100 ? n.toFixed(1) : Number(n.toPrecision(4)).toString();
+  return unit ? `${rounded} ${unit}` : rounded;
+}
+function cell2(text4) {
+  return text4.replace(/\r?\n+/g, " ").replace(/\|/g, "\\|").trim() || "-";
+}
+function renderReport(r, extras = {}) {
+  const u = extras.unit;
+  const kept = r.attempts.filter((a) => a.kept);
+  const lines = [`# Synthe solve: ${r.problem}`, ""];
+  if (extras.goal) lines.push(`Goal: ${extras.goal}`, "");
+  const better = extras.direction === "lower" ? "lower is better" : extras.direction === "higher" ? "higher is better" : "";
+  lines.push(`- Baseline: ${formatNumber(r.baseline, u)}${better ? ` (${better})` : ""}`);
+  lines.push(`- Final: ${formatNumber(r.final, u)}`);
+  lines.push(`- Attempts: ${r.attempts.length}, kept: ${kept.length}`);
+  lines.push(`- Stopped: ${r.stopped}`);
+  lines.push(r.branch ? `- Kept changes are on branch \`${r.branch}\`. Your working tree and current branch did not change.` : "- No change was kept, so Synthe made no branch. Your working tree and current branch did not change.");
+  lines.push("");
+  if (r.attempts.length) {
+    lines.push("## Attempts", "", "| Round | Change | Kept | Before | After | Reason |", "|---|---|---|---|---|---|");
+    for (const a of r.attempts) {
+      lines.push(`| ${a.round} | ${cell2(a.summary)} | ${a.kept ? "yes" : "no"} | ${formatNumber(a.before, u)} | ${formatNumber(a.after, u)} | ${cell2(a.reason)} |`);
+    }
+    lines.push("");
+  } else {
+    lines.push("No attempts were made.", "");
+  }
+  lines.push("## Next step", "");
+  if (r.branch) lines.push(`Read the diff with \`git diff HEAD...${r.branch}\`. If you agree with it, merge the branch.`);
+  else lines.push("Read the reasons above. Then change the goal, the measure or the proposer, and run `synthe solve` again.");
+  lines.push("");
+  return lines.join("\n");
 }
 var init_report = __esm({
   "src/solve/report.ts"() {
@@ -29221,12 +30165,12 @@ var init_report = __esm({
 });
 
 // src/solve/scratch.ts
-import { execFileSync as execFileSync5 } from "node:child_process";
-import { existsSync as existsSync15, lstatSync as lstatSync3, mkdtempSync as mkdtempSync3, realpathSync as realpathSync3, rmSync as rmSync4, symlinkSync as symlinkSync2, unlinkSync as unlinkSync3 } from "node:fs";
+import { execFileSync as execFileSync6 } from "node:child_process";
+import { existsSync as existsSync16, lstatSync as lstatSync3, mkdtempSync as mkdtempSync3, realpathSync as realpathSync3, rmSync as rmSync4, symlinkSync as symlinkSync2, unlinkSync as unlinkSync3 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
-import { join as join20, relative as relative2 } from "node:path";
+import { join as join22, relative as relative2 } from "node:path";
 function git(cwd, args, input) {
-  return execFileSync5("git", ["-C", cwd, ...args], {
+  return execFileSync6("git", ["-C", cwd, ...args], {
     encoding: "utf8",
     input,
     stdio: [input === void 0 ? "ignore" : "pipe", "pipe", "pipe"],
@@ -29284,20 +30228,20 @@ function openState(repoRoot, problemDir, name) {
     throw new Error(`The folder ${rel} is not committed in ${top}. Commit it first: Synthe works only on committed files.`);
   }
   const branch = nextBranch2(top, name);
-  const dir = realpathSync3(mkdtempSync3(join20(tmpdir3(), "synthe-solve-")));
+  const dir = realpathSync3(mkdtempSync3(join22(tmpdir3(), "synthe-solve-")));
   try {
     git(top, ["worktree", "add", "--quiet", "-b", branch, dir, base]);
   } catch (e) {
     rmSync4(dir, { recursive: true, force: true });
     throw new Error(`Could not make a scratch checkout on ${branch}: ${firstLine4(e)}`);
   }
-  const scratch = { top, root: dir, dir: join20(dir, rel), branch, base, links: [] };
+  const scratch = { top, root: dir, dir: join22(dir, rel), branch, base, links: [] };
   for (const from of /* @__PURE__ */ new Set([top, real])) {
-    const to = join20(scratch.root, relative2(top, from));
+    const to = join22(scratch.root, relative2(top, from));
     for (const name2 of LINKED2) {
-      const source = join20(from, name2);
-      const link = join20(to, name2);
-      if (existsSync15(source) && existsSync15(to) && !existsSync15(link)) {
+      const source = join22(from, name2);
+      const link = join22(to, name2);
+      if (existsSync16(source) && existsSync16(to) && !existsSync16(link)) {
         try {
           symlinkSync2(source, link, process.platform === "win32" ? "junction" : "dir");
           scratch.links.push(link);
@@ -29342,19 +30286,9 @@ var init_scratch = __esm({
   }
 });
 
-// src/solve/types.ts
-var isJudged, MAX_MISSES2;
-var init_types2 = __esm({
-  "src/solve/types.ts"() {
-    "use strict";
-    isJudged = (m) => "judge" in m;
-    MAX_MISSES2 = 3;
-  }
-});
-
 // src/solve/loop.ts
-import { execFileSync as execFileSync6 } from "node:child_process";
-import { isAbsolute as isAbsolute3, join as join21, resolve as resolve4 } from "node:path";
+import { execFileSync as execFileSync7 } from "node:child_process";
+import { isAbsolute as isAbsolute4, join as join23, resolve as resolve4 } from "node:path";
 async function runLoop2(steps, options) {
   const say = steps.say ?? (() => {
   });
@@ -29467,7 +30401,7 @@ async function solve(problem, proposer, options, io2) {
   } catch {
     throw new SetupError(`${problem.dir} is not inside a git repository. Synthe works in a scratch checkout of a git repository.`);
   }
-  const outDir = options.out ? isAbsolute3(options.out) ? options.out : resolve4(process.cwd(), options.out) : join21(repoRoot, ".synthe", "solve", problem.name);
+  const outDir = options.out ? isAbsolute4(options.out) ? options.out : resolve4(process.cwd(), options.out) : join23(repoRoot, ".synthe", "solve", problem.name);
   const history = readHistory(gitDir, problem.name).map((h) => ({ ...h }));
   let scratch;
   try {
@@ -29549,8 +30483,8 @@ async function solve(problem, proposer, options, io2) {
     branch: result2.keptAny ? scratch.branch : null,
     attempts: result2.attempts
   };
-  writeReport(outDir, solved);
-  io2.say(`Wrote ${join21(outDir, "result.json")} and report.md.`);
+  writeReport(outDir, solved, { goal: problem.goal, direction, ...problem.measure.unit ? { unit: problem.measure.unit } : {} });
+  io2.say(`Wrote ${join23(outDir, "result.json")} and report.md.`);
   if (solved.branch) io2.say(`Kept changes are on the branch ${solved.branch}.`);
   return solved;
 }
@@ -29568,65 +30502,126 @@ var init_loop = __esm({
     SetupError = class extends Error {
     };
     plural2 = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
-    git2 = (cwd, ...args) => execFileSync6("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+    git2 = (cwd, ...args) => execFileSync7("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
     entry = (a) => ({ round: a.round, summary: a.summary, kept: a.kept, reason: a.reason });
   }
 });
 
 // src/solve/model-proposer.ts
-function modelProposer(_problem, _env) {
-  throw new Error("model-proposer.ts is not built yet");
+function buildUser(input) {
+  const n = input.candidates;
+  return `Make ${n === 1 ? "1 proposal" : `up to ${n} proposals, each a different idea`}.
+
+${JSON.stringify(input, null, 2)}`;
 }
+function jsonIn(text4) {
+  const tries = [text4, text4.match(/```(?:json)?\s*\n?([\s\S]*?)```/i)?.[1], text4.slice(text4.indexOf("{"), text4.lastIndexOf("}") + 1)];
+  for (const t of tries) {
+    if (!t || !t.trim()) continue;
+    try {
+      return JSON.parse(t);
+    } catch {
+    }
+  }
+  throw new Error("not JSON");
+}
+function parseProposals(text4) {
+  let json;
+  try {
+    json = jsonIn(text4);
+  } catch {
+    return { failed: `The model's reply was not valid JSON: ${JSON.stringify(short(text4.trim()))}` };
+  }
+  const list = json?.proposals;
+  if (!json || typeof json !== "object" || !Array.isArray(list)) return { failed: `The model's reply had no "proposals" list.` };
+  const proposals = [];
+  for (const [i, p] of list.entries()) {
+    const at = `Proposal ${i + 1} in the model's reply`;
+    if (!p || typeof p !== "object") return { failed: `${at} is not an object.` };
+    const { summary, edits } = p;
+    if (typeof summary !== "string" || !summary.trim()) return { failed: `${at} has no "summary".` };
+    if (!Array.isArray(edits) || edits.length === 0) return { failed: `${at} has no "edits".` };
+    const out = [];
+    for (const [j, e] of edits.entries()) {
+      const { path: path4, search, replace } = e ?? {};
+      if (typeof path4 !== "string" || typeof search !== "string" || typeof replace !== "string") {
+        return { failed: `Edit ${j + 1} of proposal ${i + 1} in the model's reply needs "path", "search" and "replace" as text.` };
+      }
+      out.push({ path: path4, search, replace });
+    }
+    proposals.push({ summary: summary.trim(), edits: out });
+  }
+  return { proposals };
+}
+function modelProposer(problem, env = process.env, client) {
+  const key = env.SYNTHE_API_KEY?.trim() ?? "";
+  const config = problem.model;
+  if (!config?.model) throw new SetupError('proposer "model" needs model.model in the problem file.');
+  if (!client) {
+    if (!config.base_url) throw new SetupError('proposer "model" needs model.base_url in the problem file.');
+    if (!key) throw new SetupError('proposer "model" needs a key: set the SYNTHE_API_KEY environment variable.');
+  }
+  const model = client ?? openAiCompatibleModel({ baseUrl: config.base_url, apiKey: key });
+  const hide = (s) => key ? s.split(key).join("[your key]") : s;
+  const ask2 = async (request) => {
+    try {
+      const reply = await model.ask({ model: config.model, system: SYSTEM, user: buildUser(request), maxTokens: MAX_TOKENS, schema: PROPOSALS_SCHEMA });
+      if (reply.text === null) {
+        const why = reply.stopReason === "length" ? "it was cut off at the length limit" : reply.stopReason === "refusal" ? "the model refused" : `it ended with "${reply.stopReason ?? "no reason"}"`;
+        return { failed: hide(`The model gave no usable reply: ${why}.`) };
+      }
+      const parsed = parseProposals(reply.text);
+      return "failed" in parsed ? { failed: hide(parsed.failed) } : parsed;
+    } catch (error) {
+      return { failed: hide(`The model request failed: ${error instanceof Error ? error.message : String(error)}`) };
+    }
+  };
+  return { propose: async (request) => ({ reply: await ask2(request), calls: 1 }) };
+}
+var MAX_TOKENS, PROPOSALS_SCHEMA, SYSTEM, short;
 var init_model_proposer = __esm({
   "src/solve/model-proposer.ts"() {
     "use strict";
-  }
-});
-
-// src/solve/run.ts
-import { spawn as spawn3 } from "node:child_process";
-function runCommand(cwd, command, o = {}) {
-  return new Promise((resolve9) => {
-    const win3 = process.platform === "win32";
-    const child = spawn3(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: { ...childEnv(), ...o.env }, stdio: ["pipe", "pipe", "pipe"], detached: !win3 });
-    let stdout = "", stderr = "", timedOut = false, done = false;
-    child.stdout.on("data", (d) => {
-      if (stdout.length < MAX_OUTPUT2) stdout += d.toString().slice(0, MAX_OUTPUT2 - stdout.length);
-    });
-    child.stderr.on("data", (d) => {
-      if (stderr.length < MAX_OUTPUT2) stderr += d.toString().slice(0, MAX_OUTPUT2 - stderr.length);
-    });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        if (win3) child.kill("SIGKILL");
-        else process.kill(-child.pid, "SIGKILL");
-      } catch {
+    init_openai_compatible();
+    init_loop();
+    MAX_TOKENS = 16e3;
+    PROPOSALS_SCHEMA = {
+      type: "object",
+      additionalProperties: false,
+      required: ["proposals"],
+      properties: {
+        proposals: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["summary", "edits"],
+            properties: {
+              summary: { type: "string" },
+              edits: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  required: ["path", "search", "replace"],
+                  properties: { path: { type: "string" }, search: { type: "string" }, replace: { type: "string" } }
+                }
+              }
+            }
+          }
+        }
       }
-    }, o.timeoutMs ?? COMMAND_TIMEOUT_MS2);
-    const finish = (code) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      resolve9({ ok: code === 0 && !timedOut, code, stdout, stderr, timedOut });
     };
-    child.on("error", (e) => {
-      stderr += e.message;
-      finish(null);
-    });
-    child.on("close", finish);
-    child.stdin.on("error", () => {
-    });
-    child.stdin.end(o.stdin ?? "");
-  });
-}
-var COMMAND_TIMEOUT_MS2, MAX_OUTPUT2;
-var init_run2 = __esm({
-  "src/solve/run.ts"() {
-    "use strict";
-    init_exec();
-    COMMAND_TIMEOUT_MS2 = 6e5;
-    MAX_OUTPUT2 = 4 * 1024 * 1024;
+    SYSTEM = [
+      "You improve files so that a measured score gets better.",
+      "You get a JSON object: the goal, the files you may change with their current text, the history of earlier attempts with whether each was kept and why, and how many proposals to make.",
+      "Learn from the history: do not repeat an attempt that was not kept, and build on attempts that were kept.",
+      'Reply with only a JSON object: {"proposals": [{"summary": "...", "edits": [{"path": "...", "search": "...", "replace": "..."}]}]}.',
+      "Each proposal is one idea, with a one-sentence summary. Each edit replaces the search text with the replace text in the file at path.",
+      "The search text must occur exactly once in that file, copied exactly, with enough context to be unique.",
+      'Change only the files you were given. If you have nothing more worth trying, reply with {"proposals": []}.'
+    ].join("\n");
+    short = (s) => s.length > 200 ? `${s.slice(0, 200)}...` : s;
   }
 });
 
@@ -29655,14 +30650,14 @@ function parseJson(stdout) {
 }
 function checkProposal(raw, n) {
   const label = `proposal ${n}`;
-  if (!isObject(raw)) return `The proposer's ${label} is not a JSON object.`;
+  if (!isObject2(raw)) return `The proposer's ${label} is not a JSON object.`;
   if (typeof raw.summary !== "string") return `The proposer's ${label} has no "summary" text.`;
   if (!Array.isArray(raw.edits)) return `The proposer's ${label} has no "edits" list.`;
   if (raw.edits.length === 0) return `The proposer's ${label} has an empty "edits" list, so it changes nothing.`;
   const edits = [];
   for (const [i, e] of raw.edits.entries()) {
     const where = `Edit ${i + 1} of the proposer's ${label}`;
-    if (!isObject(e)) return `${where} is not a JSON object.`;
+    if (!isObject2(e)) return `${where} is not a JSON object.`;
     for (const field2 of ["path", "search", "replace"]) {
       if (typeof e[field2] !== "string") return `${where} has no "${field2}" text.`;
     }
@@ -29676,8 +30671,8 @@ function checkProposal(raw, n) {
 function parseReply(stdout) {
   if (!stdout.trim()) return { failed: "The proposer printed nothing on stdout. It must print one JSON object." };
   const data = parseJson(stdout);
-  if (data === void 0) return { failed: `The proposer's reply is not valid JSON: ${short(stdout, 120)}` };
-  if (!isObject(data)) return { failed: `The proposer's reply is not a JSON object with a "proposals" list.` };
+  if (data === void 0) return { failed: `The proposer's reply is not valid JSON: ${short2(stdout, 120)}` };
+  if (!isObject2(data)) return { failed: `The proposer's reply is not a JSON object with a "proposals" list.` };
   if (!Array.isArray(data.proposals)) return { failed: `The proposer's reply has no "proposals" list.` };
   const proposals = [];
   for (const [i, raw] of data.proposals.entries()) {
@@ -29690,7 +30685,7 @@ function parseReply(stdout) {
 function replyFrom(result2, timeoutMs) {
   if (result2.timedOut) return { failed: `The proposer command did not finish in ${Math.round(timeoutMs / 1e3)} seconds and was stopped.` };
   if (!result2.ok) {
-    const detail = short(result2.stderr || result2.stdout);
+    const detail = short2(result2.stderr || result2.stdout);
     return { failed: `The proposer command ${result2.code === null ? "could not start" : `exited with code ${result2.code}`}${detail ? `: ${detail}` : "."}` };
   }
   return parseReply(result2.stdout);
@@ -29707,7 +30702,7 @@ function commandProposer(problem, o = {}) {
         result2 = await run2(problem.dir, command, { stdin: `${JSON.stringify(requestObject(request))}
 `, timeoutMs });
       } catch (e) {
-        return { reply: { failed: `The proposer command could not start: ${short(e instanceof Error ? e.message : String(e))}` }, calls: 0 };
+        return { reply: { failed: `The proposer command could not start: ${short2(e instanceof Error ? e.message : String(e))}` }, calls: 0 };
       }
       return { reply: replyFrom(result2, timeoutMs), calls: 0 };
     }
@@ -29716,18 +30711,18 @@ function commandProposer(problem, o = {}) {
 function proposerFor(problem, env = process.env) {
   return problem.proposer === "model" ? modelProposer(problem, env) : commandProposer(problem);
 }
-var PROPOSER_TIMEOUT_MS, short, isObject;
+var PROPOSER_TIMEOUT_MS, short2, isObject2;
 var init_proposer = __esm({
   "src/solve/proposer.ts"() {
     "use strict";
     init_model_proposer();
     init_run2();
     PROPOSER_TIMEOUT_MS = 10 * 6e4;
-    short = (s, n = 200) => {
+    short2 = (s, n = 200) => {
       const one2 = s.trim().replace(/\s+/g, " ");
       return one2.length > n ? `${one2.slice(0, n)}...` : one2;
     };
-    isObject = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
+    isObject2 = (v) => Boolean(v) && typeof v === "object" && !Array.isArray(v);
   }
 });
 
@@ -29821,8 +30816,8 @@ function pilotGithubRepo(slug, token2, api) {
   };
   const isAncestor = async (ancestor, descendant) => {
     if (ancestor === descendant) return true;
-    const compare = await json(await request("GET", `/compare/${encodeURIComponent(ancestor)}...${encodeURIComponent(descendant)}`));
-    return compare.status === "ahead" || compare.status === "identical";
+    const compare2 = await json(await request("GET", `/compare/${encodeURIComponent(ancestor)}...${encodeURIComponent(descendant)}`));
+    return compare2.status === "ahead" || compare2.status === "identical";
   };
   const matchesReview = async (sha, file) => {
     const commit = await json(await request("GET", `/commits/${encodeURIComponent(sha)}`));
@@ -29929,12 +30924,12 @@ var init_approval = __esm({
 });
 
 // src/pilot/io.ts
-import { existsSync as existsSync16, linkSync, lstatSync as lstatSync4, mkdirSync as mkdirSync7, readFileSync as readFileSync18, realpathSync as realpathSync4, renameSync as renameSync3, statSync as statSync4, unlinkSync as unlinkSync4, writeFileSync as writeFileSync8 } from "node:fs";
-import { dirname as dirname5, isAbsolute as isAbsolute4, relative as relative3, resolve as resolve5 } from "node:path";
+import { existsSync as existsSync17, linkSync, lstatSync as lstatSync4, mkdirSync as mkdirSync8, readFileSync as readFileSync19, realpathSync as realpathSync4, renameSync as renameSync3, statSync as statSync5, unlinkSync as unlinkSync4, writeFileSync as writeFileSync9 } from "node:fs";
+import { dirname as dirname6, isAbsolute as isAbsolute5, relative as relative3, resolve as resolve5 } from "node:path";
 function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
   let size2;
   try {
-    const stat2 = statSync4(path4);
+    const stat2 = statSync5(path4);
     if (!stat2.isFile()) throw new PilotError("not_found", `${path4} is not a file.`);
     size2 = stat2.size;
   } catch (e) {
@@ -29942,12 +30937,12 @@ function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
     throw new PilotError("not_found", `${path4} does not exist or cannot be read.`);
   }
   if (size2 > maxBytes) throw new PilotError("too_large", `${path4} is ${size2} bytes; the limit is ${maxBytes}. Export a smaller, bounded file.`);
-  return readFileSync18(path4, "utf8");
+  return readFileSync19(path4, "utf8");
 }
 function inside(root, name) {
   const full = resolve5(root, name);
   const rel = relative3(resolve5(root), full);
-  if (isAbsolute4(name) || rel === "" || rel.startsWith("..") || isAbsolute4(rel)) throw new PilotError("usage", `${name} must be a file inside ${root}.`);
+  if (isAbsolute5(name) || rel === "" || rel.startsWith("..") || isAbsolute5(rel)) throw new PilotError("usage", `${name} must be a file inside ${root}.`);
   let link = false;
   try {
     link = lstatSync4(full).isSymbolicLink();
@@ -29957,7 +30952,7 @@ function inside(root, name) {
   if (link) throw new PilotError("usage", `${name} is a symbolic link. Put the file itself inside ${root}.`);
   try {
     const real = relative3(realpathSync4(root), realpathSync4(full));
-    if (real === "" || real.startsWith("..") || isAbsolute4(real)) throw new PilotError("usage", `${name} must be a file inside ${root}.`);
+    if (real === "" || real.startsWith("..") || isAbsolute5(real)) throw new PilotError("usage", `${name} must be a file inside ${root}.`);
   } catch (e) {
     if (e instanceof PilotError) throw e;
     throw new PilotError("not_found", `${name} cannot be read from ${root}.`);
@@ -29965,25 +30960,25 @@ function inside(root, name) {
   return full;
 }
 function writeOnce(path4, content) {
-  mkdirSync7(dirname5(path4), { recursive: true });
+  mkdirSync8(dirname6(path4), { recursive: true });
   const tmp = `${path4}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync8(tmp, content, { mode: 384 });
+  writeFileSync9(tmp, content, { mode: 384 });
   try {
     try {
       linkSync(tmp, path4);
       return "written";
     } catch (e) {
       const code = e.code;
-      if (code !== "EEXIST" && !existsSync16(path4)) {
+      if (code !== "EEXIST" && !existsSync17(path4)) {
         renameSync3(tmp, path4);
         return "written";
       }
       if (code !== "EEXIST" && code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV") throw e;
     }
-    if (readFileSync18(path4, "utf8") === content) return "already there";
+    if (readFileSync19(path4, "utf8") === content) return "already there";
     throw new PilotError("conflict", `${path4} already exists with different content. Stored pilot records are never replaced.`);
   } finally {
-    if (existsSync16(tmp)) unlinkSync4(tmp);
+    if (existsSync17(tmp)) unlinkSync4(tmp);
   }
 }
 function unsafeKey(value) {
@@ -30003,27 +30998,27 @@ function unsafeKey(value) {
   return null;
 }
 function writeAtomic(path4, content) {
-  mkdirSync7(dirname5(path4), { recursive: true });
+  mkdirSync8(dirname6(path4), { recursive: true });
   const tmp = `${path4}.${process.pid}.tmp`;
   try {
-    writeFileSync8(tmp, content, { mode: 384 });
+    writeFileSync9(tmp, content, { mode: 384 });
     renameSync3(tmp, path4);
   } finally {
-    if (existsSync16(tmp)) unlinkSync4(tmp);
+    if (existsSync17(tmp)) unlinkSync4(tmp);
   }
 }
 function printable2(text4, max = 80) {
   const flat2 = text4.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, " ").replace(/ {2,}/g, " ").trim();
   return flat2.length > max ? `${flat2.slice(0, max)}... (cut at ${max} characters)` : flat2;
 }
-var MAX_INPUT_BYTES, UNSAFE_KEYS, isObject2, isNonEmpty, isInt;
+var MAX_INPUT_BYTES, UNSAFE_KEYS, isObject3, isNonEmpty, isInt;
 var init_io = __esm({
   "src/pilot/io.ts"() {
     "use strict";
     init_errors3();
     MAX_INPUT_BYTES = 32 * 1024 * 1024;
     UNSAFE_KEYS = /* @__PURE__ */ new Set(["__proto__", "constructor", "prototype"]);
-    isObject2 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+    isObject3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
     isNonEmpty = (v) => typeof v === "string" && v.trim() !== "";
     isInt = (v) => typeof v === "number" && Number.isInteger(v);
   }
@@ -30050,7 +31045,7 @@ function inRange(v, lo, hi, loOpen, hiOpen) {
   return (loOpen ? v > lo : v >= lo) && (hiOpen ? v < hi : v <= hi);
 }
 function parseMetricContract(value) {
-  if (!isObject2(value)) return bad("metric must be an object.");
+  if (!isObject3(value)) return bad("metric must be an object.");
   onlyKeys(value, [
     "version",
     "primary",
@@ -30068,7 +31063,7 @@ function parseMetricContract(value) {
     "signed_off"
   ], "");
   if (value.version !== 1) bad("metric.version must be 1.");
-  if (!isObject2(value.primary)) return bad("metric.primary must be an object.");
+  if (!isObject3(value.primary)) return bad("metric.primary must be an object.");
   onlyKeys(value.primary, ["name", "kind", "unit", "direction", "min_effect"], ".primary");
   const primarySpec = metricSpec(value.primary, "primary");
   const minEffect = value.primary.min_effect;
@@ -30079,7 +31074,7 @@ function parseMetricContract(value) {
   const seen = /* @__PURE__ */ new Set([primary2.name]);
   const guards = value.guards.map((g, i) => {
     const where = `guards[${i}]`;
-    if (!isObject2(g)) return bad(`metric.${where} must be an object.`);
+    if (!isObject3(g)) return bad(`metric.${where} must be an object.`);
     onlyKeys(g, ["name", "kind", "unit", "direction", "max_harm", "critical", "early_stop", "range"], `.${where}`);
     const spec = metricSpec(g, where);
     if (spec.name === primary2.name) bad(`metric.${where}.name "${spec.name}" is the primary metric. A guard must be a different metric.`);
@@ -30093,13 +31088,13 @@ function parseMetricContract(value) {
     const guard2 = { ...spec, max_harm: maxHarm, critical: g.critical };
     if (g.range !== void 0) {
       if (spec.kind !== "mean") bad(`metric.${where}.range is only for a mean guard. A rate is always between 0 and 1.`);
-      if (!isObject2(g.range)) return bad(`metric.${where}.range must be an object with min and max.`);
+      if (!isObject3(g.range)) return bad(`metric.${where}.range must be an object with min and max.`);
       onlyKeys(g.range, ["min", "max"], `.${where}.range`);
       if (!isFiniteNumber(g.range.min) || !isFiniteNumber(g.range.max) || g.range.min >= g.range.max) bad(`metric.${where}.range needs finite numbers with min below max: the smallest and largest value one conversation can have.`);
       guard2.range = { min: g.range.min, max: g.range.max };
     }
     if (g.early_stop !== void 0) {
-      if (!isObject2(g.early_stop)) return bad(`metric.${where}.early_stop must be an object with min_per_arm.`);
+      if (!isObject3(g.early_stop)) return bad(`metric.${where}.early_stop must be an object with min_per_arm.`);
       onlyKeys(g.early_stop, ["min_per_arm"], `.${where}.early_stop`);
       if (!isInt(g.early_stop.min_per_arm) || g.early_stop.min_per_arm < 1) bad(`metric.${where}.early_stop.min_per_arm must be a whole number of at least 1.`);
       if (g.critical !== true) bad(`metric.${where}.early_stop is only allowed on a critical guard. Set critical to true or remove early_stop.`);
@@ -30121,7 +31116,7 @@ function parseMetricContract(value) {
   if (!inRange(value.max_missing_rate, 0, 0.5, false, false)) bad("metric.max_missing_rate must be between 0 and 0.5.");
   if (!inRange(value.max_unattributed_rate, 0, 0.5, false, false)) bad("metric.max_unattributed_rate must be between 0 and 0.5.");
   if (value.query_hash !== void 0 && !isSha256(value.query_hash)) bad("metric.query_hash must be 64 lowercase hex characters (the SHA-256 of the metric query).");
-  if (!isObject2(value.signed_off)) return bad("metric.signed_off must be an object with by and at.");
+  if (!isObject3(value.signed_off)) return bad("metric.signed_off must be an object with by and at.");
   onlyKeys(value.signed_off, ["by", "at"], ".signed_off");
   if (!isNonEmpty(value.signed_off.by)) bad("metric.signed_off.by must name the person who signed off the metric.");
   if (typeof value.signed_off.at !== "string" || Number.isNaN(ms(value.signed_off.at))) bad("metric.signed_off.at must be a UTC time like 2026-09-01T12:00:00Z.");
@@ -30166,10 +31161,10 @@ function onlyKeys2(value, allowed, where) {
   if (extra !== void 0) bad2(`${where} has an unknown field "${extra}"`);
 }
 function parseReplay(v) {
-  if (!isObject2(v)) return bad2("replay is required");
+  if (!isObject3(v)) return bad2("replay is required");
   onlyKeys2(v, ["model", "max_tokens", "temperature", "max_steps_per_turn", "gate", "min_recurring_cases", "max_changed_lines"], "replay");
   const gate = v.gate;
-  if (!isObject2(gate)) return bad2("replay.gate is required");
+  if (!isObject3(gate)) return bad2("replay.gate is required");
   onlyKeys2(gate, ["min_paired_cases", "min_paired_coverage", "min_net_wins", "max_unchecked_blocking_guards"], "replay.gate");
   const temperature = v.temperature === null ? null : fraction(v.temperature, "replay.temperature");
   return {
@@ -30189,7 +31184,7 @@ function parseReplay(v) {
 }
 function parseProvider(v) {
   if (v === null) return null;
-  if (!isObject2(v)) return bad2("provider must be null (scripted models only) or an approval object");
+  if (!isObject3(v)) return bad2("provider must be null (scripted models only) or an approval object");
   onlyKeys2(v, ["provider", "endpoint", "model", "key_env", "data_class", "approved_by", "approved_at", "max_calls", "max_input_chars"], "provider");
   if (v.provider !== "anthropic") bad2('provider.provider must be "anthropic"');
   const endpoint = text2(v.endpoint, "provider.endpoint");
@@ -30224,7 +31219,7 @@ function parsePilotConfig(source) {
   } catch {
     return bad2("not valid JSON");
   }
-  if (!isObject2(v)) return bad2("must be a JSON object");
+  if (!isObject3(v)) return bad2("must be a JSON object");
   const unsafe = unsafeKey(v);
   if (unsafe) bad2(`has a field named "${unsafe}", which is not allowed`);
   onlyKeys2(v, ["version", "pilot_id", "agent", "repo", "metric", "replay", "provider"], "the file");
@@ -30232,15 +31227,15 @@ function parsePilotConfig(source) {
   const pilotId = text2(v.pilot_id, "pilot_id");
   if (!/^[a-z0-9][a-z0-9-]{2,39}$/.test(pilotId)) bad2("pilot_id must be 3 to 40 lowercase letters, digits or dashes");
   const agent = v.agent;
-  if (!isObject2(agent)) return bad2("agent is required");
+  if (!isObject3(agent)) return bad2("agent is required");
   onlyKeys2(agent, ["name", "prompt_path", "baseline_tag"], "agent");
   const promptPath = text2(agent.prompt_path, "agent.prompt_path");
-  const pathProblem = promptPathProblem(promptPath);
-  if (pathProblem) bad2(`agent.prompt_path: ${pathProblem}`);
+  const pathProblem2 = promptPathProblem(promptPath);
+  if (pathProblem2) bad2(`agent.prompt_path: ${pathProblem2}`);
   const baselineTag = text2(agent.baseline_tag, "agent.baseline_tag");
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(baselineTag)) bad2("agent.baseline_tag must be 1 to 64 letters, digits, dots, dashes or underscores");
   const repo = v.repo;
-  if (!isObject2(repo)) return bad2("repo is required");
+  if (!isObject3(repo)) return bad2("repo is required");
   onlyKeys2(repo, ["slug", "base", "api"], "repo");
   const slug = text2(repo.slug, "repo.slug");
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(slug)) bad2("repo.slug must look like owner/name");
@@ -30375,7 +31370,7 @@ function parsePack(text4) {
   } catch {
     return bad3("The pack file is not valid JSON.");
   }
-  if (!isObject2(raw)) return bad3("The pack file must be a JSON object.");
+  if (!isObject3(raw)) return bad3("The pack file must be a JSON object.");
   if (unsafeKey(raw) !== null) bad3("The pack has a field named __proto__, constructor or prototype, which no pack needs. Rename it and export again.");
   onlyKeys3(raw, ["version", "name", "pack_version", "parent_pack_id", "source", "tools", "check_catalog", "cases"], "The pack");
   if (raw.version !== 1) bad3("The pack version field must be 1.");
@@ -30389,18 +31384,18 @@ function parsePack(text4) {
   if (raw.tools.length > PACK_LIMITS.tools) throw new PilotError("too_large", `The pack lists ${raw.tools.length} tools; the limit is ${PACK_LIMITS.tools}.`);
   const toolNames = /* @__PURE__ */ new Set();
   for (const [i, t] of raw.tools.entries()) {
-    if (!isObject2(t)) {
+    if (!isObject3(t)) {
       bad3(`Tool #${i + 1} must be an object.`);
       continue;
     }
     onlyKeys3(t, ["name", "description", "input_schema"], `Tool #${i + 1}`);
     if (!isNonEmpty(t.name)) bad3(`Tool #${i + 1} needs a name.`);
     if (typeof t.description !== "string") bad3(`Tool ${safeName(t.name)} needs a description.`);
-    if (!isObject2(t.input_schema)) bad3(`Tool ${safeName(t.name)} needs an input_schema object.`);
+    if (!isObject3(t.input_schema)) bad3(`Tool ${safeName(t.name)} needs an input_schema object.`);
     if (toolNames.has(t.name)) bad3(`Tool ${safeName(t.name)} is listed twice.`);
     toolNames.add(t.name);
   }
-  if (!isObject2(raw.check_catalog)) bad3("check_catalog must be an object of check id to sentence.");
+  if (!isObject3(raw.check_catalog)) bad3("check_catalog must be an object of check id to sentence.");
   const catalog = raw.check_catalog;
   for (const [id, sentence] of Object.entries(catalog)) {
     if (!isNonEmpty(sentence)) bad3(`check_catalog entry ${safeName(id)} must be a non-empty sentence.`);
@@ -30419,11 +31414,11 @@ function checkApproval(source) {
   const refuse2 = (what) => {
     throw new PilotError("pack_not_approved", `The pack has no recorded approval: ${what}. Ask the data owner to complete the source block and export again.`);
   };
-  if (!isObject2(source)) return refuse2("the source block is missing");
+  if (!isObject3(source)) return refuse2("the source block is missing");
   for (const key of ["exported_by", "exported_at"]) if (!isNonEmpty(source[key])) refuse2(`source.${key} is missing`);
   if (Number.isNaN(ms(source.exported_at))) refuse2("source.exported_at is not a UTC time like 2026-10-01T00:00:00Z");
   const red = source.redaction;
-  if (!isObject2(red)) return refuse2("source.redaction is missing");
+  if (!isObject3(red)) return refuse2("source.redaction is missing");
   for (const key of ["method", "approved_by", "approved_at"]) if (!isNonEmpty(red[key])) refuse2(`source.redaction.${key} is missing`);
   if (Number.isNaN(ms(red.approved_at))) refuse2("source.redaction.approved_at is not a UTC time like 2026-10-01T00:00:00Z");
   if (!Array.isArray(source.approved_uses) || !source.approved_uses.includes("replay")) refuse2('source.approved_uses does not include "replay"');
@@ -30432,7 +31427,7 @@ function checkApproval(source) {
   if (source.policy_version !== void 0 && typeof source.policy_version !== "string") bad3("source.policy_version must be a string.");
 }
 function checkCase(c, index, ctx) {
-  if (!isObject2(c)) {
+  if (!isObject3(c)) {
     bad3(`Case #${index + 1} must be an object.`);
     return;
   }
@@ -30443,7 +31438,7 @@ function checkCase(c, index, ctx) {
   ctx.seen.add(c.id);
   if (c.split !== "discovery" && c.split !== "heldout") bad3(`${label} needs split "discovery" or "heldout".`);
   const prov = c.provenance;
-  if (!isObject2(prov)) {
+  if (!isObject3(prov)) {
     bad3(`${label} needs a provenance block.`);
     return;
   }
@@ -30455,14 +31450,14 @@ function checkCase(c, index, ctx) {
   const turns = checkMessages(c, label, ctx);
   checkChecks(c, label, turns, ctx);
   if (c.observed !== void 0) {
-    if (!isObject2(c.observed)) bad3(`${label} observed must be an object.`);
+    if (!isObject3(c.observed)) bad3(`${label} observed must be an object.`);
     for (const [k, v] of Object.entries(c.observed)) {
       if (!(v === null || typeof v === "boolean" || typeof v === "number" && Number.isFinite(v))) bad3(`${label} observed value ${safeName(k)} must be a number, true, false or null.`);
     }
   }
   if (c.regression !== void 0) {
     const r = c.regression;
-    if (!isObject2(r)) {
+    if (!isObject3(r)) {
       bad3(`${label} regression must be an object.`);
       return;
     }
@@ -30479,7 +31474,7 @@ function checkMessages(c, label, ctx) {
   };
   messages.forEach((m, i2) => {
     const at = `${label} message ${i2 + 1}`;
-    if (!isObject2(m)) {
+    if (!isObject3(m)) {
       bad3(`${at} must be an object.`);
       return;
     }
@@ -30499,7 +31494,7 @@ function checkMessages(c, label, ctx) {
     if (role === "assistant" && m.tool_calls !== void 0) {
       if (!Array.isArray(m.tool_calls)) bad3(`${at} tool_calls must be an array.`);
       for (const tc of m.tool_calls) {
-        if (!isObject2(tc)) {
+        if (!isObject3(tc)) {
           bad3(`${at} has a tool call that is not an object.`);
           continue;
         }
@@ -30507,7 +31502,7 @@ function checkMessages(c, label, ctx) {
         if (!isNonEmpty(tc.id)) bad3(`${at} has a tool call without an id.`);
         if (!isNonEmpty(tc.name)) bad3(`${at} has a tool call without a name.`);
         if (!ctx.toolNames.has(tc.name)) bad3(`${at} calls tool ${safeName(tc.name)}, which the pack does not list in tools.`);
-        if (!isObject2(tc.input)) bad3(`${at} has a tool call for ${safeName(tc.name)} whose input is not an object.`);
+        if (!isObject3(tc.input)) bad3(`${at} has a tool call for ${safeName(tc.name)} whose input is not an object.`);
         tooLong(canonicalJson(tc.input).length, `message ${i2 + 1} tool input`);
       }
     }
@@ -30555,7 +31550,7 @@ function checkChecks(c, label, turns, ctx) {
   const pairs = /* @__PURE__ */ new Set();
   checks.forEach((k, i) => {
     const at = `${label} check #${i + 1}`;
-    if (!isObject2(k)) {
+    if (!isObject3(k)) {
       bad3(`${at} must be an object.`);
       return;
     }
@@ -30586,7 +31581,7 @@ function scanForPersonalData(pack2) {
   const walk3 = (value, where) => {
     if (typeof value === "string") hit(value, where);
     else if (Array.isArray(value)) for (const v of value) walk3(v, where);
-    else if (isObject2(value)) for (const [k, v] of Object.entries(value)) {
+    else if (isObject3(value)) for (const [k, v] of Object.entries(value)) {
       hit(k, where);
       walk3(v, where);
     }
@@ -31054,272 +32049,10 @@ var init_egress = __esm({
   }
 });
 
-// src/pilot/stats.ts
-function lnGamma(x) {
-  if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lnGamma(1 - x);
-  const y = x - 1;
-  let a = LANCZOS[0];
-  const t = y + 7.5;
-  for (let i = 1; i < 9; i++) a += LANCZOS[i] / (y + i);
-  return 0.5 * Math.log(2 * Math.PI) + (y + 0.5) * Math.log(t) - t + Math.log(a);
-}
-function gammaQ(a, x) {
-  if (x <= 0) return 1;
-  const front = Math.exp(-x + a * Math.log(x) - lnGamma(a));
-  if (x < a + 1) {
-    let ap = a;
-    let del = 1 / a;
-    let sum = del;
-    for (let n = 0; n < 1e4; n++) {
-      ap += 1;
-      del *= x / ap;
-      sum += del;
-      if (Math.abs(del) < Math.abs(sum) * 1e-16) break;
-    }
-    return 1 - sum * front;
-  }
-  let b = x + 1 - a;
-  let c = 1 / TINY;
-  let d = 1 / b;
-  let h = d;
-  for (let i = 1; i < 1e4; i++) {
-    const an = -i * (i - a);
-    b += 2;
-    d = an * d + b;
-    if (Math.abs(d) < TINY) d = TINY;
-    c = b + an / c;
-    if (Math.abs(c) < TINY) c = TINY;
-    d = 1 / d;
-    const del = d * c;
-    h *= del;
-    if (Math.abs(del - 1) < 1e-16) break;
-  }
-  return front * h;
-}
-function betaCf(a, b, x) {
-  const qab = a + b;
-  const qap = a + 1;
-  const qam = a - 1;
-  let c = 1;
-  let d = 1 - qab * x / qap;
-  if (Math.abs(d) < TINY) d = TINY;
-  d = 1 / d;
-  let h = d;
-  for (let m = 1; m < 1e4; m++) {
-    const m2 = 2 * m;
-    let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
-    d = 1 + aa * d;
-    if (Math.abs(d) < TINY) d = TINY;
-    c = 1 + aa / c;
-    if (Math.abs(c) < TINY) c = TINY;
-    d = 1 / d;
-    h *= d * c;
-    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
-    d = 1 + aa * d;
-    if (Math.abs(d) < TINY) d = TINY;
-    c = 1 + aa / c;
-    if (Math.abs(c) < TINY) c = TINY;
-    d = 1 / d;
-    const del = d * c;
-    h *= del;
-    if (Math.abs(del - 1) < 1e-16) break;
-  }
-  return h;
-}
-function incompleteBeta(a, b, x) {
-  if (x <= 0) return 0;
-  if (x >= 1) return 1;
-  const front = Math.exp(lnGamma(a + b) - lnGamma(a) - lnGamma(b) + a * Math.log(x) + b * Math.log(1 - x));
-  return x < (a + 1) / (a + b + 2) ? front * betaCf(a, b, x) / a : 1 - front * betaCf(b, a, 1 - x) / b;
-}
-function normalQuantile(p) {
-  if (!finite(p) || p <= 0 || p >= 1) return null;
-  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
-  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
-  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
-  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
-  const low = 0.02425;
-  let x;
-  if (p < low) {
-    const q = Math.sqrt(-2 * Math.log(p));
-    x = (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
-  } else if (p <= 1 - low) {
-    const q = p - 0.5;
-    const r = q * q;
-    x = (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
-  } else {
-    const q = Math.sqrt(-2 * Math.log(1 - p));
-    x = -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
-  }
-  const e = x > 0 ? 1 - p - 0.5 * gammaQ(0.5, x * x / 2) : 0.5 * gammaQ(0.5, x * x / 2) - p;
-  const u = e * Math.sqrt(2 * Math.PI) * Math.exp(x * x / 2);
-  return x - u / (1 + x * u / 2);
-}
-function studentTCdf(t, df) {
-  if (!finite(t) || !finite(df) || df <= 0) return null;
-  const tail = 0.5 * incompleteBeta(df / 2, 0.5, df / (df + t * t));
-  return t > 0 ? 1 - tail : tail;
-}
-function studentTQuantile(p, df) {
-  if (!finite(p) || p <= 0 || p >= 1 || !finite(df) || df <= 0) return null;
-  if (df > 1e7) return normalQuantile(p);
-  if (p === 0.5) return 0;
-  const upper = p > 0.5;
-  const target = upper ? 1 - p : p;
-  let lo = 0;
-  let hi = 1;
-  while (studentTCdf(-hi, df) > target) {
-    lo = hi;
-    hi *= 2;
-    if (hi > 1e12) return null;
-  }
-  for (let i = 0; i < 200 && hi - lo > 1e-13 * Math.max(1, hi); i++) {
-    const mid = (lo + hi) / 2;
-    if (studentTCdf(-mid, df) > target) lo = mid;
-    else hi = mid;
-  }
-  const t = (lo + hi) / 2;
-  return upper ? t : -t;
-}
-function chiSquareUpper(x, df) {
-  if (!finite(x) || x < 0 || !finite(df) || df < 1) return null;
-  return gammaQ(df / 2, x / 2);
-}
-function wilsonInterval(x, n, level) {
-  const z = zFor(level);
-  if (z === null || !finite(x) || !finite(n) || n <= 0 || x < 0 || x > n) return null;
-  const p = x / n;
-  const z2 = z * z;
-  const denom = 1 + z2 / n;
-  const center = (p + z2 / (2 * n)) / denom;
-  const half = z * Math.sqrt(p * (1 - p) / n + z2 / (4 * n * n)) / denom;
-  return { lo: Math.max(0, center - half), hi: Math.min(1, center + half), level };
-}
-function newcombeInterval(x1, n1, x2, n2, level) {
-  const a = wilsonInterval(x1, n1, level);
-  const b = wilsonInterval(x2, n2, level);
-  if (a === null || b === null) return null;
-  const p1 = x1 / n1;
-  const p2 = x2 / n2;
-  const d = p1 - p2;
-  return {
-    lo: d - Math.sqrt((p1 - a.lo) ** 2 + (b.hi - p2) ** 2),
-    hi: d + Math.sqrt((a.hi - p1) ** 2 + (p2 - b.lo) ** 2),
-    level
-  };
-}
-function meanSummary(values) {
-  const n = values.length;
-  if (n === 0) return { n, mean: null, sd: null };
-  const mean2 = values.reduce((s, v) => s + v, 0) / n;
-  if (n < 2) return { n, mean: mean2, sd: null };
-  const ss = values.reduce((s, v) => s + (v - mean2) ** 2, 0);
-  return { n, mean: mean2, sd: Math.sqrt(ss / (n - 1)) };
-}
-function oneSampleT(s, level) {
-  if (!finite(level) || level <= 0 || level >= 1 || s.n < 2 || !finite(s.mean) || !finite(s.sd)) return null;
-  const t = studentTQuantile(1 - (1 - level) / 2, s.n - 1);
-  if (t === null) return null;
-  const half = t * s.sd / Math.sqrt(s.n);
-  return { lo: s.mean - half, hi: s.mean + half, level };
-}
-function welchInterval(a, b, level) {
-  if (!finite(level) || level <= 0 || level >= 1) return null;
-  if (a.n < 2 || b.n < 2 || !finite(a.mean) || !finite(b.mean) || !finite(a.sd) || !finite(b.sd)) return null;
-  const va = a.sd * a.sd / a.n;
-  const vb = b.sd * b.sd / b.n;
-  const se2 = va + vb;
-  if (!(se2 >= 0)) return null;
-  const d = a.mean - b.mean;
-  if (se2 === 0) return { lo: d, hi: d, level, df: a.n + b.n - 2 };
-  const df = se2 * se2 / (va * va / (a.n - 1) + vb * vb / (b.n - 1));
-  const t = studentTQuantile(1 - (1 - level) / 2, df);
-  if (t === null) return null;
-  const half = t * Math.sqrt(se2);
-  return { lo: d - half, hi: d + half, level, df };
-}
-function chiSquareGof(observed, shares) {
-  if (observed.length < 2 || observed.length !== shares.length) return null;
-  const total = observed.reduce((s, v) => s + v, 0);
-  const shareSum = shares.reduce((s, v) => s + v, 0);
-  if (!(total > 0) || !(shareSum > 0)) return null;
-  let statistic = 0;
-  for (let i = 0; i < observed.length; i++) {
-    const expected = total * shares[i] / shareSum;
-    if (!(expected > 0)) return null;
-    statistic += (observed[i] - expected) ** 2 / expected;
-  }
-  const df = observed.length - 1;
-  const p = chiSquareUpper(statistic, df);
-  return p === null ? null : { statistic, df, p };
-}
-function chiSquareIndependence(table) {
-  const r = table.length;
-  const c = r > 0 ? table[0].length : 0;
-  if (r < 2 || c < 2 || table.some((row) => row.length !== c)) return null;
-  const rowT = table.map((row) => row.reduce((s, v) => s + v, 0));
-  const colT = Array.from({ length: c }, (_, j) => table.reduce((s, row) => s + row[j], 0));
-  const total = rowT.reduce((s, v) => s + v, 0);
-  if (!(total > 0)) return null;
-  let statistic = 0;
-  for (let i = 0; i < r; i++) {
-    for (let j = 0; j < c; j++) {
-      const expected = rowT[i] * colT[j] / total;
-      if (!(expected > 0)) return null;
-      statistic += (table[i][j] - expected) ** 2 / expected;
-    }
-  }
-  const df = (r - 1) * (c - 1);
-  const p = chiSquareUpper(statistic, df);
-  return p === null ? null : { statistic, df, p };
-}
-function sampleSizeProportions(p1, delta, direction, alpha, power) {
-  if (!finite(p1) || p1 < 0 || p1 > 1 || !finite(delta) || delta <= 0) return null;
-  const za = normalQuantile(1 - alpha / 2);
-  const zb = normalQuantile(power);
-  if (za === null || zb === null) return null;
-  const raw = direction === "higher_is_better" ? p1 + delta : p1 - delta;
-  if (raw > 1 + 1e-12 || raw < -1e-12) return null;
-  const p2 = Math.min(1 - PROPORTION_CLAMP, Math.max(PROPORTION_CLAMP, raw));
-  const diff = Math.abs(p2 - p1);
-  if (diff < PROPORTION_CLAMP || Math.sign(p2 - p1) !== Math.sign(raw - p1)) return null;
-  const pbar = (p1 + p2) / 2;
-  const top = za * Math.sqrt(2 * pbar * (1 - pbar)) + zb * Math.sqrt(p1 * (1 - p1) + p2 * (1 - p2));
-  return Math.ceil(top * top / (diff * diff) - 1e-9);
-}
-function sampleSizeMeans(sd, delta, alpha, power) {
-  if (!finite(sd) || sd <= 0 || !finite(delta) || delta <= 0) return null;
-  const za = normalQuantile(1 - alpha / 2);
-  const zb = normalQuantile(power);
-  if (za === null || zb === null) return null;
-  return Math.ceil(2 * (za + zb) ** 2 * sd * sd / (delta * delta) - 1e-9);
-}
-var finite, TINY, LANCZOS, zFor, PROPORTION_CLAMP;
-var init_stats = __esm({
-  "src/pilot/stats.ts"() {
-    "use strict";
-    finite = (x) => typeof x === "number" && Number.isFinite(x);
-    TINY = 1e-300;
-    LANCZOS = [
-      0.9999999999998099,
-      676.5203681218851,
-      -1259.1392167224028,
-      771.3234287776531,
-      -176.6150291621406,
-      12.507343278686905,
-      -0.13857109526572012,
-      9984369578019572e-21,
-      15056327351493116e-23
-    ];
-    zFor = (level) => finite(level) && level > 0 && level < 1 ? normalQuantile(1 - (1 - level) / 2) : null;
-    PROPORTION_CLAMP = 1e-6;
-  }
-});
-
 // src/pilot/wrap.ts
 import { createHash as createHash3, createHmac } from "node:crypto";
-import { closeSync as closeSync2, constants as constants2, fstatSync, mkdirSync as mkdirSync8, openSync as openSync2, readSync, writeFileSync as writeFileSync9, writeSync } from "node:fs";
-import { join as join22 } from "node:path";
+import { closeSync as closeSync2, constants as constants2, fstatSync, mkdirSync as mkdirSync9, openSync as openSync2, readSync, writeFileSync as writeFileSync10, writeSync } from "node:fs";
+import { join as join24 } from "node:path";
 function appendLine(path4, text4) {
   const fd = openSync2(path4, constants2.O_RDWR | constants2.O_APPEND | constants2.O_CREAT | (constants2.O_NOFOLLOW ?? 0), 384);
   try {
@@ -31356,13 +32089,13 @@ function pilotRecorder(options) {
   };
   function append(line, at) {
     try {
-      mkdirSync8(logDir, { recursive: true, mode: 448 });
+      mkdirSync9(logDir, { recursive: true, mode: 448 });
       try {
-        writeFileSync9(join22(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
+        writeFileSync10(join24(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
       } catch (e) {
         if (e.code !== "EEXIST") throw e;
       }
-      return appendLine(join22(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
+      return appendLine(join24(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
 `);
     } catch {
       return false;
@@ -31555,7 +32288,7 @@ function likelyCopies(rows) {
   return { twins, expected };
 }
 function validateRow(raw, where, contract) {
-  if (!isObject2(raw)) return bad4(`${where} is not an object.`);
+  if (!isObject3(raw)) return bad4(`${where} is not an object.`);
   const unknown = Object.keys(raw).filter((k) => !ROW_FIELDS.includes(k));
   if (unknown.length > 0) bad4(`${where} has an undocumented field ${shown(unknown[0])}. ${MINIMISE}`);
   for (const field2 of ["conversation_id", "prompt_version", "started_at"]) {
@@ -31571,7 +32304,7 @@ function validateRow(raw, where, contract) {
     checkPersonalData(v, field2, where);
   }
   if (!validTime(raw.started_at)) bad4(`${where}: started_at must be a UTC time like 2026-09-01T12:00:00Z.`);
-  if (!isObject2(raw.values)) return bad4(`${where}: values must be an object of metric name to number or null.`);
+  if (!isObject3(raw.values)) return bad4(`${where}: values must be an object of metric name to number or null.`);
   const metrics = contractMetrics(contract);
   const extra = Object.keys(raw.values).filter((k) => !metrics.some((m) => m.name === k));
   if (extra.length > 0) bad4(`${where}: values has ${shown(extra[0])}, which is not a metric in the contract. ${MINIMISE}`);
@@ -31681,48 +32414,48 @@ function rowsFromCsv(text4, file, contract) {
     const raw = {};
     const values = {};
     header.forEach((h, j) => {
-      const cell3 = fields[j];
+      const cell4 = fields[j];
       const metric = metrics.find((m) => m.name === h);
       if (metric) {
-        if (cell3.trim() === "") {
+        if (cell4.trim() === "") {
           values[h] = null;
           return;
         }
-        values[h] = /^\s*-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*$/.test(cell3) ? Number(cell3) : cell3;
+        values[h] = /^\s*-?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*$/.test(cell4) ? Number(cell4) : cell4;
         return;
       }
-      if (cell3 === "" && (h === "segment" || h === "unit_id" || h === "model_id")) return;
-      raw[h] = cell3;
+      if (cell4 === "" && (h === "segment" || h === "unit_id" || h === "model_id")) return;
+      raw[h] = cell4;
     });
     raw.values = values;
     return { line, raw };
   }).map(({ line, raw }) => validateRow(raw, `${file} line ${line}`, contract));
 }
 function validateAggregate(raw, where, contract) {
-  if (!isObject2(raw)) return bad4(`${where} is not an object.`);
+  if (!isObject3(raw)) return bad4(`${where} is not an object.`);
   const unknown = Object.keys(raw).filter((k) => !["prompt_version", "n", "immature", "unattributed", "metrics", "segments"].includes(k));
   if (unknown.length > 0) bad4(`${where} has an undocumented field ${shown(unknown[0])}. ${MINIMISE}`);
   if (!isNonEmpty(raw.prompt_version)) bad4(`${where}: prompt_version must be a non-empty string.`);
   if (raw.prompt_version.length > MAX_ID) bad4(`${where}: prompt_version is longer than ${MAX_ID} characters.`);
   checkPersonalData(raw.prompt_version, "prompt_version", where);
   for (const field2 of ["n", "immature", "unattributed"]) {
-    if (!isCount(raw[field2])) bad4(`${where}: ${field2} must be a whole number of 0 or more.`);
+    if (!isCount2(raw[field2])) bad4(`${where}: ${field2} must be a whole number of 0 or more.`);
   }
   const n = raw.n;
-  if (!isObject2(raw.metrics)) return bad4(`${where}: metrics must be an object of metric name to summary.`);
+  if (!isObject3(raw.metrics)) return bad4(`${where}: metrics must be an object of metric name to summary.`);
   const metrics = contractMetrics(contract);
   const extra = Object.keys(raw.metrics).filter((k) => !metrics.some((m) => m.name === k));
   if (extra.length > 0) bad4(`${where}: metrics has "${extra[0]}", which is not a metric in the contract. ${MINIMISE}`);
   const out = {};
   for (const m of metrics) {
     const s = raw.metrics[m.name];
-    if (!isObject2(s)) return bad4(`${where}: metrics is missing ${m.name}.`);
+    if (!isObject3(s)) return bad4(`${where}: metrics is missing ${m.name}.`);
     if (s.kind !== m.kind) bad4(`${where}: metrics.${m.name}.kind must be "${m.kind}", as in the contract.`);
     if (m.kind === "rate") {
       const unk = Object.keys(s).filter((k) => !["kind", "successes", "missing"].includes(k));
       if (unk.length > 0) bad4(`${where}: metrics.${m.name} has an undocumented field "${unk[0]}".`);
-      if (!isCount(s.successes)) bad4(`${where}: metrics.${m.name}.successes must be a whole number of 0 or more.`);
-      if (!isCount(s.missing)) bad4(`${where}: metrics.${m.name}.missing must be a whole number of 0 or more.`);
+      if (!isCount2(s.successes)) bad4(`${where}: metrics.${m.name}.successes must be a whole number of 0 or more.`);
+      if (!isCount2(s.missing)) bad4(`${where}: metrics.${m.name}.missing must be a whole number of 0 or more.`);
       if (s.successes + s.missing > n) bad4(`${where}: metrics.${m.name}.successes plus missing is more than n.`);
       out[m.name] = { kind: "rate", successes: s.successes, missing: s.missing };
     } else {
@@ -31730,8 +32463,8 @@ function validateAggregate(raw, where, contract) {
       if (unk.length > 0) bad4(`${where}: metrics.${m.name} has an undocumented field "${unk[0]}".`);
       if (typeof s.mean !== "number" || !Number.isFinite(s.mean)) bad4(`${where}: metrics.${m.name}.mean must be a finite number.`);
       if (typeof s.sd !== "number" || !Number.isFinite(s.sd) || s.sd < 0) bad4(`${where}: metrics.${m.name}.sd must be a finite number of 0 or more.`);
-      if (!isCount(s.missing) || s.missing > n) bad4(`${where}: metrics.${m.name}.missing must be a whole number from 0 to n.`);
-      if (s.nonzero !== void 0 && (!isCount(s.nonzero) || s.nonzero > n - s.missing)) bad4(`${where}: metrics.${m.name}.nonzero must be a whole number from 0 to the conversations that have a value.`);
+      if (!isCount2(s.missing) || s.missing > n) bad4(`${where}: metrics.${m.name}.missing must be a whole number from 0 to n.`);
+      if (s.nonzero !== void 0 && (!isCount2(s.nonzero) || s.nonzero > n - s.missing)) bad4(`${where}: metrics.${m.name}.nonzero must be a whole number from 0 to the conversations that have a value.`);
       if (s.nonzero !== void 0 && n - s.missing > 0) {
         const have = n - s.missing;
         const expected = s.sd === 0 ? s.mean === 0 ? 0 : have : null;
@@ -31751,12 +32484,12 @@ function validateAggregate(raw, where, contract) {
   }
   const agg = { prompt_version: raw.prompt_version, n, immature: raw.immature, unattributed: raw.unattributed, metrics: out };
   if (raw.segments !== void 0) {
-    if (!isObject2(raw.segments)) return bad4(`${where}: segments must be an object of segment to count.`);
+    if (!isObject3(raw.segments)) return bad4(`${where}: segments must be an object of segment to count.`);
     const segments = {};
     for (const [k, v] of Object.entries(raw.segments)) {
       if (k.length > MAX_ID) bad4(`${where}: a segment name is longer than ${MAX_ID} characters.`);
       checkPersonalData(k, "a segment name", where);
-      if (!isCount(v)) bad4(`${where}: segment counts must be whole numbers of 0 or more.`);
+      if (!isCount2(v)) bad4(`${where}: segment counts must be whole numbers of 0 or more.`);
       segments[k] = v;
     }
     agg.segments = segments;
@@ -31809,16 +32542,16 @@ function importTelemetry(input) {
   } catch {
     return bad4("The export is not valid JSON. Export it again as one JSON file shaped as docs/PILOT.md describes.");
   }
-  if (!isObject2(parsed)) return bad4("The export must be a JSON object.");
+  if (!isObject3(parsed)) return bad4("The export must be a JSON object.");
   const x = parsed;
   if (unsafeKey(x) !== null) bad4("The export has a field named __proto__, constructor or prototype, which no export needs.");
-  const unknownTop = Object.keys(x).filter((k) => !TOP_KEYS.includes(k));
+  const unknownTop = Object.keys(x).filter((k) => !TOP_KEYS2.includes(k));
   if (unknownTop.length > 0) bad4(`The export has an undocumented top-level field ${shown(unknownTop[0])}. ${MINIMISE}`);
   if (x.format !== TELEMETRY_FORMAT) bad4(`The export's format must be "${TELEMETRY_FORMAT}".`);
   if (!isNonEmpty(x.export_id)) bad4("The export needs a non-empty export_id (the customer's own id for this export).");
   if (!isNonEmpty(x.source)) bad4("The export needs a non-empty source naming the system it came from.");
   if (!validTime(x.exported_at)) bad4("exported_at must be a UTC time like 2026-09-20T00:00:00Z.");
-  if (!isObject2(x.window)) return bad4("window must be an object with start and end.");
+  if (!isObject3(x.window)) return bad4("window must be an object with start and end.");
   if (Object.keys(x.window).some((k) => k !== "start" && k !== "end")) bad4("window may only have start and end.");
   if (!validTime(x.window.start) || !validTime(x.window.end)) bad4("window.start and window.end must be UTC times like 2026-09-01T00:00:00Z.");
   if (ms(x.window.start) >= ms(x.window.end)) bad4("window.start must be before window.end.");
@@ -31826,9 +32559,9 @@ function importTelemetry(input) {
   if (input.purpose === "baseline" && x.assignment !== "none") bad4(`A baseline export covers the current prompt only, so assignment must be "none" (it is "${x.assignment}").`);
   if (input.purpose === "experiment" && x.assignment === "none") bad4('An experiment export compares two prompts, so assignment must be "randomized" or "observational", not "none".');
   if (!isNonEmpty(x.denominator)) bad4("The export needs a non-empty denominator.");
-  if (!isObject2(x.units) || Object.values(x.units).some((u) => typeof u !== "string")) bad4("units must be an object of metric name to unit.");
+  if (!isObject3(x.units) || Object.values(x.units).some((u) => typeof u !== "string")) bad4("units must be an object of metric name to unit.");
   if (x.query_hash !== void 0 && !isSha256(x.query_hash)) bad4("query_hash must be 64 lowercase hex characters.");
-  if (x.expected_rows !== void 0 && !isCount(x.expected_rows)) bad4("expected_rows must be a whole number of 0 or more.");
+  if (x.expected_rows !== void 0 && !isCount2(x.expected_rows)) bad4("expected_rows must be a whole number of 0 or more.");
   const forms = ["rows", "rows_csv", "aggregates"].filter((k) => x[k] !== void 0);
   if (forms.length !== 1) bad4(`The export must have exactly one of rows, rows_csv or aggregates (it has ${forms.length === 0 ? "none" : forms.join(" and ")}).`);
   const units = x.units;
@@ -32256,7 +32989,7 @@ function renderBaseline(report2, contract, baselineId) {
   return `${lines.join("\n")}
 `;
 }
-var fail, bad4, MAX_COUNT, isCount, validTime, TOP_KEYS, ROW_FIELDS, ID_FIELDS, MAX_ID, NO_SEGMENT, MINIMISE, contractMetrics, shown, NEIGHBOURS, MAX_NAMED_VERSIONS, byString, sameExceptValues, telemetrySource, fmt, pct3, BASELINE_FLAG_TEXT, ciText;
+var fail, bad4, MAX_COUNT, isCount2, validTime, TOP_KEYS2, ROW_FIELDS, ID_FIELDS, MAX_ID, NO_SEGMENT, MINIMISE, contractMetrics, shown, NEIGHBOURS, MAX_NAMED_VERSIONS, byString, sameExceptValues, telemetrySource, fmt, pct3, BASELINE_FLAG_TEXT, ciText;
 var init_telemetry = __esm({
   "src/pilot/telemetry.ts"() {
     "use strict";
@@ -32273,9 +33006,9 @@ var init_telemetry = __esm({
     };
     bad4 = (message) => fail("invalid_telemetry", message);
     MAX_COUNT = 1e12;
-    isCount = (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 && v <= MAX_COUNT;
+    isCount2 = (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0 && v <= MAX_COUNT;
     validTime = (v) => typeof v === "string" && !Number.isNaN(ms(v));
-    TOP_KEYS = [
+    TOP_KEYS2 = [
       "format",
       "export_id",
       "source",
@@ -32887,19 +33620,19 @@ function parseModelScript(source) {
   } catch {
     return bad5("it is not valid JSON");
   }
-  if (!isObject2(v) || v.version !== 1 || typeof v.name !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.name)) return bad5("it needs version 1 and a short lowercase name");
+  if (!isObject3(v) || v.version !== 1 || typeof v.name !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.name)) return bad5("it needs version 1 and a short lowercase name");
   if (typeof v.fallback !== "string" || !v.fallback.trim()) return bad5("it needs a fallback reply");
   if (!Array.isArray(v.rules) || v.rules.length > 500) return bad5("rules must be a list of at most 500 rules");
   for (const [i, rule] of v.rules.entries()) {
     const where = `rule ${i + 1}`;
-    if (!isObject2(rule) || !isObject2(rule.when) || !isObject2(rule.reply)) return bad5(`${where} needs "when" and "reply"`);
+    if (!isObject3(rule) || !isObject3(rule.when) || !isObject3(rule.reply)) return bad5(`${where} needs "when" and "reply"`);
     for (const key of ["system_includes", "system_excludes", "user_includes", "result_includes", "called", "not_called", "ever_called", "never_called"]) {
       if (rule.when[key] !== void 0 && !strings(rule.when[key])) return bad5(`${where}: when.${key} must be a list of phrases`);
     }
     if (rule.when.after_tool !== void 0 && rule.when.after_tool !== null && typeof rule.when.after_tool !== "string") return bad5(`${where}: when.after_tool must be a tool name or null`);
     for (const captures of [rule.capture, rule.capture_result]) {
       if (captures === void 0) continue;
-      if (!isObject2(captures)) return bad5(`${where}: capture must map names to patterns`);
+      if (!isObject3(captures)) return bad5(`${where}: capture must map names to patterns`);
       for (const pattern of Object.values(captures)) {
         if (typeof pattern !== "string" || pattern.length > 200) return bad5(`${where}: a capture pattern must be text of at most 200 characters`);
         try {
@@ -32911,7 +33644,7 @@ function parseModelScript(source) {
     }
     const { text: text4, tool } = rule.reply;
     if (text4 !== void 0 && typeof text4 !== "string") return bad5(`${where}: reply.text must be text`);
-    if (tool !== void 0 && (!isObject2(tool) || typeof tool.name !== "string" || !isObject2(tool.input))) return bad5(`${where}: reply.tool needs a name and an input object`);
+    if (tool !== void 0 && (!isObject3(tool) || typeof tool.name !== "string" || !isObject3(tool.input))) return bad5(`${where}: reply.tool needs a name and an input object`);
     if (text4 === void 0 && tool === void 0) return bad5(`${where}: reply needs text or a tool call`);
   }
   return v;
@@ -32919,7 +33652,7 @@ function parseModelScript(source) {
 function fill(value, values) {
   if (typeof value === "string") return value.replace(/\{([a-z_]+)\}/g, (whole2, name) => values[name] ?? whole2);
   if (Array.isArray(value)) return value.map((v) => fill(v, values));
-  if (isObject2(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v, values)]));
+  if (isObject3(value)) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, fill(v, values)]));
   return value;
 }
 function scriptedModel(script) {
@@ -32996,13 +33729,13 @@ function parseProposerScript(source) {
   } catch {
     return bad5("it is not valid JSON");
   }
-  if (!isObject2(v) || v.version !== 1 || typeof v.name !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.name) || !isObject2(v.findings)) return bad5("it needs version 1, a short lowercase name and a findings object");
+  if (!isObject3(v) || v.version !== 1 || typeof v.name !== "string" || !/^[a-z0-9][a-z0-9-]{0,39}$/.test(v.name) || !isObject3(v.findings)) return bad5("it needs version 1, a short lowercase name and a findings object");
   for (const [check, attempts] of Object.entries(v.findings)) {
     if (!Array.isArray(attempts)) return bad5(`findings.${check} must be a list of attempts`);
     for (const a of attempts) {
-      if (!isObject2(a) || typeof a.rationale !== "string" || !a.rationale.trim()) return bad5(`every attempt for ${check} needs a rationale`);
+      if (!isObject3(a) || typeof a.rationale !== "string" || !a.rationale.trim()) return bad5(`every attempt for ${check} needs a rationale`);
       if (a.append !== void 0 && !strings(a.append)) return bad5(`append for ${check} must be a list of lines`);
-      if (a.replace !== void 0 && !(Array.isArray(a.replace) && a.replace.every((r) => isObject2(r) && typeof r.find === "string" && r.find !== "" && typeof r.with === "string"))) return bad5(`replace for ${check} must be a list of {find, with}`);
+      if (a.replace !== void 0 && !(Array.isArray(a.replace) && a.replace.every((r) => isObject3(r) && typeof r.find === "string" && r.find !== "" && typeof r.with === "string"))) return bad5(`replace for ${check} must be a list of {find, with}`);
       if (a.append === void 0 && a.replace === void 0) return bad5(`every attempt for ${check} needs append or replace`);
     }
   }
@@ -33884,9 +34617,9 @@ function renderPilotReport(store, f) {
     const b = store.get("baseline", baselineEntry.key);
     out.push(`Record \`baseline:${baselineEntry.key}\`, from ${b.telemetry_ids.map((id) => `\`telemetry:${shortId(id)}\``).join(", ")}; window ${b.window.start} to ${b.window.end}; ${b.rows} rows, ${b.mature} mature, ${b.immature} immature.`, "");
     out.push("| Metric | Role | Value | Interval | n | Missing | Source | Method |", "|---|---|---|---|---|---|---|---|");
-    for (const x of b.metrics) out.push(`| ${x.name} | ${x.role} | ${num(x.estimate.value)} | ${x.ci ? `${num(x.ci.lo)} to ${num(x.ci.hi)} (${Math.round(x.ci.level * 100)}%)` : "none"} | ${x.n} | ${x.missing} | ${cell2(x.estimate.source)} | ${cell2(x.estimate.method)} |`);
-    out.push(`| daily volume | | ${num(b.daily_volume.value, 1)} | | | | ${cell2(b.daily_volume.source)} | ${cell2(b.daily_volume.method)} |`);
-    out.push(`| needed per arm | | ${num(b.required_per_arm.value, 0)} | | | | ${cell2(b.required_per_arm.source)} | ${cell2(b.required_per_arm.method)} |`, "");
+    for (const x of b.metrics) out.push(`| ${x.name} | ${x.role} | ${num(x.estimate.value)} | ${x.ci ? `${num(x.ci.lo)} to ${num(x.ci.hi)} (${Math.round(x.ci.level * 100)}%)` : "none"} | ${x.n} | ${x.missing} | ${cell3(x.estimate.source)} | ${cell3(x.estimate.method)} |`);
+    out.push(`| daily volume | | ${num(b.daily_volume.value, 1)} | | | | ${cell3(b.daily_volume.source)} | ${cell3(b.daily_volume.method)} |`);
+    out.push(`| needed per arm | | ${num(b.required_per_arm.value, 0)} | | | | ${cell3(b.required_per_arm.source)} | ${cell3(b.required_per_arm.method)} |`, "");
     if (b.flags.length) out.push(`Flags: ${b.flags.join(", ")}.`, "");
   }
   out.push("## 3. Conversation packs", "");
@@ -33955,14 +34688,14 @@ function renderPilotReport(store, f) {
   return `${out.join("\n")}
 `;
 }
-var num, cell2;
+var num, cell3;
 var init_report2 = __esm({
   "src/pilot/report.ts"() {
     "use strict";
     init_ids();
     init_io();
     num = (v, digits = 4) => v === null || v === void 0 || !Number.isFinite(v) ? "unknown" : String(Number(v.toFixed(digits)));
-    cell2 = (s) => s.replaceAll("|", "\\|").replaceAll("\n", " ");
+    cell3 = (s) => s.replaceAll("|", "\\|").replaceAll("\n", " ");
   }
 });
 
@@ -33970,10 +34703,10 @@ var init_report2 = __esm({
 function lineOps(a, b) {
   let head = 0;
   while (head < a.length && head < b.length && a[head] === b[head]) head++;
-  let tail = 0;
-  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
-  const x = a.slice(head, a.length - tail);
-  const y = b.slice(head, b.length - tail);
+  let tail2 = 0;
+  while (tail2 < a.length - head && tail2 < b.length - head && a[a.length - 1 - tail2] === b[b.length - 1 - tail2]) tail2++;
+  const x = a.slice(head, a.length - tail2);
+  const y = b.slice(head, b.length - tail2);
   const w = y.length + 1;
   const lcs = new Uint32Array((x.length + 1) * w);
   for (let i2 = x.length - 1; i2 >= 0; i2--) {
@@ -33992,7 +34725,7 @@ function lineOps(a, b) {
     } else if (j >= y.length || i < x.length && lcs[(i + 1) * w + j] >= lcs[i * w + j + 1]) ops.push({ t: "-", line: x[i++] });
     else ops.push({ t: "+", line: y[j++] });
   }
-  for (const line of a.slice(a.length - tail)) ops.push({ t: " ", line });
+  for (const line of a.slice(a.length - tail2)) ops.push({ t: " ", line });
   return ops;
 }
 function promptDiff(path4, before, after) {
@@ -34224,8 +34957,8 @@ var init_review = __esm({
 });
 
 // src/pilot/store.ts
-import { appendFileSync as appendFileSync3, closeSync as closeSync3, existsSync as existsSync17, mkdirSync as mkdirSync9, openSync as openSync3, readdirSync as readdirSync3, readFileSync as readFileSync19, statSync as statSync5, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
-import { join as join23 } from "node:path";
+import { appendFileSync as appendFileSync3, closeSync as closeSync3, existsSync as existsSync18, mkdirSync as mkdirSync10, openSync as openSync3, readdirSync as readdirSync3, readFileSync as readFileSync20, statSync as statSync6, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
+import { join as join25 } from "node:path";
 var OBJECT_KINDS, entryHash, MAX_OBJECT_BYTES, LOCK_STALE_MS, HELD, PilotStore;
 var init_store = __esm({
   "src/pilot/store.ts"() {
@@ -34262,7 +34995,7 @@ var init_store = __esm({
       }
       objectPath(kind, id) {
         if (!isSha256(id)) throw new PilotError("usage", `${String(id).slice(0, 80)} is not a full 64-character id.`);
-        return join23(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
+        return join25(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
       }
       // Stores a record under its content id. Storing the same record again is a no-op, so every step can be retried.
       put(kind, value) {
@@ -34280,7 +35013,7 @@ var init_store = __esm({
           writeOnce(path4, content);
         } catch (e) {
           if (!(e instanceof PilotError) || e.code !== "conflict") throw e;
-          if (!content.startsWith(readFileSync19(path4, "utf8"))) {
+          if (!content.startsWith(readFileSync20(path4, "utf8"))) {
             throw new PilotError("tampered", `${path4} already exists with content that does not match its name, so it was changed after it was written. It was not overwritten. Compare it with a backup, or start a new pilot directory.`);
           }
           writeAtomic(path4, content);
@@ -34289,7 +35022,7 @@ var init_store = __esm({
       // Reads a record and checks it still hashes to its name: an edited record is refused, not used.
       get(kind, id) {
         const path4 = this.objectPath(kind, id);
-        if (!existsSync17(path4)) throw new PilotError("not_found", `No ${kind} record ${id.slice(0, 12)} in ${this.dir}.`);
+        if (!existsSync18(path4)) throw new PilotError("not_found", `No ${kind} record ${id.slice(0, 12)} in ${this.dir}.`);
         let value;
         try {
           value = JSON.parse(readBounded(path4, MAX_OBJECT_BYTES));
@@ -34304,11 +35037,11 @@ var init_store = __esm({
         return { id, value: this.get(kind, id) };
       }
       has(kind, id) {
-        return isSha256(id) && existsSync17(this.objectPath(kind, id));
+        return isSha256(id) && existsSync18(this.objectPath(kind, id));
       }
       list(kind) {
-        const dir = join23(this.dir, "objects", kind);
-        if (!existsSync17(dir)) return [];
+        const dir = join25(this.dir, "objects", kind);
+        if (!existsSync18(dir)) return [];
         return readdirSync3(dir).map((f) => f.replace(/\.(json|txt)$/, "")).filter(isSha256).sort();
       }
       // A full id, or a prefix of at least 8 characters that names exactly one record. Approvals and publication
@@ -34332,23 +35065,23 @@ var init_store = __esm({
       }
       getPrompt(id) {
         const path4 = this.objectPath("prompt", id);
-        if (!existsSync17(path4)) throw new PilotError("not_found", `No prompt ${id.slice(0, 12)} in ${this.dir}.`);
+        if (!existsSync18(path4)) throw new PilotError("not_found", `No prompt ${id.slice(0, 12)} in ${this.dir}.`);
         const text4 = readBounded(path4);
         if (promptId(text4) !== id) throw new PilotError("tampered", `The stored prompt ${id.slice(0, 12)} no longer matches its id, so it was changed after it was written.`);
         return text4;
       }
       journalPath() {
-        return join23(this.dir, "journal.jsonl");
+        return join25(this.dir, "journal.jsonl");
       }
       // The sequence number and hash of the newest entry, kept beside the journal. The chain alone cannot show that
       // entries were cut off the end; a journal shorter than its recorded head can.
       headPath() {
-        return join23(this.dir, "journal.head");
+        return join25(this.dir, "journal.head");
       }
       head() {
-        if (!existsSync17(this.headPath())) return null;
+        if (!existsSync18(this.headPath())) return null;
         try {
-          const h = JSON.parse(readFileSync19(this.headPath(), "utf8"));
+          const h = JSON.parse(readFileSync20(this.headPath(), "utf8"));
           if (Number.isInteger(h.seq) && h.seq >= 1 && isSha256(h.hash)) return { seq: h.seq, hash: h.hash };
         } catch {
         }
@@ -34357,7 +35090,7 @@ var init_store = __esm({
       // Every entry, after checking the chain: each line must hash to its own `hash` and name the line before it.
       journal() {
         const path4 = this.journalPath();
-        if (!existsSync17(path4)) return [];
+        if (!existsSync18(path4)) return [];
         const entries = [];
         let prev = null;
         const text4 = readBounded(path4, MAX_OBJECT_BYTES);
@@ -34390,8 +35123,8 @@ var init_store = __esm({
       // next record() removes it.
       tornTail() {
         const path4 = this.journalPath();
-        if (!existsSync17(path4)) return false;
-        const bytes = readFileSync19(path4);
+        if (!existsSync18(path4)) return false;
+        const bytes = readFileSync20(path4);
         return bytes.length > 0 && bytes[bytes.length - 1] !== 10;
       }
       find(step, key) {
@@ -34414,8 +35147,8 @@ var init_store = __esm({
           }
           const rest = { seq: entries.length + 1, at, step, key, refs, prev: entries.at(-1)?.hash ?? null };
           const entry2 = { ...rest, hash: entryHash(rest) };
-          mkdirSync9(this.dir, { recursive: true });
-          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync19(this.journalPath()).lastIndexOf(10) + 1);
+          mkdirSync10(this.dir, { recursive: true });
+          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync20(this.journalPath()).lastIndexOf(10) + 1);
           appendFileSync3(this.journalPath(), `${JSON.stringify(entry2)}
 `, { mode: 384 });
           writeAtomic(this.headPath(), `${JSON.stringify({ seq: entry2.seq, hash: entry2.hash })}
@@ -34448,12 +35181,12 @@ var init_store = __esm({
       // half-written. Only a lock whose owner is gone, or that is older than `staleMs`, is removed, and only after
       // reading it again and finding the same content, so a lock that was replaced in between is not removed.
       acquire(file, staleMs) {
-        mkdirSync9(this.dir, { recursive: true });
-        const lock = join23(this.dir, file);
+        mkdirSync10(this.dir, { recursive: true });
+        const lock = join25(this.dir, file);
         const pause = new Int32Array(new SharedArrayBuffer(4));
         const read = () => {
           try {
-            return { text: readFileSync19(lock, "utf8"), age: Date.now() - statSync5(lock).mtimeMs };
+            return { text: readFileSync20(lock, "utf8"), age: Date.now() - statSync6(lock).mtimeMs };
           } catch (e) {
             if (e.code === "ENOENT") return null;
             throw e;
@@ -34502,14 +35235,14 @@ var init_store = __esm({
         return () => {
           HELD.delete(lock);
           try {
-            if (readFileSync19(lock, "utf8") === String(process.pid)) unlinkSync5(lock);
+            if (readFileSync20(lock, "utf8") === String(process.pid)) unlinkSync5(lock);
           } catch {
           }
         };
       }
       // A rendering of stored records. Safe to overwrite: the records, not the report, are the evidence.
       report(name, content) {
-        const path4 = join23(this.dir, "reports", name);
+        const path4 = join25(this.dir, "reports", name);
         writeAtomic(path4, content);
         return path4;
       }
@@ -34518,12 +35251,12 @@ var init_store = __esm({
 });
 
 // src/pilot/commands.ts
-import { execFileSync as execFileSync7 } from "node:child_process";
-import { appendFileSync as appendFileSync4, existsSync as existsSync18, readFileSync as readFileSync20 } from "node:fs";
-import { dirname as dirname6, join as join24 } from "node:path";
+import { execFileSync as execFileSync8 } from "node:child_process";
+import { appendFileSync as appendFileSync4, existsSync as existsSync19, readFileSync as readFileSync21 } from "node:fs";
+import { dirname as dirname7, join as join26 } from "node:path";
 function defaultGit(args, cwd) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_")));
-  return execFileSync7("git", args, { cwd, encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync8("git", args, { cwd, encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
 }
 function originOf(url) {
   const m = /^(?:[a-z][a-z0-9+.-]*:\/\/)?(?:[^@/\s]+@)?([^:/\s]+)[:/](?:\d+\/)?(.+?)(?:\.git)?\/?$/i.exec(url);
@@ -34594,18 +35327,18 @@ function assertNotFromTheFuture(imported, now, cutoff) {
   }
 }
 function protectDirectory(dir, say) {
-  if (existsSync18(join24(dir, ".git"))) {
+  if (existsSync19(join26(dir, ".git"))) {
     throw new PilotError("usage", "The pilot directory is a git repository root. It holds customer data; use a directory that is not a repository, or a subdirectory with its own .gitignore.");
   }
-  const file = join24(dir, ".gitignore");
-  if (!existsSync18(file)) writeOnce(file, "*\n");
+  const file = join26(dir, ".gitignore");
+  if (!existsSync19(file)) writeOnce(file, "*\n");
   else {
-    const lines = readFileSync20(file, "utf8").split(/\r?\n/).map((l) => l.trim());
-    if (!lines.includes("*")) appendFileSync4(file, `${readFileSync20(file, "utf8").endsWith("\n") ? "" : "\n"}*
+    const lines = readFileSync21(file, "utf8").split(/\r?\n/).map((l) => l.trim());
+    if (!lines.includes("*")) appendFileSync4(file, `${readFileSync21(file, "utf8").endsWith("\n") ? "" : "\n"}*
 `);
   }
   try {
-    const tracked = execFileSync7("git", ["-C", dir, "ls-files", "--", "."], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const tracked = execFileSync8("git", ["-C", dir, "ls-files", "--", "."], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     if (tracked) say("Warning: a surrounding git repository already tracks files in this directory. An ignore file does not untrack them; run `git rm -r --cached` on it before you commit.");
   } catch {
   }
@@ -34698,7 +35431,7 @@ async function baselineLocked(store, flags, deps) {
   const file = need(flags, "telemetry", "the customer's baseline export (JSON)");
   const imported = importTelemetry({
     text: readBounded(file),
-    readSibling: (name) => readBounded(inside(dirname6(file), name)),
+    readSibling: (name) => readBounded(inside(dirname7(file), name)),
     purpose: "baseline",
     scope_id: f.config_id,
     contract: f.config.metric,
@@ -35000,7 +35733,7 @@ async function analyzeLocked(store, flags, deps) {
   if (file) {
     const imported = importTelemetry({
       text: readBounded(file),
-      readSibling: (name) => readBounded(inside(dirname6(file), name)),
+      readSibling: (name) => readBounded(inside(dirname7(file), name)),
       purpose: "experiment",
       scope_id: experimentId,
       contract: f.config.metric,
@@ -35352,7 +36085,7 @@ var init_commands = __esm({
 
 // src/pilot/calllog.ts
 import { readdirSync as readdirSync4 } from "node:fs";
-import { join as join25 } from "node:path";
+import { join as join27 } from "node:path";
 function valuesBefore(c, before) {
   const values = /* @__PURE__ */ new Map();
   const seen = /* @__PURE__ */ new Map();
@@ -35388,7 +36121,7 @@ function readCallLog(dir) {
     return c;
   };
   for (const name of names2) {
-    const text4 = readBounded(join25(dir, name), MAX_LOG_FILE_BYTES);
+    const text4 = readBounded(join27(dir, name), MAX_LOG_FILE_BYTES);
     const parts = text4.split("\n");
     parts.pop();
     for (const part of parts) {
@@ -35401,7 +36134,7 @@ function readCallLog(dir) {
         log.malformed++;
         continue;
       }
-      if (!isObject2(line) || line.v !== CALL_LOG_VERSION || !isUtc(line.at) || !isId2(line.agent)) {
+      if (!isObject3(line) || line.v !== CALL_LOG_VERSION || !isUtc(line.at) || !isId2(line.agent)) {
         log.malformed++;
         continue;
       }
@@ -35435,7 +36168,7 @@ function readCallLog(dir) {
         continue;
       }
       if (line.type === "outcome") {
-        if (!isObject2(line.values)) {
+        if (!isObject3(line.values)) {
           log.malformed++;
           continue;
         }
@@ -35486,7 +36219,7 @@ var init_calllog = __esm({
 });
 
 // src/pilot/export.ts
-import { join as join26 } from "node:path";
+import { join as join28 } from "node:path";
 function buildLogExport(input) {
   const { log, contract } = input;
   if (contract.query_hash !== void 0) throw new PilotError("usage", "The metric contract pins a query hash. A call-log export comes from the wrapper, not from a query, so it cannot carry one. Export from the signed-off query instead.");
@@ -35615,9 +36348,9 @@ function writeLogExport(input) {
     tags,
     ...experiment2 ? { window: experiment2.window } : {}
   });
-  const outDir = input.outDir ?? join26(store.dir, "exports");
-  const path4 = join26(outDir, `${exportId}.json`);
-  writeAtomic(join26(outDir, csvName), built.csv);
+  const outDir = input.outDir ?? join28(store.dir, "exports");
+  const path4 = join28(outDir, `${exportId}.json`);
+  writeAtomic(join28(outDir, csvName), built.csv);
   writeAtomic(path4, `${JSON.stringify(built.header, null, 2)}
 `);
   const notes = [];
@@ -35693,7 +36426,7 @@ var init_export = __esm({
 
 // src/pilot/watch.ts
 import { readdirSync as readdirSync5 } from "node:fs";
-import { dirname as dirname7, join as join27 } from "node:path";
+import { dirname as dirname8, join as join29 } from "node:path";
 function whole(interimDays) {
   if (!Number.isInteger(interimDays) || interimDays < 1) throw new PilotError("usage", "--interim-days must be a whole number of 1 or more.");
   return interimDays;
@@ -35794,11 +36527,11 @@ function scanInbox(store, inbox, experimentId, spec) {
   const importedKeys = new Set(imports.map((e) => e.key));
   const newest = Math.max(-Infinity, ...imports.map((e) => ms(store.get("telemetry", e.refs.telemetry).exported_at)));
   const files = names2.map((name) => {
-    const path4 = join27(inbox, name);
+    const path4 = join29(inbox, name);
     try {
       const imported = importTelemetry({
         text: readBounded(path4),
-        readSibling: (n) => readBounded(inside(dirname7(path4), n)),
+        readSibling: (n) => readBounded(inside(dirname8(path4), n)),
         purpose: "experiment",
         scope_id: experimentId,
         contract: f.config.metric,
@@ -35980,8 +36713,8 @@ var init_watch = __esm({
 });
 
 // src/pilot/cases.ts
-import { existsSync as existsSync19, mkdirSync as mkdirSync10, writeFileSync as writeFileSync10 } from "node:fs";
-import { dirname as dirname8, join as join28, resolve as resolve6 } from "node:path";
+import { existsSync as existsSync20, mkdirSync as mkdirSync11, writeFileSync as writeFileSync11 } from "node:fs";
+import { dirname as dirname9, join as join30, resolve as resolve6 } from "node:path";
 function describe(check) {
   switch (check.kind) {
     case "reply_includes":
@@ -36074,16 +36807,16 @@ async function cases3(store, flags, deps) {
   let path4;
   if (typeof outFlag === "string") {
     path4 = resolve6(outFlag);
-    if (existsSync19(path4)) throw new PilotError("conflict", `${printable2(outFlag, 200)} already exists. Name a new file with --out, then copy the lines you want into your scenarios file yourself.`);
-    mkdirSync10(dirname8(path4), { recursive: true });
+    if (existsSync20(path4)) throw new PilotError("conflict", `${printable2(outFlag, 200)} already exists. Name a new file with --out, then copy the lines you want into your scenarios file yourself.`);
+    mkdirSync11(dirname9(path4), { recursive: true });
     try {
-      writeFileSync10(path4, text4, { flag: "wx", mode: 384 });
+      writeFileSync11(path4, text4, { flag: "wx", mode: 384 });
     } catch (e) {
       if (e.code === "EEXIST") throw new PilotError("conflict", `${printable2(outFlag, 200)} already exists. Name a new file with --out.`);
       throw e;
     }
   } else {
-    path4 = join28(store.dir, "cases", `cases-${shortId(id)}.jsonl`);
+    path4 = join30(store.dir, "cases", `cases-${shortId(id)}.jsonl`);
     writeAtomic(path4, text4);
   }
   deps.say(`Wrote ${path4}`);
@@ -36756,18 +37489,18 @@ var demo_exports = {};
 __export(demo_exports, {
   demo: () => demo
 });
-import { execFileSync as execFileSync8 } from "node:child_process";
-import { existsSync as existsSync20, mkdirSync as mkdirSync11, readdirSync as readdirSync6, readFileSync as readFileSync21, statSync as statSync6, writeFileSync as writeFileSync11 } from "node:fs";
-import { dirname as dirname9, join as join29, resolve as resolve7 } from "node:path";
+import { execFileSync as execFileSync9 } from "node:child_process";
+import { existsSync as existsSync21, mkdirSync as mkdirSync12, readdirSync as readdirSync6, readFileSync as readFileSync22, statSync as statSync7, writeFileSync as writeFileSync12 } from "node:fs";
+import { dirname as dirname10, join as join31, resolve as resolve7 } from "node:path";
 function git3(args, cwd) {
   const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_"))), ...GIT_ENV };
-  return execFileSync8("git", args, { cwd, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
+  return execFileSync9("git", args, { cwd, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
 }
 function filesUnder(dir) {
-  if (!existsSync20(dir)) return [];
+  if (!existsSync21(dir)) return [];
   return readdirSync6(dir).flatMap((name) => {
-    const path4 = join29(dir, name);
-    return statSync6(path4).isDirectory() ? filesUnder(path4) : [path4];
+    const path4 = join31(dir, name);
+    return statSync7(path4).isDirectory() ? filesUnder(path4) : [path4];
   });
 }
 async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
@@ -36775,20 +37508,20 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
   const outFlag = flags.out;
   if (typeof outFlag !== "string" || !outFlag.trim()) throw new PilotError("usage", "--out is required: a new, empty directory for the demo's inputs, pilot records and reports.");
   const out = resolve7(outFlag);
-  if (existsSync20(out) && readdirSync6(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
-  const inputs = join29(out, "inputs");
-  const repoDir = join29(out, "customer-repo");
-  const dir = join29(out, "pilot");
-  mkdirSync11(inputs, { recursive: true });
-  mkdirSync11(join29(repoDir, dirname9(DEMO.prompt_path)), { recursive: true });
+  if (existsSync21(out) && readdirSync6(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
+  const inputs = join31(out, "inputs");
+  const repoDir = join31(out, "customer-repo");
+  const dir = join31(out, "pilot");
+  mkdirSync12(inputs, { recursive: true });
+  mkdirSync12(join31(repoDir, dirname10(DEMO.prompt_path)), { recursive: true });
   const put = (name, content) => {
-    const path4 = join29(inputs, name);
-    writeFileSync11(path4, content);
+    const path4 = join31(inputs, name);
+    writeFileSync12(path4, content);
     return path4;
   };
   const json = (value) => `${JSON.stringify(value, null, 2)}
 `;
-  writeFileSync11(join29(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
+  writeFileSync12(join31(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
   git3(["init", "-q", "-b", DEMO.base], repoDir);
   git3(["add", DEMO.prompt_path], repoDir);
   git3(["commit", "-q", "-m", "Juniper prompt v14"], repoDir);
@@ -36849,7 +37582,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Synthe enterprise pilot: synthetic run for Fernhill Outfitters' support agent Juniper (all data invented).");
     say(`Inputs: ${inputs}   Pilot records and reports: ${dir}`);
     expect("init succeeds", await run2("Freeze the contract and the baseline prompt", ["init", "--config", put("pilot.json", json(demoConfig())), "--repo-dir", repoDir]) === 0);
-    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync20(join29(dir, "reports", "baseline.md")));
+    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync21(join31(dir, "reports", "baseline.md")));
     expect("pack frozen", await run2("Freeze the redacted conversation pack", ["pack", "--file", put("pack.v1.json", json(demoPack()))]) === 0);
     const packV1 = activePack(store);
     expect("discover succeeds", await run2("Find recurring failures on the discovery cases", ["discover", "--model", model]) === 0);
@@ -36956,7 +37689,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("approval recorded against the exact candidate and experiment", await run2("Record the approval", ["approve", "--candidate", candD, "--experiment", expD, "--approver", DEMO.metric_owner]) === 0);
     const tagD = candidateTag(candD);
     const specD = store.get("experiment", expD);
-    const logDir = join29(out, "agent-log");
+    const logDir = join31(out, "agent-log");
     let recorderClock = 0;
     const traffic = demoTraffic({
       recorder: pilotRecorder({ logDir, agent: "Juniper", idKey: DEMO_ID_KEY, now: () => new Date(recorderClock) }),
@@ -36973,7 +37706,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     });
     const looksD = () => store.find("analysis.decided").filter((e) => e.refs.experiment === expD);
     const importsD = () => store.find("telemetry.imported").filter((e) => e.refs.scope === expD).length;
-    const watchMd = () => readFileSync21(join29(dir, "reports", "WATCH.md"), "utf8");
+    const watchMd = () => readFileSync22(join31(dir, "reports", "WATCH.md"), "utf8");
     const tick2 = async (title, iso3) => {
       traffic.upTo(Date.parse(iso3));
       atTime(iso3);
@@ -36984,7 +37717,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const lastLook = () => store.get("analysis", looksD().at(-1)?.refs.analysis ?? "");
     expect("watch --log without --assignment is refused, even while no look is due", await run2("Try a watch tick without saying how traffic was assigned", ["watch", "--log", logDir]) === 1 && looksD().length === 0);
     const t0 = await tick2("Watch tick before the experiment starts (2026-11-27)", "2026-11-27T09:00:00Z");
-    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join29(dir, "exports")).length === 0);
+    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join31(dir, "exports")).length === 0);
     const t1 = await tick2("Watch tick at the end of day 1 (2026-11-29)", "2026-11-29T23:30:00Z");
     expect("day 1: one interim look, HOLD", t1.code === 0 && looksD().length === 1 && lastLook().recommendation === "hold" && lastLook().final === false && importsD() === 1);
     const t1b = await tick2("Watch tick again on day 1, twenty minutes later", "2026-11-29T23:50:00Z");
@@ -36998,9 +37731,9 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("the cutoff: the final analysis is HOLD (inconclusive), final", t4.code === 0 && looksD().length === 4 && finalD.recommendation === "hold" && finalD.final === true && t4.md.startsWith("# HOLD"));
     expect("the lift is real but smaller than the minimum effect, so it is not a keep", (finalD.primary.candidate.estimate ?? 0) - (finalD.primary.baseline.estimate ?? 0) < specD.primary.min_effect);
     const importsAtFinal = importsD();
-    const exportsAtFinal = filesUnder(join29(dir, "exports")).length;
+    const exportsAtFinal = filesUnder(join31(dir, "exports")).length;
     const t5 = await tick2("Watch tick after the final analysis (2026-12-16)", "2026-12-16T09:00:00Z");
-    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join29(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
+    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join31(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
     const pl = traffic.planted;
     const byVersion = (m) => Object.entries(m).sort().map(([t, n]) => `${t} ${n}`).join(", ");
     const count2 = (m) => Object.values(m).reduce((a, b) => a + b, 0);
@@ -37013,9 +37746,9 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect(`the cutoff export notes carry the planted counts (${count2(pl.no_outcome)} no outcome, ${count2(pl.two_versions)} two versions, ${pl.other_version_after_outcome} after the outcome, ${pl.outcome_after_other_version} of them with the outcome recorded again, ${pl.outcome_without_call} outcome without a call), in the tick's output and in WATCH.md`, count2(pl.no_outcome) === TRAFFIC.no_outcome.length && count2(pl.two_versions) === TRAFFIC.call_before_outcome.length && pl.other_version_after_outcome === TRAFFIC.call_after_outcome.length && pl.outcome_after_other_version === TRAFFIC.repeat_after_other_call.length && pl.outcome_without_call === TRAFFIC.outcome_without_call.length && notesOk(t4.out) && notesOk(t4.md));
     expect("every conversation with a recorded call is a row, including the ones with no outcome or two versions", finalD.coverage.rows === 14 * TRAFFIC.per_day);
     expect("no new GitHub request was made after the review", github.requests.length === requestsAfterReview);
-    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync21(p, "utf8")).join("\n");
+    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync22(p, "utf8")).join("\n");
     const rawId = /fernhill-(conv|unit|orphan)-/;
-    const pilotText = [...filesUnder(join29(dir, "reports")), ...filesUnder(join29(dir, "exports")), join29(dir, "journal.jsonl")].map((p) => readFileSync21(p, "utf8")).join("\n");
+    const pilotText = [...filesUnder(join31(dir, "reports")), ...filesUnder(join31(dir, "exports")), join31(dir, "journal.jsonl")].map((p) => readFileSync22(p, "utf8")).join("\n");
     const canariesList = Object.values(CANARIES);
     expect(`the ${filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).length} log files hold no raw conversation or unit id and no message text`, logText.length > 0 && !rawId.test(logText) && !traffic.rawIds.filter((_, i) => i % 997 === 0).some((id) => logText.includes(id)) && !canariesList.some((c) => logText.toLowerCase().includes(c.toLowerCase())));
     expect("the exports, reports and journal hold no raw conversation or unit id either", !rawId.test(pilotText));
@@ -37028,8 +37761,8 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const canaries = Object.values(CANARIES);
     const leaks = (text4) => canaries.some((c) => text4.toLowerCase().includes(c.toLowerCase()));
     expect(`nothing sent to GitHub holds pack conversation text (${github.requests.length} requests checked)`, !github.requests.some((r) => leaks(r.body) || leaks(r.path)));
-    expect("no report holds pack conversation text", !filesUnder(join29(dir, "reports")).some((p) => leaks(readFileSync21(p, "utf8"))));
-    expect("the journal holds no pack conversation text", !leaks(readFileSync21(join29(dir, "journal.jsonl"), "utf8")));
+    expect("no report holds pack conversation text", !filesUnder(join31(dir, "reports")).some((p) => leaks(readFileSync22(p, "utf8"))));
+    expect("the journal holds no pack conversation text", !leaks(readFileSync22(join31(dir, "journal.jsonl"), "utf8")));
     expect("nothing printed by the commands holds pack conversation text", !leaks(transcript2.join("\n")));
     expect("the GitHub token went only to the loopback server and was never printed", github.requests.every((r) => r.authorization === "Bearer demo-token-for-the-loopback-server") && !transcript2.join("\n").includes("demo-token-for-the-loopback-server"));
     expect("no provider credential was read: the commands saw only the GitHub token variable", Object.keys(inner.env).length === 1);
@@ -37037,21 +37770,21 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Outcomes:");
     for (const line of outcomes) say(`- ${line}`);
     const decisionFiles = [`replay-${shortId(candA)}-pack-v1.md`, `decision-${shortId(expB)}.md`, `decision-${shortId(expC)}.md`, `decision-${shortId(expD)}.md`];
-    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync20(join29(dir, "reports", f))));
+    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync21(join31(dir, "reports", f))));
     say("");
     say("The four outcomes, and the file that holds each decision:");
-    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join29(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
-    say(`- Reverted: candidate ${shortId(candB)}   ${join29(dir, "reports", `decision-${shortId(expB)}.md`)}`);
-    say(`- Kept: candidate ${shortId(candC)}   ${join29(dir, "reports", `decision-${shortId(expC)}.md`)}`);
-    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join29(dir, "reports", `decision-${shortId(expD)}.md`)}`);
+    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join31(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
+    say(`- Reverted: candidate ${shortId(candB)}   ${join31(dir, "reports", `decision-${shortId(expB)}.md`)}`);
+    say(`- Kept: candidate ${shortId(candC)}   ${join31(dir, "reports", `decision-${shortId(expC)}.md`)}`);
+    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join31(dir, "reports", `decision-${shortId(expD)}.md`)}`);
     say("");
     say("Evidence to open:");
-    say(`- ${join29(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
-    say(`- ${join29(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
-    say(`- ${join29(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
-    say(`- ${join29(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
-    say(`- ${join29(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
-    say(`- ${join29(dir, "journal.jsonl")}   every step, in order`);
+    say(`- ${join31(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
+    say(`- ${join31(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
+    say(`- ${join31(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
+    say(`- ${join31(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
+    say(`- ${join31(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
+    say(`- ${join31(dir, "journal.jsonl")}   every step, in order`);
     say("");
     say(failures.length === 0 ? `Synthetic pilot passed: ${step} steps, every expectation held (${((Date.now() - startedAt) / 1e3).toFixed(1)} s).` : `Synthetic pilot FAILED: ${failures.length} expectation(s) did not hold:`);
     for (const f of failures) say(`- ${f}`);
@@ -37258,7 +37991,7 @@ init_prompt();
 init_state();
 init_safety();
 import { spawn as spawn4 } from "node:child_process";
-import { existsSync as existsSync21, readFileSync as readFileSync22, writeFileSync as writeFileSync12 } from "node:fs";
+import { existsSync as existsSync22, readFileSync as readFileSync23, writeFileSync as writeFileSync13 } from "node:fs";
 import { createInterface as createInterface4 } from "node:readline/promises";
 
 // src/loop/report.ts
@@ -37383,43 +38116,16 @@ var CHANGED = /* @__PURE__ */ new Set(["merged", "reverted", "proposed"]);
 
 // src/loop/vault.ts
 init_merge_rule();
-
-// src/core/cost.ts
-var PRICES = {
-  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
-  "claude-sonnet-5-5": { input: 2, output: 10 },
-  "claude-opus-5-5": { input: 4, output: 20 },
-  // Teams still on Sonnet 4.5 need a price to see what moving off it (it retires 2026-11-30) would cost.
-  "claude-sonnet-4-5": { input: 3, output: 15 }
-};
-var knownModels = () => Object.keys(PRICES);
-function costUsd(model, usage) {
-  const base = PRICES[model];
-  if (!base || !usage || usage.input_tokens == null || usage.output_tokens == null) return null;
-  const totalInput = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
-  const price = model === "claude-haiku-5-5" && totalInput > 1e5 ? { input: 0.5, output: 2.5 } : base;
-  const input = usage.input_tokens + (usage.cache_creation_input_tokens ?? 0) * 1.25 + (usage.cache_read_input_tokens ?? 0) * 0.1;
-  return (input * price.input + usage.output_tokens * price.output) / 1e6;
-}
-function sumCosts(costs) {
-  let total = 0;
-  for (const c of costs) {
-    if (c === null) return null;
-    total += c;
-  }
-  return total;
-}
-function pricedCost(price, input, output) {
-  if (!price || typeof input !== "number" || typeof output !== "number" || !Number.isFinite(input) || !Number.isFinite(output)) return null;
-  return (input * price.input + output * price.output) / 1e6;
-}
+init_cost();
 
 // src/loop/score.ts
 init_merge_rule();
 init_safety();
+init_cost();
 
 // src/model/client.ts
 init_sdk();
+init_cost();
 
 // src/model/cache.ts
 import { createHash as createHash2 } from "node:crypto";
@@ -37445,208 +38151,8 @@ ${system}`).digest("hex");
   };
 }
 
-// src/model/openai-compatible.ts
-init_goal();
-var ProviderError = class extends Error {
-  status;
-  // null when the server couldn't be reached
-  host;
-  model;
-  loopback;
-  credit;
-  // out of credit or over a spending limit: a person has to act
-  exhausted;
-  // the free limit is used up for now: the next scheduled run tries again
-  constructor(message, a) {
-    super(message);
-    this.status = a.status;
-    this.host = a.host;
-    this.model = a.model;
-    this.loopback = a.loopback;
-    this.credit = a.credit ?? false;
-    this.exhausted = a.exhausted ?? false;
-  }
-};
-var MAX_RETRIES = 4;
-var TIMEOUT_MS = 10 * 6e4;
-var MAX_WAIT_MS = 6e4;
-var CREDIT = /insufficient_quota|credit balance|out of credits?|insufficient (funds|balance)|spend(ing)? limit reached|payment required/i;
-var DAILY = /per[\s_-]?day|daily|requests_per_day|PerDay/i;
-var PACED_AT_ONCE = 2;
-function retryAfterMs(headers, now = Date.now()) {
-  const ms2 = Number(headers.get("retry-after-ms"));
-  if (headers.get("retry-after-ms") && Number.isFinite(ms2) && ms2 >= 0) return Math.min(ms2, MAX_WAIT_MS);
-  const raw = headers.get("retry-after");
-  if (!raw) return null;
-  const seconds2 = Number(raw);
-  if (Number.isFinite(seconds2) && seconds2 >= 0) return Math.min(seconds2 * 1e3, MAX_WAIT_MS);
-  const at = Date.parse(raw);
-  return Number.isFinite(at) ? Math.min(Math.max(0, at - now), MAX_WAIT_MS) : null;
-}
-var backoffMs = (attempt) => Math.min(500 * 2 ** attempt, 8e3) * (0.75 + Math.random() * 0.25);
-var JSON_ONLY = (schema) => `
-
-Reply with only a JSON object that matches this JSON schema, with no other text before or after it:
-${JSON.stringify(schema)}`;
-var unfence = (text4) => text4.match(/^\s*```(?:json)?\s*\n?([\s\S]*?)\n?\s*```\s*$/i)?.[1] ?? text4;
-function textOf(content) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map((p) => p && typeof p === "object" && typeof p.text === "string" ? p.text : "").join("");
-  return null;
-}
-function openAiCompatibleModel(o) {
-  const base = o.baseUrl.trim().replace(/\/+$/, "");
-  const url = new URL(`${base}/chat/completions`);
-  const host = url.host;
-  const loopback = isLoopback(url);
-  const sleep2 = o.sleep ?? ((ms2) => new Promise((resolve9) => setTimeout(resolve9, ms2)));
-  const now = o.now ?? Date.now;
-  const gap = o.maxRequestsPerMinute ? 6e4 / o.maxRequestsPerMinute : 0;
-  let nextAt = 0;
-  const pace = async () => {
-    if (!gap) return;
-    const t = now(), at = Math.max(t, nextAt);
-    nextAt = at + gap;
-    if (at > t) await sleep2(at - t);
-  };
-  let active = 0;
-  const waiting2 = [];
-  const slot = async () => {
-    if (!gap) return () => {
-    };
-    while (active >= PACED_AT_ONCE) await new Promise((resolve9) => waiting2.push(resolve9));
-    active++;
-    return () => {
-      active--;
-      waiting2.shift()?.();
-    };
-  };
-  const hide = (text4) => o.apiKey ? text4.split(o.apiKey).join("[your key]") : text4;
-  const noSchema = /* @__PURE__ */ new Set();
-  const completionTokens = /* @__PURE__ */ new Set();
-  async function post(model, body) {
-    for (let attempt = 0; ; attempt++) {
-      let response;
-      await pace();
-      try {
-        response = await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${o.apiKey}` },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(TIMEOUT_MS),
-          redirect: "error"
-          // a redirect would carry the key to wherever it points
-        });
-      } catch (error) {
-        if (attempt < MAX_RETRIES) {
-          await sleep2(backoffMs(attempt));
-          continue;
-        }
-        throw new ProviderError(`Couldn't reach ${host}: ${hide(error instanceof Error ? error.message : String(error))}`, { status: null, host, model, loopback });
-      }
-      const text4 = await response.text();
-      let json = null;
-      try {
-        json = JSON.parse(text4);
-      } catch {
-      }
-      const credit = CREDIT.test(text4) || response.status === 402;
-      const daily = response.status === 429 && DAILY.test(text4);
-      const retryable = response.status === 429 && !credit && !daily || response.status === 408 || response.status >= 500;
-      if (retryable && attempt < MAX_RETRIES) {
-        await sleep2(retryAfterMs(response.headers) ?? backoffMs(attempt));
-        continue;
-      }
-      return { status: response.status, json, text: text4 };
-    }
-  }
-  const said = (r) => {
-    const m = r.json?.error?.message ?? r.json?.message ?? r.json?.error;
-    return (typeof m === "string" ? m : r.text).trim().slice(0, 300);
-  };
-  return {
-    async ask(a) {
-      const done = await slot();
-      try {
-        return await askOnce(a);
-      } finally {
-        done();
-      }
-    }
-  };
-  async function askOnce({ model, system, user: user2, maxTokens, schema, allowCutOff }) {
-    let jsonInPrompt = Boolean(schema) && noSchema.has(model);
-    let tokensField = completionTokens.has(model) ? "max_completion_tokens" : "max_tokens";
-    let retriedTokens = false, retriedSchema = false;
-    for (; ; ) {
-      const body = {
-        model,
-        messages: [...system === void 0 ? [] : [{ role: "system", content: system }], { role: "user", content: schema && jsonInPrompt ? `${user2}${JSON_ONLY(schema)}` : user2 }],
-        [tokensField]: maxTokens,
-        ...o.reasoningEffort ? { reasoning_effort: o.reasoningEffort } : {},
-        ...schema && !jsonInPrompt ? { response_format: { type: "json_schema", json_schema: { name: "reply", schema, strict: true } } } : {}
-      };
-      const r = await post(model, body);
-      if (r.status === 400) {
-        const why = said(r);
-        if (!retriedTokens && tokensField === "max_tokens" && /max_completion_tokens/.test(why)) {
-          retriedTokens = true;
-          tokensField = "max_completion_tokens";
-          completionTokens.add(model);
-          continue;
-        }
-        if (schema && !jsonInPrompt && !retriedSchema) {
-          retriedSchema = true;
-          jsonInPrompt = true;
-          noSchema.add(model);
-          continue;
-        }
-      }
-      if (r.status < 200 || r.status >= 300) {
-        const credit = CREDIT.test(r.text) || r.status === 402;
-        throw new ProviderError(`${host} answered ${r.status}: ${hide(said(r))}`, { status: r.status, host, model, loopback, credit, exhausted: r.status === 429 && !credit });
-      }
-      const choice = r.json?.choices?.[0];
-      const content = textOf(choice?.message?.content);
-      const refused = typeof choice?.message?.refusal === "string" && choice.message.refusal.trim().length > 0;
-      const reason = typeof choice?.finish_reason === "string" ? choice.finish_reason : null;
-      const raw = refused ? null : content;
-      const text4 = raw !== null && jsonInPrompt ? unfence(raw) : raw;
-      const finished = reason === "stop" && text4 !== null && text4.length > 0;
-      const cutOff = allowCutOff === true && reason === "length" && text4 !== null && text4.length > 0;
-      const usage = r.json?.usage;
-      const input = typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null;
-      const output = typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null;
-      const price = o.prices?.[model];
-      const costUsd2 = price ? pricedCost(price, input, output) : typeof usage?.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0 ? usage.cost : null;
-      return {
-        text: finished || cutOff ? text4 : null,
-        costUsd: costUsd2,
-        ...cutOff ? { truncated: true } : {},
-        ...input !== null && output !== null ? { usage: { input, output } } : {},
-        stopReason: refused ? "refusal" : reason
-      };
-    }
-  }
-}
-async function listModels(baseUrl, apiKey) {
-  const url = new URL(`${baseUrl.trim().replace(/\/+$/, "")}/models`);
-  const hide = (text4) => apiKey ? text4.split(apiKey).join("[your key]") : text4;
-  try {
-    const response = await fetch(url, { headers: { authorization: `Bearer ${apiKey}` }, redirect: "error", signal: AbortSignal.timeout(3e4) });
-    if (response.status === 404) return { ok: false, missing: true, why: "it has no /models route" };
-    if (!response.ok) return { ok: false, missing: false, why: `it answered ${response.status}` };
-    const body = await response.json();
-    const rows = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : null;
-    if (!rows) return { ok: false, missing: false, why: "its answer had no list of models" };
-    const zero = (v) => (typeof v === "number" || typeof v === "string" && v.trim() !== "") && Number(v) === 0;
-    return { ok: true, models: rows.flatMap((m) => typeof m?.id === "string" && m.id ? [{ id: m.id.replace(/^models\//, ""), free: zero(m.pricing?.prompt) && zero(m.pricing?.completion) }] : []) };
-  } catch (error) {
-    return { ok: false, missing: false, why: hide(`it couldn't be reached (${error instanceof Error ? error.message : String(error)})`) };
-  }
-}
-
 // src/model/client.ts
+init_openai_compatible();
 var MissingKeyError = class extends Error {
 };
 function configuredModel(key, provider) {
@@ -37762,6 +38268,7 @@ function providerProblem(e) {
 }
 
 // src/loop/write.ts
+init_cost();
 init_safety();
 
 // src/core/candidate-history.ts
@@ -38832,6 +39339,7 @@ var presetById = (id) => PRESETS.find((p) => p.id === id);
 var FREE_MAX_CALLS = 500;
 
 // src/cli/init.ts
+init_openai_compatible();
 init_prompt();
 init_safety();
 
@@ -38916,6 +39424,7 @@ function baseUrlOption(args) {
 }
 
 // src/cli/calibrate.ts
+init_cost();
 import { mkdirSync as mkdirSync2, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { join as join3 } from "node:path";
 var CASES = 20;
@@ -40035,6 +40544,7 @@ Set up, but GitHub did not accept the first dispatch. Run \`gh workflow run synt
 }
 
 // src/cli/calibrate-judge.ts
+init_cost();
 var JUDGE_CASES = 10;
 var PAIRS = 6;
 var MIN_PAIRS = 3;
@@ -40172,11 +40682,12 @@ ${VARIANTS[i % VARIANTS.length]}` })), 6, async ({ s, variant }) => {
 }
 
 // src/cli/migrate.ts
-import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
-import { join as join5 } from "node:path";
+init_cost();
 init_goal();
 init_merge_rule();
 init_prompt();
+import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
+import { join as join5 } from "node:path";
 var MAX_DROP = 5;
 function parseArgs(args) {
   const out = { dryRun: false };
@@ -40828,6 +41339,7 @@ function parseImproveConfig(raw) {
 }
 
 // src/improve/loop.ts
+init_cost();
 import { execFileSync as execFileSync3 } from "node:child_process";
 import { existsSync as existsSync12, mkdirSync as mkdirSync5, mkdtempSync as mkdtempSync2, readFileSync as readFileSync13, realpathSync as realpathSync2, rmSync as rmSync3, writeFileSync as writeFileSync6 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
@@ -40917,41 +41429,8 @@ var package_default = {
   }
 };
 
-// src/improve/verdict.ts
-var median = (xs) => {
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-};
-var range = (xs) => xs.length ? Math.max(...xs) - Math.min(...xs) : 0;
-var plainNumber = (n) => String(Number.isInteger(n) ? n : Number(n.toFixed(2)));
-var MAX_NAMED = 3;
-function brokenTests(baseline2, candidate) {
-  if (candidate.failing === void 0) return null;
-  if (candidate.failing !== null && candidate.failing.length === 0) return null;
-  if (baseline2.failing === void 0) return "Some tests still fail, and the current code was measured before Synthe recorded which tests fail, so a fixed test could be hiding a newly broken one. Run npx synthe improve again to measure it.";
-  if (candidate.failing === null || baseline2.failing === null) return "Some tests still fail, and Synthe could not tell which ones from the test output, so a fixed test could be hiding a newly broken one.";
-  const before = new Set(baseline2.failing);
-  const broken = candidate.failing.filter((t) => !before.has(t));
-  if (!broken.length) return null;
-  const named = broken.slice(0, MAX_NAMED).join("; ") + (broken.length > MAX_NAMED ? `; and ${broken.length - MAX_NAMED} more` : "");
-  return `It breaks ${broken.length === 1 ? "a test that" : `${broken.length} tests that`} passed in every run before: ${named}.`;
-}
-function verdict(direction, baseline2, candidate, guardPassed) {
-  const delta = candidate.median - baseline2.median;
-  const noise = Math.max(range(baseline2.runs), range(candidate.runs));
-  const result2 = (win3, why, reason) => ({ win: win3, why, delta, noise, ...reason && { reason } });
-  if (guardPassed === false) return result2(false, "The regression check did not pass.", "guard");
-  const better = direction === "higher" ? delta : -delta;
-  if (better <= 0) return result2(false, `Not better than the current code (${plainNumber(candidate.median)} vs ${plainNumber(baseline2.median)}).`, "worse");
-  const broken = brokenTests(baseline2, candidate);
-  if (broken) return result2(false, broken, "tests");
-  const d = plainNumber(Math.abs(delta));
-  if (Math.abs(delta) <= noise) return result2(false, `Within noise: changed by ${d}, but runs vary by up to ${plainNumber(noise)}.`, "noise");
-  return result2(true, `Better by ${d}, more than the run-to-run noise of ${plainNumber(noise)}${guardPassed ? "; the regression check passed." : "."}`);
-}
-
 // src/improve/text.ts
+init_verdict();
 function formatValue(value, unit) {
   if (unit === "bytes") {
     if (Math.abs(value) < 1024) return `${plainNumber(value)} bytes`;
@@ -41096,9 +41575,9 @@ function lessonLine(l) {
   const why = clip3(oneLine2(l.why ?? ""), WHY_MAX).replace(/[.\s]+$/, "");
   const numbers = l.after === null ? "" : `${formatValue(l.before, l.unit)} \u2192 ${formatValue(l.after, l.unit)}`;
   const detail = [why, numbers].filter(Boolean).join("; ");
-  const tail = `${detail ? ` (${detail})` : ""}.`;
-  const summary = clip3(oneLine2(l.summary).replace(/[.\s]+$/, ""), Math.max(20, LINE_MAX - head.length - tail.length));
-  return clip3(`${head}${summary}${tail}`, LINE_MAX);
+  const tail2 = `${detail ? ` (${detail})` : ""}.`;
+  const summary = clip3(oneLine2(l.summary).replace(/[.\s]+$/, ""), Math.max(20, LINE_MAX - head.length - tail2.length));
+  return clip3(`${head}${summary}${tail2}`, LINE_MAX);
 }
 var lessonsFile = (gitRoot) => join12(gitRoot, ".synthe", "improve-lessons.md");
 function appendLessons(gitRoot, lines) {
@@ -41147,6 +41626,9 @@ function lessonsTarget(_gitRoot, choice) {
   if (choice === "agents") return "AGENTS.md";
   return null;
 }
+
+// src/improve/loop.ts
+init_verdict();
 
 // src/improve/worktree.ts
 import { existsSync as existsSync9, lstatSync, mkdtempSync, rmSync as rmSync2, symlinkSync, unlinkSync as unlinkSync2 } from "node:fs";
@@ -41331,6 +41813,7 @@ ${r.stderr}`;
 }
 
 // src/improve/worktree.ts
+init_verdict();
 var win2 = process.platform === "win32";
 var quote = (s) => win2 ? `"${s}"` : `'${s.replace(/'/g, "'\\''")}'`;
 var GIT_TIMEOUT_MS = 12e4;
@@ -42012,6 +42495,8 @@ async function publish(io2, a) {
 init_goal();
 
 // src/core/calls.ts
+init_cost();
+init_openai_compatible();
 var CallLimitError = class extends Error {
   maxCalls;
   constructor(maxCalls) {
@@ -42392,6 +42877,7 @@ async function settle(io2, o, presets, defaultBranch, top) {
 
 // src/cli/submit.ts
 import { existsSync as existsSync13, readFileSync as readFileSync15 } from "node:fs";
+init_verdict();
 var SUBMIT_NEXT_WIN = "NEXT: Show the person the result and the pull request link as written.";
 var SUBMIT_NEXT_LOSS = "NEXT: Show the person why this change did not win, as written. If they want another try, make a different small change on the same branch, commit, and run `npx synthe submit` again.";
 var MAX_CHANGED_FILES = 60;
@@ -42572,10 +43058,10 @@ function onInterrupt(cleanup) {
     for (const s of signals) process.off(s, stop2);
   };
 }
-var template = () => readFileSync22(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync23(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms2) => new Promise((r) => setTimeout(r, ms2)) };
 function setUpHere() {
-  if (existsSync21(GOAL_FILE)) return true;
+  if (existsSync22(GOAL_FILE)) return true;
   console.log("Synthe isn't set up in this folder. Run `npx synthe init` inside your project's folder first.");
   process.exitCode = 1;
   return false;
@@ -42604,7 +43090,7 @@ async function status2() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync22(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync23(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -42612,7 +43098,7 @@ async function status2() {
   const sameModel = sameModelNote(goal.models);
   if (sameModel) console.log(sameModel);
   try {
-    const rows = parseScenarios(readFileSync22(goal.scenarios, "utf8"));
+    const rows = parseScenarios(readFileSync23(goal.scenarios, "utf8"));
     const power = powerLines(goal, rows.filter((r) => r.split === "train").length, rows.filter((r) => r.split === "holdout").length);
     console.log(`What your test cases can detect: ${power[0]} ${power.at(-1)}`);
   } catch {
@@ -42631,7 +43117,7 @@ async function changes() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync22(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync23(GOAL_FILE, "utf8"));
   console.log(changesText(goal, s));
 }
 async function stop() {
@@ -42650,7 +43136,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync22(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync23(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -42660,7 +43146,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync21(goal.scenarios) ? sha256(readFileSync22(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync22(goal.scenarios) ? sha256(readFileSync23(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -42689,7 +43175,7 @@ async function undoRound() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync22(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync23(GOAL_FILE, "utf8"));
   const token2 = (await run("gh", ["auth", "token"])).trim();
   const history = async (path4) => {
     const shas = (await run("git", ["log", "--format=%H", "--", path4])).split("\n").filter(Boolean);
@@ -42699,7 +43185,7 @@ async function undoRound() {
 }
 function localRun(command) {
   if (!setUpHere()) return null;
-  const goal = parseGoal(readFileSync22(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync23(GOAL_FILE, "utf8"));
   const credential = localCredential(process.env, goal.provider);
   if (!credential) {
     console.log(noLocalCredential(command, goal));
@@ -42707,13 +43193,13 @@ function localRun(command) {
     return null;
   }
   console.log(credential.line);
-  const prompt = readPrompt(readFileSync22(goal.prompt.path, "utf8"), goal, null);
+  const prompt = readPrompt(readFileSync23(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync22(goal.scenarios, "utf8")), model: configuredModel(credential.key, goal.provider) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync23(goal.scenarios, "utf8")), model: configuredModel(credential.key, goal.provider) };
 }
 function noLocalCredential(command, goal) {
   if (goal.provider?.kind === "openai-compatible") return `\`npx synthe ${command}\` runs on your computer, changing nothing, and needs your key for ${providerHost(goal.provider)}. Set SYNTHE_API_KEY in your environment, then run this again.`;
@@ -42743,8 +43229,8 @@ async function calibrateChecks() {
   const result2 = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result2) return;
   if (result2.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync22(GOAL_FILE, "utf8"));
-    writeFileSync12(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result2.checks }, null, 2)}
+    const saved = JSON.parse(readFileSync23(GOAL_FILE, "utf8"));
+    writeFileSync13(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result2.checks }, null, 2)}
 `);
     console.log(`
 Saved your reworded checks in ${GOAL_FILE}. Push them so Synthe's next round uses them:`);
@@ -42812,7 +43298,7 @@ async function main2() {
   else if (command === "submit") process.exitCode = await submit({ say: console.log, ask, run, exec: shellExec, env: process.env }, process.cwd(), submitOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
-    process.exitCode = await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync22(GOAL_FILE, "utf8")).provider, process.cwd()) ? 0 : 1;
+    process.exitCode = await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync23(GOAL_FILE, "utf8")).provider, process.cwd()) ? 0 : 1;
   } else if (command === "upgrade") console.log(upgrade(process.cwd(), template()));
   else if (command === "stop") await stop();
   else if (command === "status") await status2();

@@ -65,13 +65,14 @@ problem folder.
 | `goal` | yes | Shown to the proposer. |
 | `artifact` | yes | Globs of files Synthe may change. Any file type. A change outside these globs is refused. |
 | `protect` | no | Globs Synthe must never change. A change that touches them is refused, even inside `artifact`. |
-| `measure.command` | one of two | A shell command, run in the scratch checkout. Its last number on stdout is the score. |
+| `measure.command` | one of two | A shell command, run in the scratch checkout. Its last number on stdout is the score. A leading minus sign belongs to the number: `-20` is -20. |
 | `measure.judge` | one of two | A judged measure; see below. |
 | `measure.direction` | with `command` | `higher` or `lower`. |
 | `measure.runs` | no | Runs per measurement; default 3. |
 | `guards` | no | Shell commands that must exit 0 after a change, or the change is refused. |
 | `split.holdout` | no | When true, `measure.command` runs with `SYNTHE_SPLIT=train` to compare proposals, and a proposal is kept only if it also wins with `SYNTHE_SPLIT=holdout`. The proposer never sees holdout results. |
 | `proposer` | no | `{ "command": "..." }` for an outside proposer, or `"model"` (the default) for the configured model. |
+| `candidates` | no | How many proposals Synthe asks for in each round. Default 1. |
 | `budget.max_rounds` | no | Default 6. |
 | `budget.max_calls` | no | Model calls, when the proposer or judge is a model. |
 | `model` | no | `{ "base_url": "...", "model": "..." }` for an OpenAI-compatible chat completions endpoint. Used when `proposer` or `compare` is `"model"`. The key comes only from the `SYNTHE_API_KEY` environment variable, goes only to `base_url`, and never appears in output or files. |
@@ -97,7 +98,8 @@ stdin:
 ```
 
 `files` holds every file that matches `artifact`, at its current kept version. `history` holds every earlier attempt
-for this problem, from this run and from earlier runs. `candidates` is how many proposals Synthe wants this round.
+for this problem, from this run and from earlier runs. Two runs are the same problem when they have the same `name`
+in the same repository. A problem never gets the history of another problem. `candidates` is how many proposals Synthe wants this round.
 
 stdout:
 
@@ -128,6 +130,9 @@ For problems with no number to print, such as a reply's quality:
 `node src/cli/main.ts solve <problem-file> [--out DIR] [--seed N]`
 
 - Runs rounds until the proposer has nothing more, the budget ends, or 3 rounds in a row keep nothing.
+- An exact measure is one whose repeated runs give the same number, and `runs` can be 1. For an exact measure, any
+  change in the right direction is a real gain. A rank test (sign test, Mann-Whitney) alone cannot keep anything at
+  low `runs`, so the decision rule must handle exact measures. Noisy measures need a statistical test.
 - Kept changes go to a new branch, `synthe/solve-<name>-<n>`, in the repository that holds the problem file.
   The person's working tree and current branch do not change.
 - Writes `result.json` and `report.md` to `--out` (default: `.synthe/solve/<name>/` in the repository).
