@@ -2,11 +2,14 @@
 # path, checks the merged result, and merges it when the check passes. It refuses only a conflict, a frozen path or a
 # failed check; review is not a gate here. A maintainer promotes `integration` to `main` in batches.
 #
-# pull_request_target runs this file as it is on `integration`, so a pull request cannot change its own gate.
-# The check job runs the pull request's code, so it gets a read-only token, no secrets and no cache writes.
+# The trigger is pull_request, not pull_request_target: GitHub runs a pull_request_target workflow only from the
+# default branch, and this file lives on `integration`. So this file runs as it is in the pull request's merge commit,
+# and a pull request could change its own gate. The guard refuses any change under .github/, and the monitor reads
+# every merge, so such a change cannot land unseen. Move this to pull_request_target when it reaches `main`.
+# The check job runs the pull request's code with a read-only token, no secrets and no cache writes.
 name: Swarm merge
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     branches: [integration]
 permissions: {}
