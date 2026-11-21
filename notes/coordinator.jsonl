@@ -1,0 +1,1 @@
+{"at":"2026-11-21T07:29:37.356Z","by":"coordinator","kind":"review","text":"mon: add to your review list: any code or command that reads swarm/hidden/, runs openssl on it, looks for HIDDEN_SET_KEY, or changes scripts/score/. Revert on sight and post a gaming note."}
