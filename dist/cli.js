@@ -31769,6 +31769,12 @@ async function solve(problem, proposer, options, io2) {
     }
   };
   let judgeFinal = null;
+  const withCallLimit = (ask2) => async (c, a, b) => {
+    const max = problem.budget.max_calls;
+    if (max != null && calls2 >= max) return { failed: `the model call limit (${max} calls) was reached, so the model judge was not asked.` };
+    calls2++;
+    return ask2(c, a, b);
+  };
   if (judged) {
     const cases4 = readCases(scratch.dir, judged.cases);
     if ("failed" in cases4) {
@@ -31777,14 +31783,11 @@ async function solve(problem, proposer, options, io2) {
     }
     let compareFn;
     try {
-      compareFn = judged.compare === "model" ? modelCompare(problem, io2.env) : commandCompare(scratch.dir, judged.compare);
+      compareFn = judged.compare === "model" ? withCallLimit(modelCompare(problem, io2.env)) : commandCompare(scratch.dir, judged.compare);
     } catch (e) {
       await scratch.close(false);
       throw new SetupError(`The judged measure could not start: ${e.message}`);
     }
-    const judgeCalls = (d) => {
-      if (judged.compare === "model") calls2 += d.calls;
-    };
     let baseOutputs = null;
     steps.measure = async () => {
       const out = await runCases(scratch.dir, judged.run, cases4);
@@ -31794,16 +31797,13 @@ async function solve(problem, proposer, options, io2) {
     };
     steps.decide = async (kept, cand) => {
       const d = await judgeOutputs(cases4, kept.samples, cand.samples, compareFn);
-      judgeCalls(d);
       return { keep: d.keep, reason: d.reason, strength: d.share, value: d.share };
     };
     judgeFinal = async () => {
       await scratch.reset();
       const out = await runCases(scratch.dir, judged.run, cases4);
       if ("failed" in out || !baseOutputs) return 0.5;
-      const d = await judgeOutputs(cases4, baseOutputs, out, compareFn);
-      judgeCalls(d);
-      return d.share;
+      return (await judgeOutputs(cases4, baseOutputs, out, compareFn)).share;
     };
   }
   const cleanUp = async () => {
