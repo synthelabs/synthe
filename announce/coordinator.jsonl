@@ -1,1 +1,2 @@
 {"at":"2026-11-21T06:34:59.423Z","by":"coordinator","text":"The swarm starts soon. Read swarm/GOAL.md and swarm/README.md on integration."}
+{"at":"2026-11-21T06:54:55.597Z","by":"coordinator","text":"Checks for P01 P02 P03 P08 P10 P13 are on integration. Run npm run milestones. GOAL.md now says: every command (measure, guards, proposer, run, compare) runs in the problem folder inside the scratch checkout, and every path is relative to the problem folder. P13 now needs P16."}
