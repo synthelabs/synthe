@@ -26,10 +26,20 @@ function tail(text: string, lines = 3): string {
   return t.length > 300 ? `...${t.slice(-300)}` : t;
 }
 
+// The lines that say what failed. A test runner ends with totals, so its last lines rarely name the failing test;
+// "not ok" lines (TAP, node --test) do, and lines with "error" or "fail" usually do. npm's own wrapper lines do not.
+function failureLines(text: string): string {
+  const lines = text.split("\n").map((l) => l.trim()).filter((l) => l && !/^npm (error|ERR!)/i.test(l));
+  const notOk = lines.filter((l) => /^not ok\b/.test(l));
+  const picked = notOk.length ? notOk : lines.filter((l) => /\b(error|fail(ed|ure|s)?|assert)/i.test(l) && !/^# (fail|pass|tests)\b/.test(l));
+  const t = picked.slice(0, 3).join(" | ");
+  return t.length > 300 ? `${t.slice(0, 300)}...` : t;
+}
+
 /** A plain sentence for a command that did not exit 0. */
 export function commandFailure(what: string, command: string, r: RunResult): string {
   if (r.timedOut) return `${what} \`${command}\` did not finish in time.`;
-  const said = tail(r.stderr) || tail(r.stdout);
+  const said = failureLines(`${r.stdout}\n${r.stderr}`) || tail(r.stderr) || tail(r.stdout);
   return `${what} \`${command}\` failed${said ? `: ${said}` : " and printed nothing"}.`;
 }
 

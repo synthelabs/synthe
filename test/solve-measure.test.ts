@@ -55,3 +55,14 @@ test("guards stop at the first failure and name it", async () => {
   const g = await guardFailure(dir, p);
   assert.match(g?.reason ?? "", /The guard `echo tests failed; exit 1` failed: tests failed/);
 });
+
+test("a guard's reason names the failing test, not the totals", async () => {
+  const out = "TAP version 13\\nok 1 - adds\\nnot ok 2 - rounds to two places\\n# tests 2\\n# pass 1\\n# fail 1\\n# duration_ms 5";
+  const p = problem("echo 1", 1, [`printf '${out}'; echo 'npm error Lifecycle script failed' >&2; exit 1`]);
+  const g = await guardFailure(dir, p);
+  assert.match(g?.reason ?? "", /failed: not ok 2 - rounds to two places\.$/);
+  const plain = await guardFailure(dir, problem("echo 1", 1, ["echo building; echo 'Error: missing semicolon'; exit 2"]));
+  assert.match(plain?.reason ?? "", /failed: Error: missing semicolon\.$/);
+  const quiet = await guardFailure(dir, problem("echo 1", 1, ["echo just this; exit 2"]));
+  assert.match(quiet?.reason ?? "", /failed: just this\.$/);
+});
