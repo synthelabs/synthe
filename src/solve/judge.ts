@@ -10,8 +10,8 @@ import { isJudged, type Decision, type Problem } from "./types.ts";
 // first position) is the judge's position bias, so it counts as a tie. A paired sign test across the cases decides.
 //
 // Length bias: a judge that likes long outputs prefers any longer output. So when the two outputs of a case differ
-// in length, the case is asked again with the shorter one padded to the same length with filler that adds no
-// content. The change is kept only when it also wins that length-matched test.
+// in length, the case is asked again with the shorter one padded with filler that adds no content, to a little past
+// the longer one. The change is kept only when it also wins that length-matched test.
 
 export interface JudgeCase { id: string; input: unknown; [key: string]: unknown }
 export type Winner = "a" | "b" | "tie";
@@ -84,12 +84,20 @@ export function commandCompare(problemDir: string, command: string): Compare {
   };
 }
 
-// Filler that adds length and words but no content: the shorter output padded to `length` characters.
+// Filler that adds length, letters and words but no content: `text` padded to at least `length` characters.
+const FILLER = " lorem ipsum dolor sit amet";
 export function padTo(text: string, length: number): string {
   if (text.length >= length) return text;
-  const room = length - text.length;
-  const fill = room === 1 ? " " : `\n${". ".repeat(Math.ceil(room / 2))}`.slice(0, room);
-  return text + fill;
+  let fill = "";
+  while (text.length + fill.length < length) fill += FILLER;
+  return text + fill.slice(0, length - text.length);
+}
+
+// The length-matched test pads the shorter output a little past the longer one. Characters, letters and words do
+// not grow in step, so an exact match on one count can leave the other counts short; the margin covers that.
+export function matchedLength(a: string, b: string): number {
+  const longer = Math.max(a.length, b.length);
+  return longer + Math.max(8, Math.ceil(longer * 0.1));
 }
 
 // Exact one-sided sign test: the chance of `wins` or more out of `wins + losses` fair coin flips.
@@ -163,8 +171,9 @@ export async function judgeOutputs(cases: JudgeCase[], kept: Outputs, cand: Outp
   const matched = await eachLimited(cases, async (c) => {
     const k = kept[c.id] ?? "", d = cand[c.id] ?? "";
     if (k.length === d.length) return rawScores[cases.indexOf(c)];
-    const len = Math.max(k.length, d.length);
-    return askTwice(counted, c, padTo(k, len), padTo(d, len));
+    // Only the shorter one is padded, so it ends a little longer than the other.
+    const len = matchedLength(k, d);
+    return k.length < d.length ? askTwice(counted, c, padTo(k, len), d) : askTwice(counted, c, k, padTo(d, len));
   });
   const mFailed = matched.find((m): m is { failed: string } => "failed" in m);
   if (mFailed) return { keep: false, reason: `The judge failed: ${mFailed.failed}`, calls, share, raw: r };
