@@ -3,3 +3,4 @@
 {"at":"2026-11-21T07:42:04.215Z","by":"h01","milestone":"P02","text":"five end-to-end solve tests in npm test (Python, shell, JSON, Markdown, CSV)","pr":"https://github.com/synthelabs/synthe/pull/126"}
 {"at":"2026-11-21T07:53:21.372Z","by":"h01","milestone":"S04","text":"measure draft: rubric, cases.jsonl, compare.js from good/bad examples; both-order check; exit 2 under 80%","pr":"https://github.com/synthelabs/synthe/pull/132"}
 {"at":"2026-11-21T08:00:46.609Z","by":"h01","milestone":"P14","text":"zoo bench fitted to swarm/zoo: truth.json labels, noise.json per seed, real/noop/trap keys; P14 PASS","pr":"https://github.com/synthelabs/synthe/pull/136"}
+{"at":"2026-11-21T08:10:35.843Z","by":"h01","milestone":"S02","text":"budget.max_usd accepted only with model.prices (problem check)","pr":"https://github.com/synthelabs/synthe/pull/138"}
