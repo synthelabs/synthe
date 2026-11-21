@@ -2,10 +2,11 @@ import { execFileSync } from "node:child_process";
 import { isAbsolute, join, resolve } from "node:path";
 import { decide, decideWithConfirm, type Remeasure } from "./decide.ts";
 import { applyProposal, artifactFiles } from "./edits.ts";
-import { appendHistory, readHistory } from "./history.ts";
+import { appendHistory, nextRun, readStored } from "./history.ts";
 import { failedGuard, measure, type Split } from "./measure.ts";
 import { writeReport } from "./report.ts";
 import { stopRunning } from "./run.ts";
+import { readState, writeState, type RunState } from "./resume.ts";
 import { openScratch, type Scratch } from "./scratch.ts";
 import { isJudged, MAX_MISSES, type Attempt, type Decision, type HistoryEntry, type Measurement, type Problem, type Proposal, type Proposer, type SolveOptions, type SolveResult } from "./types.ts";
 
@@ -43,6 +44,8 @@ export interface LoopSteps {
   record?(attempt: Attempt): Promise<void> | void;
   // Model calls used so far.
   calls?(): number;
+  // Called after every finished round, before the stop rules, so a stopped run can be resumed (S03).
+  roundDone?(state: { rounds: number; attempts: Attempt[]; idle: number; keptAny: boolean }): Promise<void> | void;
   say?(line: string): void;
 }
 
@@ -53,6 +56,8 @@ export interface LoopOptions {
   // Rounds in a row that keep nothing before the run stops.
   patience?: number;
   history?: Attempt[];
+  // Continue a stopped run (S03): its finished rounds, their attempts, and its stop-rule counters.
+  resume?: { rounds: number; attempts: Attempt[]; idle: number; keptAny: boolean };
 }
 
 export interface LoopResult { stopped: string; baseline: number; final: number; attempts: Attempt[]; rounds: number; keptAny: boolean }
@@ -64,7 +69,7 @@ export async function runLoop(steps: LoopSteps, options: LoopOptions): Promise<L
   const candidates = Math.max(1, options.candidates ?? 1);
   const patience = options.patience ?? MAX_MISSES;
   const earlier = options.history ?? [];
-  const attempts: Attempt[] = [];
+  const attempts: Attempt[] = [...(options.resume?.attempts ?? [])];
 
   const start = await steps.guards();
   if (!start.ok) throw new SetupError(`${start.reason} This is before any change, so no change can be judged. Fix the guard first.`);
@@ -80,9 +85,9 @@ export async function runLoop(steps: LoopSteps, options: LoopOptions): Promise<L
   };
 
   let stopped = `Reached the round limit (${plural(options.maxRounds, "round")}).`;
-  let idle = 0;
-  let round = 0;
-  let keptAny = false;
+  let idle = options.resume?.idle ?? 0;
+  let round = options.resume?.rounds ?? 0;
+  let keptAny = options.resume?.keptAny ?? false;
   while (true) {
     if (round >= options.maxRounds) break;
     if (options.maxCalls != null && steps.calls && steps.calls() >= options.maxCalls) {
@@ -103,6 +108,7 @@ export async function runLoop(steps: LoopSteps, options: LoopOptions): Promise<L
       if (next) { current = next; kept = true; keptAny = true; }
     }
     idle = kept ? 0 : idle + 1;
+    await steps.roundDone?.({ rounds: round, attempts, idle, keptAny });
     if (idle >= patience) {
       stopped = `${plural(patience, "round")} in a row kept nothing.`;
       break;
@@ -187,17 +193,38 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     throw new SetupError(`${problem.dir} is not inside a git repository. Synthe works in a scratch checkout of a git repository.`);
   }
   const outDir = options.out ? (isAbsolute(options.out) ? options.out : resolve(process.cwd(), options.out)) : join(repoRoot, ".synthe", "solve", problem.name);
-  const history: Attempt[] = readHistory(gitDir, problem.name).map((h) => ({ ...h }));
+  // --resume continues the latest run only when it stopped before its own stop rule (S03).
+  const saved = options.resume ? readState(gitDir, problem.name) : null;
+  const resumed: RunState | null = saved?.status === "running" ? saved : null;
+  if (options.resume) {
+    io.say(resumed
+      ? `Resuming run ${resumed.run} of ${problem.name} after round ${resumed.rounds}, on the branch ${resumed.branch}.`
+      : saved
+        ? `The last run of ${problem.name} ended normally (${saved.stopped ?? "it reached its stop rule"}), so there is nothing to resume. Starting a new run.`
+        : `No earlier run of ${problem.name} to resume. Starting a new run.`);
+  }
+  const run = resumed?.run ?? nextRun(gitDir, problem.name);
+  // The proposer hears every earlier attempt once: a resumed run's own attempts come back through `resume` below.
+  const history: Attempt[] = readStored(gitDir, problem.name).filter((e) => e.run !== run)
+    .map(({ round, summary, kept, reason }) => ({ round, summary, kept, reason }));
 
   let scratch: Scratch;
   try {
-    scratch = await openScratch(repoRoot, problem.dir, problem.name);
+    scratch = await openScratch(repoRoot, problem.dir, problem.name, resumed ? { branch: resumed.branch, base: resumed.base, head: resumed.head, root: resumed.root } : undefined);
   } catch (e) {
     throw new SetupError(`Could not make the scratch checkout: ${(e as Error).message}`);
   }
 
-  let calls = 0;
-  let keptCount = 0;
+  let calls = resumed?.calls ?? 0;
+  // Counts the kept changes on the branch, from the stopped run too: the clean-up after a Ctrl-C keeps the branch
+  // only when this is more than 0.
+  let keptCount = resumed ? resumed.attempts.filter((a) => a.kept).length : 0;
+  let baseline = resumed?.baseline ?? Number.NaN;
+  const save = (state: { rounds: number; attempts: Attempt[]; idle: number; keptAny: boolean }, status: RunState["status"] = "running", stopped?: string, head = git(scratch.root, "rev-parse", "HEAD")) =>
+    writeState(gitDir, problem.name, {
+      status, run, branch: scratch.branch, base: scratch.base, root: scratch.root, head,
+      rounds: state.rounds, attempts: state.attempts, baseline, calls, idle: state.idle, keptAny: state.keptAny, ...(stopped ? { stopped } : {}),
+    });
   let lastPaths: string[] = [];
   let lastProposal: Proposal | null = null;
   const measureAt = async (split?: Split): Promise<Measurement | { failed: string }> =>
@@ -238,6 +265,10 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
         if ("failed" in held) return { ok: false, reason: `the held-back split gave no number: ${held.failed}` };
         sample.holdout = held;
       }
+      if (first && Number.isNaN(baseline)) {
+        baseline = train.value;
+        save({ rounds: 0, attempts: [], idle: 0, keptAny: false });
+      }
       first = false;
       return { ok: true, value: train.value, samples: sample };
     },
@@ -277,7 +308,10 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
       keptCount++;
     },
     record(attempt) {
-      appendHistory(gitDir, problem.name, [entry(attempt)]);
+      appendHistory(gitDir, problem.name, [entry(attempt)], run);
+    },
+    roundDone(state) {
+      save(state);
     },
   };
   // A crash or a Ctrl-C must leave no scratch worktree and no empty branch. A branch that holds kept changes stays:
@@ -288,23 +322,29 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     : "\nStopped. Synthe removed its scratch checkout and kept no change. Your working tree did not change."));
   let result: LoopResult;
   try {
-    result = await runLoop(steps, { maxRounds: problem.budget.max_rounds, maxCalls: problem.budget.max_calls, candidates: problem.candidates, history });
+    result = await runLoop(steps, {
+      maxRounds: problem.budget.max_rounds, maxCalls: problem.budget.max_calls, candidates: problem.candidates, history,
+      ...(resumed ? { resume: { rounds: resumed.rounds, attempts: resumed.attempts, idle: resumed.idle, keptAny: resumed.keptAny } } : {}),
+    });
   } catch (e) {
     await cleanUp();
     throw e;
   } finally {
     unhook();
   }
+  const head = git(scratch.root, "rev-parse", "HEAD");
   await scratch.close(result.keptAny);
   const solved: SolveResult = {
     problem: problem.name,
     stopped: result.stopped,
-    baseline: result.baseline,
+    // A resumed run reports the first run's starting score, not the score it resumed from.
+    baseline: resumed ? resumed.baseline : result.baseline,
     final: result.final,
     branch: result.keptAny ? scratch.branch : null,
     attempts: result.attempts,
   };
   writeReport(outDir, solved, { goal: problem.goal, direction, ...(problem.measure.unit ? { unit: problem.measure.unit } : {}) });
+  save({ rounds: result.rounds, attempts: result.attempts, idle: 0, keptAny: result.keptAny }, "done", result.stopped, head);
   io.say(`Wrote ${join(outDir, "result.json")} and report.md.`);
   if (solved.branch) io.say(`Kept changes are on the branch ${solved.branch}.`);
   return solved;

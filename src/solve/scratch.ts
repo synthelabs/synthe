@@ -60,10 +60,15 @@ export function nextBranch(top: string, name: string): string {
   return `${prefix}${max + 1}`;
 }
 
+// What `solve --resume` needs to continue a stopped run on its own branch: the branch, the base it started from,
+// the commit of the last finished round, and the old checkout folder (a hard kill can leave it on disk).
+export interface Reopen { branch: string; base: string; head: string; root: string }
+
 // Throws an Error with a plain message when the folder is not in a git repository, the repository has no commit,
 // or the problem folder is not committed. `repoRoot` may be empty: the root is then found from `problemDir`.
-export async function openScratch(repoRoot: string, problemDir: string, name: string): Promise<Scratch> {
-  const s = openState(repoRoot, problemDir, name);
+// With `reopen`, the checkout is made on the stopped run's branch at `reopen.head` instead of on a new branch.
+export async function openScratch(repoRoot: string, problemDir: string, name: string, reopen?: Reopen): Promise<Scratch> {
+  const s = openState(repoRoot, problemDir, name, reopen);
   let closed = false;
   return {
     root: s.root,
@@ -80,22 +85,33 @@ export async function openScratch(repoRoot: string, problemDir: string, name: st
   };
 }
 
-function openState(repoRoot: string, problemDir: string, name: string): State {
+function openState(repoRoot: string, problemDir: string, name: string, reopen?: Reopen): State {
   const real = realpathSync(problemDir);
   const topOut = tryGit(repoRoot || real, ["rev-parse", "--show-toplevel"]);
   if (!topOut) throw new Error(`${problemDir} is not inside a git repository. Run git init and commit the files first.`);
   const top = realpathSync(topOut.trim());
-  const base = tryGit(top, ["rev-parse", "--verify", "HEAD^{commit}"])?.trim();
-  if (!base) throw new Error(`The repository at ${top} has no commit yet. Commit the files first.`);
+  const head = tryGit(top, ["rev-parse", "--verify", "HEAD^{commit}"])?.trim();
+  if (!head) throw new Error(`The repository at ${top} has no commit yet. Commit the files first.`);
+  const base = reopen?.base ?? head;
   const rel = relative(top, real);
   if (rel && !tryGit(top, ["ls-tree", "-d", "--name-only", base, rel])?.trim()) {
     throw new Error(`The folder ${rel} is not committed in ${top}. Commit it first: Synthe works only on committed files.`);
   }
 
-  const branch = nextBranch(top, name);
+  if (reopen) dropStaleCheckout(top, reopen.root);
+  const branch = reopen?.branch ?? nextBranch(top, name);
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "synthe-solve-")));
   try {
-    git(top, ["worktree", "add", "--quiet", "-b", branch, dir, base]);
+    if (!reopen) {
+      git(top, ["worktree", "add", "--quiet", "-b", branch, dir, base]);
+    } else if (tryGit(top, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`])) {
+      // The branch may hold a commit from a round the kill cut short: go back to the last finished round.
+      git(top, ["worktree", "add", "--quiet", dir, branch]);
+      git(dir, ["reset", "--hard", "--quiet", reopen.head]);
+    } else {
+      // The clean-up of a stopped run that had kept nothing removes its branch: make it again at the saved head.
+      git(top, ["worktree", "add", "--quiet", "-b", branch, dir, reopen.head]);
+    }
   } catch (e) {
     rmSync(dir, { recursive: true, force: true });
     throw new Error(`Could not make a scratch checkout on ${branch}: ${firstLine(e)}`);
@@ -116,6 +132,22 @@ function openState(repoRoot: string, problemDir: string, name: string): State {
     }
   }
   return scratch;
+}
+
+// A hard kill (SIGKILL) leaves the old checkout on disk and registered, which holds its branch. Remove it. Only a
+// folder that git lists as a worktree of this repository is removed, never any other path from the state file.
+function dropStaleCheckout(top: string, root: string): void {
+  const listed = (tryGit(top, ["worktree", "list", "--porcelain"]) ?? "").split("\n")
+    .filter((l) => l.startsWith("worktree ")).map((l) => l.slice("worktree ".length));
+  if (root && listed.includes(root) && root !== top) {
+    for (const name of LINKED) {
+      const link = join(root, name);
+      try { if (lstatSync(link).isSymbolicLink()) unlinkSync(link); } catch { /* not there */ }
+    }
+    tryGit(top, ["worktree", "remove", "--force", root]);
+    rmSync(root, { recursive: true, force: true });
+  }
+  tryGit(top, ["worktree", "prune"]);
 }
 
 // The scratch HEAD: the last kept change, or the base.

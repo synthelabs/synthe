@@ -64,7 +64,8 @@ export interface SolveResult {
   attempts: Attempt[];
 }
 
-export interface SolveOptions { out?: string; seed?: number }
+// `resume`: continue the latest run when it stopped before its own stop rule (stage 2, S03).
+export interface SolveOptions { out?: string; seed?: number; resume?: boolean }
 
 // Every problem found in a problem file, one line each, each line names the field.
 export type ProblemCheck = { ok: true; problem: Problem } | { ok: false; problems: string[] };
