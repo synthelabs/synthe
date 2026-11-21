@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -16,6 +16,8 @@ function setup(hangAt: number) {
   const side = join(base, "side");
   mkdirSync(join(repo, "p"), { recursive: true });
   mkdirSync(side);
+  // Each run gets its own temp folder for scratch checkouts, so a killed run's leftovers never meet another test.
+  mkdirSync(join(base, "tmp"));
   const files: Record<string, string> = {
     "p/config.json": '{"level": 10}\n',
     "p/measure.js": 'console.log(JSON.parse(require("fs").readFileSync("config.json", "utf8")).level);\n',
@@ -49,7 +51,7 @@ if (req.round === ${hangAt} && !fs.existsSync(hang)) {
 type Setup = ReturnType<typeof setup>;
 
 function solve(s: Setup, extra: string[] = []) {
-  const child = spawn(process.execPath, [CLI, "solve", "p/problem.json", "--out", s.out, ...extra], { cwd: s.repo, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [CLI, "solve", "p/problem.json", "--out", s.out, ...extra], { cwd: s.repo, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, TMPDIR: join(s.base, "tmp") } });
   let out = "";
   child.stdout.on("data", (d) => { out += d; });
   child.stderr.on("data", (d) => { out += d; });
@@ -81,8 +83,9 @@ function assertTreeUnchanged(s: Setup) {
   assert.equal(git(s.repo, "branch", "--show-current"), "work");
 }
 
-test("--resume after a SIGKILL in round 2 keeps round 1's change and attempt, and does not repeat round 1", { skip: process.platform === "win32" }, async () => {
+test("--resume after a SIGKILL in round 2 keeps round 1's change and attempt, and does not repeat round 1", { skip: process.platform === "win32" }, async (t) => {
   const s = setup(2);
+  t.after(() => rmSync(s.base, { recursive: true, force: true }));
   await killWhenHung(s);
   assert.equal(existsSync(join(s.out, "result.json")), false, "the killed run wrote no result.json");
   assert.equal(git(s.repo, "show", "synthe/solve-res-1:p/config.json"), '{"level": 15}');
@@ -103,11 +106,13 @@ test("--resume after a SIGKILL in round 2 keeps round 1's change and attempt, an
   assert.equal(git(s.repo, "show", "synthe/solve-res-1:p/config.json"), '{"level": 20}');
   assert.equal(git(s.repo, "branch", "--list", "--format=%(refname:short)", "synthe/*"), "synthe/solve-res-1", "no second branch");
   assert.equal(worktrees(s), 1, "the killed run's scratch checkout is gone");
+  assert.deepEqual(readdirSync(join(s.base, "tmp")), [], "no scratch folder is left");
   assertTreeUnchanged(s);
 });
 
-test("--resume after a SIGKILL in round 1, before any keep, goes on with the same branch name", { skip: process.platform === "win32" }, async () => {
+test("--resume after a SIGKILL in round 1, before any keep, goes on with the same branch name", { skip: process.platform === "win32" }, async (t) => {
   const s = setup(1);
+  t.after(() => rmSync(s.base, { recursive: true, force: true }));
   await killWhenHung(s);
   const r = await solve(s, ["--resume"]).done;
   assert.equal(r.code, 0, r.out);
@@ -121,8 +126,9 @@ test("--resume after a SIGKILL in round 1, before any keep, goes on with the sam
   assertTreeUnchanged(s);
 });
 
-test("--resume after a Ctrl-C before any keep (the empty branch was removed) makes the branch again and goes on", { skip: process.platform === "win32" }, async () => {
+test("--resume after a Ctrl-C before any keep (the empty branch was removed) makes the branch again and goes on", { skip: process.platform === "win32" }, async (t) => {
   const s = setup(1);
+  t.after(() => rmSync(s.base, { recursive: true, force: true }));
   await killWhenHung(s, "SIGINT");
   assert.equal(git(s.repo, "branch", "--list", "synthe/*"), "", "the stop removed the empty branch");
   const r = await solve(s, ["--resume"]).done;
@@ -133,8 +139,9 @@ test("--resume after a Ctrl-C before any keep (the empty branch was removed) mak
   assertTreeUnchanged(s);
 });
 
-test("--resume after a run that ended normally starts a new run and says so", { skip: process.platform === "win32" }, async () => {
+test("--resume after a run that ended normally starts a new run and says so", { skip: process.platform === "win32" }, async (t) => {
   const s = setup(0);
+  t.after(() => rmSync(s.base, { recursive: true, force: true }));
   const first = await solve(s).done;
   assert.equal(first.code, 0, first.out);
   assert.equal(result(s).branch, "synthe/solve-res-1");
@@ -146,8 +153,9 @@ test("--resume after a run that ended normally starts a new run and says so", { 
   assertTreeUnchanged(s);
 });
 
-test("--resume with no earlier run starts a new run and says so", { skip: process.platform === "win32" }, async () => {
+test("--resume with no earlier run starts a new run and says so", { skip: process.platform === "win32" }, async (t) => {
   const s = setup(0);
+  t.after(() => rmSync(s.base, { recursive: true, force: true }));
   const r = await solve(s, ["--resume"]).done;
   assert.equal(r.code, 0, r.out);
   assert.match(r.out, /There is no earlier run of res, so --resume starts a new run/);
