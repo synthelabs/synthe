@@ -6,8 +6,11 @@
 //   node scripts/score/score.mjs --self-test          # the demo set against a loopback fake model: free
 //   ... --detail <file>                               # also write per-problem detail to a file
 //
-// Environment: SCORE_MODEL (the model id), SCORE_INPUT_PER_MTOK and SCORE_OUTPUT_PER_MTOK (USD per million tokens),
-// SCORE_MAX_USD (the cap for the whole run), SCORE_RUNS (runs per version of a noisy measure, default 12).
+// Environment: SCORE_MODEL (the proposer's model id), SCORE_INPUT_PER_MTOK and SCORE_OUTPUT_PER_MTOK (USD per million
+// tokens), SCORE_MAX_USD (the cap for the whole run), SCORE_RUNS (runs per version of a noisy measure, default 12).
+// SCORE_JUDGE_MODEL, with SCORE_JUDGE_INPUT_PER_MTOK and SCORE_JUDGE_OUTPUT_PER_MTOK, gives judged problems their
+// own judge model. Without it, the judge is the proposer's model.
+// SCORE_PROBLEMS=N (or --limit N) runs only N problems, spread over the set: a small, cheap first run.
 // SCORE_API_URL points the run at a loopback fake of the API for a dry run; any other address is refused.
 //
 // For each problem: b is the baseline's score on the holdout split, f is the score of the branch that `solve` made,
@@ -33,6 +36,7 @@ const ROOT = resolve(HERE, "../..");
 const CLI = join(process.env.SCORE_SYNTHE_DIR ? resolve(process.env.SCORE_SYNTHE_DIR) : ROOT, "src", "cli", "main.ts");
 const HIDDEN_SET = join(ROOT, "swarm", "hidden", "set.tar.gz.enc");
 const DEMO = join(HERE, "demo");
+const JUDGE = join(HERE, "judge.mjs");
 const API = "https://api.anthropic.com";
 // `solve` gets this in place of the key. The gate (meter.mjs) puts the real key on the outgoing request.
 const PLACEHOLDER_KEY = "sk-ant-score-gate-placeholder";
@@ -125,6 +129,12 @@ function listProblems(dir) {
     .filter((p) => statSync(p.dir).isDirectory() && existsSync(join(p.dir, "meta.json")) && existsSync(join(p.dir, "repo", "problem.json")));
 }
 
+// `limit` problems spread evenly over the set, which is in order of kind. All of them when there is no limit.
+function spread(problems, limit) {
+  if (!limit || limit >= problems.length) return problems;
+  return Array.from({ length: limit }, (_, i) => problems[Math.floor((i * problems.length) / limit)]);
+}
+
 // How much of the stage 2 contract this `solve` accepts. The scorer writes the problem file to match.
 //   "full":      model.provider "anthropic", model.prices and budget.max_usd (swarm/GOAL-2.md)
 //   "anthropic": the provider, but no prices and no max_usd
@@ -133,6 +143,11 @@ const VARIANTS = ["full", "anthropic", "compat"];
 
 function problemFile(raw, variant, o) {
   const p = { ...raw, proposer: "model" };
+  // A separate judge model: the problem file has one model only, so the judge becomes a compare command. The
+  // command asks the judge model through the gate, which counts its cost.
+  if (o.judge && raw.measure?.judge?.compare === "model") {
+    p.measure = { ...raw.measure, judge: { ...raw.measure.judge, compare: `"${process.execPath}" "${JUDGE}" ${o.gateUrl} ${o.judge.model}` } };
+  }
   if (variant === "compat") p.model = { base_url: `${o.gateUrl}/v1`, model: o.model };
   else p.model = { provider: "anthropic", model: o.model };
   if (variant === "full") {
@@ -202,10 +217,11 @@ async function scoreProblem(problem, variant, o) {
     const { repo, base } = makeRepo(work, problem, problemFile(raw, variant, o));
 
     // 1. Run solve. Its output can hold problem content, so it goes only to the detail record.
-    const spentBefore = o.meter.spent();
+    const spentBefore = o.meter.spent(), judgeBefore = o.meter.judgeSpent();
     const out = join(work, "out");
     const solved = await run(process.execPath, [CLI, "solve", "problem.json", "--out", out], { cwd: repo, env: solveEnv(variant, o.gateUrl), timeoutMs: SOLVE_TIMEOUT_MS });
     record.meteredUsd = o.meter.spent() - spentBefore;
+    record.judgeUsd = o.meter.judgeSpent() - judgeBefore;
     record.solveExit = solved.timedOut ? "timeout" : solved.code;
     record.solveOutput = (solved.stdout + solved.stderr).slice(-4000);
     let result = null;
@@ -214,7 +230,8 @@ async function scoreProblem(problem, variant, o) {
     record.stopped = result?.stopped ?? null;
     record.attempts = Array.isArray(result?.attempts) ? result.attempts.length : 0;
     const usd = result?.cost?.usd;
-    record.costUsd = typeof usd === "number" && Number.isFinite(usd) ? usd : null;
+    // The cost of a judge command is not in result.json: solve did not make those calls. The gate counted them.
+    record.costUsd = typeof usd === "number" && Number.isFinite(usd) ? usd + record.judgeUsd : null;
     record.calls = result?.cost?.calls ?? null;
     const keptInResult = Array.isArray(result?.attempts) ? result.attempts.filter((a) => a?.kept === true).length : 0;
 
@@ -295,11 +312,13 @@ async function scoreProblem(problem, variant, o) {
  * `upstream` is the API's base URL; `allowDowngrade` lets the run go on when solve lacks part of stage 2.
  */
 async function scoreSet(o) {
-  const problems = listProblems(o.problemsDir);
-  if (!problems.length) throw new Stop("The scorer found no problem in the set.");
+  const all = listProblems(o.problemsDir);
+  if (!all.length) throw new Stop("The scorer found no problem in the set.");
+  const problems = spread(all, o.limit);
   const tmp = tempDir("synthe-score-");
-  const meter = await startMeter({ upstream: o.upstream, realKey: o.realKey, prices: o.prices, capUsd: o.capUsd });
-  const ctx = { tmp, meter, gateUrl: meter.url, model: o.model, prices: o.prices, runs: o.runs };
+  const prices = { [o.model]: o.prices, ...(o.judge ? { [o.judge.model]: o.judge.prices } : {}) };
+  const meter = await startMeter({ upstream: o.upstream, realKey: o.realKey, prices, capUsd: o.capUsd });
+  const ctx = { tmp, meter, gateUrl: meter.url, model: o.model, prices: o.prices, judge: o.judge ?? null, runs: o.runs };
   try {
     const variant = await findVariant(problems, { ...ctx });
     if (!variant) throw new Stop("Blocked: `problem check` refused the problem file in every form the scorer knows. Run `node src/cli/main.ts problem check scripts/score/demo/threshold/repo/problem.json` and read its output.");
@@ -326,7 +345,10 @@ async function scoreSet(o) {
     const summary = {
       ...syntheScore(scored.map((r) => r.g), records.reduce((a, r) => a + r.kept, 0), records.reduce((a, r) => a + r.falseKeeps, 0), cost),
       problems: problems.length,
+      inSet: all.length,
       scored: scored.length,
+      judgeUsd: meter.judgeSpent(),
+      judgeModel: o.judge?.model ?? null,
       solveFailed: records.filter((r) => r.status === "solve failed").length,
       setErrors: records.filter((r) => r.status === "set error" || r.status === "scorer error").length,
       notRun,
@@ -354,9 +376,13 @@ function report(s) {
   lines.push(`False keeps: ${s.falseKeeps} of ${s.kept} kept changes (${(100 * s.rate).toFixed(1)}%)`);
   lines.push(s.costUsd === null
     ? `Cost: not reported by solve (result.json has no cost.usd). The gate counted at most ${usd(s.meteredUsd)}.`
-    : `Cost: ${usd(s.costUsd)} from result.json. The gate counted at most ${usd(s.meteredUsd)} in ${s.calls} model calls.`);
+    : s.judgeModel
+      ? `Cost: ${usd(s.costUsd)} (${usd(s.costUsd - s.judgeUsd)} from result.json, and ${usd(s.judgeUsd)} for the separate judge model, counted by the gate). The gate counted at most ${usd(s.meteredUsd)} in ${s.calls} model calls.`
+      : `Cost: ${usd(s.costUsd)} from result.json. The gate counted at most ${usd(s.meteredUsd)} in ${s.calls} model calls.`);
   lines.push(`Score per dollar: ${s.perDollar === null ? "not available" : s.perDollar.toFixed(3)}`);
-  lines.push(`Problems: ${s.problems} (${s.scored} scored)`);
+  lines.push(s.problems < s.inSet
+    ? `Problems: ${s.problems} of the ${s.inSet} in the set (${s.scored} scored). This is a small run: do not compare its score with the score of a full run.`
+    : `Problems: ${s.problems} (${s.scored} scored)`);
   if (s.solveFailed) lines.push(`Solve runs that failed: ${s.solveFailed}. Each counts with the gain share that its branch has, usually 0.`);
   if (s.setErrors) lines.push(`Problems that could not be scored: ${s.setErrors}. They are not in the mean. Read the detail file.`);
   if (s.notRun) lines.push(`Problems not run because the cost cap of ${usd(s.capUsd)} was reached: ${s.notRun}. Each counts as gain share 0.`);
@@ -399,6 +425,15 @@ async function main(args) {
   const model = process.env.SCORE_MODEL;
   if (!model) throw new Stop("Set SCORE_MODEL to the model id.");
   const prices = { input: numberFrom("SCORE_INPUT_PER_MTOK"), output: numberFrom("SCORE_OUTPUT_PER_MTOK") };
+  let judge = null;
+  if (process.env.SCORE_JUDGE_MODEL) {
+    judge = { model: process.env.SCORE_JUDGE_MODEL, prices: { input: numberFrom("SCORE_JUDGE_INPUT_PER_MTOK"), output: numberFrom("SCORE_JUDGE_OUTPUT_PER_MTOK") } };
+    if (!/^[A-Za-z0-9._:@\[\]-]+$/.test(judge.model)) throw new Stop("SCORE_JUDGE_MODEL must be a model id with no spaces.");
+    if (judge.model === model && (judge.prices.input !== prices.input || judge.prices.output !== prices.output)) throw new Stop("The judge model is the proposer's model, but the prices are not the same. Give one pair of prices, or leave SCORE_JUDGE_MODEL empty.");
+  }
+  const limitRaw = value("--limit") ?? process.env.SCORE_PROBLEMS;
+  const limit = limitRaw ? Number(limitRaw) : 0;
+  if (!Number.isInteger(limit) || limit < 0) throw new Stop("SCORE_PROBLEMS (or --limit) must be a whole number of 1 or more, or empty for the whole set.");
   const capUsd = numberFrom("SCORE_MAX_USD");
   if (!(capUsd > 0)) throw new Stop("SCORE_MAX_USD must be above 0.");
   const realKey = process.env.SYNTHE_ANTHROPIC_KEY;
@@ -416,7 +451,7 @@ async function main(args) {
   const tmp = tempDir("synthe-score-set-");
   try {
     const problemsDir = plain ? resolve(plain) : decryptSet(tmp);
-    const { summary, records } = await scoreSet({ problemsDir, upstream, realKey, model, prices, capUsd, runs: Math.max(2, Math.floor(numberFrom("SCORE_RUNS", NOISY_RUNS))), allowDowngrade: upstream !== API });
+    const { summary, records } = await scoreSet({ problemsDir, upstream, realKey, model, prices, judge, limit, capUsd, runs: Math.max(2, Math.floor(numberFrom("SCORE_RUNS", NOISY_RUNS))), allowDowngrade: upstream !== API });
     if (detail) writeFileSync(resolve(detail), `${JSON.stringify({ summary, records }, null, 2)}\n`);
     for (const line of report(summary)) console.log(line);
     return 0;
@@ -447,13 +482,35 @@ async function selfTest() {
   const u = usageOf('event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1}}}\n\ndata: {"type":"message_delta","usage":{"output_tokens":7}}\n', "text/event-stream");
   check(u?.input === 10 && u?.output === 7 && usageOf('{"usage":{"prompt_tokens":3,"completion_tokens":4}}')?.output === 4, "the usage reader");
 
+  check(spread([1, 2, 3, 4, 5, 6, 7, 8, 9], 3).join() === "1,4,7" && spread([1, 2], 5).length === 2 && spread([1, 2], 0).length === 2, "the choice of problems for a small run");
+  const judged = problemFile({ measure: { judge: { cases: "c.jsonl", run: "node run.js", compare: "model" } } }, "full", { gateUrl: "http://127.0.0.1:1", model: "p", prices: { input: 1, output: 1 }, maxUsd: 1, judge: { model: "j" } });
+  check(judged.measure.judge.compare.endsWith(" http://127.0.0.1:1 j") && judged.model.model === "p", "a judged problem gets the judge command when there is a judge model");
+  check(problemFile({ measure: { judge: { compare: "model" } } }, "full", { gateUrl: "x", model: "p", prices: { input: 1, output: 1 }, maxUsd: 1 }).measure.judge.compare === "model", "a judged problem keeps compare \"model\" with no judge model");
+
   // The whole scorer on the demo set.
   const menu = JSON.parse(readFileSync(join(DEMO, "fake-replies.json"), "utf8"));
   const fake = await startFakeApi(menu);
+  // The judge command, through a gate with a price for each model. The fake answers a judge call with a tie.
+  {
+    const gate = await startMeter({ upstream: fake.url, realKey: "sk-ant-self-test", prices: { "fake-model": { input: 3, output: 15 }, "fake-judge": { input: 1, output: 5 } }, capUsd: 1 });
+    const dir = tempDir("synthe-score-judge-");
+    try {
+      writeFileSync(join(dir, "problem.json"), JSON.stringify({ goal: "A short reply." }));
+      const input = JSON.stringify({ case: { id: "1", input: "hello" }, a: "one", b: "two" });
+      const r = await run(process.execPath, [JUDGE, gate.url, "fake-judge"], { cwd: dir, env: cleanEnv(), input });
+      check(r.ok && r.stdout.trim() === '{"winner":"tie"}', "the judge command prints the winner");
+      const cheap = gate.judgeSpent();
+      check(cheap > 0 && cheap === gate.spent(), "the gate counts a judge call apart");
+      await run(process.execPath, [JUDGE, gate.url, "unknown-model"], { cwd: dir, env: cleanEnv(), input });
+      check(gate.judgeSpent() - cheap > 2.5 * cheap, "the gate prices an unknown model at the dearest prices");
+    } finally { await gate.close(); removeTemp(dir); }
+  }
   const base = { problemsDir: DEMO, upstream: fake.url, realKey: "sk-ant-self-test", model: "fake-model", prices: { input: 3, output: 15 }, runs: NOISY_RUNS, allowDowngrade: true };
   let first, capped;
   try {
     first = await scoreSet({ ...base, capUsd: 5 });
+    const small = await scoreSet({ ...base, capUsd: 5, limit: 1 });
+    check(small.summary.problems === 1 && small.summary.inSet === 2 && report(small.summary).join("\n").includes("small run"), "a small run takes fewer problems and says so");
     const requestsBefore = fake.requests();
     // A cap too small for one call: the gate must refuse every call, and nothing reaches the model.
     capped = await scoreSet({ ...base, capUsd: 0.000001 });

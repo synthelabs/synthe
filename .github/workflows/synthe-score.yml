@@ -12,18 +12,30 @@ on:
         description: Branch, tag or commit of Synthe to score
         default: integration
         required: true
-      model:
-        description: Model id for the proposer and the judge
+      proposer_model:
+        description: Model id for the proposer
         required: true
-      input_per_mtok:
-        description: Price of input, in USD per million tokens
+      proposer_input_per_mtok:
+        description: Proposer price of input, in USD per million tokens
         required: true
-      output_per_mtok:
-        description: Price of output, in USD per million tokens
+      proposer_output_per_mtok:
+        description: Proposer price of output, in USD per million tokens
         required: true
+      judge_model:
+        description: Model id for the judge of judged problems. Empty means the proposer's model.
+        required: false
+      judge_input_per_mtok:
+        description: Judge price of input, in USD per million tokens. Necessary with judge_model.
+        required: false
+      judge_output_per_mtok:
+        description: Judge price of output, in USD per million tokens. Necessary with judge_model.
+        required: false
       max_usd:
         description: Cost cap for the whole run, in USD
         required: true
+      problems:
+        description: How many problems to run, spread over the set. Empty means all. Use 4 for a cheap first run.
+        required: false
 permissions:
   contents: read
 concurrency:
@@ -62,17 +74,21 @@ jobs:
           SYNTHE_ANTHROPIC_KEY: ${{ secrets.SYNTHE_ANTHROPIC_KEY }}
           HIDDEN_SET_KEY: ${{ secrets.HIDDEN_SET_KEY }}
           SCORE_SYNTHE_DIR: ${{ github.workspace }}/synthe
-          SCORE_MODEL: ${{ inputs.model }}
-          SCORE_INPUT_PER_MTOK: ${{ inputs.input_per_mtok }}
-          SCORE_OUTPUT_PER_MTOK: ${{ inputs.output_per_mtok }}
+          SCORE_MODEL: ${{ inputs.proposer_model }}
+          SCORE_INPUT_PER_MTOK: ${{ inputs.proposer_input_per_mtok }}
+          SCORE_OUTPUT_PER_MTOK: ${{ inputs.proposer_output_per_mtok }}
+          SCORE_JUDGE_MODEL: ${{ inputs.judge_model }}
+          SCORE_JUDGE_INPUT_PER_MTOK: ${{ inputs.judge_input_per_mtok }}
+          SCORE_JUDGE_OUTPUT_PER_MTOK: ${{ inputs.judge_output_per_mtok }}
           SCORE_MAX_USD: ${{ inputs.max_usd }}
+          SCORE_PROBLEMS: ${{ inputs.problems }}
           REF: ${{ inputs.ref }}
         run: |
           set -o pipefail
           {
             echo "## Synthe score"
             echo
-            echo "Scored \`$REF\` at \`$(git -C synthe rev-parse --short HEAD)\` with the model \`$SCORE_MODEL\`. Cost cap: $SCORE_MAX_USD USD."
+            echo "Scored \`$REF\` at \`$(git -C synthe rev-parse --short HEAD)\` with the proposer \`$SCORE_MODEL\` and the judge \`${SCORE_JUDGE_MODEL:-$SCORE_MODEL}\`. Cost cap: $SCORE_MAX_USD USD."
             echo
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

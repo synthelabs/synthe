@@ -39,8 +39,21 @@ calls in flight and the worst case of the new call would pass `SCORE_MAX_USD`. I
 gets a placeholder. The cost in the score is the sum of `cost.usd` from each `result.json`; the gate's own count is
 printed next to it as an upper limit.
 
+## The judge model
+
+A problem file has one model. By default that model is also the judge of a judged problem (`compare: "model"`).
+With `SCORE_JUDGE_MODEL`, `SCORE_JUDGE_INPUT_PER_MTOK` and `SCORE_JUDGE_OUTPUT_PER_MTOK`, the scorer gives judged
+problems a compare command, `judge.mjs`, that asks the judge model through the gate. `solve` does not make those
+calls, so their cost is not in `result.json`: the gate counts it at the judge's prices and the scorer adds it.
+
+## A small run
+
+`SCORE_PROBLEMS=4` (or `--limit 4`) runs 4 problems, spread evenly over the set. Use it for a cheap first run.
+Do not compare the score of a small run with the score of a full run.
+
 ## Files
 
 - `score.mjs`: the scorer and the self-test. `stats.mjs`: the arithmetic. `meter.mjs`: the gate.
+- `judge.mjs`: the compare command for a separate judge model.
 - `fake-api.mjs`: the fake model for the self-test. `demo/`: two public toy problems.
 - `swarm/hidden/set.tar.gz.enc`: the hidden set.
