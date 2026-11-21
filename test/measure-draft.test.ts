@@ -67,6 +67,7 @@ test("measure draft writes the measure files, checks both orders, prints the agr
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /agreement 5\/5/);
     assert.ok(!r.out.includes(KEY), "the key never appears in output");
+    assert.match(r.out, /"compare": "model", "rubric": "[^"]*rubric\.md"/, "it prints the snippet for solve");
 
     const cases = readFileSync(join(dir, "judge/cases.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     assert.deepEqual(cases, EXAMPLES.map((e, i) => ({ id: `ex-${i + 1}`, input: e.input })));
