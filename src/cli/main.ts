@@ -6,12 +6,15 @@ import { readPrompt } from "../core/prompt.ts";
 import { newState, type State } from "../core/state.ts";
 import { sha256 } from "../core/safety.ts";
 import { headline } from "../loop/report.ts";
+import { powerLines } from "../core/power.ts";
 import { anthropicModel, configuredModel, modelProblem } from "../model/client.ts";
 import { explainNoise, measureNoise } from "../loop/score.ts";
 import { runLocalTry } from "./try-round.ts";
 import { localCredential } from "./local-credential.ts";
 import { init, type Io } from "./init.ts";
 import { calibrate } from "./calibrate.ts";
+import { calibrateJudge } from "./calibrate-judge.ts";
+import { sameModelNote } from "../core/model-notes.ts";
 import { migrate } from "./migrate.ts";
 import { restartState } from "./restart.ts";
 import { stoppedLine } from "./stopped.ts";
@@ -24,6 +27,7 @@ import { setKey } from "./key.ts";
 import { guide } from "./guide.ts";
 import { verify } from "./verify.ts";
 import { undo } from "./undo.ts";
+import { vault } from "./vault.ts";
 import { githubRepo } from "../github/repo.ts";
 import { improve, improveOptions } from "./improve.ts";
 import { submit, submitOptions } from "./submit.ts";
@@ -112,6 +116,13 @@ async function status() {
   // The summary is written for the report issue; in a terminal, "this page" is the issue, which is linked below.
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
   console.log(goal.merge_rule.mode === "propose" ? "Mode: review." : "Mode: automatic merging.");
+  const sameModel = sameModelNote(goal.models);
+  if (sameModel) console.log(sameModel);
+  try {
+    const rows = parseScenarios(readFileSync(goal.scenarios, "utf8"));
+    const power = powerLines(goal, rows.filter((r) => r.split === "train").length, rows.filter((r) => r.split === "holdout").length);
+    console.log(`What your test cases can detect: ${power[0]} ${power.at(-1)}`);
+  } catch { /* scenarios unreadable here: status still reports the rest */ }
   if (s.issue) console.log(`Full report: https://github.com/${slug}/issues/${s.issue}`);
 }
 
@@ -224,10 +235,26 @@ function localRun(command: string) {
   return { goal, prompt, scenarios: parseScenarios(readFileSync(goal.scenarios, "utf8")), model: configuredModel(credential.key) };
 }
 
+// Compares the prompt now with the one the run started from on the vault cases, which no round ever reads.
+async function vaultCheck() {
+  if (!setUpHere()) return;
+  process.exitCode = await vault({
+    cwd: process.cwd(), say: console.log, ask, run,
+    credential: () => {
+      const c = localCredential(process.env);
+      return c ? { model: configuredModel(c.key), line: c.line } : null;
+    },
+  }, process.argv.slice(3));
+}
+
 // Checks whether the team's checks are marked steadily, and the way the team means them.
 async function calibrateChecks() {
   const local = localRun("calibrate");
   if (!local) return;
+  if (process.argv.includes("--judge")) {
+    await calibrateJudge({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model);
+    return;
+  }
   const result = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result) return;
   // Rewordings the team made during the questions are saved, so the next round measures what they mean.
@@ -281,7 +308,9 @@ Then:
   npx synthe key      save or replace your own Anthropic key
   npx synthe try      run one round on your computer, changing nothing (own key)
   npx synthe try --noise   compare your prompt with itself, to see how much the judge varies
+  npx synthe vault   at the end of a run, compare your prompt with the one it started from on the "vault" test cases no round ever saw (own key; asks before spending)
   npx synthe calibrate     check that your checks are marked steadily and the way you mean them (own key)
+  npx synthe calibrate --judge   check that the judge picks between two replies the way you do, and whether it favours longer ones (own key)
   npx synthe migrate --to <model>   compare your prompt on another model, changing nothing (needs ANTHROPIC_API_KEY; add --dry-run to spend nothing)
 
 Enterprise pilot (one support agent, one production metric, changes a person reviews):
@@ -309,6 +338,7 @@ async function main() {
   else if (command === "verify") process.exitCode = verify(process.argv[3], process.cwd());
   else if (command === "undo") await undoRound();
   else if (command === "calibrate") await calibrateChecks();
+  else if (command === "vault") await vaultCheck();
   else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.ANTHROPIC_API_KEY });
   else if (command === "pilot") {
     // Loaded on demand, so no other command pays for the pilot's code. The pilot reports its own refusals and

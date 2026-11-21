@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { costUsd } from "../core/cost.ts";
+import { cachedSystem, firstAlone } from "./cache.ts";
 
 export class MissingKeyError extends Error {}
 export function configuredModel(key: string | undefined): Model {
@@ -35,16 +36,19 @@ export function anthropicModel(apiKey: string): Model {
   return sdkModel(client);
 }
 
+// Marks the system prompt for prompt caching and sends the first request for each one alone (see cache.ts).
 function sdkModel(client: Anthropic): Model {
+  const warm = firstAlone();
   return {
     async ask({ model, system, user, maxTokens, schema, allowCutOff }) {
-      const res = await client.messages.create({
-        model, max_tokens: maxTokens, system,
+      const send = () => client.messages.create({
+        model, max_tokens: maxTokens, system: cachedSystem(system),
         messages: [{ role: "user", content: user }],
         // Haiku's thinking would spend the output limit on short scoring calls.
         ...(model.startsWith("claude-haiku") ? { thinking: { type: "disabled" as const } } : {}),
         output_config: { effort: "low", ...(schema ? { format: { type: "json_schema" as const, schema } } : {}) },
       });
+      const res = await warm(model, system, send);
       const text = res.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
       const finished = res.stop_reason === "end_turn" && text.length > 0;
       const cutOff = allowCutOff === true && res.stop_reason === "max_tokens" && text.length > 0;

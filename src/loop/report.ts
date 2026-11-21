@@ -1,7 +1,11 @@
 import { STATE_BRANCH, type Goal } from "../core/goal.ts";
 import { guardSentence } from "../core/merge-rule.ts";
+import { lengthLines } from "./length.ts";
+import { powerLines } from "../core/power.ts";
 import { budgetSpend, isFinished, type RoundRecord, type State } from "../core/state.ts";
+import { runLuckLines } from "../core/run-risk.ts";
 import { displaySeries, scoreSeries } from "./delta.ts";
+import { vaultLines } from "./vault.ts";
 
 export const ISSUE_TITLE = "Synthe: prompt report";
 
@@ -128,7 +132,7 @@ function headlineBase(goal: Goal, state: State, stoppedByTeam = false, mode: Gai
     : { title: "Done: no change was clearly better, so your prompt stays as it was", summary: `Synthe stopped because ${why}. Nothing more will run or change. It spent ${money(state)} of $${goal.budget.max_usd}.` };
 }
 
-function nextSteps(goal: Goal, state: State): string[] {
+function nextSteps(goal: Goal, state: State, pilot = false): string[] {
   const merged = state.rounds.some((r) => r.outcome === "merged" || r.outcome === "reverted");
   const steps: string[] = [];
   if (state.proposal) steps.push(`Review #${state.proposal.pr}: merge it to keep the change, or close it to decline.`);
@@ -141,6 +145,9 @@ function nextSteps(goal: Goal, state: State): string[] {
   else if (state.stopped && !state.proposal && !isFinished(state.stopped) && !state.spendUnknown) steps.push("Once you've fixed it, run `npx synthe restart` to start Synthe again.");
   if (state.stopped && /no winner$/.test(state.stopped) && !badKey(last)) {
     steps.push(`If you want Synthe to keep going, add test cases your agent still gets wrong to \`${goal.scenarios}\` and push, then run \`npx synthe restart\`${state.round < goal.merge_rule.max_rounds ? "" : " (raise `merge_rule.max_rounds` in `synthe.json` first)"}. One line per case, for example:\n  \`{"id": "s99", "input": "Can I return shoes I wore once?", "expected": "Explains worn items can't be returned and offers an exchange if they're faulty", "split": "train"}\`\n  \`expected\` describes a good answer in a sentence. \`split\` is \`train\` (Synthe learns from it) or \`holdout\` (kept hidden to check its changes).`);
+  }
+  if (pilot && state.stopped && /no winner$/.test(state.stopped) && !badKey(last)) {
+    steps.push("Replayed recorded conversations with `npx synthe pilot`? Run `npx synthe pilot cases --replay <replay id>` to turn the ones your agent failed into candidate test cases. It writes a file for you to review; nothing is added to your scenarios until you copy lines in.");
   }
   // Restart can't continue a run that has used all its rounds, whatever else stopped it, so say so with the advice.
   if (state.stopped && state.round >= goal.merge_rule.max_rounds && steps.some((s) => s.includes("npx synthe restart")) && !steps.some((s) => s.includes("max_rounds"))) {
@@ -180,7 +187,7 @@ function triedGroup(outcome: string): (typeof TRIED_GROUPS)[number] | null {
 const TIE_SHARE = 0.6;
 const MIN_DUELS_FOR_TIES = 20;
 
-export function noWinSection(goal: Goal, state: State): string[] {
+export function noWinSection(goal: Goal, state: State, caseCounts?: { train: number; holdout: number }): string[] {
   if (!state.stopped || state.proposal) return [];
   const budget = /^budget/.test(state.stopped);
   if (!budget && !/no winner$/.test(state.stopped)) return [];
@@ -222,6 +229,7 @@ export function noWinSection(goal: Goal, state: State): string[] {
   if (mostlyEven) {
     lines.push(`**Most test cases came out even:** in ${duels.same} of ${duelTotal} comparisons over the last ${plural(recent.length, "round")} (${Math.round((100 * duels.same) / duelTotal)}%), a change and your current prompt did equally well. Synthe counts only the cases where one reply is better, so a real improvement has too few cases left to show it. Harder test cases fix this.`, "");
   }
+  if (caseCounts) lines.push(`**What your test cases can detect:** ${powerLines(goal, caseCounts.train, caseCounts.holdout).join(" ")}`, "");
   const grouped = TRIED_GROUPS.filter((g) => groups.has(g));
   if (grouped.length) {
     lines.push("**What the changes Synthe tried did:**", ...grouped.map((g) => `- ${g[0].toUpperCase()}${g.slice(1)}: ${plural(groups.get(g)!, "change")}.`), "");
@@ -253,6 +261,7 @@ export function roundSummary(goal: Goal, state: State, record: RoundRecord | nul
   return [
     `## Synthe round ${record.round}: ${OUTCOME[record.outcome].toLowerCase()}${record.pr ? ` (#${record.pr})` : ""}`, "",
     ...(record.plain ? [record.plain, ""] : []),
+    ...(record.replyLength ? [lengthLines(record.replyLength).join(" "), ""] : []),
     ...(attacks ? [attacks, ""] : []),
     ...(tried.length ? ["What Synthe tried:", ...tried, ""] : []),
     `Cost of this round: ${cost}. ${summary}`, "", report, "",
@@ -270,13 +279,17 @@ function roundRow(r: RoundRecord): string {
   return `| ${r.round} | ${result}${r.pr ? ` (#${r.pr})` : ""} | ${tried.replaceAll("|", "/").replaceAll("\n", " ")} | ${cost} |`;
 }
 
-export function renderReport(goal: Goal, state: State, now: Date = new Date(), repoSlug?: string): string {
+export function renderReport(goal: Goal, state: State, now: Date = new Date(), repoSlug?: string, counts?: { train: number; holdout: number }, pilot = false): string {
   const { title, summary } = headline(goal, state);
   const changes = state.rounds.filter((r) => ["merged", "reverted", "proposed"].includes(r.outcome) && r.pr);
   const mode = goal.merge_rule.mode === "propose"
     ? "**Mode:** review. Each change waits in a pull request until you merge or close it."
     : "**Mode:** automatic. Changes are merged into your main branch as soon as they win.";
   const lines = [`## ${title}`, "", summary, "", mode, ""];
+  // Display only: the vault never merges or reverts anything.
+  const moved = scoreMovement(state);
+  const vault = vaultLines(state, (moved !== null && moved.last > moved.first) || state.rounds.some((r) => r.outcome === "merged"));
+  if (vault.length) lines.push(vault.join(" "), "");
   // The score chart, when rounds have been measured and the repo is known: the decide step keeps the
   // chart beside state.json on the state branch, and the round in the URL keeps a stale cached copy
   // from standing in for the new one. The round table below stays as the text fallback.
@@ -292,11 +305,12 @@ export function renderReport(goal: Goal, state: State, now: Date = new Date(), r
       const check = r.unverified?.length ? ` **Check these are real:** ${r.unverified.map((d) => `\`${d}\``).join(", ")} ${r.unverified.length === 1 ? "isn't" : "aren't"} in your old prompt or policy.` : "";
       lines.push(`- ${label} ${(r.changed ?? "A change to the prompt").replace(/[.\s]+$/, "")}. ${r.plain ?? ""}${check}${undo}`);
       if (r.example) lines.push("", exampleText(r.example).split("\n").map((l) => `  ${l}`).join("\n"), "");
+      if (r.replyLength) lines.push("", `  ${lengthLines(r.replyLength).join(" ")}`, "");
     }
     lines.push("");
   }
-  lines.push(...noWinSection(goal, state));
-  lines.push("### What to do next", "", ...nextSteps(goal, state).map((s) => `- ${s}`), "");
+  lines.push(...noWinSection(goal, state, counts));
+  lines.push("### What to do next", "", ...nextSteps(goal, state, pilot).map((s) => `- ${s}`), "");
   if (state.rounds.length) {
     lines.push(
       "<details><summary>Round by round: every change Synthe tried and what happened</summary>", "",
@@ -313,6 +327,7 @@ export function renderReport(goal: Goal, state: State, now: Date = new Date(), r
       `- Sharing with Synthe: ${goal.share === "numbers" ? "numbers only" : "numbers and what changed"}.`,
     `- AI models: writer ${goal.models.writer}, agent ${goal.models.runner}, judge ${goal.models.judge}, rule checker ${goal.models.checker}.`,
     "- How Synthe decides: a change merges only when its replies are better in clearly more test cases than they are worse (more than luck would explain), better again on the hidden test cases, and it breaks none of your rules where your old prompt followed them. The judge's numbers below score each test case 100 when the change's reply is better, 0 when worse and 50 when the same, so 50 is even and 52 is the bar.",
+    ...runLuckLines(goal, state.rounds),
     ...(state.rounds.some((r) => r.attacks) ? ["- Attacks: each round, the current prompt and the winning change also answer the frozen attack messages in `.synthe/attacks.jsonl`, and a change that fails one the current prompt passes isn't merged. Attacks are a basic check, not a security test."] : []),
     ...[...state.rounds].reverse().map((r) => `- Round ${r.round}: ${OUTCOME[r.outcome].toLowerCase()}, cost ${r.costUsd === null ? "unknown" : `$${r.costUsd.toFixed(2)}`}${typeof r.writeUsd === "number" ? ` (writing $${r.writeUsd.toFixed(2)})` : ""}.${attackLine(r) ? ` ${attackLine(r)}` : ""} ${r.reasons.join("; ").replaceAll("\n", " ").replace(/candidate-(\d+)/g, "change $1")}`),
     "", "</details>", "",

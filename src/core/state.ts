@@ -18,6 +18,8 @@ export interface RoundRecord {
   checks?: { before: number; after: number };
   // The same for the team's guards, when they set counter_checks.
   guards?: { before: number; after: number };
+  // Median reply length in characters on the training cases, the current prompt's replies and the merged change's. Display only; see loop/length.ts.
+  replyLength?: { before: number; after: number };
   // The current prompt's score for the round: the share of the team's checks its replies passed on the
   // held-back test cases, as a percentage to one decimal. Null when the round never marked held-back
   // replies (no checks set, or nothing reached the held-back cases), so an unmeasured round is never
@@ -30,16 +32,29 @@ export interface RoundRecord {
   // Every training duel this round between a change and the current prompt: better, worse, or the same. Ties carry
   // no evidence either way, so when most duels tie a real gain can't show; the report then asks for harder cases.
   duels?: { better: number; worse: number; same: number };
+  // How many learned-from and hidden test cases the round was scored on, for the report's whole-run luck line.
+  cases?: { train: number; holdout: number };
   // The frozen attack set's result for the round, when the repo has one: how many attacks ran and the ids the
   // prompt that ended the round (the winning change, or the current prompt when nothing merged) failed.
   // unknown: the current prompt's attack results couldn't be measured, so no held count is claimed.
   attacks?: { total: number; failed: string[]; unknown?: boolean };
+  // The earlier rounds whose changes were combined into this round's merged or proposed change, when it came from
+  // the pool (see src/loop/pool.ts).
+  combined?: number[];
 }
+
+// A change from an earlier round that won some training cases without winning the round, kept so a later round can
+// combine it with another (see src/loop/pool.ts). wonOn holds training scenario ids only, never held-back ones.
+// promptHash is the prompt the wins were measured against.
+export interface PoolEntry { id: string; round: number; summary: string; edits: { find: string; replace: string }[]; wonOn: string[]; promptHash: string }
 
 export interface Landing { branch: string; kind: "merge" | "revert"; text: string; priorPrompt: string; propose?: boolean }
 
 export interface State {
   candidateHistory?: CandidateMemory[];
+  // Changes a person closed without merging (newest last, at most 10), with the last thing they wrote on the pull
+  // request when they wrote one. Set when the decide step settles the proposal, so the write step needs no GitHub calls.
+  closedProposals?: { pr: number; round: number; summary: string; comment?: string }[];
   round: number;
   prompt: string | null; // tracked inline prompt text
   lastMerge: { pr: number; priorPrompt: string; mergedHash: string; reverted: boolean } | null;
@@ -74,8 +89,17 @@ export interface State {
   chainReady?: boolean;
   // Hash of the last evidence record written, so the next one can chain to it.
   evidenceHash?: string;
+  // Only written when synthe.json sets "population": true. State saved before this existed simply has none.
+  pool?: PoolEntry[];
   rounds: RoundRecord[];
+  // The prompt the run started from, saved by the first round, so `npx synthe vault` can compare the end of a run
+  // with its start. State files from before this field don't have it; the vault command then asks for the file.
+  startPrompt?: string;
+  // The last `npx synthe vault` result: the prompt after `round` against the starting prompt, on the vault cases only.
+  vault?: VaultResult;
 }
+
+export interface VaultResult { at: string; round: number; wins: number; losses: number; ties: number; unknown: number; p: number; cases: number; costUsd: number | null }
 
 // The readings in a .synthe/calibration.json file's text: each check and how its marking read against the
 // team's. Null when the text isn't a calibration file, so a stray or damaged file is simply ignored.

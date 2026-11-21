@@ -5,3 +5,5 @@ node_modules
 mutation/reports
 .stryker-tmp
 dist/.build-*
+bench/results.json
+bench/results-live.json

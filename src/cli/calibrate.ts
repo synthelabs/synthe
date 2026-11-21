@@ -31,7 +31,7 @@ const KAPPA_UNSURE = 0.2; // below this it marks differently from the team
 // One reply to ask the team about: the message, the reply, which check, and how Synthe marked it.
 interface Item { input: string; reply: string; c: number; passes: boolean }
 
-const clip = (t: string, n: number) => (t.length > n ? `${t.slice(0, n).trimEnd()}...` : t).replace(/\s+/g, " ").trim();
+export const clip = (t: string, n: number) => (t.length > n ? `${t.slice(0, n).trimEnd()}...` : t).replace(/\s+/g, " ").trim();
 
 // Takes checks in turn and mixes replies Synthe passed and failed, so each check is compared with the team on both.
 function pick(open: Item[][], max: number): Item[] {

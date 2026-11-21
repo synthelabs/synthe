@@ -4,9 +4,13 @@ import { sumCosts } from "../core/cost.ts";
 import { promptPathProblem, sha256 } from "../core/safety.ts";
 import { candidateFingerprint, candidateScope, validateCandidateMemory } from "../core/candidate-history.ts";
 import { askJson, pool, type Model } from "../model/client.ts";
+import { closedText } from "./closed.ts";
+import { shorterAngle, shorterProblem, shorterRound } from "./shorter.ts";
+import { explainPool, mergeFromPool, type PoolMerge } from "./pool.ts";
 
-export interface Candidate { id: string; text: string; summary?: string; title?: string; edits?: Edit[] }
-export interface Written { candidates: Candidate[]; costUsd: number | null; rejected?: string[] }
+// kind "shorter": a deletion, judged by whether it is no worse rather than better (src/loop/shorter.ts).
+export interface Candidate { id: string; text: string; summary?: string; title?: string; edits?: Edit[]; kind?: "shorter" }
+export interface Written { candidates: Candidate[]; costUsd: number | null; rejected?: string[]; population?: PoolMerge }
 
 // Each candidate is one or two exact edits to the current prompt, GEPA-style, not a rewrite: everything else stays
 // word for word, so a fix can't quietly break what already works, and the writer only outputs a few lines.
@@ -122,11 +126,18 @@ export async function runWrite(goal: Goal, state: State, prompt: string, scenari
   // These are the writer's own one-line summaries of its earlier edits, never candidate texts or customer data.
   const triedSummaries = [...new Set(state.rounds.slice(-5).flatMap((r) => (r.outcome === "merged" ? [] : (r.tried ?? []).map((t) => t.summary))))];
   const notAgain = triedSummaries.length ? `\nAlready tried in earlier rounds without winning; don't propose these again:\n${triedSummaries.map((t) => `- ${t}`).join("\n")}\n` : "";
+  const closed = closedText(state);
   // The team's checks decide each test case, so the writer aims at them directly.
   const checks = goal.checks?.length ? `\nThe team measures a good reply with these checks; a change wins by making replies pass more of them:\n${goal.checks.map((c) => `- ${c}`).join("\n")}` : "";
   const quoteRule = goal.prompt.kind === "inline"
     ? `\nThe prompt lives inside a source-code string, so never use backslashes, ${goal.prompt.delimiter} or \${ in it.` : "";
-  const results = await pool(ANGLES, ANGLES.length, async (angle) => askJson<{ edits: Edit[]; summary: string; title?: string }>(model, {
+  // A shorter round asks the writer to fill the second slot with a deletion. Taking out an earlier merged change is
+  // deliberately not a source: that change passed the superiority test, and a weaker test shouldn't spend a slot trying
+  // to remove it (in the bench every such try was refused, better in 0 and worse in 13 to 15, and cost a real gain).
+  const shorter = shorterRound(goal, state);
+  const known = `${goal.objective}\n${goal.policy ?? ""}`;
+  const angles = shorter ? [ANGLES[0], shorterAngle(prompt)] : ANGLES;
+  const results = await pool(angles, angles.length, async (angle) => askJson<{ edits: Edit[]; summary: string; title?: string }>(model, {
     model: goal.models.writer, maxTokens: 3000, schema: SCHEMA,
     user: `You improve the system prompt of an AI agent by making small, exact edits.
 
@@ -144,7 +155,7 @@ ${train.slice(0, MAX_EXAMPLES).map((s) => `- ${s.input} => ${s.expected}`).join(
 
 Earlier rounds:
 ${history}
-${notAgain}${lessons}
+${notAgain}${closed}${lessons}
 Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the current prompt that appears only once in it, and "replace" is what goes in its place (an empty "replace" deletes it). To add a new rule, use an empty "find" to add it at the end, or replace a nearby line with that line plus the rule. Change only what this attempt needs; everything else stays word for word. In "summary", say in one plain sentence what the edits change and why. In "title", name the problem this fixes in a few plain lowercase words, the way a support team would say it to each other, starting with a verb: for example "stop approving every refund" or "stop inventing delivery dates", not "add policy-faithful guidance" (under 50 characters).`,
   }));
   const candidates: Candidate[] = [];
@@ -152,16 +163,24 @@ Return 1 or ${MAX_EDITS} edits. Each "find" is text copied exactly from the curr
   results.forEach((r, i) => {
     const id = `candidate-${i + 1}`;
     if (!r.value) return void rejected.push(`${id}: no edits returned`);
-    const applied = applyEdits(prompt, r.value.edits, `${goal.objective}\n${goal.policy ?? ""}`);
+    const applied = applyEdits(prompt, r.value.edits, known);
     if ("problem" in applied) return void rejected.push(`${id}: ${applied.problem}`);
+    // Only a proposal that really removes enough is judged as shorter. One that doesn't is kept as an ordinary
+    // candidate, judged by the usual rule, so the slot is never wasted: rejecting it cost real gains in the bench,
+    // since a writer that ignored the ask lost that round's idea.
+    const isShorter = shorter && i === 1 && shorterProblem(prompt, applied.text) === null;
     const fingerprint = candidateFingerprint(applied.text);
     if (fingerprint === candidateFingerprint(prompt)) return void rejected.push(`${id}: edits change only formatting or case`);
     if (tried.has(fingerprint)) return void rejected.push(`${id}: materially identical candidate already tried for this goal and prompt`);
     tried.add(fingerprint);
     candidates.push({ id, text: applied.text, summary: typeof r.value.summary === "string" ? r.value.summary.slice(0, 300) : undefined,
-      title: typeof r.value.title === "string" && r.value.title.trim() ? r.value.title.trim().replace(/\.$/, "").slice(0, 60) : undefined, edits: r.value.edits });
+      title: typeof r.value.title === "string" && r.value.title.trim() ? r.value.title.trim().replace(/\.$/, "").slice(0, 60) : undefined, edits: r.value.edits, ...(isShorter ? { kind: "shorter" as const } : {}) });
   });
-  return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected };
+  // Population, only when synthe.json turns it on: one more candidate, built without a model call from changes
+  // earlier rounds kept (see pool.ts). It is scored and judged like the writer's own.
+  const merged = goal.population === true ? mergeFromPool({ goal, prompt, train, pool: state.pool, tried }) : undefined;
+  if (merged?.candidate) candidates.push(merged.candidate);
+  return { candidates, costUsd: sumCosts(results.map((r) => r.costUsd)), rejected, ...(merged ? { population: merged } : {}) };
 }
 
 // Shortens text to one line for the Actions log.
@@ -173,5 +192,5 @@ export function explainWrite(w: Written): string[] {
     `${c.id}: ${c.summary ?? "(no summary)"}`,
     ...(c.edits ?? []).map((e) => `  ${e.find ? `replace "${clip(e.find)}"` : "add at the end"} -> "${clip(e.replace)}"`),
   ]);
-  return [...lines, ...(w.rejected ?? []).map((r) => `rejected ${r}`)];
+  return [...lines, ...(w.rejected ?? []).map((r) => `rejected ${r}`), ...explainPool(w.population)];
 }
