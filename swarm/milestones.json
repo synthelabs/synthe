@@ -25,7 +25,7 @@
       "statement": "When candidates is more than 1, the proposer gets that number, every proposal is measured, and the round keeps at most one: the best one that passes the decision rule." },
     { "id": "P12", "title": "Memory across runs", "needs": ["P03"],
       "statement": "A second `solve` run of the same problem sends the proposer the history of the first run, with each attempt's summary, kept flag and reason." },
-    { "id": "P13", "title": "Budget and stop rules", "needs": ["P02"],
+    { "id": "P13", "title": "Budget and stop rules", "needs": ["P02", "P16"],
       "statement": "`solve` stops on max_rounds, on max_calls, on an empty proposal list, and after 3 rounds in a row that keep nothing, and result.json gives the stop reason in plain words." },
     { "id": "P14", "title": "Zoo bench", "needs": ["P02"],
       "statement": "`npm run bench -- --zoo` runs `solve` on every problem in swarm/zoo/ with seeds 1, 2 and 3, prints one row for each problem, and writes bench/zoo-results.json with real gains kept, no-ops kept and traps kept." },
