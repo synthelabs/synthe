@@ -886,16 +886,16 @@ var init_values = __esm({
 var sleep;
 var init_sleep = __esm({
   "node_modules/@anthropic-ai/sdk/internal/utils/sleep.mjs"() {
-    sleep = (ms2, signal) => new Promise((resolve6) => {
+    sleep = (ms2, signal) => new Promise((resolve7) => {
       if (signal?.aborted)
-        return resolve6();
+        return resolve7();
       const onAbort = () => {
         clearTimeout(timer);
-        resolve6();
+        resolve7();
       };
       const timer = setTimeout(() => {
         signal?.removeEventListener("abort", onAbort);
-        resolve6();
+        resolve7();
       }, ms2);
       signal?.addEventListener("abort", onAbort, { once: true });
     });
@@ -5478,8 +5478,8 @@ var init_api_promise = __esm({
     APIPromise = /* @__PURE__ */ (() => {
       class APIPromise2 extends Promise {
         constructor(client, responsePromise, parseResponse = defaultParseResponse) {
-          super((resolve6) => {
-            resolve6(null);
+          super((resolve7) => {
+            resolve7(null);
           });
           this.responsePromise = responsePromise;
           this.parseResponse = parseResponse;
@@ -6329,12 +6329,12 @@ var init_MessageStream = __esm({
             }
             return this._emit("error", new AnthropicError(String(error)));
           });
-          __classPrivateFieldSet(this, _MessageStream_connectedPromise, new Promise((resolve6, reject) => {
-            __classPrivateFieldSet(this, _MessageStream_resolveConnectedPromise, resolve6, "f");
+          __classPrivateFieldSet(this, _MessageStream_connectedPromise, new Promise((resolve7, reject) => {
+            __classPrivateFieldSet(this, _MessageStream_resolveConnectedPromise, resolve7, "f");
             __classPrivateFieldSet(this, _MessageStream_rejectConnectedPromise, reject, "f");
           }), "f");
-          __classPrivateFieldSet(this, _MessageStream_endPromise, new Promise((resolve6, reject) => {
-            __classPrivateFieldSet(this, _MessageStream_resolveEndPromise, resolve6, "f");
+          __classPrivateFieldSet(this, _MessageStream_endPromise, new Promise((resolve7, reject) => {
+            __classPrivateFieldSet(this, _MessageStream_resolveEndPromise, resolve7, "f");
             __classPrivateFieldSet(this, _MessageStream_rejectEndPromise, reject, "f");
           }), "f");
           __classPrivateFieldGet(this, _MessageStream_connectedPromise, "f").catch(() => {
@@ -6526,11 +6526,11 @@ var init_MessageStream = __esm({
          *   const message = await stream.emitted('message') // rejects if the stream errors
          */
         emitted(event) {
-          return new Promise((resolve6, reject) => {
+          return new Promise((resolve7, reject) => {
             __classPrivateFieldSet(this, _MessageStream_catchingPromiseCreated, true, "f");
             if (event !== "error")
               this.once("error", reject);
-            this.once(event, resolve6);
+            this.once(event, resolve7);
           });
         }
         async done() {
@@ -6865,7 +6865,7 @@ var init_MessageStream = __esm({
                 if (done) {
                   return { value: void 0, done: true };
                 }
-                return new Promise((resolve6, reject) => readQueue.push({ resolve: resolve6, reject })).then((chunk2) => chunk2 ? { value: chunk2, done: false } : { value: void 0, done: true });
+                return new Promise((resolve7, reject) => readQueue.push({ resolve: resolve7, reject })).then((chunk2) => chunk2 ? { value: chunk2, done: false } : { value: void 0, done: true });
               }
               const chunk = pushQueue.shift();
               return { value: chunk, done: false };
@@ -9537,16 +9537,16 @@ var init_async_queue = __esm({
           if (__classPrivateFieldGet(this, _AsyncQueue_closed, "f") || signal?.aborted) {
             return Promise.resolve({ done: true, value: void 0 });
           }
-          return new Promise((resolve6) => {
+          return new Promise((resolve7) => {
             const waiter = (r) => {
               signal?.removeEventListener("abort", onAbort);
-              resolve6(r);
+              resolve7(r);
             };
             const onAbort = () => {
               const idx = __classPrivateFieldGet(this, _AsyncQueue_waiters, "f").indexOf(waiter);
               if (idx >= 0)
                 __classPrivateFieldGet(this, _AsyncQueue_waiters, "f").splice(idx, 1);
-              resolve6({ done: true, value: void 0 });
+              resolve7({ done: true, value: void 0 });
             };
             __classPrivateFieldGet(this, _AsyncQueue_waiters, "f").push(waiter);
             signal?.addEventListener("abort", onAbort, { once: true });
@@ -10273,13 +10273,13 @@ var init_json_schema = __esm({
 
 // node_modules/@anthropic-ai/sdk/internal/utils/promise.mjs
 function promiseWithResolvers() {
-  let resolve6;
+  let resolve7;
   let reject;
   const promise = new Promise((res, rej) => {
-    resolve6 = res;
+    resolve7 = res;
     reject = rej;
   });
-  return { promise, resolve: resolve6, reject };
+  return { promise, resolve: resolve7, reject };
 }
 var init_promise = __esm({
   "node_modules/@anthropic-ai/sdk/internal/utils/promise.mjs"() {
@@ -11074,10 +11074,10 @@ async function settledOrAborted(p, signal) {
     return;
   }
   let onAbort;
-  const aborted = new Promise((resolve6) => {
-    onAbort = resolve6;
+  const aborted = new Promise((resolve7) => {
+    onAbort = resolve7;
     if (signal.aborted)
-      resolve6();
+      resolve7();
   });
   signal.addEventListener("abort", onAbort, { once: true });
   try {
@@ -12161,7 +12161,7 @@ function betaGrepTool(ctx) {
   });
 }
 function runRipgrep(rg, pattern, searchPath, signal) {
-  return new Promise((resolve6, reject) => {
+  return new Promise((resolve7, reject) => {
     const proc = cp.spawn(rg, ["-n", "--no-heading", "-e", pattern, "--", searchPath], {
       ...signal ? { signal } : {}
     });
@@ -12183,12 +12183,12 @@ function runRipgrep(rg, pattern, searchPath, signal) {
       if (signal?.aborted)
         return reject(new ToolError("grep: aborted"));
       if (truncated)
-        return resolve6(out + `
+        return resolve7(out + `
 [output truncated at ${GREP_OUTPUT_LIMIT} bytes]`);
       if (code === 0)
-        return resolve6(out);
+        return resolve7(out);
       if (code === 1)
-        return resolve6("no matches");
+        return resolve7("no matches");
       reject(new ToolError(`grep: rg failed: ${errOut || `exit ${code}`}`));
     });
     proc.on("error", (e) => {
@@ -12370,8 +12370,8 @@ var init_node2 = __esm({
 `;
           __classPrivateFieldGet(this, _BashSession_proc, "f").stdin.write(wrapped);
           if (__classPrivateFieldGet(this, _BashSession_buf, "f").indexOf(sentinel2) < 0) {
-            const { promise: sentinelSeen, resolve: resolve6 } = promiseWithResolvers();
-            __classPrivateFieldSet(this, _BashSession_waiting, { sentinel: sentinel2, resolve: resolve6 }, "f");
+            const { promise: sentinelSeen, resolve: resolve7 } = promiseWithResolvers();
+            __classPrivateFieldSet(this, _BashSession_waiting, { sentinel: sentinel2, resolve: resolve7 }, "f");
             let timer;
             let onAbort;
             try {
@@ -12533,8 +12533,8 @@ async function withTimeout(p, ms2) {
   try {
     return await Promise.race([
       p.then(() => false, () => false),
-      new Promise((resolve6) => {
-        timer = setTimeout(() => resolve6(true), ms2);
+      new Promise((resolve7) => {
+        timer = setTimeout(() => resolve7(true), ms2);
       })
     ]);
   } finally {
@@ -14409,12 +14409,12 @@ var init_BetaMessageStream = __esm({
             }
             return this._emit("error", new AnthropicError(String(error)));
           });
-          __classPrivateFieldSet(this, _BetaMessageStream_connectedPromise, new Promise((resolve6, reject) => {
-            __classPrivateFieldSet(this, _BetaMessageStream_resolveConnectedPromise, resolve6, "f");
+          __classPrivateFieldSet(this, _BetaMessageStream_connectedPromise, new Promise((resolve7, reject) => {
+            __classPrivateFieldSet(this, _BetaMessageStream_resolveConnectedPromise, resolve7, "f");
             __classPrivateFieldSet(this, _BetaMessageStream_rejectConnectedPromise, reject, "f");
           }), "f");
-          __classPrivateFieldSet(this, _BetaMessageStream_endPromise, new Promise((resolve6, reject) => {
-            __classPrivateFieldSet(this, _BetaMessageStream_resolveEndPromise, resolve6, "f");
+          __classPrivateFieldSet(this, _BetaMessageStream_endPromise, new Promise((resolve7, reject) => {
+            __classPrivateFieldSet(this, _BetaMessageStream_resolveEndPromise, resolve7, "f");
             __classPrivateFieldSet(this, _BetaMessageStream_rejectEndPromise, reject, "f");
           }), "f");
           __classPrivateFieldGet(this, _BetaMessageStream_connectedPromise, "f").catch(() => {
@@ -14627,11 +14627,11 @@ var init_BetaMessageStream = __esm({
          *   const message = await stream.emitted('message') // rejects if the stream errors
          */
         emitted(event) {
-          return new Promise((resolve6, reject) => {
+          return new Promise((resolve7, reject) => {
             __classPrivateFieldSet(this, _BetaMessageStream_catchingPromiseCreated, true, "f");
             if (event !== "error")
               this.once("error", reject);
-            this.once(event, resolve6);
+            this.once(event, resolve7);
           });
         }
         async done() {
@@ -15019,7 +15019,7 @@ var init_BetaMessageStream = __esm({
                 if (done) {
                   return { value: void 0, done: true };
                 }
-                return new Promise((resolve6, reject) => readQueue.push({ resolve: resolve6, reject })).then((chunk2) => chunk2 ? { value: chunk2, done: false } : { value: void 0, done: true });
+                return new Promise((resolve7, reject) => readQueue.push({ resolve: resolve7, reject })).then((chunk2) => chunk2 ? { value: chunk2, done: false } : { value: void 0, done: true });
               }
               const chunk = pushQueue.shift();
               return { value: chunk, done: false };
@@ -29017,6 +29017,135 @@ var init_repo = __esm({
   }
 });
 
+// src/solve/problem.ts
+function checkProblem(_raw, _file) {
+  return { ok: false, problems: ["problem check is not built yet"] };
+}
+function problemSummary(_check) {
+  return "";
+}
+var init_problem = __esm({
+  "src/solve/problem.ts"() {
+    "use strict";
+  }
+});
+
+// src/cli/problem.ts
+var problem_exports = {};
+__export(problem_exports, {
+  loadProblem: () => loadProblem,
+  problemCommand: () => problemCommand
+});
+import { readFileSync as readFileSync16 } from "node:fs";
+import { resolve as resolve2 } from "node:path";
+function loadProblem(path4, cwd) {
+  const file = resolve2(cwd, path4);
+  let raw;
+  try {
+    raw = readFileSync16(file, "utf8");
+  } catch {
+    return { ok: false, problems: [`${path4}: Synthe can't read this file. Check the path.`] };
+  }
+  return checkProblem(raw, file);
+}
+function problemCommand(args, cwd, say) {
+  if (args[0] !== "check" || !args[1]) {
+    say("Usage: npx synthe problem check <problem-file>");
+    return 1;
+  }
+  const check = loadProblem(args[1], cwd);
+  if (!check.ok) {
+    for (const p of check.problems) say(p);
+    return 1;
+  }
+  say(problemSummary(check));
+  return 0;
+}
+var init_problem2 = __esm({
+  "src/cli/problem.ts"() {
+    "use strict";
+    init_problem();
+  }
+});
+
+// src/solve/loop.ts
+async function solve(_problem, _proposer, _options, _io) {
+  throw new Error("solve is not built yet");
+}
+var SetupError;
+var init_loop = __esm({
+  "src/solve/loop.ts"() {
+    "use strict";
+    SetupError = class extends Error {
+    };
+  }
+});
+
+// src/solve/proposer.ts
+function commandProposer(_problem) {
+  throw new Error("proposer.ts is not built yet");
+}
+function proposerFor(problem) {
+  return commandProposer(problem);
+}
+var init_proposer = __esm({
+  "src/solve/proposer.ts"() {
+    "use strict";
+  }
+});
+
+// src/cli/solve.ts
+var solve_exports = {};
+__export(solve_exports, {
+  solveCommand: () => solveCommand
+});
+async function solveCommand(args, cwd, say, env) {
+  const value = (flag) => {
+    const i = args.indexOf(flag);
+    return i >= 0 ? args[i + 1] : void 0;
+  };
+  const file = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--out" && args[i - 1] !== "--seed");
+  if (!file) {
+    say("Usage: npx synthe solve <problem-file> [--out DIR] [--seed N]");
+    return 1;
+  }
+  const options = {};
+  const out = value("--out");
+  if (out) options.out = out;
+  const seed = value("--seed");
+  if (seed !== void 0) {
+    if (!/^\d+$/.test(seed)) {
+      say("--seed must be a whole number, such as --seed 1.");
+      return 1;
+    }
+    options.seed = Number(seed);
+  }
+  const check = loadProblem(file, cwd);
+  if (!check.ok) {
+    for (const p of check.problems) say(p);
+    return 1;
+  }
+  try {
+    const result2 = await solve(check.problem, proposerFor(check.problem), options, { say, env });
+    say(result2.stopped);
+    return 0;
+  } catch (e) {
+    if (e instanceof SetupError) {
+      say(e.message);
+      return 1;
+    }
+    throw e;
+  }
+}
+var init_solve = __esm({
+  "src/cli/solve.ts"() {
+    "use strict";
+    init_problem2();
+    init_loop();
+    init_proposer();
+  }
+});
+
 // src/pilot/errors.ts
 var PilotError;
 var init_errors3 = __esm({
@@ -29163,8 +29292,8 @@ var init_approval = __esm({
 });
 
 // src/pilot/io.ts
-import { existsSync as existsSync14, linkSync, lstatSync as lstatSync3, mkdirSync as mkdirSync6, readFileSync as readFileSync16, realpathSync as realpathSync3, renameSync as renameSync3, statSync as statSync4, unlinkSync as unlinkSync3, writeFileSync as writeFileSync8 } from "node:fs";
-import { dirname as dirname5, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync14, linkSync, lstatSync as lstatSync3, mkdirSync as mkdirSync6, readFileSync as readFileSync17, realpathSync as realpathSync3, renameSync as renameSync3, statSync as statSync4, unlinkSync as unlinkSync3, writeFileSync as writeFileSync8 } from "node:fs";
+import { dirname as dirname5, isAbsolute as isAbsolute2, relative as relative2, resolve as resolve3 } from "node:path";
 function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
   let size2;
   try {
@@ -29176,11 +29305,11 @@ function readBounded(path4, maxBytes = MAX_INPUT_BYTES) {
     throw new PilotError("not_found", `${path4} does not exist or cannot be read.`);
   }
   if (size2 > maxBytes) throw new PilotError("too_large", `${path4} is ${size2} bytes; the limit is ${maxBytes}. Export a smaller, bounded file.`);
-  return readFileSync16(path4, "utf8");
+  return readFileSync17(path4, "utf8");
 }
 function inside(root, name) {
-  const full = resolve2(root, name);
-  const rel = relative2(resolve2(root), full);
+  const full = resolve3(root, name);
+  const rel = relative2(resolve3(root), full);
   if (isAbsolute2(name) || rel === "" || rel.startsWith("..") || isAbsolute2(rel)) throw new PilotError("usage", `${name} must be a file inside ${root}.`);
   let link = false;
   try {
@@ -29214,7 +29343,7 @@ function writeOnce(path4, content) {
       }
       if (code !== "EEXIST" && code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV") throw e;
     }
-    if (readFileSync16(path4, "utf8") === content) return "already there";
+    if (readFileSync17(path4, "utf8") === content) return "already there";
     throw new PilotError("conflict", `${path4} already exists with different content. Stored pilot records are never replaced.`);
   } finally {
     if (existsSync14(tmp)) unlinkSync3(tmp);
@@ -33458,7 +33587,7 @@ var init_review = __esm({
 });
 
 // src/pilot/store.ts
-import { appendFileSync as appendFileSync2, closeSync as closeSync3, existsSync as existsSync15, mkdirSync as mkdirSync8, openSync as openSync3, readdirSync as readdirSync3, readFileSync as readFileSync17, statSync as statSync5, truncateSync, unlinkSync as unlinkSync4, writeSync as writeSync2 } from "node:fs";
+import { appendFileSync as appendFileSync2, closeSync as closeSync3, existsSync as existsSync15, mkdirSync as mkdirSync8, openSync as openSync3, readdirSync as readdirSync3, readFileSync as readFileSync18, statSync as statSync5, truncateSync, unlinkSync as unlinkSync4, writeSync as writeSync2 } from "node:fs";
 import { join as join20 } from "node:path";
 var OBJECT_KINDS, entryHash, MAX_OBJECT_BYTES, LOCK_STALE_MS, HELD, PilotStore;
 var init_store = __esm({
@@ -33514,7 +33643,7 @@ var init_store = __esm({
           writeOnce(path4, content);
         } catch (e) {
           if (!(e instanceof PilotError) || e.code !== "conflict") throw e;
-          if (!content.startsWith(readFileSync17(path4, "utf8"))) {
+          if (!content.startsWith(readFileSync18(path4, "utf8"))) {
             throw new PilotError("tampered", `${path4} already exists with content that does not match its name, so it was changed after it was written. It was not overwritten. Compare it with a backup, or start a new pilot directory.`);
           }
           writeAtomic(path4, content);
@@ -33582,7 +33711,7 @@ var init_store = __esm({
       head() {
         if (!existsSync15(this.headPath())) return null;
         try {
-          const h = JSON.parse(readFileSync17(this.headPath(), "utf8"));
+          const h = JSON.parse(readFileSync18(this.headPath(), "utf8"));
           if (Number.isInteger(h.seq) && h.seq >= 1 && isSha256(h.hash)) return { seq: h.seq, hash: h.hash };
         } catch {
         }
@@ -33625,7 +33754,7 @@ var init_store = __esm({
       tornTail() {
         const path4 = this.journalPath();
         if (!existsSync15(path4)) return false;
-        const bytes = readFileSync17(path4);
+        const bytes = readFileSync18(path4);
         return bytes.length > 0 && bytes[bytes.length - 1] !== 10;
       }
       find(step, key) {
@@ -33649,7 +33778,7 @@ var init_store = __esm({
           const rest = { seq: entries.length + 1, at, step, key, refs, prev: entries.at(-1)?.hash ?? null };
           const entry = { ...rest, hash: entryHash(rest) };
           mkdirSync8(this.dir, { recursive: true });
-          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync17(this.journalPath()).lastIndexOf(10) + 1);
+          if (this.tornTail()) truncateSync(this.journalPath(), readFileSync18(this.journalPath()).lastIndexOf(10) + 1);
           appendFileSync2(this.journalPath(), `${JSON.stringify(entry)}
 `, { mode: 384 });
           writeAtomic(this.headPath(), `${JSON.stringify({ seq: entry.seq, hash: entry.hash })}
@@ -33687,7 +33816,7 @@ var init_store = __esm({
         const pause = new Int32Array(new SharedArrayBuffer(4));
         const read = () => {
           try {
-            return { text: readFileSync17(lock, "utf8"), age: Date.now() - statSync5(lock).mtimeMs };
+            return { text: readFileSync18(lock, "utf8"), age: Date.now() - statSync5(lock).mtimeMs };
           } catch (e) {
             if (e.code === "ENOENT") return null;
             throw e;
@@ -33736,7 +33865,7 @@ var init_store = __esm({
         return () => {
           HELD.delete(lock);
           try {
-            if (readFileSync17(lock, "utf8") === String(process.pid)) unlinkSync4(lock);
+            if (readFileSync18(lock, "utf8") === String(process.pid)) unlinkSync4(lock);
           } catch {
           }
         };
@@ -33753,7 +33882,7 @@ var init_store = __esm({
 
 // src/pilot/commands.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
-import { appendFileSync as appendFileSync3, existsSync as existsSync16, readFileSync as readFileSync18 } from "node:fs";
+import { appendFileSync as appendFileSync3, existsSync as existsSync16, readFileSync as readFileSync19 } from "node:fs";
 import { dirname as dirname6, join as join21 } from "node:path";
 function defaultGit(args, cwd) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_")));
@@ -33834,8 +33963,8 @@ function protectDirectory(dir, say) {
   const file = join21(dir, ".gitignore");
   if (!existsSync16(file)) writeOnce(file, "*\n");
   else {
-    const lines = readFileSync18(file, "utf8").split(/\r?\n/).map((l) => l.trim());
-    if (!lines.includes("*")) appendFileSync3(file, `${readFileSync18(file, "utf8").endsWith("\n") ? "" : "\n"}*
+    const lines = readFileSync19(file, "utf8").split(/\r?\n/).map((l) => l.trim());
+    if (!lines.includes("*")) appendFileSync3(file, `${readFileSync19(file, "utf8").endsWith("\n") ? "" : "\n"}*
 `);
   }
   try {
@@ -33857,7 +33986,7 @@ function chatModel(flags, config, deps) {
   if (!spec.startsWith("scripted:")) throw new PilotError("usage", "--model must be scripted:<file>. A provider model runs only with --live.");
   return scriptedModel(parseModelScript(readBounded(spec.slice("scripted:".length), 4 * 1024 * 1024)));
 }
-function proposerFor(flags, config, deps) {
+function proposerFor2(flags, config, deps) {
   const spec = opt(flags, "proposer");
   if (flags.live === true) {
     if (spec) throw new PilotError("usage", "Give --proposer scripted:<file> or --live, not both.");
@@ -34028,7 +34157,7 @@ async function propose(store, flags, deps) {
     const earlier = store.find("candidate.created").filter((e) => e.refs.finding === finding.id);
     const feedback = earlier.flatMap((e) => replaysFor(store, e.key, active.id).at(-1)?.value.gate.proposer_feedback ?? []);
     const context2 = proposerContext({ pack: active.value, baseline_prompt: baselinePrompt, finding: finding.value, attempt: earlier.length, feedback, max_changed_lines: f.config.replay.max_changed_lines });
-    const proposer = proposerFor(flags, f.config, deps);
+    const proposer = proposerFor2(flags, f.config, deps);
     const proposal = await proposer.propose(context2);
     prompt = proposal.prompt;
     made = makeCandidate({
@@ -35215,7 +35344,7 @@ var init_watch = __esm({
 
 // src/pilot/cases.ts
 import { existsSync as existsSync17, mkdirSync as mkdirSync9, writeFileSync as writeFileSync10 } from "node:fs";
-import { dirname as dirname8, join as join25, resolve as resolve3 } from "node:path";
+import { dirname as dirname8, join as join25, resolve as resolve4 } from "node:path";
 function describe(check) {
   switch (check.kind) {
     case "reply_includes":
@@ -35307,7 +35436,7 @@ async function cases3(store, flags, deps) {
   const text4 = renderCases(result2.cases);
   let path4;
   if (typeof outFlag === "string") {
-    path4 = resolve3(outFlag);
+    path4 = resolve4(outFlag);
     if (existsSync17(path4)) throw new PilotError("conflict", `${printable2(outFlag, 200)} already exists. Name a new file with --out, then copy the lines you want into your scenarios file yourself.`);
     mkdirSync9(dirname8(path4), { recursive: true });
     try {
@@ -35991,8 +36120,8 @@ __export(demo_exports, {
   demo: () => demo
 });
 import { execFileSync as execFileSync5 } from "node:child_process";
-import { existsSync as existsSync18, mkdirSync as mkdirSync10, readdirSync as readdirSync6, readFileSync as readFileSync19, statSync as statSync6, writeFileSync as writeFileSync11 } from "node:fs";
-import { dirname as dirname9, join as join26, resolve as resolve4 } from "node:path";
+import { existsSync as existsSync18, mkdirSync as mkdirSync10, readdirSync as readdirSync6, readFileSync as readFileSync20, statSync as statSync6, writeFileSync as writeFileSync11 } from "node:fs";
+import { dirname as dirname9, join as join26, resolve as resolve5 } from "node:path";
 function git(args, cwd) {
   const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_"))), ...GIT_ENV };
   return execFileSync5("git", args, { cwd, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
@@ -36008,7 +36137,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
   const startedAt = Date.now();
   const outFlag = flags.out;
   if (typeof outFlag !== "string" || !outFlag.trim()) throw new PilotError("usage", "--out is required: a new, empty directory for the demo's inputs, pilot records and reports.");
-  const out = resolve4(outFlag);
+  const out = resolve5(outFlag);
   if (existsSync18(out) && readdirSync6(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
   const inputs = join26(out, "inputs");
   const repoDir = join26(out, "customer-repo");
@@ -36207,7 +36336,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     });
     const looksD = () => store.find("analysis.decided").filter((e) => e.refs.experiment === expD);
     const importsD = () => store.find("telemetry.imported").filter((e) => e.refs.scope === expD).length;
-    const watchMd = () => readFileSync19(join26(dir, "reports", "WATCH.md"), "utf8");
+    const watchMd = () => readFileSync20(join26(dir, "reports", "WATCH.md"), "utf8");
     const tick2 = async (title, iso3) => {
       traffic.upTo(Date.parse(iso3));
       atTime(iso3);
@@ -36247,9 +36376,9 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect(`the cutoff export notes carry the planted counts (${count2(pl.no_outcome)} no outcome, ${count2(pl.two_versions)} two versions, ${pl.other_version_after_outcome} after the outcome, ${pl.outcome_after_other_version} of them with the outcome recorded again, ${pl.outcome_without_call} outcome without a call), in the tick's output and in WATCH.md`, count2(pl.no_outcome) === TRAFFIC.no_outcome.length && count2(pl.two_versions) === TRAFFIC.call_before_outcome.length && pl.other_version_after_outcome === TRAFFIC.call_after_outcome.length && pl.outcome_after_other_version === TRAFFIC.repeat_after_other_call.length && pl.outcome_without_call === TRAFFIC.outcome_without_call.length && notesOk(t4.out) && notesOk(t4.md));
     expect("every conversation with a recorded call is a row, including the ones with no outcome or two versions", finalD.coverage.rows === 14 * TRAFFIC.per_day);
     expect("no new GitHub request was made after the review", github.requests.length === requestsAfterReview);
-    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync19(p, "utf8")).join("\n");
+    const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync20(p, "utf8")).join("\n");
     const rawId = /fernhill-(conv|unit|orphan)-/;
-    const pilotText = [...filesUnder(join26(dir, "reports")), ...filesUnder(join26(dir, "exports")), join26(dir, "journal.jsonl")].map((p) => readFileSync19(p, "utf8")).join("\n");
+    const pilotText = [...filesUnder(join26(dir, "reports")), ...filesUnder(join26(dir, "exports")), join26(dir, "journal.jsonl")].map((p) => readFileSync20(p, "utf8")).join("\n");
     const canariesList = Object.values(CANARIES);
     expect(`the ${filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).length} log files hold no raw conversation or unit id and no message text`, logText.length > 0 && !rawId.test(logText) && !traffic.rawIds.filter((_, i) => i % 997 === 0).some((id) => logText.includes(id)) && !canariesList.some((c) => logText.toLowerCase().includes(c.toLowerCase())));
     expect("the exports, reports and journal hold no raw conversation or unit id either", !rawId.test(pilotText));
@@ -36262,8 +36391,8 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const canaries = Object.values(CANARIES);
     const leaks = (text4) => canaries.some((c) => text4.toLowerCase().includes(c.toLowerCase()));
     expect(`nothing sent to GitHub holds pack conversation text (${github.requests.length} requests checked)`, !github.requests.some((r) => leaks(r.body) || leaks(r.path)));
-    expect("no report holds pack conversation text", !filesUnder(join26(dir, "reports")).some((p) => leaks(readFileSync19(p, "utf8"))));
-    expect("the journal holds no pack conversation text", !leaks(readFileSync19(join26(dir, "journal.jsonl"), "utf8")));
+    expect("no report holds pack conversation text", !filesUnder(join26(dir, "reports")).some((p) => leaks(readFileSync20(p, "utf8"))));
+    expect("the journal holds no pack conversation text", !leaks(readFileSync20(join26(dir, "journal.jsonl"), "utf8")));
     expect("nothing printed by the commands holds pack conversation text", !leaks(transcript2.join("\n")));
     expect("the GitHub token went only to the loopback server and was never printed", github.requests.every((r) => r.authorization === "Bearer demo-token-for-the-loopback-server") && !transcript2.join("\n").includes("demo-token-for-the-loopback-server"));
     expect("no provider credential was read: the commands saw only the GitHub token variable", Object.keys(inner.env).length === 1);
@@ -36322,7 +36451,7 @@ __export(main_exports, {
   helpText: () => helpText,
   main: () => main
 });
-import { resolve as resolve5 } from "node:path";
+import { resolve as resolve6 } from "node:path";
 import { parseArgs as parseArgs2 } from "node:util";
 async function main(argv, deps, prog = CHECKOUT_PROG) {
   const name = argv[0];
@@ -36351,7 +36480,7 @@ async function main(argv, deps, prog = CHECKOUT_PROG) {
       deps.say(`"${name}" is not a pilot command. Run \`${prog} help\` for the list.`);
       return 1;
     }
-    return await command(new PilotStore(resolve5(typeof flags.dir === "string" ? flags.dir : DEFAULT_DIR)), flags, deps);
+    return await command(new PilotStore(resolve6(typeof flags.dir === "string" ? flags.dir : DEFAULT_DIR)), flags, deps);
   } catch (e) {
     if (e instanceof PilotError) {
       deps.say(`Refused (${e.code}): ${printable2(e.message, 2e3)}`);
@@ -36492,7 +36621,7 @@ init_prompt();
 init_state();
 init_safety();
 import { spawn as spawn3 } from "node:child_process";
-import { existsSync as existsSync19, readFileSync as readFileSync20, writeFileSync as writeFileSync12 } from "node:fs";
+import { existsSync as existsSync19, readFileSync as readFileSync21, writeFileSync as writeFileSync12 } from "node:fs";
 import { createInterface as createInterface4 } from "node:readline/promises";
 
 // src/loop/report.ts
@@ -36733,7 +36862,7 @@ function openAiCompatibleModel(o) {
   const url = new URL(`${base}/chat/completions`);
   const host = url.host;
   const loopback = isLoopback(url);
-  const sleep2 = o.sleep ?? ((ms2) => new Promise((resolve6) => setTimeout(resolve6, ms2)));
+  const sleep2 = o.sleep ?? ((ms2) => new Promise((resolve7) => setTimeout(resolve7, ms2)));
   const now = o.now ?? Date.now;
   const gap = o.maxRequestsPerMinute ? 6e4 / o.maxRequestsPerMinute : 0;
   let nextAt = 0;
@@ -36748,7 +36877,7 @@ function openAiCompatibleModel(o) {
   const slot = async () => {
     if (!gap) return () => {
     };
-    while (active >= PACED_AT_ONCE) await new Promise((resolve6) => waiting2.push(resolve6));
+    while (active >= PACED_AT_ONCE) await new Promise((resolve7) => waiting2.push(resolve7));
     active++;
     return () => {
       active--;
@@ -39601,7 +39730,7 @@ function nextLine() {
   if (!rl) start();
   if (queued.length) return Promise.resolve(queued.shift());
   if (ended) return Promise.resolve("");
-  return new Promise((resolve6) => waiting.push(resolve6));
+  return new Promise((resolve7) => waiting.push(resolve7));
 }
 async function askPiped(question) {
   process.stdout.write(question);
@@ -40138,7 +40267,8 @@ var package_default = {
     bench: "node scripts/bench.ts",
     "simulate:run": "node scripts/simulate-run.ts",
     "mutation:operators": "stryker run mutation/stryker.config.mjs",
-    "mutation:compare": "node mutation/compare.mjs"
+    "mutation:compare": "node mutation/compare.mjs",
+    milestones: "node scripts/swarm/milestones.mjs"
   },
   devDependencies: {
     "@anthropic-ai/sdk": "1.3.0",
@@ -41777,7 +41907,7 @@ function killRunning() {
   }
   live.clear();
 }
-var shellExec = (cwd, command, timeoutMs) => new Promise((resolve6) => {
+var shellExec = (cwd, command, timeoutMs) => new Promise((resolve7) => {
   const win3 = process.platform === "win32";
   const started = performance.now();
   const child = spawn2(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: childEnv(), stdio: ["ignore", "pipe", "pipe"], detached: !win3 });
@@ -41802,7 +41932,7 @@ var shellExec = (cwd, command, timeoutMs) => new Promise((resolve6) => {
     done = true;
     if (child.pid) live.delete(child.pid);
     clearTimeout(timer);
-    resolve6({ ok: code === 0 && !timedOut, stdout, stderr, ms: Math.round(performance.now() - started), timedOut });
+    resolve7({ ok: code === 0 && !timedOut, stdout, stderr, ms: Math.round(performance.now() - started), timedOut });
   };
   child.on("error", (e) => {
     stderr += e.message;
@@ -41812,7 +41942,7 @@ var shellExec = (cwd, command, timeoutMs) => new Promise((resolve6) => {
 });
 
 // src/cli/main.ts
-var run = (cmd, args, stdin) => new Promise((resolve6, reject) => {
+var run = (cmd, args, stdin) => new Promise((resolve7, reject) => {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_")));
   const child = spawn3(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env });
   let out = "", err = "";
@@ -41823,7 +41953,7 @@ var run = (cmd, args, stdin) => new Promise((resolve6, reject) => {
     err += d;
   });
   child.on("error", reject);
-  child.on("close", (code) => code === 0 ? resolve6(out) : reject(new Error(err || `${cmd} failed`)));
+  child.on("close", (code) => code === 0 ? resolve7(out) : reject(new Error(err || `${cmd} failed`)));
   child.stdin.on("error", () => {
   });
   child.stdin.end(stdin ?? "");
@@ -41848,7 +41978,7 @@ function onInterrupt(cleanup) {
     console.log("\nStopped. Synthe stopped its measurements and removed its temporary checkouts; your working tree was never touched.");
     const exit = () => process.exit(130);
     if (pending && typeof pending.then === "function") Promise.race([pending.catch(() => {
-    }), new Promise((resolve6) => setTimeout(resolve6, 1500))]).then(exit, exit);
+    }), new Promise((resolve7) => setTimeout(resolve7, 1500))]).then(exit, exit);
     else exit();
   };
   for (const s of signals) process.once(s, stop2);
@@ -41856,7 +41986,7 @@ function onInterrupt(cleanup) {
     for (const s of signals) process.off(s, stop2);
   };
 }
-var template = () => readFileSync20(new URL("../templates/synthe.yml", import.meta.url), "utf8");
+var template = () => readFileSync21(new URL("../templates/synthe.yml", import.meta.url), "utf8");
 var io = { say: console.log, ask, askSecret, run, model: anthropicModel, template, sleep: (ms2) => new Promise((r) => setTimeout(r, ms2)) };
 function setUpHere() {
   if (existsSync19(GOAL_FILE)) return true;
@@ -41888,7 +42018,7 @@ async function status2() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync20(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
   const { title, summary } = headline(goal, s, Boolean(stopped));
   console.log(title);
   console.log(summary.replace(" This page updates after each round.", " The report updates after each round."));
@@ -41896,7 +42026,7 @@ async function status2() {
   const sameModel = sameModelNote(goal.models);
   if (sameModel) console.log(sameModel);
   try {
-    const rows = parseScenarios(readFileSync20(goal.scenarios, "utf8"));
+    const rows = parseScenarios(readFileSync21(goal.scenarios, "utf8"));
     const power = powerLines(goal, rows.filter((r) => r.split === "train").length, rows.filter((r) => r.split === "holdout").length);
     console.log(`What your test cases can detect: ${power[0]} ${power.at(-1)}`);
   } catch {
@@ -41915,7 +42045,7 @@ async function changes() {
     return;
   }
   const s = { ...newState(), ...JSON.parse(raw) };
-  const goal = parseGoal(readFileSync20(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
   console.log(changesText(goal, s));
 }
 async function stop() {
@@ -41934,7 +42064,7 @@ async function restart() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync20(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
   const path4 = `repos/${slug}/contents/state.json`;
   let file = null;
   try {
@@ -41944,7 +42074,7 @@ async function restart() {
   let note = "";
   if (file) {
     const s = { ...newState(), ...JSON.parse(Buffer.from(file.content, "base64").toString("utf8")) };
-    const next = restartState(goal, s, existsSync19(goal.scenarios) ? sha256(readFileSync20(goal.scenarios, "utf8")) : null);
+    const next = restartState(goal, s, existsSync19(goal.scenarios) ? sha256(readFileSync21(goal.scenarios, "utf8")) : null);
     if ("why" in next) {
       console.log(`Synthe can't start again. ${next.why}`);
       process.exitCode = 1;
@@ -41973,7 +42103,7 @@ async function undoRound() {
   if (!setUpHere()) return;
   const slug = await repoSlug();
   if (!slug) return;
-  const goal = parseGoal(readFileSync20(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
   const token2 = (await run("gh", ["auth", "token"])).trim();
   const history = async (path4) => {
     const shas = (await run("git", ["log", "--format=%H", "--", path4])).split("\n").filter(Boolean);
@@ -41983,7 +42113,7 @@ async function undoRound() {
 }
 function localRun(command) {
   if (!setUpHere()) return null;
-  const goal = parseGoal(readFileSync20(GOAL_FILE, "utf8"));
+  const goal = parseGoal(readFileSync21(GOAL_FILE, "utf8"));
   const credential = localCredential(process.env, goal.provider);
   if (!credential) {
     console.log(noLocalCredential(command, goal));
@@ -41991,13 +42121,13 @@ function localRun(command) {
     return null;
   }
   console.log(credential.line);
-  const prompt = readPrompt(readFileSync20(goal.prompt.path, "utf8"), goal, null);
+  const prompt = readPrompt(readFileSync21(goal.prompt.path, "utf8"), goal, null);
   if (prompt === null) {
     console.log(`Couldn't find your prompt in ${goal.prompt.path}. If you moved or rewrote it, update prompt in ${GOAL_FILE}.`);
     process.exitCode = 1;
     return null;
   }
-  return { goal, prompt, scenarios: parseScenarios(readFileSync20(goal.scenarios, "utf8")), model: configuredModel(credential.key, goal.provider) };
+  return { goal, prompt, scenarios: parseScenarios(readFileSync21(goal.scenarios, "utf8")), model: configuredModel(credential.key, goal.provider) };
 }
 function noLocalCredential(command, goal) {
   if (goal.provider?.kind === "openai-compatible") return `\`npx synthe ${command}\` runs on your computer, changing nothing, and needs your key for ${providerHost(goal.provider)}. Set SYNTHE_API_KEY in your environment, then run this again.`;
@@ -42027,7 +42157,7 @@ async function calibrateChecks() {
   const result2 = await calibrate({ say: console.log, ask }, local.goal, local.prompt, local.scenarios, local.model, ".synthe");
   if (!result2) return;
   if (result2.checks.some((c, i) => c !== local.goal.checks?.[i])) {
-    const saved = JSON.parse(readFileSync20(GOAL_FILE, "utf8"));
+    const saved = JSON.parse(readFileSync21(GOAL_FILE, "utf8"));
     writeFileSync12(GOAL_FILE, `${JSON.stringify({ ...saved, checks: result2.checks }, null, 2)}
 `);
     console.log(`
@@ -42062,6 +42192,8 @@ Start here, inside your project's folder:
   npx synthe guide    instructions for setup through a coding agent
   npx synthe improve  raise a number you choose (tests passing, bundle size, build time or your own command): Synthe proposes code changes, measures each one, keeps only wins and opens one pull request (own key; no AI prompt needed)
   npx synthe improve --rounds N --budget USD   at most N rounds (default 6) and USD dollars of model cost (default 1.50)
+  npx synthe problem check <file>   check a problem file: which files may change, how to measure them, what must not break
+  npx synthe solve <file> [--out DIR] [--seed N]   propose changes for a problem file, measure each one and keep only real gains on a new branch
   npx synthe improve --handoff   measure only, and make the change with the coding agent you already use; then:
   npx synthe submit   measure that change; open the pull request, or merge it in auto mode
 
@@ -42094,7 +42226,7 @@ async function main2() {
   else if (command === "submit") process.exitCode = await submit({ say: console.log, ask, run, exec: shellExec, env: process.env }, process.cwd(), submitOptions(process.argv.slice(3))) ? 0 : 1;
   else if (command === "key") {
     if (!setUpHere()) return;
-    process.exitCode = await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync20(GOAL_FILE, "utf8")).provider, process.cwd()) ? 0 : 1;
+    process.exitCode = await setKey(io, process.env, Boolean(process.stdin.isTTY), parseGoal(readFileSync21(GOAL_FILE, "utf8")).provider, process.cwd()) ? 0 : 1;
   } else if (command === "upgrade") console.log(upgrade(process.cwd(), template()));
   else if (command === "stop") await stop();
   else if (command === "status") await status2();
@@ -42106,6 +42238,8 @@ async function main2() {
   else if (command === "calibrate") await calibrateChecks();
   else if (command === "vault") await vaultCheck();
   else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.SYNTHE_API_KEY, anthropicKey: process.env.SYNTHE_ANTHROPIC_KEY });
+  else if (command === "problem") process.exitCode = (await Promise.resolve().then(() => (init_problem2(), problem_exports))).problemCommand(process.argv.slice(3), process.cwd(), console.log);
+  else if (command === "solve") process.exitCode = await (await Promise.resolve().then(() => (init_solve(), solve_exports))).solveCommand(process.argv.slice(3), process.cwd(), console.log, process.env);
   else if (command === "pilot") {
     const pilot = await Promise.resolve().then(() => (init_main(), main_exports));
     process.exitCode = await pilot.main(process.argv.slice(3), pilot.defaultDeps(), "npx synthe pilot").catch(() => {

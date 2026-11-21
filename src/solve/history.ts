@@ -1,20 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import type { HistoryEntry } from "./types.ts";
 
 // The memory of every attempt on a problem, across runs (P12). It lives in the repository's git directory, not in
 // the working tree: the person's tree stays clean, every worktree of the repository shares it, and git never
 // commits it. One JSON object per line, appended, so a crash mid-run loses at most the line being written.
 
-// One attempt as the proposer sees it in `history` (swarm/GOAL.md). Only these four fields go to the proposer:
+// HistoryEntry is the proposer's view of one attempt (swarm/GOAL.md). Only its four fields go to the proposer:
 // before/after numbers stay out, so a holdout number can never reach it through the history.
-export interface HistoryEntry {
-  round: number;
-  summary: string;
-  kept: boolean;
-  reason: string;
-}
-
 // What the file stores: the proposer's view plus the run it came from and when.
 export interface StoredEntry extends HistoryEntry {
   run: number;
@@ -23,7 +17,8 @@ export interface StoredEntry extends HistoryEntry {
 
 const NAME = /^[A-Za-z0-9-]+$/;
 
-// The shared git directory of the repository that holds `dir`. --git-common-dir, not --git-dir, so a scratch
+// The shared git directory of the repository that holds `dir`. `dir` may be any folder in the repository, a
+// worktree of it, or the git directory itself. --git-common-dir, not --git-dir, so a scratch
 // worktree and the person's checkout read and write the same history.
 export function gitCommonDir(dir: string): string {
   const out = execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -64,10 +59,14 @@ export function nextRun(dir: string, name: string): number {
   return readStored(dir, name).reduce((max, e) => Math.max(max, e.run), 0) + 1;
 }
 
-// Records one attempt at once, so the next round of this run and every later run see it.
-export function appendHistory(dir: string, name: string, run: number, entry: HistoryEntry): void {
+// Records attempts at once, so the next round of this run and every later run see them. Call it after each round,
+// not only at the end, so a run that crashes still leaves its attempts. Read nextRun() once at the start of a run and
+// pass it to every call of that run; without it, each call counts as a new run.
+export function appendHistory(dir: string, name: string, entries: HistoryEntry[], run = nextRun(dir, name)): void {
+  if (entries.length === 0) return;
   const file = historyFile(dir, name);
   mkdirSync(join(file, ".."), { recursive: true });
-  const stored: StoredEntry = { round: entry.round, summary: entry.summary, kept: entry.kept, reason: entry.reason, run, at: new Date().toISOString() };
-  appendFileSync(file, JSON.stringify(stored) + "\n");
+  const at = new Date().toISOString();
+  const lines = entries.map((e) => JSON.stringify({ round: e.round, summary: e.summary, kept: e.kept, reason: e.reason, run, at } satisfies StoredEntry));
+  appendFileSync(file, lines.join("\n") + "\n");
 }
