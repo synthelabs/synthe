@@ -42,6 +42,41 @@ test("max_usd refuses the call that would pass it, before it is sent", async () 
   assert.equal(m.summary().calls, 3);
 });
 
+test("parallel calls cannot pass max_usd: each call in flight reserves the dearest cost", async () => {
+  // 0.006 per call and a 0.02 cap: at most 3 calls, even when 8 are asked at once, as the judge does.
+  const m = new CostMeter({ input_per_mtok: 3, output_per_mtok: 15 }, 0.02);
+  let sent = 0, running = 0, most = 0;
+  const model = m.wrap({
+    ask: async () => {
+      sent++; running++; most = Math.max(most, running);
+      await new Promise((r) => setTimeout(r, 10));
+      running--;
+      return { text: "{}", costUsd: null, stopReason: "stop", usage: { input: 1000, output: 200 } };
+    },
+  });
+  const results = await Promise.allSettled(Array.from({ length: 8 }, () => model.ask(ask)));
+  assert.equal(sent, 3);
+  assert.equal(results.filter((r) => r.status === "rejected" && r.reason instanceof BudgetError).length, 5);
+  assert.ok(m.summary().usd! <= 0.02, String(m.summary().usd));
+  assert.ok(most >= 2, "after the first call, the next ones still run in parallel");
+});
+
+test("without a cap, parallel calls do not wait for each other", async () => {
+  const m = new CostMeter({ input_per_mtok: 3, output_per_mtok: 15 }, null);
+  let running = 0, most = 0;
+  const model = m.wrap({
+    ask: async () => {
+      running++; most = Math.max(most, running);
+      await new Promise((r) => setTimeout(r, 10));
+      running--;
+      return { text: "{}", costUsd: null, stopReason: "stop", usage: { input: 1, output: 1 } };
+    },
+  });
+  await Promise.all(Array.from({ length: 4 }, () => model.ask(ask)));
+  assert.equal(most, 4);
+  assert.equal(m.summary().calls, 4);
+});
+
 test("a call that fails after it was sent still counts", async () => {
   const m = new CostMeter(undefined, null);
   await assert.rejects(m.wrap({ ask: async () => { throw new Error("500"); } }).ask(ask));
