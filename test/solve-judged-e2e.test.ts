@@ -102,6 +102,7 @@ test("solve with compare \"model\" asks the model judge and counts its calls aga
     writeFileSync(join(top2, "problem.json"), JSON.stringify(p));
     git(top2, "commit", "-qam", "model judge");
     const out2 = join(top2, "out");
+    const before = asked;
     await new Promise<number | null>((done) => {
       const child = spawn("node", [main, "solve", join(top2, "problem.json"), "--out", out2], { env, stdio: "ignore" });
       child.on("close", done);
@@ -109,6 +110,8 @@ test("solve with compare \"model\" asks the model judge and counts its calls aga
     const r2 = JSON.parse(readFileSync(join(out2, "result.json"), "utf8"));
     assert.match(r2.stopped, /call limit/);
     assert.equal(r2.attempts.length, 1);
+    assert.ok(asked - before <= 5, `the model judge was asked ${asked - before} times with max_calls 5`);
+    assert.match(r2.attempts[0].reason, /call limit/);
   } finally {
     server.close();
   }
