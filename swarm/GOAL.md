@@ -9,6 +9,12 @@ honestly, keeps only real gains, and learns from every attempt. Synthe runs the 
 The capstone (milestone `FINAL`) is the proof: across the frozen problem zoo in `swarm/zoo/`, `synthe solve` keeps
 the real gains and refuses the no-op changes and the traps.
 
+## Stages
+
+- Stage 1: milestones `P01` to `P16` and `FINAL`. Synthe is honest on any problem.
+- Stage 2: milestones `S01` to `S05`, in `swarm/GOAL-2.md`. Synthe is ready for real models.
+- Stage 3: raise the Synthe score on a hidden problem set. The coordinator runs it; the swarm never sees the set.
+
 ## How done is decided
 
 Each milestone in `swarm/milestones.json` has a check: a test file in `test/milestones/`. A milestone is done when its
