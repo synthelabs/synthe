@@ -25,8 +25,8 @@ test("result.json has the contract fields in order; report.md names each attempt
   assert.deepEqual(Object.keys(json), ["problem", "stopped", "baseline", "final", "branch", "attempts"]);
   assert.deepEqual(json, result);
   const md = readFileSync(paths.md, "utf8");
-  assert.match(md, /Raise x \| yes \| 10 points \| 12\.5 points \| better on every run/);
-  assert.match(md, /Edit a \\\| b second line \| no \| 12\.5 points \| - \|/);
+  assert.match(md, /Raise x \| kept \| 10 points \| 12\.5 points \| better on every run/);
+  assert.match(md, /Edit a \\\| b second line \| not kept \| 12\.5 points \| - \|/);
   assert.match(md, /the guard `pytest -q` failed/);
   assert.match(md, /Stopped: the proposer had nothing more to try/);
   assert.match(md, /synthe\/solve-demo-1/);
@@ -37,4 +37,16 @@ test("a run with no kept change says so and gives a next step", () => {
   assert.match(md, /No change was kept/);
   assert.match(md, /No attempts were made/);
   assert.match(md, /run `synthe solve` again/);
+});
+
+test("report.md says 'kept' or 'not kept' for each attempt, in plain words", () => {
+  const md = renderReport({
+    problem: "words", stopped: "The proposer had nothing more to try.", baseline: 1, final: 2, branch: "synthe/solve-words-1",
+    attempts: [
+      { round: 1, summary: "raise it", kept: true, reason: "Better.", before: 1, after: 2 },
+      { round: 2, summary: "lower it", kept: false, reason: "Not better.", before: 2, after: 1 },
+    ],
+  });
+  assert.match(md, /\| raise it \| kept \|/);
+  assert.match(md, /\| lower it \| not kept \|/);
 });
