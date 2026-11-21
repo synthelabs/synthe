@@ -387,12 +387,12 @@ function nonInferiorityP(wins, losses, margin = NON_INFERIORITY_MARGIN) {
   if (!Number.isSafeInteger(wins) || !Number.isSafeInteger(losses) || wins < 0 || losses < 0 || n === 0) return 1;
   const p = 0.5 + margin;
   let logTerm = n * Math.log(1 - p);
-  let tail = Math.exp(logTerm);
+  let tail2 = Math.exp(logTerm);
   for (let k = 0; k < losses; k++) {
     logTerm += Math.log(n - k) - Math.log(k + 1) + Math.log(p) - Math.log(1 - p);
-    tail += Math.exp(logTerm);
+    tail2 += Math.exp(logTerm);
   }
-  return Math.min(1, tail);
+  return Math.min(1, tail2);
 }
 function notWorseProblem(id, split, maxP, where) {
   if (split === null) return `${id}: ${where} could not be compared`;
@@ -455,13 +455,13 @@ function mean(rows) {
 function signP(wins, losses) {
   const n = wins + losses;
   if (n === 0) return 1;
-  let tail = 0;
+  let tail2 = 0;
   let ways = 1;
   for (let i = 0; i <= losses; i++) {
-    tail += ways;
+    tail2 += ways;
     ways = ways * (n - i) / (i + 1);
   }
-  return Math.min(1, tail / 2 ** n);
+  return Math.min(1, tail2 / 2 ** n);
 }
 function paired(after, before) {
   const scores = new Map(before.map((r) => [r.id, r.score]));
@@ -6177,25 +6177,25 @@ var init_parser2 = __esm({
       return tokens2.slice(0, length);
     };
     unstrip = (tokens2) => {
-      let tail = [];
+      let tail2 = [];
       tokens2.map((token2) => {
         if (token2.type === "brace") {
           if (token2.value === "{") {
-            tail.push("}");
+            tail2.push("}");
           } else {
-            tail.splice(tail.lastIndexOf("}"), 1);
+            tail2.splice(tail2.lastIndexOf("}"), 1);
           }
         }
         if (token2.type === "paren") {
           if (token2.value === "[") {
-            tail.push("]");
+            tail2.push("]");
           } else {
-            tail.splice(tail.lastIndexOf("]"), 1);
+            tail2.splice(tail2.lastIndexOf("]"), 1);
           }
         }
       });
-      if (tail.length > 0) {
-        tail.reverse().map((item) => {
+      if (tail2.length > 0) {
+        tail2.reverse().map((item) => {
           if (item === "}") {
             tokens2.push({
               type: "brace",
@@ -10303,7 +10303,7 @@ function errnoCode(err) {
   return typeof code === "string" ? code : void 0;
 }
 async function canonicalize(abs) {
-  const tail = [];
+  const tail2 = [];
   let prefix = abs;
   let hops = 0;
   for (; ; ) {
@@ -10321,7 +10321,7 @@ async function canonicalize(abs) {
         const parent = path.dirname(prefix);
         if (parent === prefix)
           throw lstatErr;
-        tail.push(path.basename(prefix));
+        tail2.push(path.basename(prefix));
         prefix = parent;
         continue;
       }
@@ -10333,7 +10333,7 @@ async function canonicalize(abs) {
       prefix = path.resolve(path.dirname(prefix), await fs2.readlink(prefix));
       continue;
     }
-    return tail.length ? path.join(real, ...tail.reverse()) : real;
+    return tail2.length ? path.join(real, ...tail2.reverse()) : real;
   }
 }
 async function confineToRoot(root, p, opts) {
@@ -10871,8 +10871,8 @@ var init_file_store = __esm({
          * the write fails with `ENOENT`.
          */
         async put(relPath, data, opts) {
-          const tail = relPath.replace(/\\/g, "/");
-          if (tail.endsWith("/") || tail.endsWith("/.") || tail === "" || tail === ".") {
+          const tail2 = relPath.replace(/\\/g, "/");
+          if (tail2.endsWith("/") || tail2.endsWith("/.") || tail2 === "" || tail2 === ".") {
             throw new FileStoreError(FileStoreError.NOT_A_FILE, relPath);
           }
           const dest = this.resolveUnderRoot(relPath);
@@ -11859,7 +11859,7 @@ function scrubbedShellEnv() {
 function betaBashTool(ctx) {
   rejectUnrestrictedPaths(ctx.unrestrictedPaths);
   let session;
-  let tail = Promise.resolve();
+  let tail2 = Promise.resolve();
   return betaTool({
     name: "bash",
     description: "Run a bash command in a persistent shell. State (cwd, env vars) persists across calls.",
@@ -11872,9 +11872,9 @@ function betaBashTool(ctx) {
       }
     },
     run: async ({ command, restart: restart2, timeout_ms }, context2) => {
-      const prev = tail;
+      const prev = tail2;
       const gate = promiseWithResolvers();
-      tail = gate.promise;
+      tail2 = gate.promise;
       try {
         await prev;
       } catch {
@@ -12399,8 +12399,8 @@ var init_node2 = __esm({
           if (idx < 0) {
             throw new AnthropicError("bash session terminated");
           }
-          const tail = __classPrivateFieldGet(this, _BashSession_buf, "f").slice(idx + sentinel2.length);
-          const m = tail.match(/^(-?\d+)/);
+          const tail2 = __classPrivateFieldGet(this, _BashSession_buf, "f").slice(idx + sentinel2.length);
+          const m = tail2.match(/^(-?\d+)/);
           const exitCode = m ? parseInt(m[1], 10) : -1;
           let out = __classPrivateFieldGet(this, _BashSession_buf, "f").slice(0, idx).replace(ANSI_RE, "").replace(/\n+$/, "");
           if (__classPrivateFieldGet(this, _BashSession_truncated, "f")) {
@@ -23713,16 +23713,16 @@ var init_ThreadState = __esm({
         __classPrivateFieldGet(this, _ThreadState_logger, "f").info(`Replaying the full message history under a new thread: reason=${reason} previous_message_id=${this.previousMessageId}`);
         __classPrivateFieldSet(this, _ThreadState_anchor, { type: "create", replacesLostThread: reason === "thread_not_found" }, "f");
       }, _ThreadState_retryPartialTurn = function _ThreadState_retryPartialTurn2() {
-        const tail = __classPrivateFieldGet(this, _ThreadState_stored, "f").at(-1);
-        if (__classPrivateFieldGet(this, _ThreadState_staged, "f").length || !tail || tail.reply && !tail.partial)
+        const tail2 = __classPrivateFieldGet(this, _ThreadState_stored, "f").at(-1);
+        if (__classPrivateFieldGet(this, _ThreadState_staged, "f").length || !tail2 || tail2.reply && !tail2.partial)
           return;
-        if (tail.reply)
+        if (tail2.reply)
           __classPrivateFieldGet(this, _ThreadState_stored, "f").pop();
         let turnStart = __classPrivateFieldGet(this, _ThreadState_stored, "f").length;
         while (turnStart > 0 && !__classPrivateFieldGet(this, _ThreadState_stored, "f")[turnStart - 1].reply)
           turnStart -= 1;
         __classPrivateFieldSet(this, _ThreadState_staged, __classPrivateFieldGet(this, _ThreadState_stored, "f").splice(turnStart), "f");
-        __classPrivateFieldGet(this, _ThreadState_logger, "f").info(`Re-sending the turn whose reply ended before \`message_stop\`: partial_reply_id=${tail.reply?.id ?? null}`);
+        __classPrivateFieldGet(this, _ThreadState_logger, "f").info(`Re-sending the turn whose reply ended before \`message_stop\`: partial_reply_id=${tail2.reply?.id ?? null}`);
       }, _ThreadState_dropsRefusedTurn = function _ThreadState_dropsRefusedTurn2(reply) {
         if (reply.stop_reason !== "refusal" || __classPrivateFieldGet(this, _ThreadState_anchor, "f").type === "never_threaded")
           return false;
@@ -29017,6 +29017,46 @@ var init_repo = __esm({
   }
 });
 
+// src/improve/verdict.ts
+function brokenTests(baseline2, candidate) {
+  if (candidate.failing === void 0) return null;
+  if (candidate.failing !== null && candidate.failing.length === 0) return null;
+  if (baseline2.failing === void 0) return "Some tests still fail, and the current code was measured before Synthe recorded which tests fail, so a fixed test could be hiding a newly broken one. Run npx synthe improve again to measure it.";
+  if (candidate.failing === null || baseline2.failing === null) return "Some tests still fail, and Synthe could not tell which ones from the test output, so a fixed test could be hiding a newly broken one.";
+  const before = new Set(baseline2.failing);
+  const broken = candidate.failing.filter((t) => !before.has(t));
+  if (!broken.length) return null;
+  const named = broken.slice(0, MAX_NAMED).join("; ") + (broken.length > MAX_NAMED ? `; and ${broken.length - MAX_NAMED} more` : "");
+  return `It breaks ${broken.length === 1 ? "a test that" : `${broken.length} tests that`} passed in every run before: ${named}.`;
+}
+function verdict(direction, baseline2, candidate, guardPassed) {
+  const delta = candidate.median - baseline2.median;
+  const noise = Math.max(range(baseline2.runs), range(candidate.runs));
+  const result2 = (win3, why, reason) => ({ win: win3, why, delta, noise, ...reason && { reason } });
+  if (guardPassed === false) return result2(false, "The regression check did not pass.", "guard");
+  const better = direction === "higher" ? delta : -delta;
+  if (better <= 0) return result2(false, `Not better than the current code (${plainNumber(candidate.median)} vs ${plainNumber(baseline2.median)}).`, "worse");
+  const broken = brokenTests(baseline2, candidate);
+  if (broken) return result2(false, broken, "tests");
+  const d = plainNumber(Math.abs(delta));
+  if (Math.abs(delta) <= noise) return result2(false, `Within noise: changed by ${d}, but runs vary by up to ${plainNumber(noise)}.`, "noise");
+  return result2(true, `Better by ${d}, more than the run-to-run noise of ${plainNumber(noise)}${guardPassed ? "; the regression check passed." : "."}`);
+}
+var median, range, plainNumber, MAX_NAMED;
+var init_verdict = __esm({
+  "src/improve/verdict.ts"() {
+    "use strict";
+    median = (xs) => {
+      const s = [...xs].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    };
+    range = (xs) => xs.length ? Math.max(...xs) - Math.min(...xs) : 0;
+    plainNumber = (n) => String(Number.isInteger(n) ? n : Number(n.toFixed(2)));
+    MAX_NAMED = 3;
+  }
+});
+
 // src/improve/exec.ts
 import { spawn as spawn2 } from "node:child_process";
 import { performance } from "node:perf_hooks";
@@ -29126,13 +29166,305 @@ var init_problem2 = __esm({
   }
 });
 
-// src/solve/decide.ts
-function decide(_direction, _before, _after) {
-  throw new Error("decide.ts is not built yet");
+// src/pilot/stats.ts
+function lnGamma(x) {
+  if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lnGamma(1 - x);
+  const y = x - 1;
+  let a = LANCZOS[0];
+  const t = y + 7.5;
+  for (let i = 1; i < 9; i++) a += LANCZOS[i] / (y + i);
+  return 0.5 * Math.log(2 * Math.PI) + (y + 0.5) * Math.log(t) - t + Math.log(a);
 }
+function gammaQ(a, x) {
+  if (x <= 0) return 1;
+  const front = Math.exp(-x + a * Math.log(x) - lnGamma(a));
+  if (x < a + 1) {
+    let ap = a;
+    let del = 1 / a;
+    let sum = del;
+    for (let n = 0; n < 1e4; n++) {
+      ap += 1;
+      del *= x / ap;
+      sum += del;
+      if (Math.abs(del) < Math.abs(sum) * 1e-16) break;
+    }
+    return 1 - sum * front;
+  }
+  let b = x + 1 - a;
+  let c = 1 / TINY;
+  let d = 1 / b;
+  let h = d;
+  for (let i = 1; i < 1e4; i++) {
+    const an = -i * (i - a);
+    b += 2;
+    d = an * d + b;
+    if (Math.abs(d) < TINY) d = TINY;
+    c = b + an / c;
+    if (Math.abs(c) < TINY) c = TINY;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < 1e-16) break;
+  }
+  return front * h;
+}
+function betaCf(a, b, x) {
+  const qab = a + b;
+  const qap = a + 1;
+  const qam = a - 1;
+  let c = 1;
+  let d = 1 - qab * x / qap;
+  if (Math.abs(d) < TINY) d = TINY;
+  d = 1 / d;
+  let h = d;
+  for (let m = 1; m < 1e4; m++) {
+    const m2 = 2 * m;
+    let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+    d = 1 + aa * d;
+    if (Math.abs(d) < TINY) d = TINY;
+    c = 1 + aa / c;
+    if (Math.abs(c) < TINY) c = TINY;
+    d = 1 / d;
+    h *= d * c;
+    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+    d = 1 + aa * d;
+    if (Math.abs(d) < TINY) d = TINY;
+    c = 1 + aa / c;
+    if (Math.abs(c) < TINY) c = TINY;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < 1e-16) break;
+  }
+  return h;
+}
+function incompleteBeta(a, b, x) {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  const front = Math.exp(lnGamma(a + b) - lnGamma(a) - lnGamma(b) + a * Math.log(x) + b * Math.log(1 - x));
+  return x < (a + 1) / (a + b + 2) ? front * betaCf(a, b, x) / a : 1 - front * betaCf(b, a, 1 - x) / b;
+}
+function normalQuantile(p) {
+  if (!finite(p) || p <= 0 || p >= 1) return null;
+  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
+  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
+  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
+  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
+  const low = 0.02425;
+  let x;
+  if (p < low) {
+    const q = Math.sqrt(-2 * Math.log(p));
+    x = (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  } else if (p <= 1 - low) {
+    const q = p - 0.5;
+    const r = q * q;
+    x = (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
+  } else {
+    const q = Math.sqrt(-2 * Math.log(1 - p));
+    x = -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
+  }
+  const e = x > 0 ? 1 - p - 0.5 * gammaQ(0.5, x * x / 2) : 0.5 * gammaQ(0.5, x * x / 2) - p;
+  const u = e * Math.sqrt(2 * Math.PI) * Math.exp(x * x / 2);
+  return x - u / (1 + x * u / 2);
+}
+function studentTCdf(t, df) {
+  if (!finite(t) || !finite(df) || df <= 0) return null;
+  const tail2 = 0.5 * incompleteBeta(df / 2, 0.5, df / (df + t * t));
+  return t > 0 ? 1 - tail2 : tail2;
+}
+function studentTQuantile(p, df) {
+  if (!finite(p) || p <= 0 || p >= 1 || !finite(df) || df <= 0) return null;
+  if (df > 1e7) return normalQuantile(p);
+  if (p === 0.5) return 0;
+  const upper = p > 0.5;
+  const target = upper ? 1 - p : p;
+  let lo = 0;
+  let hi = 1;
+  while (studentTCdf(-hi, df) > target) {
+    lo = hi;
+    hi *= 2;
+    if (hi > 1e12) return null;
+  }
+  for (let i = 0; i < 200 && hi - lo > 1e-13 * Math.max(1, hi); i++) {
+    const mid = (lo + hi) / 2;
+    if (studentTCdf(-mid, df) > target) lo = mid;
+    else hi = mid;
+  }
+  const t = (lo + hi) / 2;
+  return upper ? t : -t;
+}
+function chiSquareUpper(x, df) {
+  if (!finite(x) || x < 0 || !finite(df) || df < 1) return null;
+  return gammaQ(df / 2, x / 2);
+}
+function wilsonInterval(x, n, level) {
+  const z = zFor(level);
+  if (z === null || !finite(x) || !finite(n) || n <= 0 || x < 0 || x > n) return null;
+  const p = x / n;
+  const z2 = z * z;
+  const denom = 1 + z2 / n;
+  const center = (p + z2 / (2 * n)) / denom;
+  const half = z * Math.sqrt(p * (1 - p) / n + z2 / (4 * n * n)) / denom;
+  return { lo: Math.max(0, center - half), hi: Math.min(1, center + half), level };
+}
+function newcombeInterval(x1, n1, x2, n2, level) {
+  const a = wilsonInterval(x1, n1, level);
+  const b = wilsonInterval(x2, n2, level);
+  if (a === null || b === null) return null;
+  const p1 = x1 / n1;
+  const p2 = x2 / n2;
+  const d = p1 - p2;
+  return {
+    lo: d - Math.sqrt((p1 - a.lo) ** 2 + (b.hi - p2) ** 2),
+    hi: d + Math.sqrt((a.hi - p1) ** 2 + (p2 - b.lo) ** 2),
+    level
+  };
+}
+function meanSummary(values) {
+  const n = values.length;
+  if (n === 0) return { n, mean: null, sd: null };
+  const mean2 = values.reduce((s, v) => s + v, 0) / n;
+  if (n < 2) return { n, mean: mean2, sd: null };
+  const ss = values.reduce((s, v) => s + (v - mean2) ** 2, 0);
+  return { n, mean: mean2, sd: Math.sqrt(ss / (n - 1)) };
+}
+function oneSampleT(s, level) {
+  if (!finite(level) || level <= 0 || level >= 1 || s.n < 2 || !finite(s.mean) || !finite(s.sd)) return null;
+  const t = studentTQuantile(1 - (1 - level) / 2, s.n - 1);
+  if (t === null) return null;
+  const half = t * s.sd / Math.sqrt(s.n);
+  return { lo: s.mean - half, hi: s.mean + half, level };
+}
+function welchInterval(a, b, level) {
+  if (!finite(level) || level <= 0 || level >= 1) return null;
+  if (a.n < 2 || b.n < 2 || !finite(a.mean) || !finite(b.mean) || !finite(a.sd) || !finite(b.sd)) return null;
+  const va = a.sd * a.sd / a.n;
+  const vb = b.sd * b.sd / b.n;
+  const se2 = va + vb;
+  if (!(se2 >= 0)) return null;
+  const d = a.mean - b.mean;
+  if (se2 === 0) return { lo: d, hi: d, level, df: a.n + b.n - 2 };
+  const df = se2 * se2 / (va * va / (a.n - 1) + vb * vb / (b.n - 1));
+  const t = studentTQuantile(1 - (1 - level) / 2, df);
+  if (t === null) return null;
+  const half = t * Math.sqrt(se2);
+  return { lo: d - half, hi: d + half, level, df };
+}
+function chiSquareGof(observed, shares) {
+  if (observed.length < 2 || observed.length !== shares.length) return null;
+  const total = observed.reduce((s, v) => s + v, 0);
+  const shareSum = shares.reduce((s, v) => s + v, 0);
+  if (!(total > 0) || !(shareSum > 0)) return null;
+  let statistic = 0;
+  for (let i = 0; i < observed.length; i++) {
+    const expected = total * shares[i] / shareSum;
+    if (!(expected > 0)) return null;
+    statistic += (observed[i] - expected) ** 2 / expected;
+  }
+  const df = observed.length - 1;
+  const p = chiSquareUpper(statistic, df);
+  return p === null ? null : { statistic, df, p };
+}
+function chiSquareIndependence(table) {
+  const r = table.length;
+  const c = r > 0 ? table[0].length : 0;
+  if (r < 2 || c < 2 || table.some((row) => row.length !== c)) return null;
+  const rowT = table.map((row) => row.reduce((s, v) => s + v, 0));
+  const colT = Array.from({ length: c }, (_, j) => table.reduce((s, row) => s + row[j], 0));
+  const total = rowT.reduce((s, v) => s + v, 0);
+  if (!(total > 0)) return null;
+  let statistic = 0;
+  for (let i = 0; i < r; i++) {
+    for (let j = 0; j < c; j++) {
+      const expected = rowT[i] * colT[j] / total;
+      if (!(expected > 0)) return null;
+      statistic += (table[i][j] - expected) ** 2 / expected;
+    }
+  }
+  const df = (r - 1) * (c - 1);
+  const p = chiSquareUpper(statistic, df);
+  return p === null ? null : { statistic, df, p };
+}
+function sampleSizeProportions(p1, delta, direction, alpha, power) {
+  if (!finite(p1) || p1 < 0 || p1 > 1 || !finite(delta) || delta <= 0) return null;
+  const za = normalQuantile(1 - alpha / 2);
+  const zb = normalQuantile(power);
+  if (za === null || zb === null) return null;
+  const raw = direction === "higher_is_better" ? p1 + delta : p1 - delta;
+  if (raw > 1 + 1e-12 || raw < -1e-12) return null;
+  const p2 = Math.min(1 - PROPORTION_CLAMP, Math.max(PROPORTION_CLAMP, raw));
+  const diff = Math.abs(p2 - p1);
+  if (diff < PROPORTION_CLAMP || Math.sign(p2 - p1) !== Math.sign(raw - p1)) return null;
+  const pbar = (p1 + p2) / 2;
+  const top = za * Math.sqrt(2 * pbar * (1 - pbar)) + zb * Math.sqrt(p1 * (1 - p1) + p2 * (1 - p2));
+  return Math.ceil(top * top / (diff * diff) - 1e-9);
+}
+function sampleSizeMeans(sd, delta, alpha, power) {
+  if (!finite(sd) || sd <= 0 || !finite(delta) || delta <= 0) return null;
+  const za = normalQuantile(1 - alpha / 2);
+  const zb = normalQuantile(power);
+  if (za === null || zb === null) return null;
+  return Math.ceil(2 * (za + zb) ** 2 * sd * sd / (delta * delta) - 1e-9);
+}
+var finite, TINY, LANCZOS, zFor, PROPORTION_CLAMP;
+var init_stats = __esm({
+  "src/pilot/stats.ts"() {
+    "use strict";
+    finite = (x) => typeof x === "number" && Number.isFinite(x);
+    TINY = 1e-300;
+    LANCZOS = [
+      0.9999999999998099,
+      676.5203681218851,
+      -1259.1392167224028,
+      771.3234287776531,
+      -176.6150291621406,
+      12.507343278686905,
+      -0.13857109526572012,
+      9984369578019572e-21,
+      15056327351493116e-23
+    ];
+    zFor = (level) => finite(level) && level > 0 && level < 1 ? normalQuantile(1 - (1 - level) / 2) : null;
+    PROPORTION_CLAMP = 1e-6;
+  }
+});
+
+// src/solve/decide.ts
+function compare(direction, before, after) {
+  const a = meanSummary(after), b = meanSummary(before);
+  if (a.mean === null || b.mean === null) return { better: false, p: null };
+  const gain = direction === "higher" ? a.mean - b.mean : b.mean - a.mean;
+  const scale = Math.max(1, Math.abs(a.mean), Math.abs(b.mean));
+  const better = gain > DUST * scale;
+  if (a.sd === null || b.sd === null) return { better, p: null };
+  const va = a.sd * a.sd / a.n, vb = b.sd * b.sd / b.n;
+  const se2 = va + vb;
+  if (se2 <= (DUST * scale) ** 2) return { better, p: better ? 0 : 1 };
+  const df = se2 * se2 / (va * va / (a.n - 1) + vb * vb / (b.n - 1));
+  const cdf = studentTCdf(gain / Math.sqrt(se2), df);
+  return { better, p: cdf === null ? 1 : 1 - cdf };
+}
+function look(direction, before, after, alpha, second) {
+  const c = compare(direction, before.runs, after.runs);
+  const nums = `${plainNumber(before.value)} -> ${plainNumber(after.value)}`;
+  const exact = c.p === null || c.p === 0;
+  if (!c.better) return { keep: false, exact, reason: `Not better: the score went ${nums}, and ${direction} is better.` };
+  if (c.p === null) return { keep: true, exact, reason: `Better: the score went ${nums}.` };
+  const p = `p = ${plainNumber(c.p)}${second ? ` on ${after.runs.length} runs each` : ""}`;
+  if (c.p >= alpha) return { keep: false, exact, reason: `Within noise: the score went ${nums}, but a move this size happens by chance (${p}).` };
+  return { keep: true, exact, reason: `Better: the score went ${nums}, more than the noise explains (${p}).` };
+}
+function decide(direction, before, after) {
+  const { keep, reason } = look(direction, before, after, SCREEN_ALPHA, false);
+  return { keep, reason };
+}
+var SCREEN_ALPHA, DUST;
 var init_decide = __esm({
   "src/solve/decide.ts"() {
     "use strict";
+    init_stats();
+    init_verdict();
+    SCREEN_ALPHA = 0.1;
+    DUST = 1e-9;
   }
 });
 
@@ -29197,16 +29529,117 @@ var init_history = __esm({
   }
 });
 
+// src/solve/run.ts
+import { spawn as spawn3 } from "node:child_process";
+function runCommand(cwd, command, o = {}) {
+  return new Promise((resolve9) => {
+    const win3 = process.platform === "win32";
+    const child = spawn3(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: { ...childEnv(), ...o.env }, stdio: ["pipe", "pipe", "pipe"], detached: !win3 });
+    let stdout = "", stderr = "", timedOut = false, done = false;
+    child.stdout.on("data", (d) => {
+      if (stdout.length < MAX_OUTPUT2) stdout += d.toString().slice(0, MAX_OUTPUT2 - stdout.length);
+    });
+    child.stderr.on("data", (d) => {
+      if (stderr.length < MAX_OUTPUT2) stderr += d.toString().slice(0, MAX_OUTPUT2 - stderr.length);
+    });
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        if (win3) child.kill("SIGKILL");
+        else process.kill(-child.pid, "SIGKILL");
+      } catch {
+      }
+    }, o.timeoutMs ?? COMMAND_TIMEOUT_MS2);
+    const finish = (code) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve9({ ok: code === 0 && !timedOut, code, stdout, stderr, timedOut });
+    };
+    child.on("error", (e) => {
+      stderr += e.message;
+      finish(null);
+    });
+    child.on("close", finish);
+    child.stdin.on("error", () => {
+    });
+    child.stdin.end(o.stdin ?? "");
+  });
+}
+var COMMAND_TIMEOUT_MS2, MAX_OUTPUT2;
+var init_run2 = __esm({
+  "src/solve/run.ts"() {
+    "use strict";
+    init_exec();
+    COMMAND_TIMEOUT_MS2 = 6e5;
+    MAX_OUTPUT2 = 4 * 1024 * 1024;
+  }
+});
+
+// src/solve/types.ts
+var isJudged, MAX_MISSES2;
+var init_types2 = __esm({
+  "src/solve/types.ts"() {
+    "use strict";
+    isJudged = (m) => "judge" in m;
+    MAX_MISSES2 = 3;
+  }
+});
+
 // src/solve/measure.ts
-async function measure(_checkout, _problem, _ctx = {}) {
-  throw new Error("measure.ts is not built yet");
+function lastNumber2(stdout) {
+  const all = stdout.match(NUMBER2);
+  if (!all) return null;
+  const n = Number(all[all.length - 1]);
+  return Number.isFinite(n) ? n : null;
 }
-async function failedGuard(_checkout, _problem) {
-  throw new Error("measure.ts is not built yet");
+function tail(text4, lines = 3) {
+  const t = text4.trim().split("\n").slice(-lines).join(" | ").trim();
+  return t.length > 300 ? `...${t.slice(-300)}` : t;
 }
+function commandFailure(what, command, r) {
+  if (r.timedOut) return `${what} \`${command}\` did not finish in time.`;
+  const said = tail(r.stderr) || tail(r.stdout);
+  return `${what} \`${command}\` failed${said ? `: ${said}` : " and printed nothing"}.`;
+}
+async function measure(checkout, problem, ctx = {}) {
+  const m = problem.measure;
+  if (isJudged(m)) return { failed: "A judged measure has no command to run; judge.ts compares judged versions." };
+  const env = {};
+  if (ctx.split) env.SYNTHE_SPLIT = ctx.split;
+  if (ctx.seed !== void 0) env.SYNTHE_SEED = String(ctx.seed);
+  const runs = [];
+  for (let i = 0; i < Math.max(1, m.runs); i++) {
+    const r = await runCommand(checkout, m.command, { env });
+    if (!r.ok) return { failed: commandFailure("The measure command", m.command, r) };
+    const n = lastNumber2(r.stdout);
+    if (n === null) return { failed: `The measure command \`${m.command}\` printed no number. Its last number on stdout is the score.` };
+    runs.push(n);
+  }
+  return { value: median2(runs), runs };
+}
+async function guardFailure(checkout, problem) {
+  for (const guard2 of problem.guards) {
+    const r = await runCommand(checkout, guard2);
+    if (!r.ok) return { guard: guard2, reason: commandFailure("The guard", guard2, r) };
+  }
+  return null;
+}
+async function failedGuard(checkout, problem) {
+  return (await guardFailure(checkout, problem))?.guard ?? null;
+}
+var NUMBER2, median2;
 var init_measure = __esm({
   "src/solve/measure.ts"() {
     "use strict";
+    init_run2();
+    init_types2();
+    NUMBER2 = /[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g;
+    median2 = (xs) => {
+      const s = [...xs].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    };
   }
 });
 
@@ -29339,16 +29772,6 @@ var init_scratch = __esm({
     "use strict";
     LINKED2 = ["node_modules", ".venv", "venv"];
     IDENTITY = ["-c", "user.name=Synthe", "-c", "user.email=synthe@users.noreply.github.com"];
-  }
-});
-
-// src/solve/types.ts
-var isJudged, MAX_MISSES2;
-var init_types2 = __esm({
-  "src/solve/types.ts"() {
-    "use strict";
-    isJudged = (m) => "judge" in m;
-    MAX_MISSES2 = 3;
   }
 });
 
@@ -29583,53 +30006,6 @@ var init_model_proposer = __esm({
   }
 });
 
-// src/solve/run.ts
-import { spawn as spawn3 } from "node:child_process";
-function runCommand(cwd, command, o = {}) {
-  return new Promise((resolve9) => {
-    const win3 = process.platform === "win32";
-    const child = spawn3(win3 ? "cmd" : "sh", [win3 ? "/c" : "-c", command], { cwd, env: { ...childEnv(), ...o.env }, stdio: ["pipe", "pipe", "pipe"], detached: !win3 });
-    let stdout = "", stderr = "", timedOut = false, done = false;
-    child.stdout.on("data", (d) => {
-      if (stdout.length < MAX_OUTPUT2) stdout += d.toString().slice(0, MAX_OUTPUT2 - stdout.length);
-    });
-    child.stderr.on("data", (d) => {
-      if (stderr.length < MAX_OUTPUT2) stderr += d.toString().slice(0, MAX_OUTPUT2 - stderr.length);
-    });
-    const timer = setTimeout(() => {
-      timedOut = true;
-      try {
-        if (win3) child.kill("SIGKILL");
-        else process.kill(-child.pid, "SIGKILL");
-      } catch {
-      }
-    }, o.timeoutMs ?? COMMAND_TIMEOUT_MS2);
-    const finish = (code) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      resolve9({ ok: code === 0 && !timedOut, code, stdout, stderr, timedOut });
-    };
-    child.on("error", (e) => {
-      stderr += e.message;
-      finish(null);
-    });
-    child.on("close", finish);
-    child.stdin.on("error", () => {
-    });
-    child.stdin.end(o.stdin ?? "");
-  });
-}
-var COMMAND_TIMEOUT_MS2, MAX_OUTPUT2;
-var init_run2 = __esm({
-  "src/solve/run.ts"() {
-    "use strict";
-    init_exec();
-    COMMAND_TIMEOUT_MS2 = 6e5;
-    MAX_OUTPUT2 = 4 * 1024 * 1024;
-  }
-});
-
 // src/solve/proposer.ts
 function requestObject(r) {
   return {
@@ -29821,8 +30197,8 @@ function pilotGithubRepo(slug, token2, api) {
   };
   const isAncestor = async (ancestor, descendant) => {
     if (ancestor === descendant) return true;
-    const compare = await json(await request("GET", `/compare/${encodeURIComponent(ancestor)}...${encodeURIComponent(descendant)}`));
-    return compare.status === "ahead" || compare.status === "identical";
+    const compare2 = await json(await request("GET", `/compare/${encodeURIComponent(ancestor)}...${encodeURIComponent(descendant)}`));
+    return compare2.status === "ahead" || compare2.status === "identical";
   };
   const matchesReview = async (sha, file) => {
     const commit = await json(await request("GET", `/commits/${encodeURIComponent(sha)}`));
@@ -31051,268 +31427,6 @@ var init_egress = __esm({
     rot13 = (text4) => text4.replace(/[a-z]/gi, (c) => String.fromCharCode((c <= "Z" ? 65 : 97) + (c.charCodeAt(0) - (c <= "Z" ? 65 : 97) + 13) % 26));
     listed = (lines) => lines.length === 0 ? "" : `; line${lines.length === 1 ? "" : "s"} ${lines.slice(0, 8).join(", ")}${lines.length > 8 ? " and more" : ""}`;
     MAX_MODEL_TEXT_CHARS = 300;
-  }
-});
-
-// src/pilot/stats.ts
-function lnGamma(x) {
-  if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lnGamma(1 - x);
-  const y = x - 1;
-  let a = LANCZOS[0];
-  const t = y + 7.5;
-  for (let i = 1; i < 9; i++) a += LANCZOS[i] / (y + i);
-  return 0.5 * Math.log(2 * Math.PI) + (y + 0.5) * Math.log(t) - t + Math.log(a);
-}
-function gammaQ(a, x) {
-  if (x <= 0) return 1;
-  const front = Math.exp(-x + a * Math.log(x) - lnGamma(a));
-  if (x < a + 1) {
-    let ap = a;
-    let del = 1 / a;
-    let sum = del;
-    for (let n = 0; n < 1e4; n++) {
-      ap += 1;
-      del *= x / ap;
-      sum += del;
-      if (Math.abs(del) < Math.abs(sum) * 1e-16) break;
-    }
-    return 1 - sum * front;
-  }
-  let b = x + 1 - a;
-  let c = 1 / TINY;
-  let d = 1 / b;
-  let h = d;
-  for (let i = 1; i < 1e4; i++) {
-    const an = -i * (i - a);
-    b += 2;
-    d = an * d + b;
-    if (Math.abs(d) < TINY) d = TINY;
-    c = b + an / c;
-    if (Math.abs(c) < TINY) c = TINY;
-    d = 1 / d;
-    const del = d * c;
-    h *= del;
-    if (Math.abs(del - 1) < 1e-16) break;
-  }
-  return front * h;
-}
-function betaCf(a, b, x) {
-  const qab = a + b;
-  const qap = a + 1;
-  const qam = a - 1;
-  let c = 1;
-  let d = 1 - qab * x / qap;
-  if (Math.abs(d) < TINY) d = TINY;
-  d = 1 / d;
-  let h = d;
-  for (let m = 1; m < 1e4; m++) {
-    const m2 = 2 * m;
-    let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
-    d = 1 + aa * d;
-    if (Math.abs(d) < TINY) d = TINY;
-    c = 1 + aa / c;
-    if (Math.abs(c) < TINY) c = TINY;
-    d = 1 / d;
-    h *= d * c;
-    aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
-    d = 1 + aa * d;
-    if (Math.abs(d) < TINY) d = TINY;
-    c = 1 + aa / c;
-    if (Math.abs(c) < TINY) c = TINY;
-    d = 1 / d;
-    const del = d * c;
-    h *= del;
-    if (Math.abs(del - 1) < 1e-16) break;
-  }
-  return h;
-}
-function incompleteBeta(a, b, x) {
-  if (x <= 0) return 0;
-  if (x >= 1) return 1;
-  const front = Math.exp(lnGamma(a + b) - lnGamma(a) - lnGamma(b) + a * Math.log(x) + b * Math.log(1 - x));
-  return x < (a + 1) / (a + b + 2) ? front * betaCf(a, b, x) / a : 1 - front * betaCf(b, a, 1 - x) / b;
-}
-function normalQuantile(p) {
-  if (!finite(p) || p <= 0 || p >= 1) return null;
-  const a = [-39.69683028665376, 220.9460984245205, -275.9285104469687, 138.357751867269, -30.66479806614716, 2.506628277459239];
-  const b = [-54.47609879822406, 161.5858368580409, -155.6989798598866, 66.80131188771972, -13.28068155288572];
-  const c = [-0.007784894002430293, -0.3223964580411365, -2.400758277161838, -2.549732539343734, 4.374664141464968, 2.938163982698783];
-  const d = [0.007784695709041462, 0.3224671290700398, 2.445134137142996, 3.754408661907416];
-  const low = 0.02425;
-  let x;
-  if (p < low) {
-    const q = Math.sqrt(-2 * Math.log(p));
-    x = (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
-  } else if (p <= 1 - low) {
-    const q = p - 0.5;
-    const r = q * q;
-    x = (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
-  } else {
-    const q = Math.sqrt(-2 * Math.log(1 - p));
-    x = -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1);
-  }
-  const e = x > 0 ? 1 - p - 0.5 * gammaQ(0.5, x * x / 2) : 0.5 * gammaQ(0.5, x * x / 2) - p;
-  const u = e * Math.sqrt(2 * Math.PI) * Math.exp(x * x / 2);
-  return x - u / (1 + x * u / 2);
-}
-function studentTCdf(t, df) {
-  if (!finite(t) || !finite(df) || df <= 0) return null;
-  const tail = 0.5 * incompleteBeta(df / 2, 0.5, df / (df + t * t));
-  return t > 0 ? 1 - tail : tail;
-}
-function studentTQuantile(p, df) {
-  if (!finite(p) || p <= 0 || p >= 1 || !finite(df) || df <= 0) return null;
-  if (df > 1e7) return normalQuantile(p);
-  if (p === 0.5) return 0;
-  const upper = p > 0.5;
-  const target = upper ? 1 - p : p;
-  let lo = 0;
-  let hi = 1;
-  while (studentTCdf(-hi, df) > target) {
-    lo = hi;
-    hi *= 2;
-    if (hi > 1e12) return null;
-  }
-  for (let i = 0; i < 200 && hi - lo > 1e-13 * Math.max(1, hi); i++) {
-    const mid = (lo + hi) / 2;
-    if (studentTCdf(-mid, df) > target) lo = mid;
-    else hi = mid;
-  }
-  const t = (lo + hi) / 2;
-  return upper ? t : -t;
-}
-function chiSquareUpper(x, df) {
-  if (!finite(x) || x < 0 || !finite(df) || df < 1) return null;
-  return gammaQ(df / 2, x / 2);
-}
-function wilsonInterval(x, n, level) {
-  const z = zFor(level);
-  if (z === null || !finite(x) || !finite(n) || n <= 0 || x < 0 || x > n) return null;
-  const p = x / n;
-  const z2 = z * z;
-  const denom = 1 + z2 / n;
-  const center = (p + z2 / (2 * n)) / denom;
-  const half = z * Math.sqrt(p * (1 - p) / n + z2 / (4 * n * n)) / denom;
-  return { lo: Math.max(0, center - half), hi: Math.min(1, center + half), level };
-}
-function newcombeInterval(x1, n1, x2, n2, level) {
-  const a = wilsonInterval(x1, n1, level);
-  const b = wilsonInterval(x2, n2, level);
-  if (a === null || b === null) return null;
-  const p1 = x1 / n1;
-  const p2 = x2 / n2;
-  const d = p1 - p2;
-  return {
-    lo: d - Math.sqrt((p1 - a.lo) ** 2 + (b.hi - p2) ** 2),
-    hi: d + Math.sqrt((a.hi - p1) ** 2 + (p2 - b.lo) ** 2),
-    level
-  };
-}
-function meanSummary(values) {
-  const n = values.length;
-  if (n === 0) return { n, mean: null, sd: null };
-  const mean2 = values.reduce((s, v) => s + v, 0) / n;
-  if (n < 2) return { n, mean: mean2, sd: null };
-  const ss = values.reduce((s, v) => s + (v - mean2) ** 2, 0);
-  return { n, mean: mean2, sd: Math.sqrt(ss / (n - 1)) };
-}
-function oneSampleT(s, level) {
-  if (!finite(level) || level <= 0 || level >= 1 || s.n < 2 || !finite(s.mean) || !finite(s.sd)) return null;
-  const t = studentTQuantile(1 - (1 - level) / 2, s.n - 1);
-  if (t === null) return null;
-  const half = t * s.sd / Math.sqrt(s.n);
-  return { lo: s.mean - half, hi: s.mean + half, level };
-}
-function welchInterval(a, b, level) {
-  if (!finite(level) || level <= 0 || level >= 1) return null;
-  if (a.n < 2 || b.n < 2 || !finite(a.mean) || !finite(b.mean) || !finite(a.sd) || !finite(b.sd)) return null;
-  const va = a.sd * a.sd / a.n;
-  const vb = b.sd * b.sd / b.n;
-  const se2 = va + vb;
-  if (!(se2 >= 0)) return null;
-  const d = a.mean - b.mean;
-  if (se2 === 0) return { lo: d, hi: d, level, df: a.n + b.n - 2 };
-  const df = se2 * se2 / (va * va / (a.n - 1) + vb * vb / (b.n - 1));
-  const t = studentTQuantile(1 - (1 - level) / 2, df);
-  if (t === null) return null;
-  const half = t * Math.sqrt(se2);
-  return { lo: d - half, hi: d + half, level, df };
-}
-function chiSquareGof(observed, shares) {
-  if (observed.length < 2 || observed.length !== shares.length) return null;
-  const total = observed.reduce((s, v) => s + v, 0);
-  const shareSum = shares.reduce((s, v) => s + v, 0);
-  if (!(total > 0) || !(shareSum > 0)) return null;
-  let statistic = 0;
-  for (let i = 0; i < observed.length; i++) {
-    const expected = total * shares[i] / shareSum;
-    if (!(expected > 0)) return null;
-    statistic += (observed[i] - expected) ** 2 / expected;
-  }
-  const df = observed.length - 1;
-  const p = chiSquareUpper(statistic, df);
-  return p === null ? null : { statistic, df, p };
-}
-function chiSquareIndependence(table) {
-  const r = table.length;
-  const c = r > 0 ? table[0].length : 0;
-  if (r < 2 || c < 2 || table.some((row) => row.length !== c)) return null;
-  const rowT = table.map((row) => row.reduce((s, v) => s + v, 0));
-  const colT = Array.from({ length: c }, (_, j) => table.reduce((s, row) => s + row[j], 0));
-  const total = rowT.reduce((s, v) => s + v, 0);
-  if (!(total > 0)) return null;
-  let statistic = 0;
-  for (let i = 0; i < r; i++) {
-    for (let j = 0; j < c; j++) {
-      const expected = rowT[i] * colT[j] / total;
-      if (!(expected > 0)) return null;
-      statistic += (table[i][j] - expected) ** 2 / expected;
-    }
-  }
-  const df = (r - 1) * (c - 1);
-  const p = chiSquareUpper(statistic, df);
-  return p === null ? null : { statistic, df, p };
-}
-function sampleSizeProportions(p1, delta, direction, alpha, power) {
-  if (!finite(p1) || p1 < 0 || p1 > 1 || !finite(delta) || delta <= 0) return null;
-  const za = normalQuantile(1 - alpha / 2);
-  const zb = normalQuantile(power);
-  if (za === null || zb === null) return null;
-  const raw = direction === "higher_is_better" ? p1 + delta : p1 - delta;
-  if (raw > 1 + 1e-12 || raw < -1e-12) return null;
-  const p2 = Math.min(1 - PROPORTION_CLAMP, Math.max(PROPORTION_CLAMP, raw));
-  const diff = Math.abs(p2 - p1);
-  if (diff < PROPORTION_CLAMP || Math.sign(p2 - p1) !== Math.sign(raw - p1)) return null;
-  const pbar = (p1 + p2) / 2;
-  const top = za * Math.sqrt(2 * pbar * (1 - pbar)) + zb * Math.sqrt(p1 * (1 - p1) + p2 * (1 - p2));
-  return Math.ceil(top * top / (diff * diff) - 1e-9);
-}
-function sampleSizeMeans(sd, delta, alpha, power) {
-  if (!finite(sd) || sd <= 0 || !finite(delta) || delta <= 0) return null;
-  const za = normalQuantile(1 - alpha / 2);
-  const zb = normalQuantile(power);
-  if (za === null || zb === null) return null;
-  return Math.ceil(2 * (za + zb) ** 2 * sd * sd / (delta * delta) - 1e-9);
-}
-var finite, TINY, LANCZOS, zFor, PROPORTION_CLAMP;
-var init_stats = __esm({
-  "src/pilot/stats.ts"() {
-    "use strict";
-    finite = (x) => typeof x === "number" && Number.isFinite(x);
-    TINY = 1e-300;
-    LANCZOS = [
-      0.9999999999998099,
-      676.5203681218851,
-      -1259.1392167224028,
-      771.3234287776531,
-      -176.6150291621406,
-      12.507343278686905,
-      -0.13857109526572012,
-      9984369578019572e-21,
-      15056327351493116e-23
-    ];
-    zFor = (level) => finite(level) && level > 0 && level < 1 ? normalQuantile(1 - (1 - level) / 2) : null;
-    PROPORTION_CLAMP = 1e-6;
   }
 });
 
@@ -33970,10 +34084,10 @@ var init_report2 = __esm({
 function lineOps(a, b) {
   let head = 0;
   while (head < a.length && head < b.length && a[head] === b[head]) head++;
-  let tail = 0;
-  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
-  const x = a.slice(head, a.length - tail);
-  const y = b.slice(head, b.length - tail);
+  let tail2 = 0;
+  while (tail2 < a.length - head && tail2 < b.length - head && a[a.length - 1 - tail2] === b[b.length - 1 - tail2]) tail2++;
+  const x = a.slice(head, a.length - tail2);
+  const y = b.slice(head, b.length - tail2);
   const w = y.length + 1;
   const lcs = new Uint32Array((x.length + 1) * w);
   for (let i2 = x.length - 1; i2 >= 0; i2--) {
@@ -33992,7 +34106,7 @@ function lineOps(a, b) {
     } else if (j >= y.length || i < x.length && lcs[(i + 1) * w + j] >= lcs[i * w + j + 1]) ops.push({ t: "-", line: x[i++] });
     else ops.push({ t: "+", line: y[j++] });
   }
-  for (const line of a.slice(a.length - tail)) ops.push({ t: " ", line });
+  for (const line of a.slice(a.length - tail2)) ops.push({ t: " ", line });
   return ops;
 }
 function promptDiff(path4, before, after) {
@@ -40917,41 +41031,8 @@ var package_default = {
   }
 };
 
-// src/improve/verdict.ts
-var median = (xs) => {
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
-};
-var range = (xs) => xs.length ? Math.max(...xs) - Math.min(...xs) : 0;
-var plainNumber = (n) => String(Number.isInteger(n) ? n : Number(n.toFixed(2)));
-var MAX_NAMED = 3;
-function brokenTests(baseline2, candidate) {
-  if (candidate.failing === void 0) return null;
-  if (candidate.failing !== null && candidate.failing.length === 0) return null;
-  if (baseline2.failing === void 0) return "Some tests still fail, and the current code was measured before Synthe recorded which tests fail, so a fixed test could be hiding a newly broken one. Run npx synthe improve again to measure it.";
-  if (candidate.failing === null || baseline2.failing === null) return "Some tests still fail, and Synthe could not tell which ones from the test output, so a fixed test could be hiding a newly broken one.";
-  const before = new Set(baseline2.failing);
-  const broken = candidate.failing.filter((t) => !before.has(t));
-  if (!broken.length) return null;
-  const named = broken.slice(0, MAX_NAMED).join("; ") + (broken.length > MAX_NAMED ? `; and ${broken.length - MAX_NAMED} more` : "");
-  return `It breaks ${broken.length === 1 ? "a test that" : `${broken.length} tests that`} passed in every run before: ${named}.`;
-}
-function verdict(direction, baseline2, candidate, guardPassed) {
-  const delta = candidate.median - baseline2.median;
-  const noise = Math.max(range(baseline2.runs), range(candidate.runs));
-  const result2 = (win3, why, reason) => ({ win: win3, why, delta, noise, ...reason && { reason } });
-  if (guardPassed === false) return result2(false, "The regression check did not pass.", "guard");
-  const better = direction === "higher" ? delta : -delta;
-  if (better <= 0) return result2(false, `Not better than the current code (${plainNumber(candidate.median)} vs ${plainNumber(baseline2.median)}).`, "worse");
-  const broken = brokenTests(baseline2, candidate);
-  if (broken) return result2(false, broken, "tests");
-  const d = plainNumber(Math.abs(delta));
-  if (Math.abs(delta) <= noise) return result2(false, `Within noise: changed by ${d}, but runs vary by up to ${plainNumber(noise)}.`, "noise");
-  return result2(true, `Better by ${d}, more than the run-to-run noise of ${plainNumber(noise)}${guardPassed ? "; the regression check passed." : "."}`);
-}
-
 // src/improve/text.ts
+init_verdict();
 function formatValue(value, unit) {
   if (unit === "bytes") {
     if (Math.abs(value) < 1024) return `${plainNumber(value)} bytes`;
@@ -41096,9 +41177,9 @@ function lessonLine(l) {
   const why = clip3(oneLine2(l.why ?? ""), WHY_MAX).replace(/[.\s]+$/, "");
   const numbers = l.after === null ? "" : `${formatValue(l.before, l.unit)} \u2192 ${formatValue(l.after, l.unit)}`;
   const detail = [why, numbers].filter(Boolean).join("; ");
-  const tail = `${detail ? ` (${detail})` : ""}.`;
-  const summary = clip3(oneLine2(l.summary).replace(/[.\s]+$/, ""), Math.max(20, LINE_MAX - head.length - tail.length));
-  return clip3(`${head}${summary}${tail}`, LINE_MAX);
+  const tail2 = `${detail ? ` (${detail})` : ""}.`;
+  const summary = clip3(oneLine2(l.summary).replace(/[.\s]+$/, ""), Math.max(20, LINE_MAX - head.length - tail2.length));
+  return clip3(`${head}${summary}${tail2}`, LINE_MAX);
 }
 var lessonsFile = (gitRoot) => join12(gitRoot, ".synthe", "improve-lessons.md");
 function appendLessons(gitRoot, lines) {
@@ -41147,6 +41228,9 @@ function lessonsTarget(_gitRoot, choice) {
   if (choice === "agents") return "AGENTS.md";
   return null;
 }
+
+// src/improve/loop.ts
+init_verdict();
 
 // src/improve/worktree.ts
 import { existsSync as existsSync9, lstatSync, mkdtempSync, rmSync as rmSync2, symlinkSync, unlinkSync as unlinkSync2 } from "node:fs";
@@ -41331,6 +41415,7 @@ ${r.stderr}`;
 }
 
 // src/improve/worktree.ts
+init_verdict();
 var win2 = process.platform === "win32";
 var quote = (s) => win2 ? `"${s}"` : `'${s.replace(/'/g, "'\\''")}'`;
 var GIT_TIMEOUT_MS = 12e4;
@@ -42392,6 +42477,7 @@ async function settle(io2, o, presets, defaultBranch, top) {
 
 // src/cli/submit.ts
 import { existsSync as existsSync13, readFileSync as readFileSync15 } from "node:fs";
+init_verdict();
 var SUBMIT_NEXT_WIN = "NEXT: Show the person the result and the pull request link as written.";
 var SUBMIT_NEXT_LOSS = "NEXT: Show the person why this change did not win, as written. If they want another try, make a different small change on the same branch, commit, and run `npx synthe submit` again.";
 var MAX_CHANGED_FILES = 60;
