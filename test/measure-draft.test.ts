@@ -67,7 +67,7 @@ test("measure draft writes the measure files, checks both orders, prints the agr
     assert.equal(r.code, 0, r.out);
     assert.match(r.out, /agreement 5\/5/);
     assert.ok(!r.out.includes(KEY), "the key never appears in output");
-    assert.match(r.out, /"compare": "model", "rubric": "[^"]*rubric\.md"/, "it prints the snippet for solve");
+    assert.match(r.out, /"cases": "judge\/cases\.jsonl", .*"compare": "model", "rubric": "judge\/rubric\.md"/, "it prints the snippet for solve, with relative paths");
 
     const cases = readFileSync(join(dir, "judge/cases.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
     assert.deepEqual(cases, EXAMPLES.map((e, i) => ({ id: `ex-${i + 1}`, input: e.input })));
@@ -99,6 +99,7 @@ test("measure draft exits 2 and names the examples when agreement is below 80%",
     assert.match(r.out, /agreement 3\/5/);
     assert.match(r.out, /ex-4/);
     assert.match(r.out, /ex-5/);
+    assert.match(r.out, /^    Do you ship to Canada\?$/m, "the full input of a disagreeing example is on its own line");
     assert.doesNotMatch(r.out, /ex-1\b/);
     assert.ok(existsSync(join(dir, "judge/rubric.md")), "the files stay, so the person can fix the rubric");
   } finally { await fake.close(); }
@@ -150,7 +151,7 @@ test("measure draft uses the OpenAI-compatible model of a problem file, for the 
     spawnGitInit(dir);
     writeFileSync(join(dir, "problem.json"), JSON.stringify({
       version: 1, name: "replies", goal: "Better replies.", artifact: ["prompt.md"],
-      measure: { command: "echo 1", direction: "higher" }, model: { base_url: base, model: "m-1" },
+      model: { base_url: base, model: "m-1" },
     }));
     const r = await run(["measure", "draft", "--examples", "examples.jsonl", "--out", "judge", "--problem", "problem.json"], dir, { SYNTHE_API_KEY: "sk-other-999" });
     assert.equal(r.code, 0, r.out);
@@ -174,4 +175,18 @@ test("compareEnv passes on only the provider's own key, never another provider's
     { SYNTHE_ANTHROPIC_KEY: "sk-ant-2", SYNTHE_ANTHROPIC_BASE_URL: "http://127.0.0.1:9" });
   assert.deepEqual(compareEnv(openai, { SYNTHE_API_KEY: "sk-other-1", SYNTHE_ANTHROPIC_KEY: "sk-ant-2" }), { SYNTHE_API_KEY: "sk-other-1" });
   assert.deepEqual(compareEnv(openai, {}), {});
+});
+
+test("measure draft --problem reads only the model section and names a bad field", async () => {
+  const dir = workspace();
+  writeFileSync(join(dir, "p.json"), JSON.stringify({ version: 1, name: "x", model: { provider: "openai-compatible", model: "m" } }));
+  const r = await run(["measure", "draft", "--examples", "examples.jsonl", "--out", "j", "--problem", "p.json"], dir, { SYNTHE_API_KEY: "k" });
+  assert.equal(r.code, 1);
+  assert.match(r.out, /p\.json: model\.base_url: the openai-compatible provider needs model\.base_url/);
+  assert.doesNotMatch(r.out, /measure/i, "a missing measure is not an error here");
+  writeFileSync(join(dir, "q.json"), JSON.stringify({ model: { model: "m", api_key: "sk-ant-leak" } }));
+  const q = await run(["measure", "draft", "--examples", "examples.jsonl", "--out", "j", "--problem", "q.json"], dir, { SYNTHE_ANTHROPIC_KEY: "k" });
+  assert.equal(q.code, 1);
+  assert.match(q.out, /model\.api_key: never put a key/);
+  assert.ok(!q.out.includes("sk-ant-leak"));
 });
