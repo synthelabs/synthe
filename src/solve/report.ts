@@ -59,7 +59,7 @@ export function renderReport(r: SolveResult, extras: ReportExtras = {}): string 
   if (r.attempts.length) {
     lines.push("## Attempts", "", "| Round | Change | Kept | Before | After | Reason |", "|---|---|---|---|---|---|");
     for (const a of r.attempts) {
-      lines.push(`| ${a.round} | ${cell(a.summary)} | ${a.kept ? "yes" : "no"} | ${formatNumber(a.before, u)} | ${formatNumber(a.after, u)} | ${cell(a.reason)} |`);
+      lines.push(`| ${a.round} | ${cell(a.summary)} | ${a.kept ? "kept" : "not kept"} | ${formatNumber(a.before, u)} | ${formatNumber(a.after, u)} | ${cell(a.reason)} |`);
     }
     lines.push("");
   } else {
