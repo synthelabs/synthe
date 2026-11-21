@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "name": "synthe-self",
+  "goal": "Make Synthe keep more real gains and fewer false keeps (no-op changes and traps) on its own seeded bench.",
+  "artifact": ["src/**"],
+  "protect": ["bench/**", "test/**", "swarm/**", "spec/**"],
+  "measure": { "command": "npm run bench -- --score", "direction": "higher", "unit": "points", "runs": 1 },
+  "guards": ["npm run typecheck", "npm test"],
+  "proposer": "model",
+  "budget": { "max_rounds": 6, "max_calls": 200 }
+}
