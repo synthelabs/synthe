@@ -312,7 +312,12 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
       if (!onTrain.keep || !holdout) return { ...onTrain, strength };
       // The candidate is still in the checkout, so its holdout number is measured now, and only now.
       const now = await measureAt("holdout");
-      if ("failed" in now) return { keep: false, reason: `Could not measure the held-back split: ${now.failed}` };
+      if ("failed" in now) {
+        // The failure output is held-back data (it can name cases and expected answers), and the reason goes to the
+        // proposer's history, result.json and report.md. So only the person sees the details, in Synthe's output.
+        io.say(`The held-back measure failed for this change: ${now.failed}`);
+        return { keep: false, reason: "It won on the train split, but the held-back measure failed for it, so it is not kept. Synthe's output has the details; the proposer never sees held-back output." };
+      }
       c.holdout = now;
       const onHoldout = decide(direction, k.holdout!, now);
       // No holdout numbers in the reason: it goes to the proposer's history.
