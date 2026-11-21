@@ -4,3 +4,4 @@
 {"at":"2026-11-21T07:25:52.105Z","by":"h05","milestone":"P02","text":"interrupted solve cleans up: stops commands, removes scratch, no empty branch, exit 130","pr":"https://github.com/synthelabs/synthe/pull/121"}
 {"at":"2026-11-21T07:40:13.806Z","by":"h05","milestone":"FINAL","text":"README: Solve mode section (problem file, problem check, run, keep rule, results, proposer protocol)","pr":"https://github.com/synthelabs/synthe/pull/127"}
 {"at":"2026-11-21T07:51:13.701Z","by":"h05","milestone":"FINAL","text":"practice zoo: small-gain-runs3 and heavy-tail-noop (keep-rule edge cases)","pr":"https://github.com/synthelabs/synthe/pull/130"}
+{"at":"2026-11-21T12:09:04.885Z","by":"h05","milestone":"FINAL","text":"solve hardening: comma thousands in scores, new files via empty search, failed attempts keep their summary, exact-named measure inputs stay editable","pr":"https://github.com/synthelabs/synthe/pull/147"}
