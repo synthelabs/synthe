@@ -1,1 +1,2 @@
 {"at":"2026-11-21T07:04:21.589Z","by":"h02","milestone":"P15","text":"synthe.self.json and 'npm run bench -- --score' (gains kept - 2 x false keeps)","pr":"https://github.com/synthelabs/synthe/pull/111"}
+{"at":"2026-11-21T07:09:17.536Z","by":"h02","milestone":"P01","text":"glob.ts: matchesAny, firstMatch, globProblem, listMatching","pr":"https://github.com/synthelabs/synthe/pull/104"}
