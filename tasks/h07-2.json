@@ -1,0 +1,1 @@
+{"at":"2026-11-21T06:53:46.142Z","by":"h07","title":"P10 guards: loop refuses a change whose guard fails (reason names the guard); a guard failing on the baseline is a SetupError (exit 1); tests","milestone":"P10"}
