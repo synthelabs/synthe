@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -19,6 +19,8 @@ function setup(hangAt: number) {
   const pids = join(base, "pids");
   mkdirSync(join(repo, "p"), { recursive: true });
   mkdirSync(pids);
+  // Its own temp folder for scratch checkouts, so this run never shows up in another test's count of them.
+  mkdirSync(join(base, "tmp"));
   const files: Record<string, string> = {
     "README.md": "hello\n",
     "p/config.json": '{"level": 10}\n',
@@ -73,7 +75,7 @@ async function alive(pid: number): Promise<boolean> {
 async function interrupted(hangAt: number, signal: NodeJS.Signals) {
   const s = setup(hangAt);
   const head = git(s.repo, "rev-parse", "HEAD");
-  const child = spawn(process.execPath, [CLI, "solve", "p/problem.json", "--out", join(s.base, "out")], { cwd: s.repo, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [CLI, "solve", "p/problem.json", "--out", join(s.base, "out")], { cwd: s.repo, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, TMPDIR: join(s.base, "tmp") } });
   let out = "";
   child.stdout.on("data", (d) => { out += d; });
   child.stderr.on("data", (d) => { out += d; });
@@ -91,20 +93,24 @@ function assertClean(r: { repo: string; head: string }) {
   assert.equal(git(r.repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ")).length, 1, "no scratch worktree is left");
 }
 
-test("Ctrl-C before any keep: the proposer stops, and no worktree, no branch and no change are left", { skip: process.platform === "win32" }, async () => {
+test("Ctrl-C before any keep: the proposer stops, and no worktree, no branch and no change are left", { skip: process.platform === "win32" }, async (t) => {
   const r = await interrupted(1, "SIGINT");
+  t.after(() => rmSync(r.base, { recursive: true, force: true }));
   assert.equal(r.code, 130, r.out);
   assert.match(r.out, /Stopped\. .*kept no change/);
   assert.equal(await alive(r.pid), false, "the proposer was stopped");
   assertClean(r);
+  assert.deepEqual(readdirSync(join(r.base, "tmp")), [], "no scratch folder is left");
   assert.equal(git(r.repo, "branch", "--list", "synthe/*"), "", "no empty branch is left");
 });
 
-test("a kill after one keep: the branch with the kept change stays; nothing else is left", { skip: process.platform === "win32" }, async () => {
+test("a kill after one keep: the branch with the kept change stays; nothing else is left", { skip: process.platform === "win32" }, async (t) => {
   const r = await interrupted(2, "SIGTERM");
+  t.after(() => rmSync(r.base, { recursive: true, force: true }));
   assert.equal(r.code, 130, r.out);
   assert.match(r.out, /on the branch synthe\/solve-stop-1/);
   assertClean(r);
+  assert.deepEqual(readdirSync(join(r.base, "tmp")), [], "no scratch folder is left");
   assert.equal(git(r.repo, "branch", "--list", "--format=%(refname:short)", "synthe/*"), "synthe/solve-stop-1");
   assert.equal(git(r.repo, "show", "synthe/solve-stop-1:p/config.json"), '{"level": 15}');
   assert.equal(readFileSync(join(r.repo, "p/config.json"), "utf8"), '{"level": 10}\n');
