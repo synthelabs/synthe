@@ -3,7 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { decide, decideWithConfirm, type Remeasure } from "./decide.ts";
 import { applyProposal, artifactFiles } from "./edits.ts";
 import { appendHistory, readHistory } from "./history.ts";
-import { failedGuard, measure, type Split } from "./measure.ts";
+import { guardFailure, measure, type Split } from "./measure.ts";
 import { writeReport } from "./report.ts";
 import { stopRunning } from "./run.ts";
 import { openScratch, type Scratch } from "./scratch.ts";
@@ -225,8 +225,9 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
       return { ok: true };
     },
     async guards() {
-      const failed = await failedGuard(scratch.dir, problem);
-      return failed === null ? { ok: true } : { ok: false, reason: `The guard \`${failed}\` failed.` };
+      // The reason names the guard and the lines that say what failed, so the proposer can learn from it.
+      const failed = await guardFailure(scratch.dir, problem);
+      return failed === null ? { ok: true } : { ok: false, reason: failed.reason };
     },
     async measure() {
       const train = await measureAt(holdout ? "train" : undefined);
