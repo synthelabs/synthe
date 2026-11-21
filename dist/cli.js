@@ -30828,6 +30828,9 @@ var init_cost3 = __esm({
       outputTokens = 0;
       usd = 0;
       dearest = 0;
+      reserved = 0;
+      inFlight = 0;
+      finished = [];
       prices;
       maxUsd;
       constructor(prices, maxUsd) {
@@ -30840,7 +30843,7 @@ var init_cost3 = __esm({
       // A plain stop reason when the next call would take the known cost above budget.max_usd, else null.
       stopReason() {
         if (this.maxUsd === null || !this.prices) return null;
-        if (this.usd >= this.maxUsd || this.usd + this.dearest > this.maxUsd) {
+        if (this.usd >= this.maxUsd || this.usd + this.reserved + this.dearest > this.maxUsd) {
           return `Reached the cost limit: ${dollars(this.usd)} spent, and the next model call could take it above ${dollars(this.maxUsd)}.`;
         }
         return null;
@@ -30865,16 +30868,28 @@ var init_cost3 = __esm({
       wrap(model) {
         return {
           ask: async (a) => {
+            const capped = this.maxUsd !== null && this.prices !== void 0;
+            while (capped && this.calls === 0 && this.inFlight > 0) await new Promise((resolve11) => this.finished.push(resolve11));
             const why = this.stopReason();
             if (why) throw new BudgetError(why);
+            const hold = this.dearest;
+            this.reserved += hold;
+            this.inFlight++;
+            const release = () => {
+              this.reserved -= hold;
+              this.inFlight--;
+              for (const wake of this.finished.splice(0)) wake();
+            };
             let reply;
             try {
               reply = await model.ask(a);
             } catch (e) {
               this.add(void 0);
+              release();
               throw e;
             }
             this.add(reply.usage);
+            release();
             return reply;
           }
         };
