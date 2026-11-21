@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { commandFailure } from "./measure.ts";
+import { modelCompare } from "./model-compare.ts";
 import { runCommand } from "./run.ts";
 import { isJudged, type Decision, type Problem } from "./types.ts";
 
@@ -184,16 +185,21 @@ export async function judgeOutputs(cases: JudgeCase[], kept: Outputs, cand: Outp
 }
 
 // Runs every case in both checkouts (their problem folders) and judges the candidate against the kept version.
-// The comparisons run in the kept checkout's problem folder. compare "model" is not here yet: P16 adds it.
+// The comparisons run in the kept checkout's problem folder. compare "model" asks the problem's model instead.
 export async function judgeCandidate(keptCheckout: string, candidateCheckout: string, problem: Problem, _seed?: number): Promise<JudgeDecision> {
   const m = problem.measure;
   if (!isJudged(m)) return { keep: false, reason: "This problem has no judged measure.", calls: 0, share: 0.5 };
-  if (m.judge.compare === "model") return { keep: false, reason: 'compare "model" is not supported yet. Give a compare command.', calls: 0, share: 0.5 };
+  let compare: Compare;
+  try {
+    compare = m.judge.compare === "model" ? modelCompare(problem) : commandCompare(keptCheckout, m.judge.compare);
+  } catch (e) {
+    return { keep: false, reason: e instanceof Error ? e.message : String(e), calls: 0, share: 0.5 };
+  }
   const cases = readCases(keptCheckout, m.judge.cases);
   if ("failed" in cases) return { keep: false, reason: cases.failed, calls: 0, share: 0.5 };
   const kept = await runCases(keptCheckout, m.judge.run, cases);
   if ("failed" in kept) return { keep: false, reason: `The kept version could not run: ${kept.failed}`, calls: 0, share: 0.5 };
   const cand = await runCases(candidateCheckout, m.judge.run, cases);
   if ("failed" in cand) return { keep: false, reason: `The change could not run: ${cand.failed}`, calls: 0, share: 0.5 };
-  return judgeOutputs(cases, kept, cand, commandCompare(keptCheckout, m.judge.compare));
+  return judgeOutputs(cases, kept, cand, compare);
 }
