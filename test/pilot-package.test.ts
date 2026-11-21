@@ -35,7 +35,9 @@ test("package.json maps synthe/pilot to the wrap files and ships them", () => {
     "./package.json": "./package.json",
   });
   for (const name of WRAP_FILES) assert.ok(pkg.files.includes(`dist/${name}`), name);
-  assert.match(pkg.scripts.build, / && node scripts\/build-wrap\.mjs$/);
+  // `npm run build` builds the wrap files too: the build script runs build-wrap.mjs into the folder it moves into dist/.
+  assert.equal(pkg.scripts.build, "node scripts/build.mjs");
+  assert.match(readFileSync(join(ROOT, "scripts", "build.mjs"), "utf8"), /join\(root, "scripts\/build-wrap\.mjs"\), tmp\]/);
 });
 
 // A customer's project: node_modules/synthe holds package.json and the built files, as an install would.

@@ -11,14 +11,12 @@ const ROOT = join(import.meta.dirname, "..");
 // Nothing from the developer's shell reaches the commands: no token, no key, no Synthe setting.
 const env = { PATH: process.env.PATH ?? "" };
 
-// The first command of the package's own build script, pointed at a temporary file. Building into dist/ here would
+// The CLI as the package's own build script builds it, pointed at a temporary file. Building into dist/ here would
 // race with test/e2e.test.ts, which rebuilds dist/ while the other test files run.
 function buildProductCli(): string {
   const out = join(tmp("pilot-product-"), "cli.js");
-  const script = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).scripts.build as string;
-  const cli = script.split(" && ")[0];
-  assert.match(cli, /^esbuild src\/cli\/main\.ts .*--outfile=dist\/cli\.js/, "the build script still builds the CLI first");
-  execFileSync("sh", ["-c", cli.replace("--outfile=dist/cli.js", `--outfile='${out}'`)], { cwd: ROOT, env: { PATH: `${join(ROOT, "node_modules", ".bin")}:${env.PATH}` }, stdio: "pipe" });
+  assert.equal(JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).scripts.build, "node scripts/build.mjs", "the build script is the one --cli shares its options with");
+  execFileSync(process.execPath, [join(ROOT, "scripts", "build.mjs"), "--cli", out], { cwd: ROOT, env, stdio: "pipe" });
   return out;
 }
 

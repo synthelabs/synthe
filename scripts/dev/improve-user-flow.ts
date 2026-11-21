@@ -13,8 +13,7 @@ import { startFakeAnthropic, type FakeReply } from "./fake-anthropic.ts";
 
 const work = mkdtempSync(join(tmpdir(), "synthe-user-flow-"));
 const cli = join(work, "bundle/cli.js");
-const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-execSync(`npx ${pkg.scripts.build.split(" && ")[0].replace("--outfile=dist/cli.js", `--outfile=${cli}`)}`, { stdio: "ignore" });
+execFileSync(process.execPath, ["scripts/build.mjs", "--cli", cli], { stdio: "ignore" });
 
 const EMAILS = ["ann@example.com", "bob@test.com", "cy@site.com", "Dana@example.com", "eve.smith@example.com", "fay@mail.example.org",
   "gus+tag@example.com", "hal@example.io", "ivy_2@example.com", "jo@example.co.uk", "kim@EXAMPLE.COM", "lee-ann@example.net"];

@@ -4,3 +4,4 @@ node_modules
 .synthe-local
 mutation/reports
 .stryker-tmp
+dist/.build-*
