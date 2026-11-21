@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { isAbsolute, join, resolve } from "node:path";
-import { decide } from "./decide.ts";
+import { decide, decideWithConfirm, type Remeasure } from "./decide.ts";
 import { applyProposal, artifactFiles } from "./edits.ts";
 import { appendHistory, readHistory } from "./history.ts";
 import { failedGuard, measure, type Split } from "./measure.ts";
@@ -189,6 +189,7 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
 
   let calls = 0;
   let lastPaths: string[] = [];
+  let lastProposal: Proposal | null = null;
   const measureAt = async (split?: Split): Promise<Measurement | { failed: string }> =>
     measure(scratch.dir, problem, { ...(options.seed !== undefined ? { seed: options.seed } : {}), ...(split ? { split } : {}) });
   const holdout = problem.split.holdout;
@@ -210,6 +211,7 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
       if ("refused" in applied) return { ok: false, reason: applied.refused };
       if (applied.paths.length === 0) return { ok: false, reason: "The proposal changed no file." };
       lastPaths = applied.paths;
+      lastProposal = proposal;
       return { ok: true };
     },
     async guards() {
@@ -231,7 +233,24 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     },
     async decide(kept, cand) {
       const k = kept.samples as Sample, c = cand.samples as Sample;
-      const onTrain: Decision = decide(direction, k.train, c.train);
+      // The second look of the keep rule (P06): fresh runs of the candidate (in the checkout now), then of the kept
+      // state, then the candidate goes back so the holdout step below still finds it in the checkout.
+      const proposal = lastProposal!;
+      const remeasure: Remeasure = async () => {
+        const after = await measureAt(holdout ? "train" : undefined);
+        if ("failed" in after) return after;
+        await scratch.reset();
+        const before = await measureAt(holdout ? "train" : undefined);
+        const back = applyProposal(scratch.root, problem, proposal);
+        if ("refused" in back) return { failed: `the change could not be applied again: ${back.refused}` };
+        lastPaths = back.paths;
+        return "failed" in before ? before : { before, after };
+      };
+      const confirmed = await decideWithConfirm(direction, k.train, c.train, remeasure);
+      // More runs of the kept state make every later comparison against it sharper.
+      k.train = confirmed.before;
+      c.train = confirmed.after;
+      const onTrain: Decision = { keep: confirmed.keep, reason: confirmed.reason };
       const strength = sign * (c.train.value - k.train.value);
       if (!onTrain.keep || !holdout) return { ...onTrain, strength };
       // The candidate is still in the checkout, so its holdout number is measured now, and only now.
