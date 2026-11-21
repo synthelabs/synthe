@@ -7,6 +7,18 @@ export interface RunOptions { stdin?: string; env?: Record<string, string>; time
 export const COMMAND_TIMEOUT_MS = 600_000;
 const MAX_OUTPUT = 4 * 1024 * 1024;
 
+// Process groups of problem commands still running. Each command runs in its own group (detached), so a Ctrl-C
+// in the terminal does not reach it. An interrupted solve stops them with stopRunning().
+const live = new Set<number>();
+
+export function stopRunning(): void {
+  const win = process.platform === "win32";
+  for (const pid of live) {
+    try { process.kill(win ? pid : -pid, "SIGKILL"); } catch { /* already gone */ }
+  }
+  live.clear();
+}
+
 // Runs one shell command of the problem (measure, guard, proposer, judge) and never throws. The command gets the
 // person's environment without Synthe's own keys and tokens (see childEnv), plus only the SYNTHE_* values named in
 // `env`, such as SYNTHE_SPLIT and SYNTHE_SEED. So a measure command can never read SYNTHE_API_KEY.
@@ -14,6 +26,7 @@ export function runCommand(cwd: string, command: string, o: RunOptions = {}): Pr
   return new Promise((resolve) => {
     const win = process.platform === "win32";
     const child = spawn(win ? "cmd" : "sh", [win ? "/c" : "-c", command], { cwd, env: { ...childEnv(), ...o.env }, stdio: ["pipe", "pipe", "pipe"], detached: !win });
+    if (child.pid) live.add(child.pid);
     let stdout = "", stderr = "", timedOut = false, done = false;
     child.stdout.on("data", (d: Buffer) => { if (stdout.length < MAX_OUTPUT) stdout += d.toString().slice(0, MAX_OUTPUT - stdout.length); });
     child.stderr.on("data", (d: Buffer) => { if (stderr.length < MAX_OUTPUT) stderr += d.toString().slice(0, MAX_OUTPUT - stderr.length); });
@@ -24,6 +37,7 @@ export function runCommand(cwd: string, command: string, o: RunOptions = {}): Pr
     const finish = (code: number | null) => {
       if (done) return;
       done = true;
+      if (child.pid) live.delete(child.pid);
       clearTimeout(timer);
       resolve({ ok: code === 0 && !timedOut, code, stdout, stderr, timedOut });
     };
