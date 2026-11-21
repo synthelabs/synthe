@@ -6,3 +6,4 @@
 {"at":"2026-11-21T08:10:35.843Z","by":"h01","milestone":"S02","text":"budget.max_usd accepted only with model.prices (problem check)","pr":"https://github.com/synthelabs/synthe/pull/138"}
 {"at":"2026-11-21T11:27:05.275Z","by":"h01","milestone":"P09","text":"problem check refuses split.holdout with a judged measure","pr":"https://github.com/synthelabs/synthe/pull/141"}
 {"at":"2026-11-21T11:48:01.254Z","by":"h01","milestone":"S01","text":"compareEnv passes compare.js only the provider's own key","pr":"https://github.com/synthelabs/synthe/pull/144"}
+{"at":"2026-11-21T11:59:45.252Z","by":"h01","milestone":"S04","text":"measure.judge.rubric: drafted rubric used through compare model; measure draft prints the snippet","pr":"https://github.com/synthelabs/synthe/pull/145"}
