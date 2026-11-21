@@ -29928,14 +29928,29 @@ function decide(direction, before, after) {
   const { keep, reason } = look(direction, before, after, SCREEN_ALPHA, false);
   return { keep, reason };
 }
-var SCREEN_ALPHA, DUST;
+async function decideWithConfirm(direction, before, after, remeasure) {
+  const first = look(direction, before, after, SCREEN_ALPHA, false);
+  if (!first.keep || first.exact) return { keep: first.keep, reason: first.reason, before, after };
+  const more = await remeasure();
+  if ("failed" in more) return { keep: false, reason: `Could not measure again to confirm the gain: ${more.failed}`, before, after };
+  const b = join20(before, more.before), a = join20(after, more.after);
+  const second = look(direction, b, a, CONFIRM_ALPHA, true);
+  return { keep: second.keep, reason: second.reason, before: b, after: a };
+}
+var SCREEN_ALPHA, CONFIRM_ALPHA, DUST, join20;
 var init_decide = __esm({
   "src/solve/decide.ts"() {
     "use strict";
     init_stats();
     init_verdict();
     SCREEN_ALPHA = 0.1;
+    CONFIRM_ALPHA = 5e-3;
     DUST = 1e-9;
+    join20 = (a, b) => {
+      const runs = [...a.runs, ...b.runs];
+      const s = [...runs].sort((x, y) => x - y), mid = Math.floor(s.length / 2);
+      return { runs, value: s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2 };
+    };
   }
 });
 
@@ -29955,14 +29970,14 @@ var init_edits = __esm({
 // src/solve/history.ts
 import { execFileSync as execFileSync5 } from "node:child_process";
 import { appendFileSync as appendFileSync2, existsSync as existsSync15, mkdirSync as mkdirSync6, readFileSync as readFileSync18 } from "node:fs";
-import { isAbsolute as isAbsolute3, join as join20, resolve as resolve3 } from "node:path";
+import { isAbsolute as isAbsolute3, join as join21, resolve as resolve3 } from "node:path";
 function gitCommonDir(dir) {
   const out = execFileSync5("git", ["rev-parse", "--git-common-dir"], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   return isAbsolute3(out) ? out : resolve3(dir, out);
 }
 function historyFile(dir, name) {
   if (!NAME.test(name)) throw new Error(`The problem name "${name}" can hold only letters, digits and "-".`);
-  return join20(gitCommonDir(dir), "synthe", "solve", name, "history.jsonl");
+  return join21(gitCommonDir(dir), "synthe", "solve", name, "history.jsonl");
 }
 function parse(line) {
   try {
@@ -29987,7 +30002,7 @@ function nextRun(dir, name) {
 function appendHistory(dir, name, entries, run2 = nextRun(dir, name)) {
   if (entries.length === 0) return;
   const file = historyFile(dir, name);
-  mkdirSync6(join20(file, ".."), { recursive: true });
+  mkdirSync6(join21(file, ".."), { recursive: true });
   const at = (/* @__PURE__ */ new Date()).toISOString();
   const lines = entries.map((e) => JSON.stringify({ round: e.round, summary: e.summary, kept: e.kept, reason: e.reason, run: run2, at }));
   appendFileSync2(file, lines.join("\n") + "\n");
@@ -30106,11 +30121,11 @@ var init_measure = __esm({
 
 // src/solve/report.ts
 import { mkdirSync as mkdirSync7, writeFileSync as writeFileSync8 } from "node:fs";
-import { join as join21 } from "node:path";
+import { join as join22 } from "node:path";
 function writeReport(outDir, result2, extras = {}) {
   mkdirSync7(outDir, { recursive: true });
-  const json = join21(outDir, "result.json");
-  const md = join21(outDir, "report.md");
+  const json = join22(outDir, "result.json");
+  const md = join22(outDir, "report.md");
   const ordered = {
     problem: result2.problem,
     stopped: result2.stopped,
@@ -30168,7 +30183,7 @@ var init_report = __esm({
 import { execFileSync as execFileSync6 } from "node:child_process";
 import { existsSync as existsSync16, lstatSync as lstatSync3, mkdtempSync as mkdtempSync3, realpathSync as realpathSync3, rmSync as rmSync4, symlinkSync as symlinkSync2, unlinkSync as unlinkSync3 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
-import { join as join22, relative as relative2 } from "node:path";
+import { join as join23, relative as relative2 } from "node:path";
 function git(cwd, args, input) {
   return execFileSync6("git", ["-C", cwd, ...args], {
     encoding: "utf8",
@@ -30228,19 +30243,19 @@ function openState(repoRoot, problemDir, name) {
     throw new Error(`The folder ${rel} is not committed in ${top}. Commit it first: Synthe works only on committed files.`);
   }
   const branch = nextBranch2(top, name);
-  const dir = realpathSync3(mkdtempSync3(join22(tmpdir3(), "synthe-solve-")));
+  const dir = realpathSync3(mkdtempSync3(join23(tmpdir3(), "synthe-solve-")));
   try {
     git(top, ["worktree", "add", "--quiet", "-b", branch, dir, base]);
   } catch (e) {
     rmSync4(dir, { recursive: true, force: true });
     throw new Error(`Could not make a scratch checkout on ${branch}: ${firstLine4(e)}`);
   }
-  const scratch = { top, root: dir, dir: join22(dir, rel), branch, base, links: [] };
+  const scratch = { top, root: dir, dir: join23(dir, rel), branch, base, links: [] };
   for (const from of /* @__PURE__ */ new Set([top, real])) {
-    const to = join22(scratch.root, relative2(top, from));
+    const to = join23(scratch.root, relative2(top, from));
     for (const name2 of LINKED2) {
-      const source = join22(from, name2);
-      const link = join22(to, name2);
+      const source = join23(from, name2);
+      const link = join23(to, name2);
       if (existsSync16(source) && existsSync16(to) && !existsSync16(link)) {
         try {
           symlinkSync2(source, link, process.platform === "win32" ? "junction" : "dir");
@@ -30288,7 +30303,7 @@ var init_scratch = __esm({
 
 // src/solve/loop.ts
 import { execFileSync as execFileSync7 } from "node:child_process";
-import { isAbsolute as isAbsolute4, join as join23, resolve as resolve4 } from "node:path";
+import { isAbsolute as isAbsolute4, join as join24, resolve as resolve4 } from "node:path";
 async function runLoop2(steps, options) {
   const say = steps.say ?? (() => {
   });
@@ -30401,7 +30416,7 @@ async function solve(problem, proposer, options, io2) {
   } catch {
     throw new SetupError(`${problem.dir} is not inside a git repository. Synthe works in a scratch checkout of a git repository.`);
   }
-  const outDir = options.out ? isAbsolute4(options.out) ? options.out : resolve4(process.cwd(), options.out) : join23(repoRoot, ".synthe", "solve", problem.name);
+  const outDir = options.out ? isAbsolute4(options.out) ? options.out : resolve4(process.cwd(), options.out) : join24(repoRoot, ".synthe", "solve", problem.name);
   const history = readHistory(gitDir, problem.name).map((h) => ({ ...h }));
   let scratch;
   try {
@@ -30411,6 +30426,7 @@ async function solve(problem, proposer, options, io2) {
   }
   let calls2 = 0;
   let lastPaths = [];
+  let lastProposal = null;
   const measureAt2 = async (split) => measure(scratch.dir, problem, { ...options.seed !== void 0 ? { seed: options.seed } : {}, ...split ? { split } : {} });
   const holdout = problem.split.holdout;
   const sign = direction === "higher" ? 1 : -1;
@@ -30430,6 +30446,7 @@ async function solve(problem, proposer, options, io2) {
       if ("refused" in applied) return { ok: false, reason: applied.refused };
       if (applied.paths.length === 0) return { ok: false, reason: "The proposal changed no file." };
       lastPaths = applied.paths;
+      lastProposal = proposal;
       return { ok: true };
     },
     async guards() {
@@ -30450,7 +30467,21 @@ async function solve(problem, proposer, options, io2) {
     },
     async decide(kept, cand) {
       const k = kept.samples, c = cand.samples;
-      const onTrain = decide(direction, k.train, c.train);
+      const proposal = lastProposal;
+      const remeasure = async () => {
+        const after = await measureAt2(holdout ? "train" : void 0);
+        if ("failed" in after) return after;
+        await scratch.reset();
+        const before = await measureAt2(holdout ? "train" : void 0);
+        const back = applyProposal(scratch.root, problem, proposal);
+        if ("refused" in back) return { failed: `the change could not be applied again: ${back.refused}` };
+        lastPaths = back.paths;
+        return "failed" in before ? before : { before, after };
+      };
+      const confirmed = await decideWithConfirm(direction, k.train, c.train, remeasure);
+      k.train = confirmed.before;
+      c.train = confirmed.after;
+      const onTrain = { keep: confirmed.keep, reason: confirmed.reason };
       const strength = sign * (c.train.value - k.train.value);
       if (!onTrain.keep || !holdout) return { ...onTrain, strength };
       const now = await measureAt2("holdout");
@@ -30484,7 +30515,7 @@ async function solve(problem, proposer, options, io2) {
     attempts: result2.attempts
   };
   writeReport(outDir, solved, { goal: problem.goal, direction, ...problem.measure.unit ? { unit: problem.measure.unit } : {} });
-  io2.say(`Wrote ${join23(outDir, "result.json")} and report.md.`);
+  io2.say(`Wrote ${join24(outDir, "result.json")} and report.md.`);
   if (solved.branch) io2.say(`Kept changes are on the branch ${solved.branch}.`);
   return solved;
 }
@@ -32052,7 +32083,7 @@ var init_egress = __esm({
 // src/pilot/wrap.ts
 import { createHash as createHash3, createHmac } from "node:crypto";
 import { closeSync as closeSync2, constants as constants2, fstatSync, mkdirSync as mkdirSync9, openSync as openSync2, readSync, writeFileSync as writeFileSync10, writeSync } from "node:fs";
-import { join as join24 } from "node:path";
+import { join as join25 } from "node:path";
 function appendLine(path4, text4) {
   const fd = openSync2(path4, constants2.O_RDWR | constants2.O_APPEND | constants2.O_CREAT | (constants2.O_NOFOLLOW ?? 0), 384);
   try {
@@ -32091,11 +32122,11 @@ function pilotRecorder(options) {
     try {
       mkdirSync9(logDir, { recursive: true, mode: 448 });
       try {
-        writeFileSync10(join24(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
+        writeFileSync10(join25(logDir, ".gitignore"), "*\n", { flag: "wx", mode: 384 });
       } catch (e) {
         if (e.code !== "EEXIST") throw e;
       }
-      return appendLine(join24(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
+      return appendLine(join25(logDir, `calls-${at.toISOString().slice(0, 10)}.jsonl`), `${JSON.stringify(line)}
 `);
     } catch {
       return false;
@@ -34958,7 +34989,7 @@ var init_review = __esm({
 
 // src/pilot/store.ts
 import { appendFileSync as appendFileSync3, closeSync as closeSync3, existsSync as existsSync18, mkdirSync as mkdirSync10, openSync as openSync3, readdirSync as readdirSync3, readFileSync as readFileSync20, statSync as statSync6, truncateSync, unlinkSync as unlinkSync5, writeSync as writeSync2 } from "node:fs";
-import { join as join25 } from "node:path";
+import { join as join26 } from "node:path";
 var OBJECT_KINDS, entryHash, MAX_OBJECT_BYTES, LOCK_STALE_MS, HELD, PilotStore;
 var init_store = __esm({
   "src/pilot/store.ts"() {
@@ -34995,7 +35026,7 @@ var init_store = __esm({
       }
       objectPath(kind, id) {
         if (!isSha256(id)) throw new PilotError("usage", `${String(id).slice(0, 80)} is not a full 64-character id.`);
-        return join25(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
+        return join26(this.dir, "objects", kind, `${id}.${kind === "prompt" ? "txt" : "json"}`);
       }
       // Stores a record under its content id. Storing the same record again is a no-op, so every step can be retried.
       put(kind, value) {
@@ -35040,7 +35071,7 @@ var init_store = __esm({
         return isSha256(id) && existsSync18(this.objectPath(kind, id));
       }
       list(kind) {
-        const dir = join25(this.dir, "objects", kind);
+        const dir = join26(this.dir, "objects", kind);
         if (!existsSync18(dir)) return [];
         return readdirSync3(dir).map((f) => f.replace(/\.(json|txt)$/, "")).filter(isSha256).sort();
       }
@@ -35071,12 +35102,12 @@ var init_store = __esm({
         return text4;
       }
       journalPath() {
-        return join25(this.dir, "journal.jsonl");
+        return join26(this.dir, "journal.jsonl");
       }
       // The sequence number and hash of the newest entry, kept beside the journal. The chain alone cannot show that
       // entries were cut off the end; a journal shorter than its recorded head can.
       headPath() {
-        return join25(this.dir, "journal.head");
+        return join26(this.dir, "journal.head");
       }
       head() {
         if (!existsSync18(this.headPath())) return null;
@@ -35182,7 +35213,7 @@ var init_store = __esm({
       // reading it again and finding the same content, so a lock that was replaced in between is not removed.
       acquire(file, staleMs) {
         mkdirSync10(this.dir, { recursive: true });
-        const lock = join25(this.dir, file);
+        const lock = join26(this.dir, file);
         const pause = new Int32Array(new SharedArrayBuffer(4));
         const read = () => {
           try {
@@ -35242,7 +35273,7 @@ var init_store = __esm({
       }
       // A rendering of stored records. Safe to overwrite: the records, not the report, are the evidence.
       report(name, content) {
-        const path4 = join25(this.dir, "reports", name);
+        const path4 = join26(this.dir, "reports", name);
         writeAtomic(path4, content);
         return path4;
       }
@@ -35253,7 +35284,7 @@ var init_store = __esm({
 // src/pilot/commands.ts
 import { execFileSync as execFileSync8 } from "node:child_process";
 import { appendFileSync as appendFileSync4, existsSync as existsSync19, readFileSync as readFileSync21 } from "node:fs";
-import { dirname as dirname7, join as join26 } from "node:path";
+import { dirname as dirname7, join as join27 } from "node:path";
 function defaultGit(args, cwd) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_")));
   return execFileSync8("git", args, { cwd, encoding: "utf8", env, maxBuffer: 16 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
@@ -35327,10 +35358,10 @@ function assertNotFromTheFuture(imported, now, cutoff) {
   }
 }
 function protectDirectory(dir, say) {
-  if (existsSync19(join26(dir, ".git"))) {
+  if (existsSync19(join27(dir, ".git"))) {
     throw new PilotError("usage", "The pilot directory is a git repository root. It holds customer data; use a directory that is not a repository, or a subdirectory with its own .gitignore.");
   }
-  const file = join26(dir, ".gitignore");
+  const file = join27(dir, ".gitignore");
   if (!existsSync19(file)) writeOnce(file, "*\n");
   else {
     const lines = readFileSync21(file, "utf8").split(/\r?\n/).map((l) => l.trim());
@@ -36085,7 +36116,7 @@ var init_commands = __esm({
 
 // src/pilot/calllog.ts
 import { readdirSync as readdirSync4 } from "node:fs";
-import { join as join27 } from "node:path";
+import { join as join28 } from "node:path";
 function valuesBefore(c, before) {
   const values = /* @__PURE__ */ new Map();
   const seen = /* @__PURE__ */ new Map();
@@ -36121,7 +36152,7 @@ function readCallLog(dir) {
     return c;
   };
   for (const name of names2) {
-    const text4 = readBounded(join27(dir, name), MAX_LOG_FILE_BYTES);
+    const text4 = readBounded(join28(dir, name), MAX_LOG_FILE_BYTES);
     const parts = text4.split("\n");
     parts.pop();
     for (const part of parts) {
@@ -36219,7 +36250,7 @@ var init_calllog = __esm({
 });
 
 // src/pilot/export.ts
-import { join as join28 } from "node:path";
+import { join as join29 } from "node:path";
 function buildLogExport(input) {
   const { log, contract } = input;
   if (contract.query_hash !== void 0) throw new PilotError("usage", "The metric contract pins a query hash. A call-log export comes from the wrapper, not from a query, so it cannot carry one. Export from the signed-off query instead.");
@@ -36348,9 +36379,9 @@ function writeLogExport(input) {
     tags,
     ...experiment2 ? { window: experiment2.window } : {}
   });
-  const outDir = input.outDir ?? join28(store.dir, "exports");
-  const path4 = join28(outDir, `${exportId}.json`);
-  writeAtomic(join28(outDir, csvName), built.csv);
+  const outDir = input.outDir ?? join29(store.dir, "exports");
+  const path4 = join29(outDir, `${exportId}.json`);
+  writeAtomic(join29(outDir, csvName), built.csv);
   writeAtomic(path4, `${JSON.stringify(built.header, null, 2)}
 `);
   const notes = [];
@@ -36426,7 +36457,7 @@ var init_export = __esm({
 
 // src/pilot/watch.ts
 import { readdirSync as readdirSync5 } from "node:fs";
-import { dirname as dirname8, join as join29 } from "node:path";
+import { dirname as dirname8, join as join30 } from "node:path";
 function whole(interimDays) {
   if (!Number.isInteger(interimDays) || interimDays < 1) throw new PilotError("usage", "--interim-days must be a whole number of 1 or more.");
   return interimDays;
@@ -36527,7 +36558,7 @@ function scanInbox(store, inbox, experimentId, spec) {
   const importedKeys = new Set(imports.map((e) => e.key));
   const newest = Math.max(-Infinity, ...imports.map((e) => ms(store.get("telemetry", e.refs.telemetry).exported_at)));
   const files = names2.map((name) => {
-    const path4 = join29(inbox, name);
+    const path4 = join30(inbox, name);
     try {
       const imported = importTelemetry({
         text: readBounded(path4),
@@ -36714,7 +36745,7 @@ var init_watch = __esm({
 
 // src/pilot/cases.ts
 import { existsSync as existsSync20, mkdirSync as mkdirSync11, writeFileSync as writeFileSync11 } from "node:fs";
-import { dirname as dirname9, join as join30, resolve as resolve6 } from "node:path";
+import { dirname as dirname9, join as join31, resolve as resolve6 } from "node:path";
 function describe(check) {
   switch (check.kind) {
     case "reply_includes":
@@ -36816,7 +36847,7 @@ async function cases3(store, flags, deps) {
       throw e;
     }
   } else {
-    path4 = join30(store.dir, "cases", `cases-${shortId(id)}.jsonl`);
+    path4 = join31(store.dir, "cases", `cases-${shortId(id)}.jsonl`);
     writeAtomic(path4, text4);
   }
   deps.say(`Wrote ${path4}`);
@@ -37491,7 +37522,7 @@ __export(demo_exports, {
 });
 import { execFileSync as execFileSync9 } from "node:child_process";
 import { existsSync as existsSync21, mkdirSync as mkdirSync12, readdirSync as readdirSync6, readFileSync as readFileSync22, statSync as statSync7, writeFileSync as writeFileSync12 } from "node:fs";
-import { dirname as dirname10, join as join31, resolve as resolve7 } from "node:path";
+import { dirname as dirname10, join as join32, resolve as resolve7 } from "node:path";
 function git3(args, cwd) {
   const env = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith("SYNTHE_") && !k.startsWith("GIT_"))), ...GIT_ENV };
   return execFileSync9("git", args, { cwd, encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
@@ -37499,7 +37530,7 @@ function git3(args, cwd) {
 function filesUnder(dir) {
   if (!existsSync21(dir)) return [];
   return readdirSync6(dir).flatMap((name) => {
-    const path4 = join31(dir, name);
+    const path4 = join32(dir, name);
     return statSync7(path4).isDirectory() ? filesUnder(path4) : [path4];
   });
 }
@@ -37509,19 +37540,19 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
   if (typeof outFlag !== "string" || !outFlag.trim()) throw new PilotError("usage", "--out is required: a new, empty directory for the demo's inputs, pilot records and reports.");
   const out = resolve7(outFlag);
   if (existsSync21(out) && readdirSync6(out).length > 0) throw new PilotError("usage", `${out} is not empty. Give the demo a new directory so its records start clean.`);
-  const inputs = join31(out, "inputs");
-  const repoDir = join31(out, "customer-repo");
-  const dir = join31(out, "pilot");
+  const inputs = join32(out, "inputs");
+  const repoDir = join32(out, "customer-repo");
+  const dir = join32(out, "pilot");
   mkdirSync12(inputs, { recursive: true });
-  mkdirSync12(join31(repoDir, dirname10(DEMO.prompt_path)), { recursive: true });
+  mkdirSync12(join32(repoDir, dirname10(DEMO.prompt_path)), { recursive: true });
   const put = (name, content) => {
-    const path4 = join31(inputs, name);
+    const path4 = join32(inputs, name);
     writeFileSync12(path4, content);
     return path4;
   };
   const json = (value) => `${JSON.stringify(value, null, 2)}
 `;
-  writeFileSync12(join31(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
+  writeFileSync12(join32(repoDir, DEMO.prompt_path), BASELINE_PROMPT);
   git3(["init", "-q", "-b", DEMO.base], repoDir);
   git3(["add", DEMO.prompt_path], repoDir);
   git3(["commit", "-q", "-m", "Juniper prompt v14"], repoDir);
@@ -37582,7 +37613,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Synthe enterprise pilot: synthetic run for Fernhill Outfitters' support agent Juniper (all data invented).");
     say(`Inputs: ${inputs}   Pilot records and reports: ${dir}`);
     expect("init succeeds", await run2("Freeze the contract and the baseline prompt", ["init", "--config", put("pilot.json", json(demoConfig())), "--repo-dir", repoDir]) === 0);
-    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync21(join31(dir, "reports", "baseline.md")));
+    expect("baseline report written from imported telemetry", await run2("Import the baseline telemetry export", ["baseline", "--telemetry", writeExport("baseline.json", baselineExport())]) === 0 && existsSync21(join32(dir, "reports", "baseline.md")));
     expect("pack frozen", await run2("Freeze the redacted conversation pack", ["pack", "--file", put("pack.v1.json", json(demoPack()))]) === 0);
     const packV1 = activePack(store);
     expect("discover succeeds", await run2("Find recurring failures on the discovery cases", ["discover", "--model", model]) === 0);
@@ -37689,7 +37720,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("approval recorded against the exact candidate and experiment", await run2("Record the approval", ["approve", "--candidate", candD, "--experiment", expD, "--approver", DEMO.metric_owner]) === 0);
     const tagD = candidateTag(candD);
     const specD = store.get("experiment", expD);
-    const logDir = join31(out, "agent-log");
+    const logDir = join32(out, "agent-log");
     let recorderClock = 0;
     const traffic = demoTraffic({
       recorder: pilotRecorder({ logDir, agent: "Juniper", idKey: DEMO_ID_KEY, now: () => new Date(recorderClock) }),
@@ -37706,7 +37737,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     });
     const looksD = () => store.find("analysis.decided").filter((e) => e.refs.experiment === expD);
     const importsD = () => store.find("telemetry.imported").filter((e) => e.refs.scope === expD).length;
-    const watchMd = () => readFileSync22(join31(dir, "reports", "WATCH.md"), "utf8");
+    const watchMd = () => readFileSync22(join32(dir, "reports", "WATCH.md"), "utf8");
     const tick2 = async (title, iso3) => {
       traffic.upTo(Date.parse(iso3));
       atTime(iso3);
@@ -37717,7 +37748,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const lastLook = () => store.get("analysis", looksD().at(-1)?.refs.analysis ?? "");
     expect("watch --log without --assignment is refused, even while no look is due", await run2("Try a watch tick without saying how traffic was assigned", ["watch", "--log", logDir]) === 1 && looksD().length === 0);
     const t0 = await tick2("Watch tick before the experiment starts (2026-11-27)", "2026-11-27T09:00:00Z");
-    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join31(dir, "exports")).length === 0);
+    expect("before the start: WAITING, nothing imported, nothing exported", t0.code === 0 && t0.md.startsWith("# WAITING") && importsD() === 0 && looksD().length === 0 && filesUnder(join32(dir, "exports")).length === 0);
     const t1 = await tick2("Watch tick at the end of day 1 (2026-11-29)", "2026-11-29T23:30:00Z");
     expect("day 1: one interim look, HOLD", t1.code === 0 && looksD().length === 1 && lastLook().recommendation === "hold" && lastLook().final === false && importsD() === 1);
     const t1b = await tick2("Watch tick again on day 1, twenty minutes later", "2026-11-29T23:50:00Z");
@@ -37731,9 +37762,9 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("the cutoff: the final analysis is HOLD (inconclusive), final", t4.code === 0 && looksD().length === 4 && finalD.recommendation === "hold" && finalD.final === true && t4.md.startsWith("# HOLD"));
     expect("the lift is real but smaller than the minimum effect, so it is not a keep", (finalD.primary.candidate.estimate ?? 0) - (finalD.primary.baseline.estimate ?? 0) < specD.primary.min_effect);
     const importsAtFinal = importsD();
-    const exportsAtFinal = filesUnder(join31(dir, "exports")).length;
+    const exportsAtFinal = filesUnder(join32(dir, "exports")).length;
     const t5 = await tick2("Watch tick after the final analysis (2026-12-16)", "2026-12-16T09:00:00Z");
-    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join31(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
+    expect("after the final: done, nothing imported or exported, still HOLD", t5.code === 0 && looksD().length === 4 && importsD() === importsAtFinal && filesUnder(join32(dir, "exports")).length === exportsAtFinal && t5.md.startsWith("# HOLD") && t5.out.includes("No more looks"));
     const pl = traffic.planted;
     const byVersion = (m) => Object.entries(m).sort().map(([t, n]) => `${t} ${n}`).join(", ");
     const count2 = (m) => Object.values(m).reduce((a, b) => a + b, 0);
@@ -37748,7 +37779,7 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     expect("no new GitHub request was made after the review", github.requests.length === requestsAfterReview);
     const logText = filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).map((p) => readFileSync22(p, "utf8")).join("\n");
     const rawId = /fernhill-(conv|unit|orphan)-/;
-    const pilotText = [...filesUnder(join31(dir, "reports")), ...filesUnder(join31(dir, "exports")), join31(dir, "journal.jsonl")].map((p) => readFileSync22(p, "utf8")).join("\n");
+    const pilotText = [...filesUnder(join32(dir, "reports")), ...filesUnder(join32(dir, "exports")), join32(dir, "journal.jsonl")].map((p) => readFileSync22(p, "utf8")).join("\n");
     const canariesList = Object.values(CANARIES);
     expect(`the ${filesUnder(logDir).filter((p) => p.endsWith(".jsonl")).length} log files hold no raw conversation or unit id and no message text`, logText.length > 0 && !rawId.test(logText) && !traffic.rawIds.filter((_, i) => i % 997 === 0).some((id) => logText.includes(id)) && !canariesList.some((c) => logText.toLowerCase().includes(c.toLowerCase())));
     expect("the exports, reports and journal hold no raw conversation or unit id either", !rawId.test(pilotText));
@@ -37761,8 +37792,8 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     const canaries = Object.values(CANARIES);
     const leaks = (text4) => canaries.some((c) => text4.toLowerCase().includes(c.toLowerCase()));
     expect(`nothing sent to GitHub holds pack conversation text (${github.requests.length} requests checked)`, !github.requests.some((r) => leaks(r.body) || leaks(r.path)));
-    expect("no report holds pack conversation text", !filesUnder(join31(dir, "reports")).some((p) => leaks(readFileSync22(p, "utf8"))));
-    expect("the journal holds no pack conversation text", !leaks(readFileSync22(join31(dir, "journal.jsonl"), "utf8")));
+    expect("no report holds pack conversation text", !filesUnder(join32(dir, "reports")).some((p) => leaks(readFileSync22(p, "utf8"))));
+    expect("the journal holds no pack conversation text", !leaks(readFileSync22(join32(dir, "journal.jsonl"), "utf8")));
     expect("nothing printed by the commands holds pack conversation text", !leaks(transcript2.join("\n")));
     expect("the GitHub token went only to the loopback server and was never printed", github.requests.every((r) => r.authorization === "Bearer demo-token-for-the-loopback-server") && !transcript2.join("\n").includes("demo-token-for-the-loopback-server"));
     expect("no provider credential was read: the commands saw only the GitHub token variable", Object.keys(inner.env).length === 1);
@@ -37770,21 +37801,21 @@ async function demo(flags, deps, prog = "node src/pilot/cli.ts") {
     say("Outcomes:");
     for (const line of outcomes) say(`- ${line}`);
     const decisionFiles = [`replay-${shortId(candA)}-pack-v1.md`, `decision-${shortId(expB)}.md`, `decision-${shortId(expC)}.md`, `decision-${shortId(expD)}.md`];
-    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync21(join31(dir, "reports", f))));
+    expect("each of the four outcomes has its decision file", decisionFiles.every((f) => existsSync21(join32(dir, "reports", f))));
     say("");
     say("The four outcomes, and the file that holds each decision:");
-    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join31(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
-    say(`- Reverted: candidate ${shortId(candB)}   ${join31(dir, "reports", `decision-${shortId(expB)}.md`)}`);
-    say(`- Kept: candidate ${shortId(candC)}   ${join31(dir, "reports", `decision-${shortId(expC)}.md`)}`);
-    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join31(dir, "reports", `decision-${shortId(expD)}.md`)}`);
+    say(`- Rejected in replay: candidate ${shortId(candA)}   ${join32(dir, "reports", `replay-${shortId(candA)}-pack-v1.md`)}`);
+    say(`- Reverted: candidate ${shortId(candB)}   ${join32(dir, "reports", `decision-${shortId(expB)}.md`)}`);
+    say(`- Kept: candidate ${shortId(candC)}   ${join32(dir, "reports", `decision-${shortId(expC)}.md`)}`);
+    say(`- Held at the final analysis (inconclusive): candidate ${shortId(candD)}   ${join32(dir, "reports", `decision-${shortId(expD)}.md`)}`);
     say("");
     say("Evidence to open:");
-    say(`- ${join31(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
-    say(`- ${join31(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
-    say(`- ${join31(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
-    say(`- ${join31(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
-    say(`- ${join31(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
-    say(`- ${join31(dir, "journal.jsonl")}   every step, in order`);
+    say(`- ${join32(dir, "reports", "PILOT.md")}   the whole pilot, each line citing its record`);
+    say(`- ${join32(dir, "reports", `review-${shortId(candC)}`, "REVIEW.md")}   the review bundle that became pull request #${github.pulls[1]?.number}`);
+    say(`- ${join32(dir, "reports", `decision-${shortId(expB)}.md`)}   the revert`);
+    say(`- ${join32(dir, "reports", `decision-${shortId(expC)}.md`)}   the keep (the hold is the earlier file for the same experiment)`);
+    say(`- ${join32(dir, "reports", `decision-${shortId(expD)}.md`)}   the hold at the final analysis (watch wrote WATCH.md beside it)`);
+    say(`- ${join32(dir, "journal.jsonl")}   every step, in order`);
     say("");
     say(failures.length === 0 ? `Synthetic pilot passed: ${step} steps, every expectation held (${((Date.now() - startedAt) / 1e3).toFixed(1)} s).` : `Synthetic pilot FAILED: ${failures.length} expectation(s) did not hold:`);
     for (const f of failures) say(`- ${f}`);
