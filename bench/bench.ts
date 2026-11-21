@@ -105,6 +105,16 @@ export function checkResults(r: Results, base: Results): string[] {
   return problems;
 }
 
+// One number for `npm run bench -- --score`, so Synthe can measure itself (synthe.self.json): real gains kept,
+// minus a heavier cost for every false keep. A false keep costs more than a gain earns, so a change that keeps
+// one more gain only by also keeping one more trap lowers the score.
+export const FALSE_KEEP_COST = 2;
+export function scoreOf(r: Results): number {
+  const gains = r.totals.prompt.gainsKept + r.totals.improve.realKept;
+  const falseKeeps = r.totals.prompt.falseKeeps + r.totals.improve.falseKeeps;
+  return gains - FALSE_KEEP_COST * falseKeeps;
+}
+
 // Every task and seed's change from the baseline, so a person can see where a failing check comes from.
 export function diffLines(r: Results, base: Results): string[] {
   const lines: string[] = [];
