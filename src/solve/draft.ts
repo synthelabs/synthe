@@ -3,7 +3,7 @@
 // rubric.md, compare.js). It then checks the rubric against the person's own labels, both ways round, and says
 // plainly when the judge does not agree with them. See swarm/GOAL-2.md.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import type { Model } from "../model/client.ts";
 import { runCommand } from "./run.ts";
 
@@ -197,9 +197,39 @@ export async function runCompare(script: string, question: unknown, env: Record<
   } catch { return "failed: the output was not JSON"; }
 }
 
-export interface DraftIo { say(line: string): void; env: NodeJS.ProcessEnv; hide(text: string): string }
+// hintBase: the folder the printed snippet's paths are relative to (the problem file's folder, or the current one).
+export interface DraftIo { say(line: string): void; env: NodeJS.ProcessEnv; hide(text: string): string; hintBase?: string }
 
-const shortText = (s: string) => { const one = s.replace(/\s+/g, " ").trim(); return one.length > 60 ? `${one.slice(0, 57)}...` : one; };
+/**
+ * The model of a problem file, read from its "model" section only. The person may run measure draft before the
+ * problem has a measure (drafting the measure is the point), so the rest of the file is not checked here.
+ */
+export function draftModelFrom(raw: unknown): { ok: true; model: DraftModel } | { ok: false; problems: string[] } {
+  const config = (raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>).model : undefined) as unknown;
+  if (config === undefined) return { ok: false, problems: ["model: measure draft needs a model section with model.model in the problem file, or use --model <model-id>."] };
+  if (!config || typeof config !== "object" || Array.isArray(config)) return { ok: false, problems: ["model: must be an object with \"model\", and \"base_url\" for an OpenAI-compatible provider."] };
+  const c = config as Record<string, unknown>;
+  const problems: string[] = [];
+  // A key in the file would end up in git; the line names the field but never quotes its value.
+  for (const k of Object.keys(c)) if (/key|token|secret|auth/i.test(k)) problems.push(`model.${k}: never put a key in the problem file. Set the key in the environment.`);
+  const p = c.provider;
+  if (p !== undefined && p !== "anthropic" && p !== "openai-compatible") problems.push(`model.provider: must be "anthropic" or "openai-compatible".`);
+  if (typeof c.model !== "string" || !c.model.trim()) problems.push("model.model: must be a model name.");
+  const provider: Provider = p === "anthropic" || p === "openai-compatible" ? p : c.base_url !== undefined ? "openai-compatible" : "anthropic";
+  let urlOk = c.base_url === undefined && provider === "anthropic";
+  if (typeof c.base_url === "string") { try { urlOk = ["http:", "https:"].includes(new URL(c.base_url).protocol); } catch { urlOk = false; } }
+  if (!urlOk) problems.push(provider === "openai-compatible" && c.base_url === undefined ? "model.base_url: the openai-compatible provider needs model.base_url." : "model.base_url: must be an http or https URL, such as \"https://api.example.com/v1\".");
+  if (problems.length) return { ok: false, problems };
+  return { ok: true, model: { provider, model: (c.model as string).trim(), ...(typeof c.base_url === "string" ? { base_url: c.base_url } : {}) } };
+}
+
+// A path for the snippet: relative to hintBase, with forward slashes, as a problem file wants it.
+function hintPath(path: string, base: string | undefined): string {
+  if (!base) return path;
+  const r = relative(base, path);
+  return (r || ".").split(sep).join("/");
+}
+
 
 /**
  * The whole command once the model is known. Returns the exit code: 0 when the judge agrees on at least 80% of the
@@ -229,14 +259,17 @@ export async function draftMeasure(examples: Example[], m: DraftModel, client: M
     io.say(`The judge agreed with your labels on ${agree} of ${examples.length} examples. Synthe needs at least ${Math.round(AGREEMENT_NEEDED * 100)}% before a measure is fair to use.`);
     io.say("The judge disagreed on:");
     for (const v of verdicts.filter((x) => !x.agrees)) {
-      io.say(`  ${v.id} (${JSON.stringify(shortText(v.input))}): with good first it said ${v.goodFirst}; with good second it said ${v.badFirst}.`);
+      io.say(`  ${v.id}: with good first it said ${v.goodFirst}; with good second it said ${v.badFirst}. Input:`);
+      // The whole input, so the person can find the example; a short form can match several examples.
+      io.say(`    ${v.input}`);
     }
     io.say(`Next: edit ${join(outDir, "rubric.md")} so it explains why the good outputs are better, then run the command again.`);
     return 2;
   }
   // GOAL-2.md: inside solve, problem commands never get the key, so solve uses the rubric through its own model judge.
-  io.say("The judge agrees with you often enough. To use it in solve, put this measure in your problem file, with the paths relative to the problem file, and keep the model section that you drafted with:");
-  io.say(`  "measure": { "judge": { "cases": "${join(outDir, "cases.jsonl")}", "run": "<the command that prints the output for one case>", "compare": "model", "rubric": "${join(outDir, "rubric.md")}" } }`);
+  const where = io.hintBase ? `paths relative to ${io.hintBase}` : "these paths";
+  io.say(`The judge agrees with you often enough. To use it in solve, put this measure in your problem file (${where}; change them if your problem file is in another folder), and keep the model section that you drafted with:`);
+  io.say(`  "measure": { "judge": { "cases": "${hintPath(join(outDir, "cases.jsonl"), io.hintBase)}", "run": "<the command that prints the output for one case>", "compare": "model", "rubric": "${hintPath(join(outDir, "rubric.md"), io.hintBase)}" } }`);
   io.say(`To try the judge by hand, run: echo '{"case": {...}, "a": "...", "b": "..."}' | node ${script}`);
   return 0;
 }

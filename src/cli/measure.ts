@@ -1,10 +1,10 @@
 // `synthe measure draft --examples <file.jsonl> --out <dir> [--problem <file> | --model <id>]`: drafts a judged
 // measure from examples and checks it against the person's labels. See src/solve/draft.ts.
-import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { anthropicModel, type Model } from "../model/client.ts";
 import { openAiCompatibleModel } from "../model/openai-compatible.ts";
-import { draftMeasure, examplesFile, providerKey, type DraftModel } from "../solve/draft.ts";
-import { loadProblem } from "./problem.ts";
+import { draftMeasure, draftModelFrom, examplesFile, providerKey, type DraftModel } from "../solve/draft.ts";
 
 const USAGE = "Usage: npx synthe measure draft --examples <file.jsonl> --out <dir> [--problem <problem-file> | --model <model-id>]";
 
@@ -23,13 +23,15 @@ export async function measureCommand(args: string[], cwd: string, say: (line: st
   let m: DraftModel;
   if (modelId) m = { provider: "anthropic", model: modelId };
   else {
-    const check = loadProblem(problemPath!, cwd);
-    if (!check.ok) { for (const p of check.problems) say(p); return 1; }
-    const config = check.problem.model as ({ provider?: string; base_url?: string; model?: string } | undefined);
-    if (!config?.model) { say(`${problemPath}: measure draft needs model.model in the problem file, or use --model <model-id>.`); return 1; }
-    const provider = config.provider === "anthropic" || config.provider === "openai-compatible" ? config.provider : config.base_url ? "openai-compatible" : "anthropic";
-    if (provider === "openai-compatible" && !config.base_url) { say(`${problemPath}: the openai-compatible provider needs model.base_url.`); return 1; }
-    m = { provider, model: config.model, ...(config.base_url ? { base_url: config.base_url } : {}) };
+    // Only the model section: the problem file may have no measure yet, since this command drafts it.
+    let raw: unknown;
+    try { raw = JSON.parse(readFileSync(resolve(cwd, problemPath!), "utf8")); } catch (e) {
+      say(`${problemPath}: Synthe can't read this problem file as JSON (${(e as Error).message}).`);
+      return 1;
+    }
+    const found = draftModelFrom(raw);
+    if (!found.ok) { for (const p of found.problems) say(`${problemPath}: ${p}`); return 1; }
+    m = found.model;
   }
 
   const examples = examplesFile(resolve(cwd, examplesPath));
@@ -44,7 +46,8 @@ export async function measureCommand(args: string[], cwd: string, say: (line: st
   const hide = (text: string): string => keys.reduce((t, k) => t.split(k).join("[your key]"), text);
   const model = client ?? (m.provider === "anthropic" ? anthropicModel(key) : openAiCompatibleModel({ baseUrl: m.base_url!, apiKey: key }));
   try {
-    return await draftMeasure(examples.examples, m, model, resolve(cwd, out), { say, env, hide });
+    const hintBase = problemPath ? dirname(resolve(cwd, problemPath)) : cwd;
+    return await draftMeasure(examples.examples, m, model, resolve(cwd, out), { say, env, hide, hintBase });
   } catch (e) {
     say(`The model call failed: ${hide(e instanceof Error ? e.message : String(e))}`);
     return 1;
