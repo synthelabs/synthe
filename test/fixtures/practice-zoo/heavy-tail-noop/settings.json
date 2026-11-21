@@ -1,0 +1,7 @@
+{
+  "retries": 2,
+  "color": "blue",
+  "verbose": false,
+  "title": "Report",
+  "cache": 100
+}
