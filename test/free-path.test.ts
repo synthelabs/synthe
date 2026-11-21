@@ -56,6 +56,11 @@ const paced = (rpm?: number) => openAiCompatibleModel({ baseUrl: baseUrl(), apiK
 
 test("with max_requests_per_minute, requests are spaced out and at most two are in flight", async () => {
   // Real time, at 600 a minute (100ms apart). Each reply takes 250ms, so without the limit three would be in flight.
+  // Open both connections first. Otherwise the first two timed requests each wait for a new connection, and on a busy
+  // machine the first one arrives late enough that the first gap looks short (seen in CI: [0,55,270,369,525,625]).
+  reset();
+  for (let i = 0; i < 2; i++) fake.queue.push({ body: { choices: [{ finish_reason: "stop", message: { content: "warm" } }] }, holdMs: 50 });
+  await Promise.all(Array.from({ length: 2 }, () => paced().ask(ask)));
   reset();
   const real = () => openAiCompatibleModel({ baseUrl: baseUrl(), apiKey: "test-key", maxRequestsPerMinute: 600 });
   for (let i = 0; i < 6; i++) fake.queue.push({ body: { choices: [{ finish_reason: "stop", message: { content: `r${i}` } }] }, holdMs: 250 });
