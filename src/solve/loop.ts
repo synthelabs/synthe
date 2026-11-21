@@ -2,12 +2,13 @@ import { execFileSync } from "node:child_process";
 import { isAbsolute, join, resolve } from "node:path";
 import { decide, decideWithConfirm, type Remeasure } from "./decide.ts";
 import { applyProposal, artifactFiles } from "./edits.ts";
-import { appendHistory, readHistory } from "./history.ts";
+import { appendHistory, nextRun, readHistory } from "./history.ts";
 import { failedGuard, measure, type Split } from "./measure.ts";
 import { commandCompare, judgeOutputs, readCases, runCases, type Compare, type Outputs } from "./judge.ts";
 import { modelCompare } from "./model-compare.ts";
 import { writeReport } from "./report.ts";
 import { stopRunning } from "./run.ts";
+import { idleRounds, readRun, type RunRecord, stillRunning, writeRun } from "./resume.ts";
 import { openScratch, type Scratch } from "./scratch.ts";
 import { isJudged, MAX_MISSES, type Attempt, type Decision, type HistoryEntry, type Measurement, type Problem, type Proposal, type Proposer, type SolveOptions, type SolveResult } from "./types.ts";
 
@@ -56,6 +57,11 @@ export interface LoopOptions {
   // Rounds in a row that keep nothing before the run stops.
   patience?: number;
   history?: Attempt[];
+  // A resumed run (solve --resume): the rounds it already finished, their attempts, the rounds in a row at their
+  // end that kept nothing, and the baseline of the first start. The rounds go on from there.
+  resume?: { rounds: number; attempts: Attempt[]; idle: number; baseline: number | null };
+  // Called after each finished round with every attempt of this run so far, so a stopped run can be resumed.
+  onRound?(round: number, attempts: Attempt[]): Promise<void> | void;
 }
 
 export interface LoopResult { stopped: string; baseline: number; final: number; attempts: Attempt[]; rounds: number; keptAny: boolean }
@@ -68,13 +74,15 @@ export async function runLoop(steps: LoopSteps, options: LoopOptions): Promise<L
   const patience = options.patience ?? MAX_MISSES;
   const earlier = options.history ?? [];
   const attempts: Attempt[] = [];
+  const prior = options.resume?.attempts ?? [];
 
   const start = await steps.guards();
   if (!start.ok) throw new SetupError(`${start.reason} This is before any change, so no change can be judged. Fix the guard first.`);
   const first = await steps.measure();
   if (!first.ok) throw new SetupError(`Could not measure the starting point: ${first.reason}`);
   let current: Ok = first;
-  say(`Starting score: ${first.value}.`);
+  const baseline = options.resume?.baseline ?? first.value;
+  say(options.resume ? `Resuming after round ${options.resume.rounds}. Score now: ${first.value} (baseline ${baseline}).` : `Starting score: ${first.value}.`);
 
   const record = async (attempt: Attempt) => {
     attempts.push(attempt);
@@ -83,11 +91,15 @@ export async function runLoop(steps: LoopSteps, options: LoopOptions): Promise<L
   };
 
   let stopped = `Reached the round limit (${plural(options.maxRounds, "round")}).`;
-  let idle = 0;
-  let round = 0;
-  let keptAny = false;
+  let idle = options.resume?.idle ?? 0;
+  let round = options.resume?.rounds ?? 0;
+  let keptAny = prior.some((a) => a.kept);
   while (true) {
     if (round >= options.maxRounds) break;
+    if (idle >= patience) {
+      stopped = `${plural(patience, "round")} in a row kept nothing.`;
+      break;
+    }
     if (options.maxCalls != null && steps.calls && steps.calls() >= options.maxCalls) {
       stopped = `Reached the model call limit (${plural(options.maxCalls, "call")}).`;
       break;
@@ -106,12 +118,13 @@ export async function runLoop(steps: LoopSteps, options: LoopOptions): Promise<L
       if (next) { current = next; kept = true; keptAny = true; }
     }
     idle = kept ? 0 : idle + 1;
+    await options.onRound?.(round, [...prior, ...attempts]);
     if (idle >= patience) {
       stopped = `${plural(patience, "round")} in a row kept nothing.`;
       break;
     }
   }
-  return { stopped, baseline: first.value, final: current.value, attempts, rounds: round, keptAny };
+  return { stopped, baseline, final: current.value, attempts: [...prior, ...attempts], rounds: round, keptAny };
 }
 
 // Every proposal is tried on the kept state. The round keeps at most one: the strongest that passes the rule.
@@ -193,15 +206,35 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
   const outDir = options.out ? (isAbsolute(options.out) ? options.out : resolve(process.cwd(), options.out)) : join(repoRoot, ".synthe", "solve", problem.name);
   const history: Attempt[] = readHistory(gitDir, problem.name).map((h) => ({ ...h }));
 
+  // --resume goes on with the most recent run when it stopped before its own stop rule (GOAL-2.md).
+  const last = readRun(gitDir, problem.name);
+  let from: RunRecord | null = null;
+  if (options.resume) {
+    if (last?.status === "running") {
+      if (stillRunning(last)) throw new SetupError(`The last run of ${problem.name} is still going (process ${last.pid}). Stop it or let it end, then resume.`);
+      from = last;
+    } else {
+      io.say(last ? `The last run of ${problem.name} ended normally, so --resume starts a new run.` : `There is no earlier run of ${problem.name}, so --resume starts a new run.`);
+    }
+  }
+  const run = from ? from.run : Math.max(nextRun(gitDir, problem.name), (last?.run ?? 0) + 1);
+
   let scratch: Scratch;
   try {
-    scratch = await openScratch(repoRoot, problem.dir, problem.name);
+    scratch = await openScratch(repoRoot, problem.dir, problem.name, from ? { branch: from.branch, base: from.base, head: from.head, staleRoot: from.root } : undefined);
   } catch (e) {
-    throw new SetupError(`Could not make the scratch checkout: ${(e as Error).message}`);
+    throw new SetupError(`Could not ${from ? "resume on" : "make"} the scratch checkout: ${(e as Error).message}`);
   }
+  if (from) io.say(`Resuming run ${run} of ${problem.name} on ${scratch.branch} after round ${from.rounds}.`);
 
-  let calls = 0;
-  let keptCount = 0;
+  const record: RunRecord = {
+    run, status: "running", branch: scratch.branch, base: from?.base ?? scratch.base, head: git(scratch.root, "rev-parse", "HEAD"), root: scratch.root,
+    pid: process.pid, rounds: from?.rounds ?? 0, calls: from?.calls ?? 0, baseline: from?.baseline ?? null, attempts: from?.attempts ?? [],
+  };
+  writeRun(gitDir, problem.name, record);
+
+  let calls = record.calls;
+  let keptCount = record.attempts.filter((a) => a.kept).length;
   let lastPaths: string[] = [];
   let lastProposal: Proposal | null = null;
   const measureAt = async (split?: Split): Promise<Measurement | { failed: string }> =>
@@ -242,6 +275,7 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
         if ("failed" in held) return { ok: false, reason: `the held-back split gave no number: ${held.failed}` };
         sample.holdout = held;
       }
+      if (first && record.baseline === null) record.baseline = train.value;
       first = false;
       return { ok: true, value: train.value, samples: sample };
     },
@@ -281,7 +315,7 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
       keptCount++;
     },
     record(attempt) {
-      appendHistory(gitDir, problem.name, [entry(attempt)]);
+      appendHistory(gitDir, problem.name, [entry(attempt)], run);
     },
   };
   // A judged measure has no number for one version alone, only for a comparison. So each version's "measurement"
@@ -333,7 +367,14 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
   let result: LoopResult;
   let final: number;
   try {
-    result = await runLoop(steps, { maxRounds: problem.budget.max_rounds, maxCalls: problem.budget.max_calls, candidates: problem.candidates, history });
+    result = await runLoop(steps, {
+      maxRounds: problem.budget.max_rounds, maxCalls: problem.budget.max_calls, candidates: problem.candidates, history,
+      ...(from ? { resume: { rounds: from.rounds, attempts: from.attempts, idle: idleRounds(from), baseline: from.baseline } } : {}),
+      onRound(round, attempts) {
+        Object.assign(record, { rounds: round, calls, attempts, head: git(scratch.root, "rev-parse", "HEAD") });
+        writeRun(gitDir, problem.name, record);
+      },
+    });
     final = judgeFinal && result.keptAny ? await judgeFinal() : result.final;
   } catch (e) {
     await cleanUp();
@@ -352,6 +393,7 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
   };
   const unit = judged ? "share of cases won" : isJudged(problem.measure) ? undefined : problem.measure.unit;
   writeReport(outDir, solved, { goal: problem.goal, direction, ...(unit ? { unit } : {}) });
+  writeRun(gitDir, problem.name, { ...record, status: "ended" });
   io.say(`Wrote ${join(outDir, "result.json")} and report.md.`);
   if (solved.branch) io.say(`Kept changes are on the branch ${solved.branch}.`);
   return solved;

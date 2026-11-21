@@ -301,6 +301,7 @@ Start here, inside your project's folder:
   npx synthe improve  raise a number you choose (tests passing, bundle size, build time or your own command): Synthe proposes code changes, measures each one, keeps only wins and opens one pull request (own key; no AI prompt needed)
   npx synthe improve --rounds N --budget USD   at most N rounds (default 6) and USD dollars of model cost (default 1.50)
   npx synthe problem check <file>   check a problem file: which files may change, how to measure them, what must not break
+  npx synthe measure draft --examples FILE --out DIR [--model ID]   draft a judged measure (rubric, cases, compare command) from good and bad example outputs, and check it against your labels
   npx synthe solve <file> [--out DIR] [--seed N]   propose changes for a problem file, measure each one and keep only real gains on a new branch
   npx synthe improve --handoff   measure only, and make the change with the coding agent you already use; then:
   npx synthe submit   measure that change; open the pull request, or merge it in auto mode
@@ -350,6 +351,7 @@ async function main() {
   else if (command === "migrate") process.exitCode = await migrate(process.argv.slice(3), { cwd: process.cwd(), say: console.log, apiKey: process.env.SYNTHE_API_KEY, anthropicKey: process.env.SYNTHE_ANTHROPIC_KEY });
   // Loaded on demand, like the pilot: the older commands do not pay for the solve code.
   else if (command === "problem") process.exitCode = (await import("./problem.ts")).problemCommand(process.argv.slice(3), process.cwd(), console.log);
+  else if (command === "measure") process.exitCode = await (await import("./measure.ts")).measureCommand(process.argv.slice(3), process.cwd(), console.log, process.env);
   else if (command === "solve") process.exitCode = await (await import("./solve.ts")).solveCommand(process.argv.slice(3), process.cwd(), console.log, process.env);
   else if (command === "pilot") {
     // Loaded on demand, so no other command pays for the pilot's code. The pilot reports its own refusals and

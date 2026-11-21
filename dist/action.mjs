@@ -28838,8 +28838,8 @@ function providerHost(provider) {
     return provider.base_url;
   }
 }
-function anthropicModel(apiKey) {
-  const client = new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(), maxRetries: 4 });
+function anthropicModel(apiKey, env = process.env) {
+  const client = new Anthropic({ apiKey, baseURL: ownKeyBaseUrl(env), maxRetries: 4 });
   return sdkModel(client);
 }
 function sdkModel(client) {
