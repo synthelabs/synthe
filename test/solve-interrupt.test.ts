@@ -18,6 +18,10 @@ function fixture(hangAt: number, proposals: { from: number; to: number }[]) {
   git("config", "user.email", "t@example.com");
   git("config", "user.name", "T");
   const pidFile = join(base, "measure.pid");
+  // solve makes its scratch checkout here, not in the shared temp folder, where other test files that run at the
+  // same time make and remove their own: only this run's leftovers count.
+  const tmp = join(base, "tmp");
+  mkdirSync(tmp);
   writeFileSync(join(dir, "knob.txt"), "level=10\n");
   // The measure hangs (and says so in pidFile) when the level is `hangAt`. Otherwise it prints the level.
   writeFileSync(join(dir, "measure", "score.js"), `const fs = require("fs"), path = require("path");
@@ -40,14 +44,15 @@ process.stdin.on("end", () => {
   }));
   git("add", "-A");
   git("commit", "-qm", "start");
-  return { base, dir, git, pidFile };
+  return { base, dir, git, pidFile, tmp };
 }
 
-const scratchDirs = () => new Set(readdirSync(tmpdir()).filter((n) => n.startsWith("synthe-solve-")));
+const scratchDirs = (tmp: string) => new Set(readdirSync(tmp).filter((n) => n.startsWith("synthe-solve-")));
 
 async function interrupt(f: ReturnType<typeof fixture>) {
-  const before = scratchDirs();
-  const child = spawn(process.execPath, [CLI, "solve", "problem.json"], { cwd: f.dir, stdio: ["ignore", "pipe", "pipe"] });
+  const before = scratchDirs(f.tmp);
+  const env = { ...process.env, TMPDIR: f.tmp, TMP: f.tmp, TEMP: f.tmp };
+  const child = spawn(process.execPath, [CLI, "solve", "problem.json"], { cwd: f.dir, env, stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
   child.stdout.on("data", (d) => { out += d; });
   child.stderr.on("data", (d) => { out += d; });
@@ -64,7 +69,7 @@ async function interrupt(f: ReturnType<typeof fixture>) {
   // A killed process can take a moment to go away.
   for (let i = 0; i < 60 && isAlive(); i++) await new Promise((r) => setTimeout(r, 50));
   const alive = isAlive();
-  const leftover = [...scratchDirs()].filter((n) => !before.has(n));
+  const leftover = [...scratchDirs(f.tmp)].filter((n) => !before.has(n));
   return { code, out, alive, leftover };
 }
 

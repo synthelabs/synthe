@@ -51,7 +51,12 @@ process.stdin.on("end", () => {
 }
 
 function solve(repo: string, out: string, ...extra: string[]) {
-  const child = spawn(process.execPath, [MAIN, "solve", join(repo, "problem.json"), "--out", out, ...extra], { cwd: repo, stdio: ["ignore", "pipe", "pipe"] });
+  // Scratch checkouts go to a temp folder of this test's own: a hard kill leaves one behind until the resume, and
+  // other test files look for leftovers in the shared temp folder.
+  const tmp = join(repo, "..", "tmp");
+  mkdirSync(tmp, { recursive: true });
+  const env = { ...process.env, TMPDIR: tmp, TMP: tmp, TEMP: tmp };
+  const child = spawn(process.execPath, [MAIN, "solve", join(repo, "problem.json"), "--out", out, ...extra], { cwd: repo, env, stdio: ["ignore", "pipe", "pipe"] });
   let text = "";
   child.stdout.on("data", (d) => { text += d; });
   child.stderr.on("data", (d) => { text += d; });
