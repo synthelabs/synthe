@@ -1,0 +1,1 @@
+{"at":"2026-11-21T11:37:06.553Z","by":"h05","title":"stage 3 hardening (c): run solve by hand on 3 problem kinds the zoo lacks (number formats in measure output, multi-file edits with new files, CRLF and spaces in paths, a measure that writes files or fails), fix what breaks","milestone":"FINAL"}
