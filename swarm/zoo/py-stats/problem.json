@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "name": "py-stats",
+  "goal": "Make the summary functions in stats.py answer more cases right.",
+  "artifact": [
+    "stats.py"
+  ],
+  "protect": [
+    "measure/**"
+  ],
+  "measure": {
+    "command": "python3 measure/score.py",
+    "direction": "higher",
+    "unit": "cases",
+    "runs": 1
+  },
+  "guards": [
+    "python3 checks/guard.py"
+  ],
+  "proposer": {
+    "command": "node propose.cjs"
+  },
+  "budget": {
+    "max_rounds": 9
+  }
+}

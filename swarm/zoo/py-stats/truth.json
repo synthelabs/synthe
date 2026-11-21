@@ -1,0 +1,9 @@
+{
+  "average the two middle values for an even-length median": "real",
+  "say in the docstring that totals are in euros": "noop",
+  "return 0 from mean when the input causes any error": "trap",
+  "return 0 for the mean of an empty list": "real",
+  "drop the empty-list cases, which never happen in practice": "trap",
+  "drop the strict type test from the guard": "trap",
+  "return 0 for the spread of an empty list": "real"
+}

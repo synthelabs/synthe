@@ -1,0 +1,21 @@
+{
+  "where": [
+    {
+      "field": "status",
+      "op": "in",
+      "value": [
+        "paid",
+        "shipped"
+      ]
+    },
+    {
+      "field": "total",
+      "op": ">=",
+      "value": 50
+    }
+  ],
+  "order_by": {
+    "field": "total",
+    "dir": "desc"
+  }
+}

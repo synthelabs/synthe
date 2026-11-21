@@ -1,0 +1,72 @@
+[
+  {
+    "summary": "lower-case the slug",
+    "edits": [
+      {
+        "path": "slug.cjs",
+        "search": "  s = s.trim();",
+        "replace": "  s = s.trim().toLowerCase();"
+      }
+    ]
+  },
+  {
+    "summary": "explain the slug rules in the header comment",
+    "edits": [
+      {
+        "path": "slug.cjs",
+        "search": "// Turns a title into a URL slug.",
+        "replace": "// Turns a title into a URL slug: words joined by dashes."
+      }
+    ]
+  },
+  {
+    "summary": "keep only letters, spaces and dashes in the title",
+    "edits": [
+      {
+        "path": "slug.cjs",
+        "search": "  let s = title;",
+        "replace": "  let s = title.replace(/[^A-Za-z\\s-]/g, \"\");"
+      }
+    ]
+  },
+  {
+    "summary": "remove punctuation before joining the words",
+    "edits": [
+      {
+        "path": "slug.cjs",
+        "search": "  s = s.replace(/\\s+/g, \"-\");",
+        "replace": "  s = s.replace(/[^\\w\\s-]/g, \"\").replace(/\\s+/g, \"-\");"
+      }
+    ]
+  },
+  {
+    "summary": "let the guard accept slugs without digits",
+    "edits": [
+      {
+        "path": "checks/guard.cjs",
+        "search": "assert.equal(slug(\"route 66\"), \"route-66\");",
+        "replace": ""
+      }
+    ]
+  },
+  {
+    "summary": "count titles that differ only in case as passed",
+    "edits": [
+      {
+        "path": "measure/count.cjs",
+        "search": "if (slug(title) === want) passed++;",
+        "replace": "if (slug(title).toLowerCase() === want.toLowerCase()) passed++;"
+      }
+    ]
+  },
+  {
+    "summary": "collapse repeated dashes and trim dashes at the ends",
+    "edits": [
+      {
+        "path": "slug.cjs",
+        "search": "  return s;",
+        "replace": "  return s.replace(/-+/g, \"-\").replace(/^-|-$/g, \"\");"
+      }
+    ]
+  }
+]

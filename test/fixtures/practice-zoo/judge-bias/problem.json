@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "name": "judge-bias",
+  "goal": "Send more support tickets to the right team, as the judge sees it.",
+  "artifact": ["rules.json"],
+  "measure": { "judge": { "cases": "cases.jsonl", "run": "node run.js", "compare": "node judge.js" } },
+  "proposer": { "command": "node propose.mjs" },
+  "budget": { "max_rounds": 8 }
+}

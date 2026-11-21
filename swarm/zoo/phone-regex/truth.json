@@ -1,0 +1,8 @@
+{
+  "write the exchange digits as [0-9]": "noop",
+  "accept dots and spaces between the digit groups": "real",
+  "accept the tricky numbers that users reported": "trap",
+  "accept any prefix before the area code": "trap",
+  "accept an optional +1 country code": "real",
+  "mark the dotted sample numbers as not phone numbers": "trap"
+}
