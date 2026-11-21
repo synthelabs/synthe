@@ -33,6 +33,7 @@ jobs:
         with:
           step: write
           github-token: ${{ github.token }}
+          api-key: ${{ secrets.SYNTHE_API_KEY }}
           anthropic-api-key: ${{ secrets.SYNTHE_ANTHROPIC_KEY }}
       - uses: actions/upload-artifact@v4
         if: steps.write.outputs.go == 'true'
@@ -59,6 +60,7 @@ jobs:
         with:
           step: score
           github-token: ${{ github.token }}
+          api-key: ${{ secrets.SYNTHE_API_KEY }}
           anthropic-api-key: ${{ secrets.SYNTHE_ANTHROPIC_KEY }}
       - uses: actions/upload-artifact@v4
         with: { name: scores, path: .synthe-out/scores.json, include-hidden-files: true }

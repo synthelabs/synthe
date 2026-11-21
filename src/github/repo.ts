@@ -39,6 +39,10 @@ export interface Repo {
   closePr(number: number): Promise<void>;
   updatePrBody(number: number, body: string): Promise<void>;
   findPr(branch: string): Promise<PrInfo | null>;
+  // The text of the last comment on a pull request by someone who could have reviewed it (its author_association is
+  // OWNER, MEMBER or COLLABORATOR), or null when there is none. Anyone else's comment is ignored, never a fallback:
+  // on a public repo anyone can comment, and the text goes into the writer's prompt.
+  lastHumanComment(number: number): Promise<string | null>;
   upsertIssue(number: number | null, title: string, body: string): Promise<number>;
   readState(): Promise<State>;
   writeState(state: State): Promise<void>;
@@ -47,6 +51,7 @@ export interface Repo {
 }
 
 const STATE_PATH = "state.json";
+const REVIEWERS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 const RETRIES = 2;
 const sleepFor = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -166,6 +171,19 @@ export function githubRepo(slug: string, token: string, api = "https://api.githu
       const list = await json("GET", `/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}`);
       const pr = Array.isArray(list) ? list[0] : undefined;
       return pr ? { number: pr.number, open: pr.state === "open", merged: Boolean(pr.merged_at) } : null;
+    },
+    async lastHumanComment(number) {
+      // Comments come oldest first, 100 to a page, so the last one is on the last page.
+      let res = await call("GET", `/issues/${number}/comments?per_page=100`);
+      if (!res.ok) throw new Error(`GitHub GET /issues/${number}/comments: ${res.status}`);
+      const last = /<[^>]*[?&]page=(\d+)[^>]*>;\s*rel="last"/.exec(res.headers.get("link") ?? "");
+      if (last) {
+        res = await call("GET", `/issues/${number}/comments?per_page=100&page=${last[1]}`);
+        if (!res.ok) throw new Error(`GitHub GET /issues/${number}/comments: ${res.status}`);
+      }
+      const list = await res.json();
+      const human = (Array.isArray(list) ? list : []).filter((c) => REVIEWERS.has(c?.author_association) && c?.user?.type !== "Bot" && !/\[bot\]$/.test(c?.user?.login ?? "") && typeof c?.body === "string" && c.body.trim() !== "");
+      return human.length ? human[human.length - 1].body : null;
     },
     async upsertIssue(number, title, body) {
       let res: Response;

@@ -1,10 +1,14 @@
 import { DEFAULTS, type Goal } from "./goal.ts";
+import { heldBackLimit, plannedCandidates } from "./run-alpha.ts";
+import { nonInferiorityP, notWorseNote, notWorseProblem, shorterSentence } from "./non-inferiority.ts";
 
 // One scenario's result. A null score means it could not be measured.
 // reply is kept only for the current prompt's training rows, so the next writer can study what went wrong.
 // failed and applicable count the team's checks on this reply; failedChecks names them for the next writer.
 // guardFailed and guardApplicable count the team's guards the same way. Guards are measured, never used to score.
-export interface ScoreRow { id: string; score: number | null; violation: boolean | null; reply?: string; failed?: number; applicable?: number; failedChecks?: string[]; guardFailed?: number; guardApplicable?: number }
+export interface ScoreRow { id: string; score: number | null; violation: boolean | null; reply?: string; failed?: number; applicable?: number; failedChecks?: string[]; guardFailed?: number; guardApplicable?: number;
+  // Full character length of this reply and of the current prompt's reply it was judged against, before the kept-text clip. Training rows only; display, never read by the merge rule.
+  chars?: number; currentChars?: number }
 
 // The share of the team's checks the replies passed, as a whole percentage, or null when no check applied or a reply
 // wasn't checked. The same rows must be compared on both sides.
@@ -38,6 +42,12 @@ export interface CandidateScore {
   // while attacks exist means the result is unknown, and an unknown result blocks a merge, like a duel that
   // couldn't be judged. Only the round's winning candidate is measured (see runScore), so the others stay unset.
   attackFailed?: string[] | null;
+  // Set when futility stopping (src/loop/futility.ts) stopped dueling it after this many training cases because it
+  // could no longer pass. Its remaining rows are unknown (null), never wins.
+  stoppedAfter?: number;
+  // A deletion candidate (src/loop/shorter.ts) and the prompt's length before and after it, in characters.
+  kind?: "shorter";
+  chars?: { before: number; after: number };
 }
 
 export interface RoundScores {
@@ -72,6 +82,7 @@ function tally(rows: ScoreRow[], current: ScoreRow[]) {
 
 // The same verdict as trainingProblem, in words a team understands.
 function trainingNote(c: CandidateScore, current: ScoreRow[], goal: Goal): string {
+  if (c.stoppedAfter !== undefined) return `Stopped after ${cases(c.stoppedAfter)}: it could no longer pass.`;
   const t = tally(c.train, current);
   if (mean(c.train) === null || !t) return "Some replies couldn't be judged, so it wasn't used.";
   if (mean(c.train)! < mean(current)! + goal.merge_rule.min_improvement) {
@@ -129,6 +140,7 @@ export function trainingProblem(c: CandidateScore, baselineTrain: ScoreRow[], go
   const { min_improvement, max_p } = goal.merge_rule;
   const before = mean(baselineTrain);
   if (before === null) return "baseline score unknown";
+  if (c.stoppedAfter !== undefined) return `${c.id}: stopped after ${c.stoppedAfter} test cases, it could no longer pass`;
   const after = mean(c.train);
   if (after === null) return `${c.id}: training score unknown`;
   if (after < before + min_improvement) return `${c.id}: judge score ${after.toFixed(1)}, needs ${(before + min_improvement).toFixed(1)} (${before.toFixed(0)} is even)`;
@@ -136,6 +148,18 @@ export function trainingProblem(c: CandidateScore, baselineTrain: ScoreRow[], go
   if (split === null) return `${c.id}: test cases could not be compared`;
   if (split.p > max_p) return `${c.id}: better in ${split.wins} and worse in ${split.losses} test cases, which could be luck`;
   return null;
+}
+
+// A shorter candidate only has to be no worse (src/core/non-inferiority.ts), and only while the team turned that on.
+// With merge_rule.allow_shorter off, a shorter candidate is judged like any other: it merges only if it is better.
+export const judgedAsShorter = (c: CandidateScore, goal: Goal) => c.kind === "shorter" && goal.merge_rule.allow_shorter === true;
+
+// trainingProblem for any candidate: the no-worse test on training for a shorter one, the usual one otherwise.
+export function candidateTrainingProblem(c: CandidateScore, baselineTrain: ScoreRow[], goal: Goal): string | null {
+  if (!judgedAsShorter(c, goal)) return trainingProblem(c, baselineTrain, goal);
+  if (mean(baselineTrain) === null) return "baseline score unknown";
+  if (c.stoppedAfter !== undefined) return `${c.id}: stopped after ${c.stoppedAfter} test cases, it could no longer pass`;
+  return notWorseProblem(c.id, paired(c.train, baselineTrain), goal.merge_rule.max_p, "test cases");
 }
 
 // replaced holds the head-to-head rows of the prompt the last merge replaced against the current prompt, or null
@@ -163,27 +187,39 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
   const reasons: string[] = [];
   const notes: Record<string, string> = {};
   let best: Extract<Verdict, { action: "merge" }> | null = null;
+  let bestShorter = false;
   for (const c of scores.candidates) {
-    const problem = trainingProblem(c, scores.baselineTrain, goal);
-    if (problem) { reasons.push(problem); notes[c.id] = trainingNote(c, scores.baselineTrain, goal); continue; }
+    const shorter = judgedAsShorter(c, goal);
+    const problem = candidateTrainingProblem(c, scores.baselineTrain, goal);
+    // A stopped candidate's note says it stopped, whichever rule stopped it (trainingNote does that first).
+    if (problem) { reasons.push(problem); notes[c.id] = shorter && c.stoppedAfter === undefined ? notWorseNote(tally(c.train, scores.baselineTrain), "") : trainingNote(c, scores.baselineTrain, goal); continue; }
     const after = mean(c.train)!;
     const split = paired(c.train, scores.baselineTrain)!;
-    if (!c.holdout) { reasons.push(`${c.id}: not tried on the hidden test cases`); notes[c.id] = "Also looked better, but another change did better still."; continue; }
+    if (!c.holdout) { reasons.push(`${c.id}: not tried on the hidden test cases`); notes[c.id] = shorter ? "Shorter and no worse on the test cases it learned from, but a change that did better was tried instead." : "Also looked better, but another change did better still."; continue; }
     const held = mean(c.holdout);
     const heldSplit = tally(c.holdout, scores.baselineHoldout);
     if (held === null || !heldSplit) { reasons.push(`${c.id}: hidden test cases couldn't be judged`); notes[c.id] = "Couldn't be checked on the hidden test cases, so it wasn't used."; continue; }
-    if (held < beforeHoldout + min_improvement) {
+    if (!shorter && held < beforeHoldout + min_improvement) {
       reasons.push(`${c.id}: judge score ${held.toFixed(1)} on the hidden test cases, needs ${(beforeHoldout + min_improvement).toFixed(1)}`);
       notes[c.id] = `Better on the test cases it learned from, but not on the ${c.holdout.length} hidden ones (better in ${heldSplit.w}, worse in ${heldSplit.l}), so it may only fit the ones it saw.`;
       continue;
     }
     // The held-back win must also be unlikely to be luck. The mean check above alone passes a change with no real
     // effect about half the time, and choosing the best of several candidates on training makes that worse.
-    const holdoutMaxP = goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p;
+    // merge_rule.run_alpha, when set, can make this limit stricter than holdout_max_p (see run-alpha.ts).
+    const holdoutMaxP = heldBackLimit(goal, plannedCandidates(goal, scores.candidates.length));
     const heldP = signP(heldSplit.w, heldSplit.l);
-    if (heldP > holdoutMaxP) {
-      reasons.push(`${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck (p ${heldP.toFixed(3)}, needs ${holdoutMaxP})`);
-      notes[c.id] = `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck, so it wasn't used.`;
+    if (shorter) {
+      const why = notWorseProblem(c.id, { wins: heldSplit.w, losses: heldSplit.l }, holdoutMaxP, "hidden test cases");
+      if (why) { reasons.push(why); notes[c.id] = notWorseNote(heldSplit, " hidden"); continue; }
+    } else if (heldP > holdoutMaxP) {
+      const perRun = holdoutMaxP < (goal.merge_rule.holdout_max_p ?? DEFAULTS.merge_rule.holdout_max_p);
+      reasons.push(perRun
+        ? `${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck over a whole run (p ${heldP.toFixed(3)}, needs ${holdoutMaxP.toFixed(3)} under merge_rule.run_alpha ${goal.merge_rule.run_alpha})`
+        : `${c.id}: better in ${heldSplit.w} and worse in ${heldSplit.l} hidden test cases, which could be luck (p ${heldP.toFixed(3)}, needs ${holdoutMaxP})`);
+      notes[c.id] = perRun
+        ? `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck across a whole run (your merge_rule.run_alpha), so it wasn't used.`
+        : `Better on the hidden test cases (better in ${heldSplit.w}, worse in ${heldSplit.l}), but not by enough to rule out luck, so it wasn't used.`;
       continue;
     }
     const added = addedBreaks(c.train, scores.baselineTrain) + addedBreaks(c.holdout, scores.baselineHoldout);
@@ -237,8 +273,10 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
     const guards = goal.counter_checks?.length ? { before: guardBefore!, after: guardAfter! } : undefined;
     const stillBroken = breaks(c.train) + breaks(c.holdout);
     const wasBroken = breaks(scores.baselineTrain) + breaks(scores.baselineHoldout.filter((r) => c.holdout!.some((h) => h.id === r.id)));
-    notes[c.id] = "Also looked better, but another change did better still.";
-    if (best === null || after > best.after) {
+    notes[c.id] = shorter ? "Shorter and no worse, but a change that did better was used instead." : "Also looked better, but another change did better still.";
+    // A change that is better beats one that is only shorter; between two of the same kind, the higher score wins.
+    if (best === null || (bestShorter && !shorter) || (bestShorter === shorter && after > best.after)) {
+      bestShorter = shorter;
       // The team's own number first, when they set checks: it is what they asked Synthe to improve.
       const rateBefore = checkRate([...scores.baselineTrain, ...currentHeld]);
       const rateAfter = checkRate([...c.train, ...c.holdout]);
@@ -253,8 +291,10 @@ export function judgeRound(scores: RoundScores, goal: Goal, replaced: ScoreRow[]
       best = {
         action: "merge", candidateId: c.id, before, after, heldBefore: beforeHoldout, heldAfter: held, wins: split.wins, losses: split.losses,
         heldWins: heldSplit.w, heldLosses: heldSplit.l, notes, ...(rates ? { checks: rates } : {}), ...(guards ? { guards } : {}), ...(attacks ? { attacks } : {}),
-        plain: `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}${guardLine}${attackLine}`,
-        reasons: [`judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`],
+        plain: shorter
+          ? `${rates ? `Your checks passed ${rates.after}% of the time, against ${rates.before}% before. ` : ""}${shorterSentence(c.chars, { w: split.wins, l: split.losses, t: c.train.length - split.wins - split.losses })} On the hidden test cases it never saw: better in ${heldSplit.w}, worse in ${heldSplit.l}, the same in ${heldSplit.t}.${rules}${guardLine}${attackLine}`
+          : `${lead}Its replies were better in ${cases(split.wins)} and worse in ${split.losses}, then better again on the hidden test cases it never saw (better in ${heldSplit.w}, worse in ${heldSplit.l}).${rules}${guardLine}${attackLine}`,
+        reasons: [`${shorter ? `shorter and no worse: p ${nonInferiorityP(split.wins, split.losses).toFixed(3)} on the learned-from test cases, ${nonInferiorityP(heldSplit.w, heldSplit.l).toFixed(3)} on the hidden ones; ` : ""}judge score ${held.toFixed(1)} on the hidden test cases and ${after.toFixed(1)} on the learned-from ones, where ${before.toFixed(0)} is even; better in ${split.wins} and worse in ${split.losses} learned-from test cases${stillBroken > 0 ? `; still breaks a rule in ${stillBroken} test case${stillBroken === 1 ? "" : "s"}, down from ${wasBroken}` : ""}`],
       };
     }
   }

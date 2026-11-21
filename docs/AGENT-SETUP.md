@@ -55,7 +55,11 @@ SYNTHE_ANTHROPIC_KEY=<key> npx --yes github:synthelabs/synthe#v1.10.0 init --age
 
 3. The key is a real secret. Tell the person it will appear in this chat and in the command, and that after setup they can run `npx synthe key` in their own terminal to replace it. Never write the key to a file. Never commit it.
 
-Agent setup uses only `SYNTHE_ANTHROPIC_KEY`. Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app's key is never silently used by an agent. Show the printed credential and budget so they know whose credit will be used.
+Agent setup uses only `SYNTHE_ANTHROPIC_KEY` (or an Anthropic key in `SYNTHE_API_KEY`). Both draft and confirmation refuse an `ANTHROPIC_API_KEY`-only environment; the app's key is never silently used by an agent. Show the printed credential and budget so they know whose credit will be used.
+
+If the agent runs on another provider's model through an OpenAI-compatible API (OpenAI, Gemini, Groq, OpenRouter, a local Ollama), the person can use that provider instead, so the prompt is tested on the model their users get. Put the key in front as `SYNTHE_API_KEY=<key>` (never `OPENAI_API_KEY`), and add `--base-url <its OpenAI-compatible URL> --model <the model the agent uses> --price <input>/<output>` to the step 5 command, where the price is US dollars per million input and output tokens from the provider's pricing page. Ask the person for the model and the price; never guess them.
+
+If the person has no key at all, they can get a free one: use `--preset gemini`, `--preset groq` or `--preset openrouter` (no `--base-url` or `--model` needed) and add `--free` if they say the key is on the provider's free tier, or `--price` if it is paid. Ask; don't guess. Free tiers have limits the provider sets; Synthe stops cleanly when they run out and tries again on the next scheduled run.
 
 ## 3. Find the system prompt
 

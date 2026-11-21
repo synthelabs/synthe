@@ -27,8 +27,8 @@ const mutations = [
   ["agent sees an interactive paste prompt", "src/cli/init.ts", 'if (!agent) io.say("\\nOptional:', 'io.say("\\nOptional:'],
   ["own key is never used", "src/model/client.ts", 'if (key?.trim()) return anthropicModel(key.trim());', 'if (false) return anthropicModel(key.trim());'],
   ["a missing key is not blamed on the key", "src/loop/failure.ts", 'if (e instanceof MissingKeyError) return { step, kind: "key", message: e.message };', ''],
-  ["agent draft sends a non-Anthropic key", "src/cli/init.ts", 'if (agent && key && !/^sk-ant-\\S+$/.test(key)) askPerson', 'if (false) askPerson'],
-  ["agent confirmation saves a non-Anthropic key", "src/cli/init.ts", 'if (!/^sk-ant-\\S+$/.test(credential)) askPerson', 'if (false) askPerson'],
+  ["agent draft sends a non-Anthropic key", "src/cli/init.ts", 'if (agentKey && !/^sk-ant-\\S+$/.test(agentKey)) askPerson', 'if (false) askPerson'],
+  ["agent confirmation saves a non-Anthropic key", "src/cli/init.ts", 'if (!drafted && !/^sk-ant-\\S+$/.test(credential)) askPerson', 'if (false) askPerson'],
   ["event workflow upgrade hides the key step", "src/cli/upgrade.ts", '/step: receipt-start|synthelabs\\/synthe@v\\d+\\.\\d+\\.\\d+/.test(before)', 'false'],
   ["own-key workflow upgrade is told to run key", "src/cli/upgrade.ts", '/step: receipt-start|synthelabs\\/synthe@v\\d+\\.\\d+\\.\\d+/.test(before)', '/-code:/.test(before)'],
 ];

@@ -12,6 +12,7 @@ const SHARE = "src/core/share.ts";
 const REPORT = "src/loop/report.ts";
 const EVIDENCE = "src/core/evidence.ts";
 const WORKFLOW = "templates/synthe.yml";
+const POOL = "src/loop/pool.ts";
 
 // Every test file, so a new one is never left out of the check.
 const TESTS = readdirSync("test").filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`);
@@ -65,7 +66,7 @@ const allMutations = [
   ["prompt change ignored", DECIDE, "sha256(current) !== scores.baselineHash", "false"],
   ["any stop resumes on new scenarios", STATE, "!/rounds in a row found no winner$/.test(s.stopped) || ", ""],
   ["resumes without a scenario change", STATE, " || s.scenariosHash === scenariosHash", ""],
-  ["held-back test goes to the highest average", SCORE, "\n    .filter((c) => trainingProblem(c, scores.baselineTrain, goal) === null)", ""],
+  ["held-back test goes to the highest average", SCORE, "\n    .filter((c) => candidateTrainingProblem(c, scores.baselineTrain, goal) === null)", ""],
   ["writer studies held-back replies", WRITE, "lessonText(state, prompt, train)", "lessonText(state, prompt, scenarios)"],
   ["writer studies a stale prompt's replies", WRITE, " || state.lessons.promptHash !== sha256(prompt)", ""],
   ["winner read from the wrong side", SCORE, 'const challengerWon = v.better === (first ? "A" : "B");', 'const challengerWon = v.better === "A";'],
@@ -96,7 +97,7 @@ const allMutations = [
   ["setup defaults an unclear merge answer to automatic", "src/cli/init.ts", "if (auto === null) { auto = false;", "if (auto === null) { auto = true;"],
   ["unknown cost merges", DECIDE, "input.costUsd === null", "false"],
   ["identical candidate scored", SCORE, " && c.text.trim() !== baseline.trim()", ""],
-  ["candidates trained on held-back scenarios", SCORE, "const duels = await challenge(c.id, c.text, train, trainReplies);", "const duels = await challenge(c.id, c.text, scenarios, new Map([...trainReplies, ...(await holdReplies())]));"],
+  ["candidates trained on held-back scenarios", SCORE, "const duels = await challenge(c.id, c.text, train, trainReplies, goal.compose === true ? undefined : stopFor(c));", "const duels = await challenge(c.id, c.text, scenarios, new Map([...trainReplies, ...(await holdReplies())]));"],
   ["writer sees held-back scenarios", WRITE, 'const train = scenarios.filter((s) => s.split === "train");', "const train = scenarios;"],
   ["a busy API round counts as a stall", DECIDE, "run `npx synthe restart` later.\";\n      stall = false;", "run `npx synthe restart` later.\";"],
   ["a key failure is read as a busy API", "src/loop/failure.ts", "kind: /\\bkey\\b/i.test(plain) ? \"key\" : \"busy\"", "kind: \"busy\""],
@@ -180,6 +181,27 @@ const allMutations = [
   ["attack subset test inverted", RULE, "const newAttacks = mine.filter((id) => !baselineFailed.has(id));", "const newAttacks = mine.filter((id) => baselineFailed.has(id));"],
   ["an unknown attack result passes", RULE, "if (baseFailed === null || !Array.isArray(mine)) {", "if (false) {"],
   ["attacks leaked into the writer input", SCORE, "const train = scenarios.filter((s) => s.split === \"train\");\n  const holdout", "const train = [...scenarios, ...attacks.map((a) => ({ id: a.id, input: a.input, expected: a.must, split: \"train\" as const }))].filter((s) => s.split === \"train\");\n  const holdout"],
+  ["pool: held-back ids are kept", POOL, 'e.wonOn.filter((id) => trainIds.has(id) && !fixed.has(id))', 'e.wonOn.filter((id) => !fixed.has(id))'],
+  ["pool: a change that breaks a guardrail is pooled", POOL, ' || addedBreaks(scored.train, a.scores.baselineTrain) > 0', ''],
+  ["pool: the merge candidate skips the safety check", POOL, ': candidateProblem(built.text, goal.prompt)', ': null'],
+  ["pool: conflicting edits are combined", POOL, ' || paragraphs(both.text) !== paragraphs(other.text)', ''],
+  ["pool: a combination already tried is built again", POOL, 'a.tried.has(print) ? "it was already tried for this goal and prompt" : null', 'null'],
+  ["pool: the same paragraph is added twice", POOL, 'if (entry.edits.some((e) => e.find === "" && have.includes(flat(e.replace)))) return { problem: "the prompt already has this text" };\n', ''],
+  ["pool: stale entries are kept", POOL, 'entries = entries.filter((e) => !("problem" in apply(a.promptAfter, e, a.goal)));', ''],
+  ["pool: nothing is pruned", POOL, 'entries = entries.filter((e, i) => !entries.some((d, j) => j !== i && within(e, d) && (!within(d, e) || j < i)));', ''],
+  ["pool: the cap is ignored", POOL, 'entries.slice(0, POOL_SIZE)', 'entries'],
+  ["pool: a merged winner's wins still count for the rest", POOL, 'a.outcome === "merged" && a.winnerId ? winsOf(a.winnerId) : []', '[]'],
+  ["pool: a change the hidden cases refused is pooled", POOL, '      if (scored.holdout) continue;\n', ''],
+  ["pool: a change with a coin's record is pooled", POOL, 'wonOn.length && signP(wonOn.length, lost) <= POOL_MAX_P', 'wonOn.length'],
+  ["pool: planted wins count toward the evidence bar", POOL, 'const wonOn = winsOf(c.id).filter((x) => trainIds.has(x));', 'const wonOn = winsOf(c.id);'],
+  ["pool: the round's winner is pooled", POOL, 'c.id === a.winnerId || ', ''],
+  ["pool: population runs when synthe.json leaves it off", WRITE, 'goal.population === true ? mergeFromPool', 'true ? mergeFromPool'],
+  ["pool: state gets a pool when population is off", DECIDE, 'judged && goal.population === true && current', 'judged && current'],
+  ["pool: compose and the pool both add a candidate", SCORE, 'goal.compose === true && safe.some((c) => c.id === POOL_ID)', 'false'],
+  ["futility: a shorter candidate is stopped by the better-than rule", "src/loop/futility.ts", '...(kind ? { kind } : {})', ''],
+  ["futility: a candidate the pool could keep is stopped", SCORE, ' && !(poolable(c) && couldStillPool(done, rest, current))', ''],
+  ["pool: a candidate futility stopped is pooled", POOL, '      if (scored.stoppedAfter !== undefined) continue;\n', ''],
+  ["run_alpha: the pool's candidate is left out of the planned count", "src/core/run-alpha.ts", 'goal.compose === true || goal.population === true', 'goal.compose === true'],
   ["improve: a change that breaks a passing test can still win", "src/improve/verdict.ts", '  if (broken) return result(false, broken, "tests");\n', ''],
   ["improve: unnamed failing tests pass as clean", "src/improve/verdict.ts", 'if (candidate.failing === null || baseline.failing === null) return', 'if (false) return'],
   ["improve: any test failing before excuses every failure", "src/improve/verdict.ts", 'candidate.failing.filter((t) => !before.has(t))', 'candidate.failing.filter(() => false)'],

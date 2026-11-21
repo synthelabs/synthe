@@ -63,6 +63,18 @@ const server = createServer((req, res) => {
       return send(m.status, { message: m.body });
     }
     if (path === "/issues") return send(201, { number: 3 });
+    // Pull request comments, oldest first: #9 has two pages, #10 only bots, #11 is an error, #12 has none.
+    const person = (login: string, body: string, author_association = "MEMBER") => ({ user: { login, type: "User" }, author_association, body });
+    const bot = (login: string, body: string) => ({ user: { login, type: "Bot" }, author_association: "MEMBER", body });
+    if (path === "/issues/9/comments") {
+      if (url.searchParams.get("page") === "2") return send(200, [person("a", "older on page two", "OWNER"), person("b", "  the last word  ", "COLLABORATOR"), person("rando", "newer, but a stranger's", "NONE"), person("fan", "newest, a past contributor", "CONTRIBUTOR"), bot("github-actions[bot]", "report updated")]);
+      res.setHeader("link", `<http://x/repos/o/r/issues/9/comments?per_page=100&page=2>; rel="next", <http://x/repos/o/r/issues/9/comments?per_page=100&page=2>; rel="last"`);
+      return send(200, [person("a", "page one")]);
+    }
+    if (path === "/issues/10/comments") return send(200, [bot("github-actions[bot]", "hello"), { user: { login: "ci[bot]", type: "User" }, author_association: "MEMBER", body: "x" }, person("c", "   "), person("d", "only strangers speak", "NONE"), person("e", "first-timer", "FIRST_TIME_CONTRIBUTOR")]);
+    if (path === "/issues/11/comments") return send(500, { message: "boom" });
+    if (path === "/issues/12/comments") return send(200, []);
+    if (path === "/issues/13/comments") return send(200, [person("m", "a maintainer, long ago", "MEMBER"), person("n", "a stranger, later", "NONE")]);
     if (path.startsWith("/issues/")) return send(200, {});
     send(404, {});
   });
@@ -78,6 +90,14 @@ after(() => server.close());
 test("reads files, and missing is null", async () => {
   assert.equal(await repo.readFile("prompt.md", "main"), "Old");
   assert.equal(await repo.readFile("nope.md", "main"), null);
+});
+
+test("the last comment a reviewer left on a pull request is found, on the last page; bots and strangers don't count", async () => {
+  assert.equal(await repo.lastHumanComment(9), "  the last word  ");
+  assert.equal(await repo.lastHumanComment(10), null, "only bots, blank text, or strangers");
+  assert.equal(await repo.lastHumanComment(13), "a maintainer, long ago", "the newest comment from a reviewer wins over a newer one from anyone else");
+  assert.equal(await repo.lastHumanComment(12), null, "no comments");
+  await assert.rejects(repo.lastHumanComment(11), /comments: 500/);
 });
 
 test("dispatches the default-branch workflow and distinguishes permission from rate limiting", async () => {

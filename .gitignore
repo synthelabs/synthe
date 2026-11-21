@@ -4,3 +4,7 @@ node_modules
 .synthe-local
 mutation/reports
 .stryker-tmp
+dist/.build-*
+bench/results.json
+bench/results-live.json
+bench/zoo-results.json

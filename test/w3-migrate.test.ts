@@ -140,7 +140,8 @@ test("the command is in the help and runs from the CLI without a key", () => {
   assert.equal(unknown.status, 1);
   const keyless = spawnSync(process.execPath, [MAIN, "migrate", "--to", "claude-haiku-5-5"], { cwd: dir, encoding: "utf8", env });
   assert.equal(keyless.status, 1);
-  assert.match(keyless.stdout, /needs your Synthe key/);
+  assert.match(keyless.stdout, /needs your own key:\n  SYNTHE_API_KEY=your-key npx synthe migrate/);
+  assert.match(keyless.stdout, /ANTHROPIC_API_KEY isn.t read/);
 });
 
 test("outside a set-up project it says to run init", async () => {

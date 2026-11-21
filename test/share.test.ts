@@ -6,7 +6,10 @@ import { scrub, sharePayload, shareRound, stopCode } from "../src/core/share.ts"
 import { newState, type RoundRecord } from "../src/core/state.ts";
 import { renderReport } from "../src/loop/report.ts";
 import { shouldShare } from "../src/core/share.ts";
-import { goal } from "./helpers.ts";
+import { MemoryRepo, goal } from "./helpers.ts";
+import type { RoundScores, ScoreRow } from "../src/core/merge-rule.ts";
+import { sha256 } from "../src/core/safety.ts";
+import { runDecide } from "../src/loop/decide.ts";
 
 const record: RoundRecord = {
   round: 2, at: "2026-11-03T00:00:00Z", outcome: "merged", reasons: [],
@@ -135,4 +138,28 @@ test("no workflow condition starts with a bare !, which YAML would read as a tag
   const workflow = readFileSync("templates/synthe.yml", "utf8");
   const bare = workflow.split("\n").filter((line) => /^\s*if:\s*!/.test(line));
   assert.deepEqual(bare, []);
+});
+
+test("no share sends a vault row: the shared example only ever comes from a scored training case", async () => {
+  // Since the time-limited "full" share is gone, the only test-case text a share carries is the round's example,
+  // which pickExample takes from the winning change's training rows, and rounds never score vault cases.
+  const row = (id: string, split: string, input: string) => JSON.stringify({ id, input, expected: "good", split });
+  const train = Array.from({ length: 20 }, (_, i) => `s${i}`);
+  const held = Array.from({ length: 10 }, (_, i) => `h${i}`);
+  const file = [...train.map((id) => row(id, "train", `TRAIN-${id} question`)), ...held.map((id) => row(id, "holdout", `HOLDOUT-${id} question`)), row("v1", "vault", "VAULT-MARKER question")].join("\n");
+  const g = goal({ share: "detail" });
+  // Even a scores file that plants the vault case as the winning change's first win can't make it the example.
+  for (const planted of [false, true]) {
+    const ids = planted ? ["v1", ...train] : train;
+    const rows = (score: number, who: string): ScoreRow[] => ids.map((id) => ({ id, score, violation: false, reply: id === "v1" ? "VAULT-MARKER reply" : `${who} reply ${id}` }));
+    const heldRows = (score: number): ScoreRow[] => held.map((id) => ({ id, score, violation: false }));
+    const scores: RoundScores = { baselineHash: sha256("Base"), baselineTrain: rows(50, "old"), baselineHoldout: heldRows(50), candidates: [{ id: "c1", train: rows(100, "new"), holdout: heldRows(100) }] };
+    const repo = new MemoryRepo("Base");
+    repo.files.set("s.jsonl", file);
+    const r = await runDecide(g, repo, { candidates: [{ id: "c1", text: "New", edits: [{ find: "Base", replace: "New" }] }], scores, costUsd: 0.1 });
+    assert.equal(r?.outcome, "merged");
+    const uploaded = JSON.stringify(sharePayload(g, repo.state, r!, "1.6.2"));
+    assert.doesNotMatch(uploaded, /VAULT-MARKER|"v1"/);
+    if (!planted) assert.match(uploaded, /TRAIN-s0 question/, "the example itself is still shared");
+  }
 });

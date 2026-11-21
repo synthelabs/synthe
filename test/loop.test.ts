@@ -353,10 +353,16 @@ test("a judge that always picks the first reply can't manufacture a winner", asy
   const ask = m.ask;
   m.ask = async (a) => (a.schema ? { text: JSON.stringify({ better: "A", a_guardrail_ok: true, b_guardrail_ok: true }), costUsd: 0.001 } : ask(a));
   const many = [...Array(40)].map((_, i): Scenario => ({ id: `s${i}`, input: `q-${i}`, expected: "good", split: i < 30 ? "train" : "holdout" }));
-  const { scores } = await runScore(goal(), "Base", [{ id: "c", text: "Other" }], many, m);
-  const wins = scores.candidates[0].train.filter((r) => r.score === 100).length;
-  assert.equal(wins, 15); // exactly half each way, so position alone decides nothing
-  assert.notEqual(judgeRound(scores, goal(), null).action, "merge");
+  // Scored in full, and with futility stopping: exactly half of the cases actually dueled are won each way, so
+  // position alone decides nothing, and stopping early keeps that balance.
+  for (const stopEarly of [false, true]) {
+    const { scores } = await runScore(goal(), "Base", [{ id: "c", text: "Other" }], many, m, null, Math.random, [], null, null, stopEarly);
+    const c = scores.candidates[0];
+    const wins = c.train.filter((r) => r.score === 100).length;
+    assert.equal(c.stoppedAfter === undefined, !stopEarly);
+    assert.equal(wins, (c.stoppedAfter ?? 30) / 2);
+    assert.notEqual(judgeRound(scores, goal(), null).action, "merge");
+  }
 });
 
 test("after a merge, the replaced prompt challenges the new one and wins a revert when it's clearly better", async () => {
@@ -695,11 +701,11 @@ test("the business policy reaches the judge and the guardrail re-check", async (
   const m = flagsC(() => ({ breaks: false, guardrail: "", quote: "" }));
   const { scores } = await runScore(g, "Base", [{ id: "bold", text: "Bold" }], named, m);
   const judged = (m as any).seen.filter((a: Ask) => a.schema);
-  assert.ok(judged.length > 0 && judged.every((a: Ask) => a.user.includes("Refunds only within 30 days.")));
+  assert.ok(judged.length > 0 && judged.every((a: Ask) => `${a.system ?? ""}\n${a.user}`.includes("Refunds only within 30 days.")));
   assert.ok(scores.candidates.length === 1);
   const m2 = scripted({});
   await runScore(goal(), "Base", [{ id: "c", text: "Other" }], named, m2);
-  assert.ok(m2.seen.filter((a) => a.schema).every((a) => !a.user.includes("Business policy")));
+  assert.ok(m2.seen.filter((a) => a.schema).every((a) => !`${a.system ?? ""}\n${a.user}`.includes("Business policy")));
 });
 
 test("every merged pull request carries a receipt and says what wasn't tested", async () => {

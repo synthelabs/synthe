@@ -1,5 +1,5 @@
 import { relative, join } from "node:path";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { AgentSetupError, askPerson } from "./agent.ts";
 import { DEFAULT_RUNS, improveFile, parseImproveConfig, type Direction, type ImproveConfig, type PresetId } from "../improve/config.ts";
 import type { Exec } from "../improve/exec.ts";
@@ -9,7 +9,9 @@ import { metricOnlyFiles, promptModeProtect } from "../improve/protect.ts";
 import { baselineLine, loopPrBody, loopPrTitle, money, movement, quantity, taskCard, triedLines } from "../improve/text.ts";
 import { measureAt } from "../improve/worktree.ts";
 import { EDIT_MODEL } from "../improve/writer.ts";
-import { anthropicModel, type Model } from "../model/client.ts";
+import { anthropicModel, onModel, providerHost, providerModel, type Model } from "../model/client.ts";
+import { GOAL_FILE, parseGoal, unpricedModels, type OtherProvider } from "../core/goal.ts";
+import { countCalls } from "../core/calls.ts";
 
 // env, makeModel and onInterrupt are only used by the loop; main.ts passes the real ones, tests pass fakes.
 export interface ImproveIo {
@@ -25,7 +27,7 @@ export interface ImproveOptions {
 
 export const IMPROVE_BRANCH = (n: number) => `synthe/improve-${n}`;
 export const IMPROVE_NEXT = "NEXT: Synthe measured the current code and saved its config inside .git (nothing to commit). Show the person the baseline and the task card as written. Then create the branch named in the card, make ONE small change to product code only, commit it, and run `npx synthe submit`. Do not edit tests, the metric, package.json or anything under .synthe/.";
-export const IMPROVE_LIST_NEXT = "NEXT: Show the person this list as written. Ask them, in one message: what should get better (one sentence), which metric, which regression check, and auto or review. Then run `npx synthe improve --agent` with their answers: Synthe proposes code changes itself, measures each one and keeps only wins, which takes several minutes, so give the command a long timeout (30 minutes). It needs SYNTHE_ANTHROPIC_KEY in the environment. To make the change yourself instead, add --handoff.";
+export const IMPROVE_LIST_NEXT = "NEXT: Show the person this list as written. Ask them, in one message: what should get better (one sentence), which metric, which regression check, and auto or review. Then run `npx synthe improve --agent` with their answers: Synthe proposes code changes itself, measures each one and keeps only wins, which takes several minutes, so give the command a long timeout (30 minutes). It needs SYNTHE_API_KEY (or SYNTHE_ANTHROPIC_KEY) in the environment. To make the change yourself instead, add --handoff.";
 export const IMPROVE_LOOP_NEXT_WIN = "NEXT: Show the person every round line, the result and the pull request link as written. In auto mode, tell them to run git pull. In review mode, tell them to review the pull request and merge it to keep the changes.";
 export const IMPROVE_LOOP_NEXT_NONE = "NEXT: Show the person what was tried and why each change was not kept, as written. Nothing was pushed. To try again, run the same command (the next run reads these lessons); to make the change yourself instead, run it with --handoff.";
 
@@ -144,17 +146,40 @@ export async function preflight(io: ImproveIo, dirtyMessage: string, more?: (fou
   return problems.length ? { problems, found } : { problems, repo: found, found };
 }
 
-export interface LoopCredential { key: string; line: string }
+// provider and model: another provider from synthe.json, and the model all of the loop's calls go to there.
+// maxCalls: budget.max_calls from synthe.json, the same hard cap a workflow run has, here per improve run.
+export interface LoopCredential { key: string; line: string; provider?: OtherProvider; model?: string; maxCalls?: number }
 
-// Which credential the loop spends, chosen only from Synthe's own variables. Unlike `try`, it never falls back to
-// ANTHROPIC_API_KEY: that is usually the app's own key, and the loop makes several calls per round.
-export function loopCredential(env: Partial<Record<string, string>>): { credential: LoopCredential } | { problem: string } {
-  const key = env.SYNTHE_ANTHROPIC_KEY?.trim();
-  if (key) return { credential: { key, line: "Credential: your own key from SYNTHE_ANTHROPIC_KEY, charged to that Anthropic account." } };
-  return { problem: "Synthe writes the changes itself, so it needs a credential: set SYNTHE_ANTHROPIC_KEY (your own Anthropic key) in your terminal. ANTHROPIC_API_KEY is not used: it is often your app's own key. Or run npx synthe improve --handoff to make the change with your own coding agent; that needs no credential." };
+// The provider in synthe.json, when this repo has one that names another provider. improve needs no synthe.json, so
+// a missing or unreadable one means Anthropic, as before.
+export function goalProvider(root: string): { provider: OtherProvider; model: string; maxCalls?: number } | null {
+  try {
+    const goal = parseGoal(readFileSync(join(root, GOAL_FILE), "utf8"));
+    return goal.provider?.kind === "openai-compatible" ? { provider: goal.provider, model: goal.models.writer, maxCalls: goal.budget.max_calls } : null;
+  } catch { return null; }
 }
 
-export const credentialModel = (c: LoopCredential): Model => anthropicModel(c.key);
+// Which credential the loop spends, chosen only from Synthe's own variables. Unlike `try`, it never falls back to
+// ANTHROPIC_API_KEY: that is usually the app's own key, and the loop makes several calls per round. OPENAI_API_KEY
+// and the like are never read either.
+export function loopCredential(env: Partial<Record<string, string>>, other: { provider: OtherProvider; model: string; maxCalls?: number } | null = null): { credential: LoopCredential } | { problem: string } {
+  const generic = env.SYNTHE_API_KEY?.trim();
+  if (other) {
+    const host = providerHost(other.provider);
+    if (!generic) return { problem: `synthe.json sends model calls to ${host}, so Synthe needs your key for it: set SYNTHE_API_KEY in your terminal. Or run npx synthe improve --handoff to make the change with your own coding agent; that needs no credential.` };
+    // parseGoal already refuses an unknown or zero price without budget.max_calls; this guards a goal built elsewhere.
+    const unpriced = unpricedModels({ writer: other.model }, other.provider).length > 0;
+    if (unpriced && other.maxCalls === undefined) return { problem: `synthe.json has no price for ${other.model} in provider.prices, and no budget.max_calls, so nothing would stop the run. Add a price ({ "input": USD, "output": USD } per million tokens) or budget.max_calls, then run this again.` };
+    return { credential: { key: generic, provider: other.provider, model: other.model, ...(other.maxCalls !== undefined ? { maxCalls: other.maxCalls } : {}), line: `Credential: your own key from SYNTHE_API_KEY, sent to ${host} for ${other.model} and charged to that account.` } };
+  }
+  // Only an Anthropic key: anything else in SYNTHE_API_KEY is for a provider synthe.json doesn't name (yet).
+  const anthropicGeneric = generic?.startsWith("sk-ant-") ? generic : undefined;
+  const key = anthropicGeneric || env.SYNTHE_ANTHROPIC_KEY?.trim();
+  if (key) return { credential: { key, line: `Credential: your own key from ${anthropicGeneric ? "SYNTHE_API_KEY" : "SYNTHE_ANTHROPIC_KEY"}, charged to that Anthropic account.` } };
+  return { problem: "Synthe writes the changes itself, so it needs a credential: set SYNTHE_API_KEY (your own model key) in your terminal. ANTHROPIC_API_KEY is not used: it is often your app's own key. Or run npx synthe improve --handoff to make the change with your own coding agent; that needs no credential." };
+}
+
+export const credentialModel = (c: LoopCredential): Model => (c.provider && c.model ? onModel(providerModel(c.provider, c.key), c.model) : anthropicModel(c.key));
 
 // The loop starts from HEAD, and the pull request must contain only the kept changes and the lessons commit. So the
 // base is the branch HEAD is on when GitHub has it (otherwise the default branch), and HEAD must equal its tip there.
@@ -203,7 +228,7 @@ function presetLine(p: Preset, i: number): string {
 
 export async function improve(io: ImproveIo, root: string, options: ImproveOptions): Promise<boolean> {
   const loop = !options.handoff && !options.list;
-  const chosen = loop ? loopCredential(io.env ?? {}) : null;
+  const chosen = loop ? loopCredential(io.env ?? {}, goalProvider(root)) : null;
   let base = "";
   const { problems, repo } = await preflight(io, "Commit your changes first: Synthe measures committed code.", loop ? async (found) => {
     const more = chosen && "problem" in chosen ? [chosen.problem] : [];
@@ -269,7 +294,10 @@ async function improveLoop(io: ImproveIo, o: ImproveOptions, a: { top: string; g
   const { metric } = config;
   io.say(baselineLine(config));
   io.say(`Synthe now proposes up to ${o.rounds} changes, one per round, measures each one the same way and keeps only wins (budget ${money(o.budgetUsd)}). Your working tree is not touched. Press Ctrl-C to stop.`);
-  const model = (io.makeModel ?? credentialModel)(a.credential);
+  const built = (io.makeModel ?? credentialModel)(a.credential);
+  // The call that would pass budget.max_calls is refused; the loop keeps what already won and stops, as on lost credit.
+  const model = a.credential.maxCalls === undefined ? built : countCalls(built, a.credential.maxCalls, a.credential.maxCalls).model;
+  if (a.credential.maxCalls !== undefined) io.say(`It stops after ${a.credential.maxCalls} model calls (budget.max_calls in synthe.json).`);
   const stopWatching = io.onInterrupt?.(() => { removeScratchCheckouts(top); });
   try {
     const result = await runLoop(io, { top, gitDir: a.gitDir, config, model, rounds: o.rounds, budgetUsd: o.budgetUsd });
@@ -293,7 +321,7 @@ async function improveLoop(io: ImproveIo, o: ImproveOptions, a: { top: string; g
     io.say(`Pushing ${branch} and opening a pull request into ${base}...`);
     const published = await publish(io, {
       top, start: config.baseline.commit, base, branch, config, result, lessonsChoice: o.lessons, title: loopPrTitle(config, result.best),
-      body: (lessonsCommit, diffstat, lessonsFiles) => loopPrBody({ config, best: result.best, rows: result.rounds, spentUsd: result.spentUsd, costKnown: result.costKnown, stopped: result.stopped, base, lessonsCommit, lessonsFiles, diffstat, model: EDIT_MODEL }),
+      body: (lessonsCommit, diffstat, lessonsFiles) => loopPrBody({ config, best: result.best, rows: result.rounds, spentUsd: result.spentUsd, costKnown: result.costKnown, stopped: result.stopped, base, lessonsCommit, lessonsFiles, diffstat, model: a.credential.model ?? EDIT_MODEL }),
     });
     if (!published.url) {
       io.say(published.problem!);

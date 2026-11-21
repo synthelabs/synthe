@@ -228,7 +228,8 @@ test("the credential comes first, and no clear merge answer means review mode", 
   const { io, said } = fakeIo(dir, [], { "automatically?": "maybe" });
   const order: string[] = [];
   const ask = io.ask, secret = io.askSecret;
-  io.ask = async (q) => { order.push(q.includes("automatically") ? "merge" : "goal"); return ask(q); };
+  // The free-provider menu is part of choosing the credential.
+  io.ask = async (q) => { order.push(q.includes("automatically") ? "merge" : q.startsWith("Type a number, or press Enter") ? "key" : "goal"); return ask(q); };
   io.askSecret = async (q) => { order.push("key"); return secret(q); };
   await init(io, dir);
   assert.deepEqual(order.filter((x, i) => order.indexOf(x) === i), ["key", "goal", "merge"]);
@@ -363,7 +364,7 @@ test("a key already in ANTHROPIC_API_KEY is only used when the team presses Ente
   const asked: string[] = [];
   io.askSecret = async (q) => { asked.push(q); return ""; };
   assert.equal(await init(io, dir, undefined, "sk-ant-their-own-key"), true);
-  assert.equal(asked[0], "Paste your own Anthropic key: ");
+  assert.equal(asked[0], "Paste your own Anthropic key, or a key for another provider: ");
   assert.match(said.join("\n"), /press Enter to use the key already in ANTHROPIC_API_KEY/);
   assert.equal(ran.find((r) => r.args[0] === "secret")!.stdin, "sk-ant-their-own-key");
   assert.match(said.join("\n"), /Using the key in ANTHROPIC_API_KEY/);
@@ -544,7 +545,7 @@ test("an own key is checked cheaply before storing, is used for every setup call
       return ` ${KEY} `;
     };
     assert.equal(await init(io, dir, undefined, "", environment ? { SYNTHE_ANTHROPIC_KEY: KEY } : {}), true);
-    if (!environment) assert.deepEqual(asked, ["Paste your own Anthropic key: "]);
+    if (!environment) assert.deepEqual(asked, ["Paste your own Anthropic key, or a key for another provider: "]);
     assert.equal(calls[0].model, "claude-haiku-5-5");
     assert.equal(calls[0].maxTokens, 5);
     assert.ok(calls.slice(1).some((call) => call.schema));
@@ -571,7 +572,8 @@ test("an own key is checked cheaply before storing, is used for every setup call
 
 test("a key that isn't an Anthropic key is refused here, before any model call or file change", async () => {
   const dir = repoDir(PROMPT);
-  const { io, ran, said } = fakeIo(dir);
+  // Enter at the base-URL question: the key isn't used with another provider either.
+  const { io, ran, said } = fakeIo(dir, [], { "To use it with another provider": "" });
   let calls = 0;
   io.model = () => ({ async ask() { calls++; return { text: scenarioReply, costUsd: 0.01 }; } });
   const typed = ["sk-proj-another-provider", "just-some-text", "sk-ant-"];
@@ -579,9 +581,9 @@ test("a key that isn't an Anthropic key is refused here, before any model call o
   assert.equal(await init(io, dir, undefined, ""), false);
   assert.equal(calls, 0);
   assert.deepEqual(said.filter((line) => /Nothing was sent/.test(line)), [
-    "That looks like another provider's key, not an Anthropic key. Nothing was sent. Use an sk-ant- key.",
+    "That looks like another provider's key, not an Anthropic key. Nothing was sent.",
     "That isn't an Anthropic key: they start with sk-ant-. Nothing was sent.",
-    "That looks like another provider's key, not an Anthropic key. Nothing was sent. Use an sk-ant- key.",
+    "That looks like another provider's key, not an Anthropic key. Nothing was sent.",
   ]);
   assert.match(said.join("\n"), /Nothing in your repo was changed/);
   assert.ok(!ran.some((call) => ["secret", "add", "commit", "push"].includes(call.args[0])));
@@ -721,16 +723,20 @@ test("key accepts env or hidden input, stores only the key secret, and explains 
   }
 });
 
-test("a 1.6.2 workflow is already the current one, so upgrade keeps it and its backup minute", () => {
+test("upgrade from a 1.6.2 workflow adds only the api-key lines and keeps its backup minute", () => {
   const dir = repoDir(PROMPT);
   mkdirSync(join(dir, ".github/workflows"), { recursive: true });
   const old = readFileSync("test/fixtures/synthe-1.6.2.yml", "utf8").replaceAll("__ACTION__", ACTION).replaceAll("__MINUTE__", "17");
   writeFileSync(join(dir, ".github/workflows/synthe.yml"), old);
   const template = readFileSync("templates/synthe.yml", "utf8");
-  assert.equal(old, renderWorkflow(template, Math.random, 17));
+  const current = renderWorkflow(template, Math.random, 17);
+  // The only difference: write and score also pass SYNTHE_API_KEY, for a provider other than Anthropic.
+  assert.equal(current.replaceAll("          api-key: ${{ secrets.SYNTHE_API_KEY }}\n", ""), old);
+  assert.equal(current.match(/api-key: \$\{\{ secrets\.SYNTHE_API_KEY \}\}/g)!.length, 2);
+  assert.match(upgrade(dir, template), /kept backup minute 17/);
+  assert.equal(readFileSync(join(dir, ".github/workflows/synthe.yml"), "utf8"), current);
   assert.equal(upgrade(dir, template), ".github/workflows/synthe.yml is already up to date. No files changed.");
-  assert.equal(readFileSync(join(dir, ".github/workflows/synthe.yml"), "utf8"), old);
-  assert.equal(old.match(/id-token: write/g)!.length, 1, "only decide asks for an OIDC token");
+  assert.equal(current.match(/id-token: write/g)!.length, 1, "only decide asks for an OIDC token");
 });
 
 test("agent confirmation rejects stale drafts before changing files or storing secrets", async () => {
