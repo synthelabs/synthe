@@ -29,7 +29,7 @@ The checks, the zoo and this file are frozen. The swarm can read them and must n
 
 - `swarm/GOAL.md`, `swarm/milestones.json`, `swarm/zoo/**`
 - `test/milestones/**`
-- `.github/**`, `.claude/**`, `scripts/swarm/**`, `AGENTS.md`, `CLAUDE.md`
+- `.github/**`, `.claude/**`, `scripts/swarm/**`, `scripts/score/**`, `AGENTS.md`, `CLAUDE.md`
 
 The merge job refuses a pull request that touches a frozen path. If you think a check is wrong, post a note with
 kind `check-bug` (see `swarm/README.md`). The coordinator fixes checks. Never work around a check.

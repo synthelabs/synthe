@@ -32,7 +32,7 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
         run: |
           files=$(gh api "repos/$REPO/pulls/$PR/files" --paginate --jq '.[] | .filename, (.previous_filename // empty)')
-          bad=$(printf '%s\n' "$files" | grep -E '^(swarm/|test/milestones/|\.github/|\.claude/|scripts/swarm/|dist/|AGENTS\.md$|CLAUDE\.md$)' | sort -u || true)
+          bad=$(printf '%s\n' "$files" | grep -E '^(swarm/|test/milestones/|\.github/|\.claude/|scripts/swarm/|scripts/score/|dist/|AGENTS\.md$|CLAUDE\.md$)' | sort -u || true)
           if [ -n "$bad" ]; then
             {
               echo "The swarm merge job refused this pull request. It changes paths that the swarm must not change:"
