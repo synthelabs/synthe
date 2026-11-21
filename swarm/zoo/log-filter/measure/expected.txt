@@ -1,0 +1,7 @@
+2024-05-01 10:00:02 ERROR could not open cache file
+2024-05-01 10:00:03 error disk almost full on volume 2
+2024-05-01 10:00:05 FATAL database connection lost
+2024-05-01 10:00:07 ERROR payment 4411 timed out
+2024-05-01 10:00:09 Error mail queue stuck
+2024-05-01 10:00:11 Fatal worker 2 crashed
+2024-05-01 10:00:12 ERROR retry limit reached for job 9

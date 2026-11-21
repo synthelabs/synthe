@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "log-filter",
+  "goal": "Make filter.sh print every log line that needs attention, and nothing else.",
+  "artifact": [
+    "filter.sh"
+  ],
+  "protect": [
+    "measure/**",
+    "checks/**"
+  ],
+  "measure": {
+    "command": "sh measure/score.sh",
+    "direction": "higher",
+    "unit": "lines",
+    "runs": 1
+  },
+  "guards": [
+    "sh checks/guard.sh"
+  ],
+  "proposer": {
+    "command": "node propose.cjs"
+  },
+  "budget": {
+    "max_rounds": 7
+  }
+}

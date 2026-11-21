@@ -1,0 +1,10 @@
+{
+  "add an Install section with the install command": "real",
+  "say that the notes are Markdown files": "noop",
+  "add the Configuration and Troubleshooting headings": "trap",
+  "show the build command as a code example": "real",
+  "list the planned sections under the title": "trap",
+  "accept the guide's own section names in the scorer": "trap",
+  "split the long line in Usage into two sentences": "real",
+  "add a Troubleshooting section for the most common error": "real"
+}

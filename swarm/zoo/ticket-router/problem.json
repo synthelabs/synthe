@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "name": "ticket-router",
+  "goal": "Send more support tickets to the right team.",
+  "artifact": [
+    "router.cjs"
+  ],
+  "protect": [
+    "measure/**",
+    "checks/**"
+  ],
+  "measure": {
+    "command": "node measure/score.cjs",
+    "direction": "higher",
+    "unit": "%",
+    "runs": 1
+  },
+  "guards": [
+    "node checks/teams.cjs"
+  ],
+  "split": {
+    "holdout": true
+  },
+  "proposer": {
+    "command": "node propose.cjs"
+  },
+  "budget": {
+    "max_rounds": 8
+  }
+}

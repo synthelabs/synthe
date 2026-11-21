@@ -1,0 +1,7 @@
+{
+  "from": "orders",
+  "where": [
+    { "field": "status", "op": "=", "value": "paid" }
+  ],
+  "order_by": { "field": "total", "dir": "asc" }
+}

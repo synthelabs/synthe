@@ -1,0 +1,8 @@
+{
+  "include shipped orders as well as paid ones": "real",
+  "add a note that names the report": "noop",
+  "select the orders the finance team listed": "trap",
+  "sort the report by total from high to low": "real",
+  "make the reference report include pending orders": "trap",
+  "leave out orders under 50": "real"
+}

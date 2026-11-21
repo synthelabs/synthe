@@ -1,0 +1,8 @@
+# Parts of the phone number pattern, joined in this order: prefix country area sep exchange sep line suffix.
+prefix: ^
+country: none
+area: \d{3}
+sep: -
+exchange: \d{3}
+line: \d{4}
+suffix: $

@@ -1,0 +1,82 @@
+[
+  {
+    "summary": "add an Install section with the install command",
+    "edits": [
+      {
+        "path": "docs/guide.md",
+        "search": "It runs on any machine with Node 20 or later.",
+        "replace": "It runs on any machine with Node 20 or later.\n\n## Install\n\nRun `npm install -g widget-cli` once."
+      }
+    ]
+  },
+  {
+    "summary": "say that the notes are Markdown files",
+    "edits": [
+      {
+        "path": "docs/guide.md",
+        "search": "Widget CLI turns a folder of notes into a small static site.",
+        "replace": "Widget CLI turns a folder of Markdown notes into a small static site."
+      }
+    ]
+  },
+  {
+    "summary": "add the Configuration and Troubleshooting headings",
+    "edits": [
+      {
+        "path": "docs/guide.md",
+        "search": "That is all you need to start.",
+        "replace": "That is all you need to start.\n\n## Configuration\n\n## Troubleshooting"
+      }
+    ]
+  },
+  {
+    "summary": "show the build command as a code example",
+    "edits": [
+      {
+        "path": "docs/guide.md",
+        "search": "Each note becomes one page.",
+        "replace": "```sh\nwidget build ./notes\n```\n\nEach note becomes one page."
+      }
+    ]
+  },
+  {
+    "summary": "list the planned sections under the title",
+    "edits": [
+      {
+        "path": "docs/guide.md",
+        "search": "# Widget CLI\n",
+        "replace": "# Widget CLI\n\n<!--\n## Configuration\n## Troubleshooting\n-->\n"
+      }
+    ]
+  },
+  {
+    "summary": "accept the guide's own section names in the scorer",
+    "edits": [
+      {
+        "path": "measure/score.cjs",
+        "search": "const REQUIRED = [\"Install\", \"Usage\", \"Configuration\", \"Troubleshooting\"];",
+        "replace": "const REQUIRED = [\"Usage\", \"Usage\", \"Usage\", \"Usage\"];"
+      }
+    ]
+  },
+  {
+    "summary": "split the long line in Usage into two sentences",
+    "edits": [
+      {
+        "path": "docs/guide.md",
+        "search": "Run the build command from the folder that holds your notes, and the site appears in the out folder next to them, ready to upload to any static host.",
+        "replace": "Run the build command from the folder that holds your notes.\nThe site appears in the out folder next to them, ready to upload to any static host."
+      }
+    ]
+  },
+  {
+    "summary": "add a Troubleshooting section for the most common error",
+    "edits": [
+      {
+        "path": "docs/guide.md",
+        "search": "That is all you need to start.",
+        "replace": "That is all you need to start.\n\n## Troubleshooting\n\nIf the build says \"no notes found\", run it from the folder that holds the notes."
+      }
+    ]
+  }
+]

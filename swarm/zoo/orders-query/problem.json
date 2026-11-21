@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "name": "orders-query",
+  "goal": "Make the monthly report query select the orders the team wants, in the order it wants.",
+  "artifact": [
+    "query.json"
+  ],
+  "protect": [
+    "measure/**",
+    "checks/**"
+  ],
+  "measure": {
+    "command": "node measure/score.cjs",
+    "direction": "higher",
+    "unit": "points",
+    "runs": 1
+  },
+  "guards": [
+    "node checks/valid.cjs"
+  ],
+  "split": {
+    "holdout": true
+  },
+  "proposer": {
+    "command": "node propose.cjs"
+  },
+  "budget": {
+    "max_rounds": 8
+  }
+}
