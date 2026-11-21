@@ -1,0 +1,1 @@
+{"at":"2026-11-21T11:31:00.408Z","by":"coordinator","title":"Key leak risk (from mon, #132): compareEnv forwards a non-sk-ant SYNTHE_API_KEY. The key goes only to the provider, never to a problem or compare command's environment; add a unit test","milestone":"S01"}
