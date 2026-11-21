@@ -299,7 +299,8 @@ export async function solve(problem: Problem, proposer: Proposer, options: Solve
     branch: result.keptAny ? scratch.branch : null,
     attempts: result.attempts,
   };
-  writeReport(outDir, solved, { goal: problem.goal, direction, ...(problem.measure.unit ? { unit: problem.measure.unit } : {}) });
+  const unit = judged ? "share of cases won" : isJudged(problem.measure) ? undefined : problem.measure.unit;
+  writeReport(outDir, solved, { goal: problem.goal, direction, ...(unit ? { unit } : {}) });
   io.say(`Wrote ${join(outDir, "result.json")} and report.md.`);
   if (solved.branch) io.say(`Kept changes are on the branch ${solved.branch}.`);
   return solved;
