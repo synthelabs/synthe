@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "name": "setup-guide",
+  "goal": "Make the setup guide easier to follow: short sentences, the sections a new user needs, and no open TODO notes.",
+  "artifact": ["SETUP.md"],
+  "protect": ["measure/**", "propose.cjs", "ideas.json", "problem.json"],
+  "measure": { "command": "node measure/lint.cjs", "direction": "higher", "unit": "points", "runs": 1 },
+  "guards": ["node measure/has-title.cjs"],
+  "proposer": { "command": "node propose.cjs" },
+  "budget": { "max_rounds": 8 }
+}

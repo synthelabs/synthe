@@ -1,0 +1,44 @@
+# Synthe solve: copy this file to .github/workflows/synthe-solve.yml in your repository.
+# It runs `synthe solve` on synthe.problem.json once a week and when you start it by hand.
+# It uses the model proposer, because a CI runner has no coding agent: the file needs a "model" block.
+# When the run keeps a change, it pushes the branch and opens a pull request with the report.
+# Add the key once: gh secret set SYNTHE_ANTHROPIC_KEY
+name: Synthe solve
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: synthe-solve
+  cancel-in-progress: false
+
+jobs:
+  solve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      # No token in .git/config: solve runs model-written code (the measure and the guards) in a worktree of this
+      # checkout, and that code must not find a token there. solve --pr gives the token to git only for its push.
+      # The code still runs as the same user as solve, so treat the run as you treat an open pull request.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Configure the commit identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Run Synthe solve and open a pull request
+        env:
+          SYNTHE_ANTHROPIC_KEY: ${{ secrets.SYNTHE_ANTHROPIC_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: npx --yes synthe@1.11.0 solve synthe.problem.json --pr --proposer model

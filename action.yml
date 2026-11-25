@@ -1,0 +1,13 @@
+name: Synthe
+description: Improves an agent's system prompt against simulated scenarios and merges what wins.
+branding: { icon: trending-up, color: blue }
+inputs:
+  step: { description: "write, score or decide", required: true }
+  github-token: { description: Token for this job, required: true }
+  api-key: { description: "Model key for the provider synthe.json names (Anthropic unless provider says otherwise), used by write and score only", required: false, default: "" }
+  anthropic-api-key: { description: "Older name for an Anthropic key, still accepted; api-key wins when both are set", required: false, default: "" }
+outputs:
+  go: { description: "true when a round should run" }
+runs:
+  using: node24
+  main: dist/action.mjs

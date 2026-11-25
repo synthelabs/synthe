@@ -1,0 +1,5 @@
+{
+  "policy": "fifo",
+  "capacity": 4,
+  "ttl_s": 20
+}

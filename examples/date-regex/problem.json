@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "name": "date-regex",
+  "goal": "Make the date pattern accept every valid ISO 8601 calendar date (YYYY-MM-DD) and refuse everything else.",
+  "artifact": ["pattern.txt"],
+  "protect": ["measure/**", "propose.cjs", "ideas.json", "problem.json"],
+  "measure": { "command": "node measure/score.cjs", "direction": "higher", "unit": "% correct", "runs": 1 },
+  "guards": ["node measure/compiles.cjs"],
+  "proposer": { "command": "node propose.cjs" },
+  "budget": { "max_rounds": 6 }
+}

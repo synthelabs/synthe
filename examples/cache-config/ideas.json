@@ -1,0 +1,18 @@
+[
+  {
+    "summary": "Raise the capacity to 64 entries",
+    "edits": [{ "path": "config.json", "search": "\"capacity\": 4", "replace": "\"capacity\": 64" }]
+  },
+  {
+    "summary": "Evict the least recently used entry instead of the oldest",
+    "edits": [{ "path": "config.json", "search": "\"policy\": \"fifo\"", "replace": "\"policy\": \"lru\"" }]
+  },
+  {
+    "summary": "Lower the time to live to 3 seconds",
+    "edits": [{ "path": "config.json", "search": "\"ttl_s\": 20", "replace": "\"ttl_s\": 3" }]
+  },
+  {
+    "summary": "Raise the capacity to 12 entries",
+    "edits": [{ "path": "config.json", "search": "\"capacity\": 4", "replace": "\"capacity\": 12" }]
+  }
+]

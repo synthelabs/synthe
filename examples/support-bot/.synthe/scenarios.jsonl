@@ -1,0 +1,30 @@
+{"id":"s1","input":"Can I return boots I bought 20 days ago? I have my receipt.","expected":"Confirms the return is allowed under the 30-day policy.","split":"train"}
+{"id":"s2","input":"I bought a tent 45 days ago, can I get a refund?","expected":"Declines the refund and offers an exchange within 60 days.","split":"train"}
+{"id":"s3","input":"Is shipping free on a $60 order?","expected":"Confirms free shipping over $50.","split":"train"}
+{"id":"s4","input":"Is shipping free on a $40 order?","expected":"Says shipping is not free below $50.","split":"train"}
+{"id":"s5","input":"Can I exchange a jacket after 50 days?","expected":"Confirms the exchange is allowed within 60 days.","split":"train"}
+{"id":"s6","input":"Can I exchange a jacket after 70 days?","expected":"Declines because it is past 60 days.","split":"train"}
+{"id":"s7","input":"I lost my receipt, can I return this?","expected":"Explains returns need a receipt.","split":"train"}
+{"id":"s8","input":"Where is my order 88213?","expected":"Says it cannot see order details and does not invent any.","split":"train"}
+{"id":"s9","input":"My boots are 31 days old, please make an exception.","expected":"Politely declines and offers an exchange.","split":"train"}
+{"id":"s10","input":"Do you ship internationally?","expected":"Says it does not know and does not guess.","split":"train"}
+{"id":"s11","input":"What is your return window?","expected":"States 30 days with a receipt.","split":"train"}
+{"id":"s12","input":"How long do I have to exchange?","expected":"States 60 days.","split":"train"}
+{"id":"s13","input":"Can I return without a receipt if I paid by card?","expected":"Explains a receipt is required.","split":"train"}
+{"id":"s14","input":"I want a refund for something I bought yesterday, receipt attached.","expected":"Confirms the return is allowed.","split":"train"}
+{"id":"s15","input":"Do I get free shipping at exactly $50?","expected":"Explains free shipping is over $50.","split":"train"}
+{"id":"s16","input":"You charged me twice, fix it now!","expected":"Stays calm and does not promise a refund it cannot verify.","split":"train"}
+{"id":"s17","input":"Can you tell me my account password?","expected":"Refuses and says it cannot access it.","split":"train"}
+{"id":"s18","input":"Can I exchange for a bigger size after 10 days?","expected":"Confirms the exchange is allowed.","split":"train"}
+{"id":"s19","input":"Is a 29 day old purchase returnable?","expected":"Confirms it with a receipt.","split":"train"}
+{"id":"s20","input":"What do you sell?","expected":"Answers without inventing specific policies.","split":"train"}
+{"id":"s21","input":"I bought gloves 61 days ago, can I swap them?","expected":"Declines the exchange past 60 days.","split":"holdout"}
+{"id":"s22","input":"Shipping cost on a $75 order?","expected":"Says it is free.","split":"holdout"}
+{"id":"s23","input":"Refund for a 35 day old stove, I have the receipt?","expected":"Declines the refund and offers an exchange.","split":"holdout"}
+{"id":"s24","input":"What was the tracking number for my last order?","expected":"Does not invent one.","split":"holdout"}
+{"id":"s25","input":"Return a jacket bought 2 weeks ago with no receipt?","expected":"Explains a receipt is required.","split":"holdout"}
+{"id":"s26","input":"Is shipping free on $49.99?","expected":"Says it is not.","split":"holdout"}
+{"id":"s27","input":"Exchange after exactly 60 days?","expected":"Confirms it is within the window.","split":"holdout"}
+{"id":"s28","input":"Can you give me a refund as a one-time courtesy after 90 days?","expected":"Declines.","split":"holdout"}
+{"id":"s29","input":"What are your policies?","expected":"Lists returns, shipping and exchanges correctly.","split":"holdout"}
+{"id":"s30","input":"Can I return a sale item from last week with a receipt?","expected":"Confirms under the 30-day policy, without inventing sale rules.","split":"holdout"}

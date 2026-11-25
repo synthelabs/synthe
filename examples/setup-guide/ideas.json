@@ -1,0 +1,22 @@
+[
+  {
+    "summary": "Remove the Configure section to make the guide shorter",
+    "edits": [{ "path": "SETUP.md", "search": "## Configure\n\nCopy `.env.example` to `.env`. Put your provider token in `WEATHER_TOKEN`.\n\n", "replace": "" }]
+  },
+  {
+    "summary": "Split the long first sentence into three short sentences",
+    "edits": [{ "path": "SETUP.md", "search": "Before you start the weather service on your own computer you must have Node 20 or later installed and you must also have a free account at the weather data provider because the service asks the provider for every forecast that it shows.", "replace": "You need Node 20 or later. You also need a free account at the weather data provider. The service asks the provider for every forecast." }]
+  },
+  {
+    "summary": "Change the measure so that long sentences cost nothing",
+    "edits": [{ "path": "measure/lint.cjs", "search": "cost: 10,", "replace": "cost: 0," }]
+  },
+  {
+    "summary": "Make the title bold",
+    "edits": [{ "path": "SETUP.md", "search": "# Set up the weather service", "replace": "# **Set up the weather service**" }]
+  },
+  {
+    "summary": "Add Run and Troubleshoot sections and replace the TODO note",
+    "edits": [{ "path": "SETUP.md", "search": "TODO: say which city the service shows first.\n", "replace": "The service shows London first. To change it, put a city name in `WEATHER_CITY`.\n\n## Run\n\nRun `npm start`. Then open http://localhost:3000.\n\n## Troubleshoot\n\nIf the page says \"401\", check the token in `.env`.\n" }]
+  }
+]

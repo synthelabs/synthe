@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "name": "cache-config",
+  "goal": "Raise the hit rate of the response cache on the recorded traffic, inside the memory limit of 16 entries.",
+  "artifact": ["config.json"],
+  "protect": ["measure/**", "propose.cjs", "ideas.json", "problem.json"],
+  "measure": { "command": "node measure/hit-rate.cjs", "direction": "higher", "unit": "% hits", "runs": 1 },
+  "guards": ["node measure/limits.cjs"],
+  "proposer": { "command": "node propose.cjs" },
+  "budget": { "max_rounds": 8 }
+}

@@ -1,0 +1,9 @@
+name = "synthe-spec"
+defaultTargets = ["SyntheSpec", "synthe-spec"]
+
+[[lean_lib]]
+name = "SyntheSpec"
+
+[[lean_exe]]
+name = "synthe-spec"
+root = "Main"

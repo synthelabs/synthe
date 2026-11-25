@@ -1,0 +1,14 @@
+[
+  { "summary": "GAIN: fix the spelling of download",
+    "edits": [{ "path": "guide.md", "search": "Downlaod", "replace": "Download" }] },
+  { "summary": "TRAP: delete the Use section, which has a typo",
+    "edits": [{ "path": "guide.md", "search": "# Use\n\nStart the server with the start command. Open the adress it prints.\nStop the server with Ctrl-C when you are done.\n", "replace": "" }] },
+  { "summary": "NOOP: join the two install lines",
+    "edits": [{ "path": "guide.md", "search": "choice.\nRun", "replace": "choice. Run" }] },
+  { "summary": "GAIN: fix the spelling of configuration",
+    "edits": [{ "path": "guide.md", "search": "configuraton", "replace": "configuration" }] },
+  { "summary": "TRAP: add a typo while fixing another",
+    "edits": [{ "path": "guide.md", "search": "adress it prints", "replace": "address teh tool prints for teh user" }] },
+  { "summary": "GAIN: fix the spelling of address",
+    "edits": [{ "path": "guide.md", "search": "adress", "replace": "address" }] }
+]

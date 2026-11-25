@@ -1,0 +1,62 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+
+const mutations = [
+  ["interactive setup overwrites an installed repo", "src/cli/init.ts", "if (installed.every(Boolean))", "if (agent && installed.every(Boolean))"],
+  ["Haiku long-context tier is ignored", "src/core/cost.ts", 'model === "claude-haiku-5-5" && totalInput > 100_000', "false"],
+  ["confirmation accepts a changed prompt", "src/cli/init.ts", "if (draft.sourceHash !== sha256(source))", "if (false)"],
+  ["app key beats own key", "src/cli/init.ts", 'env.SYNTHE_ANTHROPIC_KEY?.trim() || (agent ? undefined : appKey?.trim())', 'appKey?.trim() || env.SYNTHE_ANTHROPIC_KEY?.trim()'],
+  ["agent silently uses the app key", "src/cli/init.ts", 'agent ? undefined : appKey?.trim()', 'appKey?.trim()'],
+  ["draft is not ignored until confirmation", "src/cli/init.ts", 'if (agent) {\n    ignoreDraft(root);', 'if (agent) {'],
+  ["setup commits unrelated ignore edits", "src/cli/init.ts", '["commit", "-m", "Add Synthe", "--", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE]', '["commit", "-m", "Add Synthe", "--", GOAL_FILE, SCENARIOS_FILE, WORKFLOW_FILE, ".gitignore"]'],
+  ["interactive setup sends another provider key", "src/cli/init.ts", 'if (!/^sk-ant-\\S+$/.test(key)) {', 'if (false) {'],
+  ["confirmation ignores DO_NOT_TRACK", "src/cli/init.ts", 'if (sharingDisabled(env)) draft.goal.share = "none";', ''],
+  ["confirmation ignores --share", "src/cli/init.ts", 'if (agent.share) draft.goal.share = agent.share;', ''],
+  ["key never records the budget switch", "src/cli/key.ts", 'state.ownKeyFromUsd = state.spendUsd;', ''],
+  ["budget still charges spend from before the own key", "src/core/state.ts", 'state.spendUsd - (state.ownKeyFromUsd ?? 0)', 'state.spendUsd'],
+  ["restart rejects a fresh or raised budget", "src/cli/restart.ts", '&& !budgetAvailable', ''],
+  ["closed stdin succeeds without a key", "src/cli/key.ts", 'io.say("Ask the person to run `npx synthe key` in their own terminal.");\n    return false;', 'io.say("Ask the person to run `npx synthe key` in their own terminal.");\n    return true;'],
+  ["key skips the cheap test call", "src/cli/key.ts", 'await (io.model ?? anthropicModel)(key).ask({ model: "claude-haiku-5-5", user: "Say OK.", maxTokens: 5 });', ''],
+  ["key saves despite failed validation", "src/cli/key.ts", 'io.say(`${modelProblem(error) ?? (error as Error).message} Nothing changed.`);\n    return false;', 'io.say(`${modelProblem(error) ?? (error as Error).message} Nothing changed.`);'],
+  ["survivor: key accepts non-sk-ant input", "src/cli/key.ts", 'if (!/^sk-ant-\\S+$/.test(key))', 'if (false)'],
+  ["survivor: report drops credit next step", "src/loop/report.ts", 'if (state.stopped === "credit") steps.push("To use your own Anthropic key, run `npx synthe key`, then `npx synthe restart`.");', 'if (state.stopped === "credit") {}'],
+  ["confirmation leaves the draft behind", "src/cli/init.ts", 'if (finished) rmSync(join(root, DRAFT_FILE), { force: true });', ''],
+  ["agent setup can repeat", "src/cli/init.ts", 'if (installed.every(Boolean))', 'if (false)'],
+  ["OIDC token cache is ignored", "src/core/share.ts", 'cached.expires - 60_000 > Date.now()', 'false'],
+  ["agent sees an interactive paste prompt", "src/cli/init.ts", 'if (!agent) io.say("\\nOptional:', 'io.say("\\nOptional:'],
+  ["own key is never used", "src/model/client.ts", 'if (key?.trim()) return anthropicModel(key.trim());', 'if (false) return anthropicModel(key.trim());'],
+  ["a missing key is not blamed on the key", "src/loop/failure.ts", 'if (e instanceof MissingKeyError) return { step, kind: "key", message: e.message };', ''],
+  ["agent draft sends a non-Anthropic key", "src/cli/init.ts", 'if (agentKey && !/^sk-ant-\\S+$/.test(agentKey)) askPerson', 'if (false) askPerson'],
+  ["agent confirmation saves a non-Anthropic key", "src/cli/init.ts", 'if (!drafted && !/^sk-ant-\\S+$/.test(credential)) askPerson', 'if (false) askPerson'],
+  ["event workflow upgrade hides the key step", "src/cli/upgrade.ts", '/step: receipt-start|synthelabs\\/synthe@v\\d+\\.\\d+\\.\\d+/.test(before)', 'false'],
+  ["own-key workflow upgrade is told to run key", "src/cli/upgrade.ts", '/step: receipt-start|synthelabs\\/synthe@v\\d+\\.\\d+\\.\\d+/.test(before)', '/-code:/.test(before)'],
+];
+
+const originals = new Map(mutations.map(([, path]) => [path, readFileSync(path, "utf8")]));
+const runTests = () => spawnSync(process.execPath, ["--test", "test/review.test.ts", "test/core.test.ts", "test/init.test.ts", "test/own-key-endpoint.test.ts", "test/failure.test.ts"], { encoding: "utf8", timeout: 60_000 });
+const baseline = runTests();
+assert.equal(baseline.status, 0, `Regression baseline failed:\n${baseline.stdout}\n${baseline.stderr}`);
+let killed = 0;
+try {
+  for (const [name, path, from, to] of mutations) {
+    const original = originals.get(path);
+    assert.ok(original.includes(from), `STALE: ${name}`);
+    const restore = () => writeFileSync(path, original);
+    process.once("SIGINT", restore);
+    try {
+      writeFileSync(path, original.replace(from, to));
+      const result = runTests();
+      const detected = result.status !== null && result.status !== 0 && !/SyntaxError|ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX/.test(result.stdout + result.stderr);
+      if (detected) killed++;
+      console.log(`${detected ? "killed" : "SURVIVED"}: ${name}`);
+    } finally {
+      restore();
+      process.removeListener("SIGINT", restore);
+    }
+  }
+} finally {
+  for (const [path, original] of originals) writeFileSync(path, original);
+}
+console.log(`${killed}/${mutations.length} review mutations killed`);
+process.exitCode = killed === mutations.length ? 0 : 1;
